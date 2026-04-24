@@ -17,7 +17,7 @@ pub struct PtyState {
 struct Session {
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
-    _child: Box<dyn portable_pty::Child + Send + Sync>,
+    killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
 }
 
 #[derive(Serialize, Clone)]
@@ -80,8 +80,10 @@ pub fn pty_spawn<R: Runtime>(
     }
     cmd.env("TERM", "xterm-256color");
 
-    let child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+    let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);
+
+    let killer = child.clone_killer();
 
     let master = Arc::new(Mutex::new(pair.master));
     let writer = {
@@ -93,8 +95,9 @@ pub fn pty_spawn<R: Runtime>(
         m.try_clone_reader().map_err(|e| e.to_string())?
     };
 
-    let session_id_for_thread = session_id.clone();
-    let app_for_thread = app.clone();
+    // Reader thread: stream PTY output to the front-end.
+    let reader_session_id = session_id.clone();
+    let reader_app = app.clone();
     thread::spawn(move || {
         let mut reader = reader;
         let mut buf = [0u8; 4096];
@@ -103,10 +106,10 @@ pub fn pty_spawn<R: Runtime>(
                 Ok(0) => break,
                 Ok(n) => {
                     let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app_for_thread.emit(
+                    let _ = reader_app.emit(
                         "pty://data",
                         PtyData {
-                            session_id: session_id_for_thread.clone(),
+                            session_id: reader_session_id.clone(),
                             data,
                         },
                     );
@@ -114,11 +117,21 @@ pub fn pty_spawn<R: Runtime>(
                 Err(_) => break,
             }
         }
-        let _ = app_for_thread.emit(
+    });
+
+    // Waiter thread: block on the child, emit exit with the real status code.
+    let waiter_session_id = session_id.clone();
+    let waiter_app = app.clone();
+    thread::spawn(move || {
+        let code = match child.wait() {
+            Ok(status) => status.exit_code() as i32,
+            Err(_) => -1,
+        };
+        let _ = waiter_app.emit(
             "pty://exit",
             PtyExit {
-                session_id: session_id_for_thread.clone(),
-                code: None,
+                session_id: waiter_session_id,
+                code: Some(code),
             },
         );
     });
@@ -128,7 +141,7 @@ pub fn pty_spawn<R: Runtime>(
         Session {
             master,
             writer,
-            _child: child,
+            killer,
         },
     );
 
@@ -173,9 +186,11 @@ pub fn pty_resize(
 #[tauri::command]
 pub fn pty_kill(state: State<'_, PtyState>, session_id: String) -> Result<(), String> {
     let mut sessions = state.sessions.lock();
-    sessions
+    let mut session = sessions
         .remove(&session_id)
         .ok_or_else(|| format!("unknown session {}", session_id))?;
+    // Best-effort: if the child already exited, kill() returns an error we ignore.
+    let _ = session.killer.kill();
     Ok(())
 }
 
