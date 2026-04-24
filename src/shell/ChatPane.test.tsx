@@ -10,7 +10,7 @@ const ptyMock = vi.hoisted(() => ({
   onPtyExit: vi.fn().mockResolvedValue(() => {}),
 }));
 
-vi.mock("./lib/pty", () => ptyMock);
+vi.mock("../lib/pty", () => ptyMock);
 
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({ onDragDropEvent: vi.fn().mockResolvedValue(() => {}) }),
