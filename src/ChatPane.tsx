@@ -43,13 +43,13 @@ export function ChatPane() {
       unlistens.push(unlistenData, unlistenExit);
 
       term.onData((data) => {
-        ptyWrite(SESSION_ID, data).catch(() => {});
+        ptyWrite(SESSION_ID, data).catch((e) => console.error("pty bridge error:", e));
       });
 
       const onResize = () => {
         if (disposed) return;
         fit.fit();
-        ptyResize(SESSION_ID, term.cols, term.rows).catch(() => {});
+        ptyResize(SESSION_ID, term.cols, term.rows).catch((e) => console.error("pty bridge error:", e));
       };
       window.addEventListener("resize", onResize);
       unlistens.push(() => window.removeEventListener("resize", onResize));
@@ -58,7 +58,7 @@ export function ChatPane() {
     return () => {
       disposed = true;
       for (const fn of unlistens) fn();
-      ptyKill(SESSION_ID).catch(() => {});
+      ptyKill(SESSION_ID).catch((e) => console.error("pty bridge error:", e));
       term.dispose();
     };
   }, []);

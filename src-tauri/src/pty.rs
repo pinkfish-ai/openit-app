@@ -197,6 +197,7 @@ fn resolve_command(override_cmd: Option<&str>) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
 
     #[test]
     fn resolve_command_uses_override() {
@@ -206,8 +207,71 @@ mod tests {
 
     #[test]
     fn resolve_command_falls_back_to_shell_or_bash() {
-        // We can't unset SHELL safely in parallel tests; just verify it returns something.
         let resolved = resolve_command(None).unwrap();
         assert!(!resolved.is_empty());
+    }
+
+    /// Drive the real PTY backend (without the Tauri event layer) to prove the
+    /// spawn → read → exit pipeline works end-to-end. The `pty_spawn` Tauri
+    /// command wraps these same primitives.
+    #[test]
+    fn pty_pipeline_spawns_reads_and_exits() {
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+
+        let mut cmd = CommandBuilder::new("/bin/echo");
+        cmd.arg("hello-from-pty");
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 256];
+        // Read until EOF; PTY closes when child exits.
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                Err(_) => break,
+            }
+        }
+
+        let output = String::from_utf8_lossy(&buf);
+        assert!(
+            output.contains("hello-from-pty"),
+            "expected echo output, got: {:?}",
+            output
+        );
+
+        let status = child.wait().unwrap();
+        assert!(status.success(), "echo should exit 0");
+    }
+
+    #[test]
+    fn pty_resize_succeeds_on_open_master() {
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+
+        let result = pair.master.resize(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        });
+        assert!(result.is_ok());
     }
 }
