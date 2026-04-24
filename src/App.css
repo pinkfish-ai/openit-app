@@ -567,3 +567,93 @@ body,
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Pinkfish OAuth */
+.confirm-modal-body.wide {
+  width: 460px;
+}
+
+.key-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 10px 0 4px;
+}
+
+.key-success {
+  color: #2c8a4f;
+  background: #e3f5ea;
+  border: 1px solid #b2dec3;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.icon-btn.key-set {
+  color: #2c8a4f;
+  border-color: #2c8a4f;
+  background: #e3f5ea;
+}
+
+.icon-btn.key-set:hover {
+  background: #d2efdc;
+}
+
+.key-input {
+  width: 100%;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: Menlo, monospace;
+  font-size: 12px;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+}
+
+.key-input:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.key-error {
+  color: #c0392b;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.key-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.key-actions button {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.key-actions button.key-save {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.key-actions button.key-save:hover:not(:disabled) {
+  background: #c45a2c;
+}
+
+.key-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

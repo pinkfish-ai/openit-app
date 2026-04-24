@@ -56,3 +56,48 @@ export async function stateLoad(): Promise<AppPersistedState> {
 export async function stateSave(state: AppPersistedState): Promise<void> {
   return invoke("state_save", { state });
 }
+
+export async function keychainSet(slot: string, value: string): Promise<void> {
+  return invoke("keychain_set", { slot, value });
+}
+
+export async function keychainGet(slot: string): Promise<string | null> {
+  return invoke("keychain_get", { slot });
+}
+
+export async function keychainDelete(slot: string): Promise<void> {
+  return invoke("keychain_delete", { slot });
+}
+
+export type OauthResult = {
+  access_token: string;
+  expires_in: number | null;
+  token_type: string | null;
+  scope: string | null;
+};
+
+export async function pinkfishOauthExchange(args: {
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+  tokenUrl?: string | null;
+}): Promise<OauthResult> {
+  return invoke("pinkfish_oauth_exchange", {
+    clientId: args.clientId,
+    clientSecret: args.clientSecret,
+    scope: args.scope,
+    tokenUrl: args.tokenUrl ?? null,
+  });
+}
+
+export async function pinkfishTestCall(args: {
+  accessToken: string;
+  orgId: string;
+  testUrl?: string | null;
+}): Promise<unknown> {
+  return invoke("pinkfish_test_call", {
+    accessToken: args.accessToken,
+    orgId: args.orgId,
+    testUrl: args.testUrl ?? null,
+  });
+}

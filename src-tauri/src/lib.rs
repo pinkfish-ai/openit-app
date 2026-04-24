@@ -1,6 +1,8 @@
 mod cli;
 mod fs_tree;
 mod git_history;
+mod keychain;
+mod pinkfish;
 mod pty;
 mod state;
 
@@ -22,6 +24,11 @@ pub fn run() {
             cli::pinkit_deploy,
             state::state_load,
             state::state_save,
+            keychain::keychain_set,
+            keychain::keychain_get,
+            keychain::keychain_delete,
+            pinkfish::pinkfish_oauth_exchange,
+            pinkfish::pinkfish_test_call,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
