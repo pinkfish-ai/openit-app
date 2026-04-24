@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { onPtyData, onPtyExit, ptyKill, ptyResize, ptySpawn, ptyWrite } from "./lib/pty";
+import { onPtyData, onPtyExit, ptyKill, ptyResize, ptySpawn, ptyWrite } from "../lib/pty";
+import { setActiveSession, clearActiveSession } from "./activeSession";
 import "@xterm/xterm/css/xterm.css";
 
 // macOS Terminal.app behavior: dragging a file in writes its shell-escaped path.
@@ -48,6 +49,8 @@ export function ChatPane() {
         return;
       }
 
+      setActiveSession(SESSION_ID);
+
       const unlistenData = await onPtyData(SESSION_ID, (chunk) => term.write(chunk));
       const unlistenExit = await onPtyExit(SESSION_ID, (code) => {
         term.writeln(`\r\n\x1b[33m[process exited${code != null ? `: ${code}` : ""}]\x1b[0m`);
@@ -67,12 +70,13 @@ export function ChatPane() {
       const onResize = () => {
         if (disposed) return;
         fit.fit();
-        ptyResize(SESSION_ID, term.cols, term.rows).catch((e) => console.error("pty bridge error:", e));
+        ptyResize(SESSION_ID, term.cols, term.rows).catch((e) =>
+          console.error("pty bridge error:", e),
+        );
       };
       window.addEventListener("resize", onResize);
       unlistens.push(() => window.removeEventListener("resize", onResize));
 
-      // Tauri webview drag-drop: write dropped file paths into the PTY.
       const unlistenDrop = await getCurrentWebview().onDragDropEvent((event) => {
         if (disposed) return;
         if (event.payload.type !== "drop") return;
@@ -90,6 +94,7 @@ export function ChatPane() {
 
     return () => {
       disposed = true;
+      clearActiveSession(SESSION_ID);
       containerRef.current?.removeEventListener("click", focusOnClick);
       for (const fn of unlistens) fn();
       ptyKill(SESSION_ID).catch((e) => console.error("pty bridge error:", e));
