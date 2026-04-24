@@ -19,7 +19,8 @@ export function ChatPane() {
     const SESSION_ID = `main-${crypto.randomUUID()}`;
 
     const term = new Terminal({
-      fontFamily: "Menlo, Monaco, 'SF Mono', monospace",
+      fontFamily:
+        "'MesloLGS NF', 'JetBrainsMono Nerd Font Mono', 'JetBrainsMono Nerd Font', 'Hack Nerd Font Mono', 'Hack Nerd Font', 'Symbols Nerd Font Mono', Menlo, Monaco, 'SF Mono', monospace",
       fontSize: 13,
       cursorBlink: true,
       theme: {
@@ -114,6 +115,20 @@ export function ChatPane() {
       };
       window.addEventListener("resize", onResize);
       unlistens.push(() => window.removeEventListener("resize", onResize));
+
+      // Catch pane-splitter drags — those don't fire window 'resize'.
+      // Throttle to one rAF so we don't ptyResize on every pixel.
+      let rafScheduled = false;
+      const observer = new ResizeObserver(() => {
+        if (rafScheduled) return;
+        rafScheduled = true;
+        requestAnimationFrame(() => {
+          rafScheduled = false;
+          onResize();
+        });
+      });
+      if (containerRef.current) observer.observe(containerRef.current);
+      unlistens.push(() => observer.disconnect());
 
       const unlistenDrop = await getCurrentWebview().onDragDropEvent((event) => {
         if (disposed) return;
