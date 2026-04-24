@@ -255,6 +255,28 @@ mod tests {
     }
 
     #[test]
+    fn pty_spawn_propagates_command_not_found() {
+        // Mirror the spawn path used by `pty_spawn` and confirm the error
+        // branch when the requested binary doesn't exist.
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+
+        let cmd = CommandBuilder::new("/definitely/not/a/real/binary/openit-test");
+        let result = pair.slave.spawn_command(cmd);
+        assert!(
+            result.is_err(),
+            "spawn should fail for a nonexistent binary, got Ok"
+        );
+    }
+
+    #[test]
     fn pty_resize_succeeds_on_open_master() {
         let pty_system = native_pty_system();
         let pair = pty_system
