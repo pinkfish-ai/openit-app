@@ -52,6 +52,15 @@ describe("ChatPane", () => {
     expect(ptyMock.onPtyExit).toHaveBeenCalledWith("main", expect.any(Function));
   });
 
+  it("forwards window resize to ptyResize", async () => {
+    render(<ChatPane />);
+    await new Promise((r) => setTimeout(r, 0));
+    ptyMock.ptyResize.mockClear();
+    window.dispatchEvent(new Event("resize"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ptyMock.ptyResize).toHaveBeenCalledWith("main", expect.any(Number), expect.any(Number));
+  });
+
   it("kills the pty session on unmount", async () => {
     const { unmount } = render(<ChatPane />);
     await new Promise((r) => setTimeout(r, 0));
