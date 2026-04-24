@@ -23,6 +23,9 @@ export function ChatPane() {
     term.loadAddon(fit);
     term.open(containerRef.current);
     fit.fit();
+    term.focus();
+    const focusOnClick = () => term.focus();
+    containerRef.current.addEventListener("click", focusOnClick);
 
     const unlistens: Array<() => void> = [];
     let disposed = false;
@@ -57,6 +60,7 @@ export function ChatPane() {
 
     return () => {
       disposed = true;
+      containerRef.current?.removeEventListener("click", focusOnClick);
       for (const fn of unlistens) fn();
       ptyKill(SESSION_ID).catch((e) => console.error("pty bridge error:", e));
       term.dispose();
