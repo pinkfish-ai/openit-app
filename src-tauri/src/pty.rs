@@ -136,7 +136,11 @@ pub fn pty_spawn<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn pty_write(state: State<'_, PtyState>, session_id: String, data: String) -> Result<(), String> {
+pub fn pty_write(
+    state: State<'_, PtyState>,
+    session_id: String,
+    data: String,
+) -> Result<(), String> {
     let sessions = state.sessions.lock();
     let session = sessions
         .get(&session_id)
