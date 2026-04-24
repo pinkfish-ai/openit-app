@@ -51,7 +51,7 @@ export function DeployButton({
         className="deploy-btn"
         onClick={handleClick}
         disabled={!repo || running}
-        title={repo ? `Deploy to ${env}` : "Open a repo to deploy"}
+        title={repo ? `Deploy to ${env}` : "Open a project folder to deploy"}
       >
         {running ? "Deploying…" : "Deploy"}
       </button>

@@ -2,24 +2,24 @@ import { useCallback, useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { stateLoad, stateSave, type AppPersistedState } from "../lib/api";
 import { ChatPane } from "./ChatPane";
-import { DeployButton } from "./DeployButton";
 import { FileExplorer } from "./FileExplorer";
 import { PromptBubbles } from "./PromptBubbles";
-import { VersionsDrawer } from "./VersionsDrawer";
 import { Viewer, type ViewerSource } from "./Viewer";
 
 const DEFAULT_SIZES = [18, 42, 40];
 
-export function Shell() {
+export function Shell({ repo, deployLines }: { repo: string | null; deployLines: string[] }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
   const [source, setSource] = useState<ViewerSource>(null);
-  const [versionsOpen, setVersionsOpen] = useState(false);
-  const [env, setEnv] = useState<"dev" | "prod">("dev");
-  const [, setDeployLines] = useState<string[]>([]);
 
   useEffect(() => {
     stateLoad().then(setState).catch(console.error);
   }, []);
+
+  // When new deploy output arrives, route it into the viewer.
+  useEffect(() => {
+    if (deployLines.length > 0) setSource({ kind: "deploy", lines: deployLines });
+  }, [deployLines]);
 
   const persist = useCallback(
     (patch: Partial<AppPersistedState>) => {
@@ -39,15 +39,7 @@ export function Shell() {
 
   if (!state) return <div className="shell-loading">Loading…</div>;
 
-  const repo = state.last_repo;
   const sizes = state.pane_sizes ?? DEFAULT_SIZES;
-
-  const onDeployLine = (line: string) =>
-    setDeployLines((prev) => {
-      const next = [...prev, line];
-      setSource({ kind: "deploy", lines: next });
-      return next;
-    });
 
   return (
     <div className="shell">
@@ -66,29 +58,6 @@ export function Shell() {
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[2]} minSize={25}>
           <div className="right-pane">
-            <div className="right-toolbar">
-              <button
-                className="icon-btn"
-                onClick={() => setVersionsOpen((v) => !v)}
-                title="Show version history"
-              >
-                Versions
-              </button>
-              <select
-                value={env}
-                onChange={(e) => setEnv(e.target.value as "dev" | "prod")}
-                className="env-select"
-              >
-                <option value="dev">dev</option>
-                <option value="prod">prod</option>
-              </select>
-              <DeployButton
-                repo={repo}
-                env={env}
-                onLine={onDeployLine}
-                onExit={(code) => onDeployLine(`▸ exit ${code ?? "?"}`)}
-              />
-            </div>
             <div className="chat-area">
               <ChatPane />
             </div>
@@ -96,15 +65,6 @@ export function Shell() {
           </div>
         </Panel>
       </PanelGroup>
-      <VersionsDrawer
-        repo={repo}
-        open={versionsOpen}
-        onClose={() => setVersionsOpen(false)}
-        onShowDiff={(text) => {
-          setSource({ kind: "diff", text });
-          setVersionsOpen(false);
-        }}
-      />
     </div>
   );
 }

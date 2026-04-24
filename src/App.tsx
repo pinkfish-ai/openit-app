@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Shell } from "./shell/Shell";
+import { DeployButton } from "./shell/DeployButton";
 import { stateLoad, stateSave } from "./lib/api";
 import "./App.css";
 
 function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [deployLines, setDeployLines] = useState<string[]>([]);
 
   useEffect(() => {
     stateLoad()
@@ -31,16 +33,26 @@ function App() {
     }
   };
 
+  const onDeployLine = (line: string) => setDeployLines((prev) => [...prev, line]);
+
   return (
     <main className="app">
       <header className="app-header">
         <span className="app-title">OpenIT</span>
-        <span className="app-repo">{repo ?? "no repo"}</span>
+        <span className="app-repo">{repo ?? "no project folder"}</span>
         <button className="icon-btn" onClick={pickRepo}>
-          {repo ? "Change repo" : "Open repo"}
+          {repo ? "Change project folder" : "Open project folder"}
         </button>
+        <DeployButton
+          repo={repo}
+          env="dev"
+          onLine={onDeployLine}
+          onExit={(code) => onDeployLine(`▸ exit ${code ?? "?"}`)}
+        />
       </header>
-      <section className="app-pane">{loaded && <Shell key={repo ?? "none"} />}</section>
+      <section className="app-pane">
+        {loaded && <Shell key={repo ?? "none"} repo={repo} deployLines={deployLines} />}
+      </section>
     </main>
   );
 }

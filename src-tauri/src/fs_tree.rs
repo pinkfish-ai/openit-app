@@ -31,8 +31,20 @@ pub fn fs_list(root: String) -> Result<Vec<FileNode>, String> {
     for entry in walker.flatten() {
         let path = entry.path();
         let rel = path.strip_prefix(&root_path).unwrap_or(path);
+        // Hide top-level dotfiles/dotdirs except `.claude`, which holds the
+        // skills the user edits. Without this whitelist, .git/.vscode/.env
+        // would clutter the explorer.
+        let top = rel
+            .components()
+            .next()
+            .and_then(|c| c.as_os_str().to_str())
+            .unwrap_or("");
+        if top.starts_with('.') && top != ".claude" {
+            continue;
+        }
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') && rel.components().count() == 1 {
+        // Skip OS noise files at any depth.
+        if name == ".DS_Store" || name == "Thumbs.db" {
             continue;
         }
         nodes.push(FileNode {
@@ -41,11 +53,10 @@ pub fn fs_list(root: String) -> Result<Vec<FileNode>, String> {
             is_dir: entry.file_type().is_dir(),
         });
     }
-    nodes.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => a.path.cmp(&b.path),
-    });
+    // Sort by path so each dir is followed by its descendants — correct
+    // hierarchical reading order in a flat list. Dirs-first within a parent
+    // is enforced at render time by the front-end.
+    nodes.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(nodes)
 }
 
@@ -96,6 +107,23 @@ mod tests {
         assert!(names.contains(&"README.md"));
         assert!(!names.iter().any(|n| n.starts_with(".env")));
         assert!(!names.iter().any(|n| *n == "foo.js"));
+    }
+
+    #[test]
+    fn fs_list_keeps_dot_claude_but_hides_other_dot_dirs() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join(".claude")).unwrap();
+        fs::create_dir(dir.path().join(".claude/skills")).unwrap();
+        fs::write(dir.path().join(".claude/skills/SKILL.md"), "x").unwrap();
+        fs::create_dir(dir.path().join(".git")).unwrap();
+        fs::write(dir.path().join(".git/HEAD"), "ref: x").unwrap();
+
+        let nodes = fs_list(dir.path().to_string_lossy().to_string()).unwrap();
+        let names: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&".claude"));
+        assert!(names.contains(&"SKILL.md"));
+        assert!(!names.contains(&".git"));
+        assert!(!names.contains(&"HEAD"));
     }
 
     #[test]

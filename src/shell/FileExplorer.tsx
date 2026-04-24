@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fsList, type FileNode } from "../lib/api";
 
 export function FileExplorer({
@@ -10,6 +10,7 @@ export function FileExplorer({
 }) {
   const [nodes, setNodes] = useState<FileNode[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!repo) {
@@ -30,27 +31,73 @@ export function FileExplorer({
     };
   }, [repo]);
 
+  const visible = useMemo(() => {
+    if (!repo) return [];
+    const collapsedPaths = collapsed;
+    return nodes.filter((n) => {
+      // Hide if any ancestor dir is collapsed.
+      for (const c of collapsedPaths) {
+        if (n.path !== c && n.path.startsWith(c + "/")) return false;
+      }
+      return true;
+    });
+  }, [nodes, collapsed, repo]);
+
   if (!repo) {
-    return <div className="explorer empty">No repo open</div>;
+    return <div className="explorer empty">No project folder open</div>;
   }
   if (error) {
     return <div className="explorer error">{error}</div>;
   }
 
+  const toggle = (path: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+
+  const allDirs = nodes.filter((n) => n.is_dir).map((n) => n.path);
+  const allCollapsed = allDirs.length > 0 && allDirs.every((d) => collapsed.has(d));
+  const toggleAll = () => {
+    if (allCollapsed) setCollapsed(new Set());
+    else setCollapsed(new Set(allDirs));
+  };
+
   return (
     <div className="explorer">
-      <div className="explorer-header">{repo.split("/").pop()}</div>
+      <div className="explorer-header">
+        <span className="explorer-name">{repo.split("/").pop()}</span>
+        <button
+          type="button"
+          className="explorer-toggle"
+          onClick={toggleAll}
+          title={allCollapsed ? "Expand all" : "Collapse all"}
+        >
+          {allCollapsed ? "Expand all" : "Collapse all"}
+        </button>
+      </div>
       <ul className="tree">
-        {nodes.map((n) => {
-          const depth = n.path.replace(repo, "").split("/").length - 1;
+        {visible.map((n) => {
+          const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.name;
+          const depth = rel.split("/").length - 1;
+          const isCollapsed = collapsed.has(n.path);
           return (
             <li
               key={n.path}
               className={n.is_dir ? "tree-item dir" : "tree-item file"}
               style={{ paddingLeft: 8 + depth * 12 }}
-              onClick={() => !n.is_dir && onSelect(n.path)}
+              onClick={() => (n.is_dir ? toggle(n.path) : onSelect(n.path))}
+              draggable={!n.is_dir}
+              onDragStart={(e) => {
+                if (n.is_dir) return;
+                e.dataTransfer.setData("application/x-openit-path", n.path);
+                e.dataTransfer.setData("text/plain", n.path);
+                e.dataTransfer.effectAllowed = "copy";
+              }}
             >
-              {n.is_dir ? "▸ " : ""}
+              {n.is_dir ? (isCollapsed ? "▸ " : "▾ ") : ""}
               {n.name}
             </li>
           );
