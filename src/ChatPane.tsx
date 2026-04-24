@@ -1,16 +1,21 @@
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { onPtyData, onPtyExit, ptyKill, ptyResize, ptySpawn, ptyWrite } from "./lib/pty";
 import "@xterm/xterm/css/xterm.css";
 
-const SESSION_ID = "main";
+// macOS Terminal.app behavior: dragging a file in writes its shell-escaped path.
+function shellEscape(p: string): string {
+  return `'${p.replace(/'/g, "'\\''")}'`;
+}
 
 export function ChatPane() {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const SESSION_ID = `main-${crypto.randomUUID()}`;
 
     const term = new Terminal({
       fontFamily: "Menlo, Monaco, 'SF Mono', monospace",
@@ -38,11 +43,21 @@ export function ChatPane() {
         term.writeln(`\x1b[31mfailed to spawn pty: ${String(e)}\x1b[0m`);
         return;
       }
+      if (disposed) {
+        ptyKill(SESSION_ID).catch(() => {});
+        return;
+      }
 
       const unlistenData = await onPtyData(SESSION_ID, (chunk) => term.write(chunk));
       const unlistenExit = await onPtyExit(SESSION_ID, (code) => {
         term.writeln(`\r\n\x1b[33m[process exited${code != null ? `: ${code}` : ""}]\x1b[0m`);
       });
+      if (disposed) {
+        unlistenData();
+        unlistenExit();
+        ptyKill(SESSION_ID).catch(() => {});
+        return;
+      }
       unlistens.push(unlistenData, unlistenExit);
 
       term.onData((data) => {
@@ -56,6 +71,21 @@ export function ChatPane() {
       };
       window.addEventListener("resize", onResize);
       unlistens.push(() => window.removeEventListener("resize", onResize));
+
+      // Tauri webview drag-drop: write dropped file paths into the PTY.
+      const unlistenDrop = await getCurrentWebview().onDragDropEvent((event) => {
+        if (disposed) return;
+        if (event.payload.type !== "drop") return;
+        const paths = event.payload.paths ?? [];
+        if (paths.length === 0) return;
+        const text = paths.map(shellEscape).join(" ") + " ";
+        ptyWrite(SESSION_ID, text).catch((e) => console.error("pty bridge error:", e));
+      });
+      if (disposed) {
+        unlistenDrop();
+      } else {
+        unlistens.push(unlistenDrop);
+      }
     })();
 
     return () => {

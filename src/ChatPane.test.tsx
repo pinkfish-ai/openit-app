@@ -12,6 +12,10 @@ const ptyMock = vi.hoisted(() => ({
 
 vi.mock("./lib/pty", () => ptyMock);
 
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({ onDragDropEvent: vi.fn().mockResolvedValue(() => {}) }),
+}));
+
 // xterm tries to render to a real DOM. jsdom doesn't implement enough of
 // CanvasRenderingContext2D for it to fully initialize, but the addon and
 // onData hooks still register before any rendering — which is what we test.
@@ -25,6 +29,8 @@ vi.mock("@xterm/addon-fit", () => ({
 
 import { ChatPane } from "./ChatPane";
 
+const sessionIdMatcher = expect.stringMatching(/^main-/);
+
 describe("ChatPane", () => {
   beforeEach(() => {
     Object.values(ptyMock).forEach((fn) => fn.mockClear());
@@ -36,11 +42,10 @@ describe("ChatPane", () => {
 
   it("spawns a pty session on mount", async () => {
     render(<ChatPane />);
-    // Spawning happens inside an async IIFE — flush microtasks
     await new Promise((r) => setTimeout(r, 0));
     expect(ptyMock.ptySpawn).toHaveBeenCalledTimes(1);
     const args = ptyMock.ptySpawn.mock.calls[0][0];
-    expect(args.sessionId).toBe("main");
+    expect(args.sessionId).toMatch(/^main-/);
     expect(typeof args.cols).toBe("number");
     expect(typeof args.rows).toBe("number");
   });
@@ -48,8 +53,8 @@ describe("ChatPane", () => {
   it("subscribes to pty data + exit events", async () => {
     render(<ChatPane />);
     await new Promise((r) => setTimeout(r, 0));
-    expect(ptyMock.onPtyData).toHaveBeenCalledWith("main", expect.any(Function));
-    expect(ptyMock.onPtyExit).toHaveBeenCalledWith("main", expect.any(Function));
+    expect(ptyMock.onPtyData).toHaveBeenCalledWith(sessionIdMatcher, expect.any(Function));
+    expect(ptyMock.onPtyExit).toHaveBeenCalledWith(sessionIdMatcher, expect.any(Function));
   });
 
   it("forwards window resize to ptyResize", async () => {
@@ -58,13 +63,17 @@ describe("ChatPane", () => {
     ptyMock.ptyResize.mockClear();
     window.dispatchEvent(new Event("resize"));
     await new Promise((r) => setTimeout(r, 0));
-    expect(ptyMock.ptyResize).toHaveBeenCalledWith("main", expect.any(Number), expect.any(Number));
+    expect(ptyMock.ptyResize).toHaveBeenCalledWith(
+      sessionIdMatcher,
+      expect.any(Number),
+      expect.any(Number),
+    );
   });
 
   it("kills the pty session on unmount", async () => {
     const { unmount } = render(<ChatPane />);
     await new Promise((r) => setTimeout(r, 0));
     unmount();
-    expect(ptyMock.ptyKill).toHaveBeenCalledWith("main");
+    expect(ptyMock.ptyKill).toHaveBeenCalledWith(sessionIdMatcher);
   });
 });
