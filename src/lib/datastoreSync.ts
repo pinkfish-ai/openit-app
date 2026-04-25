@@ -417,7 +417,11 @@ export async function pushAllToDatastores(args: {
           (n) =>
             !n.is_dir &&
             n.name.endsWith(".json") &&
-            n.name !== "_schema.json",
+            n.name !== "_schema.json" &&
+            // Exclude conflict shadow files — they're not real rows; pushing
+            // them would create junk items with keys like `<key>.server` on
+            // the remote.
+            !n.name.includes(".server."),
         )
         .map((n) => ({ key: n.name.replace(/\.json$/, ""), absPath: n.path }));
     } catch {
