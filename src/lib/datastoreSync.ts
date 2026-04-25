@@ -691,6 +691,26 @@ async function pullDatastoresOnceImpl(args: {
         continue;
       }
 
+      if (!tracked && localFile) {
+        // Bootstrap-adoption: row exists on disk (typically because the
+        // modal connect flow ran `syncDatastoresToDisk` to seed the
+        // working tree) but the manifest has no entry. Seed it now using
+        // the current remote_version + the file's current mtime as the
+        // baseline. Subsequent polls can then diff correctly: any future
+        // user edit will advance the mtime above pulled_at_mtime_ms and
+        // be detected as localChanged. Without this, every poll lands on
+        // this state and the row is permanently undiffable — a high-
+        // severity gap caught by BugBot in iteration 2.
+        //
+        // We don't re-write the file (no churn) and don't add to touched
+        // (no commit). Just seed the manifest.
+        persisted.files[mKey] = {
+          remote_version: remoteVer,
+          pulled_at_mtime_ms: localFile.mtime_ms ?? Date.now(),
+        };
+        continue;
+      }
+
       if (tracked && localFile) {
         const remoteChanged = remoteVer !== "" && remoteVer !== tracked.remote_version;
         const localChanged =
