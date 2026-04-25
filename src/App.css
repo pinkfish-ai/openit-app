@@ -86,6 +86,57 @@ body,
   background: var(--accent);
 }
 
+/* Left pane with tabs */
+.left-pane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-soft);
+}
+
+.left-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.left-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.left-tab:hover {
+  color: var(--text);
+}
+
+.left-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.left-tab-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.left-tab-panel[hidden] {
+  display: none;
+}
+
 /* File explorer */
 .explorer {
   height: 100%;
@@ -102,39 +153,30 @@ body,
   font-size: 12px;
 }
 
-.explorer-header {
+.explorer-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border);
 }
 
-.explorer-name {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.explorer-toggle {
+.explorer-icon-btn {
   background: transparent;
   border: 1px solid transparent;
-  color: var(--text-muted);
-  border-radius: 5px;
-  padding: 2px 8px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  color: var(--text-faint);
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
   cursor: pointer;
 }
 
-.explorer-toggle:hover {
+.explorer-icon-btn:hover {
   background: var(--accent-soft);
   color: var(--text);
   border-color: var(--accent);
@@ -168,15 +210,88 @@ body,
   cursor: pointer;
 }
 
-.unsynced-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  margin-left: 8px;
-  vertical-align: middle;
+/* VS Code-style filename coloring */
+.tree-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-item.file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.file-color-modified .tree-item-name {
+  color: #c4a33a;
+}
+
+.file-color-untracked .tree-item-name {
+  color: #73a66c;
+}
+
+.file-color-added .tree-item-name {
+  color: #73a66c;
+}
+
+.file-color-deleted .tree-item-name {
+  color: #c74e4e;
+  text-decoration: line-through;
+}
+
+.file-color-conflict .tree-item-name {
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.tree-badge {
   flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: auto;
+  padding: 0 4px;
+  border-radius: 3px;
+  line-height: 16px;
+}
+
+.tree-badge.file-color-modified {
+  color: #c4a33a;
+}
+
+.tree-badge.file-color-untracked,
+.tree-badge.file-color-added {
+  color: #73a66c;
+}
+
+.tree-badge.file-color-deleted {
+  color: #c74e4e;
+}
+
+.tree-badge.file-color-conflict {
+  color: #c0392b;
+}
+
+.tree-delete-btn {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 2px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.tree-item:hover .tree-delete-btn {
+  display: inline;
+}
+
+.tree-delete-btn:hover {
+  color: #c74e4e;
 }
 
 .explorer.drag-over {
@@ -387,6 +502,7 @@ body,
 
 /* Right pane */
 .right-pane {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -449,6 +565,7 @@ body,
   color: var(--text-faint);
   border: 1px solid var(--border);
   cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .chat-area {
@@ -493,38 +610,348 @@ body,
   border-color: var(--accent);
 }
 
-/* Versions drawer */
-.versions-drawer {
-  position: absolute;
-  top: 36px;
-  right: 0;
-  bottom: 0;
-  width: 360px;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  box-shadow: -8px 0 24px rgba(45, 42, 37, 0.08);
+.bubble-conflict {
+  border-color: #c0392b;
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.bubble-conflict:hover {
+  background: #fdecea;
+  border-color: #c0392b;
+}
+
+/* Source Control panel */
+.sc-panel {
+  height: 100%;
   display: flex;
   flex-direction: column;
-  z-index: 10;
+  overflow-y: auto;
+  background: var(--surface-soft);
 }
 
-.versions-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  font-weight: 600;
-  color: var(--text);
-}
 
-.versions-error {
-  padding: 12px;
-  color: #c0392b;
+.sc-panel.sc-empty {
+  padding: 16px;
+  color: var(--text-faint);
   font-size: 12px;
 }
 
-.versions-list {
+.sc-commit-box {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.sc-commit-input {
+  flex: 1;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.sc-commit-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sc-commit-input::placeholder {
+  color: var(--text-faint);
+}
+
+.sc-commit-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sc-commit-btn:hover:not(:disabled) {
+  background: #c45a2c;
+}
+
+.sc-commit-btn:disabled {
+  background: var(--surface-soft);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  cursor: not-allowed;
+}
+
+.sc-sparkle-btn {
+  background: var(--surface-soft);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  min-width: 28px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s ease, border-color 0.1s ease,
+    box-shadow 0.1s ease, transform 0.05s ease;
+}
+
+.sc-sparkle-btn:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.sc-sparkle-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.sc-sparkle-btn:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Generating state: visually depressed + active accent, NOT dimmed.
+   Wins over the :disabled opacity so the user sees it as "working". */
+.sc-sparkle-btn.is-generating,
+.sc-sparkle-btn.is-generating:disabled {
+  opacity: 1;
+  color: var(--accent);
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  transform: translateY(1px);
+  cursor: progress;
+}
+
+/* 12px ring spinner that picks up currentColor (= --accent in the
+   .is-generating state). Pure CSS, no extra deps. */
+.sc-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: sc-spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes sc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sc-deploy-row {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.sc-deploy-row .deploy-btn {
+  width: 100%;
+}
+
+.sc-error {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #c0392b;
+  background: #fbeaea;
+}
+
+.sc-changes {
+  flex: 0 0 auto;
+}
+
+.sc-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.sc-changes .sc-group-header + .sc-file-list + .sc-group-header,
+.sc-changes > * + .sc-group-header {
+  margin-top: 12px;
+}
+
+.sc-group-label {
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.sc-count {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-faint);
+  margin-right: auto;
+}
+
+.sc-hdr-action {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.sc-group-header:hover .sc-hdr-action {
+  opacity: 1;
+}
+
+.sc-hdr-action:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.sc-empty-hint {
+  padding: 12px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.sc-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sc-file-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 12px 2px 20px;
+  font-size: 12px;
+}
+
+.sc-file-row:hover {
+  background: var(--surface);
+}
+
+.sc-file-name {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.sc-file-name:hover {
+  color: var(--accent);
+}
+
+.sc-file-dir {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: 4px;
+}
+
+.sc-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  width: 16px;
+  text-align: center;
+}
+
+.sc-row-action {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  opacity: 0;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+}
+
+.sc-file-row:hover .sc-row-action {
+  opacity: 1;
+}
+
+.sc-row-action:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.sc-row-discard:hover,
+.sc-hdr-discard:hover {
+  background: #fdecea;
+  border-color: #c74e4e;
+  color: #c74e4e;
+}
+
+.sc-badge-modified {
+  color: #c4a33a;
+}
+
+.sc-badge-added {
+  color: #73a66c;
+}
+
+.sc-badge-untracked {
+  color: #73a66c;
+}
+
+.sc-badge-deleted {
+  color: #c74e4e;
+}
+
+.sc-badge-conflict {
+  color: #c0392b;
+}
+
+/* Commit history in Source Control */
+.sc-history {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 12px;
+}
+
+.sc-commit-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -532,35 +959,100 @@ body,
   flex: 1;
 }
 
-.commit {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
+.sc-commit-row {
+  display: flex;
+  gap: 10px;
+  padding: 0 12px;
   cursor: pointer;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 10px;
   font-size: 12px;
 }
 
-.commit:hover {
-  background: var(--accent-soft);
+.sc-commit-row:hover {
+  background: var(--surface);
 }
 
-.sha {
+.sc-timeline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 8px;
+  flex-shrink: 0;
+}
+
+.sc-commit-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex-shrink: 0;
+  margin-top: 8px;
+}
+
+.sc-commit-dot.dot-pull {
+  background: #5a6cd1;
+}
+
+.sc-commit-dot.dot-push {
+  background: var(--accent);
+}
+
+.sc-commit-dot.dot-init {
+  background: #2c8a4f;
+}
+
+.sc-timeline-line {
+  width: 1px;
+  flex: 1;
+  background: var(--border);
+}
+
+.sc-commit-body {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+}
+
+.sc-commit-subject {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.sc-commit-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.sc-sha {
   font-family: Menlo, monospace;
   color: var(--accent);
-  grid-row: span 2;
-  align-self: center;
+  font-size: 10px;
 }
 
-.subject {
-  color: var(--text);
-}
-
-.meta {
-  color: var(--text-faint);
+.kb-conflicts-hint {
   font-size: 11px;
-  grid-column: 2;
+  color: var(--text);
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+
+.kb-conflict-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.kb-conflict-link:hover code {
+  color: var(--accent);
 }
 
 /* Confirm modal */

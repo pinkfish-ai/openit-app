@@ -46,6 +46,27 @@ fn ensure_dir(p: &Path) -> Result<(), String> {
     fs::create_dir_all(p).map_err(|e| e.to_string())
 }
 
+/// Resolve a `<repo>/knowledge-base/<filename>` path and assert it stays
+/// inside the KB directory. Guards against `..` segments, absolute paths, or
+/// nested separators sneaking in via server responses or future drag sources.
+/// `filename` must be a single path component (no directory parts).
+fn safe_kb_path(repo: &str, filename: &str) -> Result<PathBuf, String> {
+    if filename.is_empty() {
+        return Err("filename is empty".into());
+    }
+    if filename.contains('/') || filename.contains('\\') {
+        return Err(format!("filename must not contain path separators: {}", filename));
+    }
+    let as_path = Path::new(filename);
+    if as_path.is_absolute() || as_path.components().count() != 1 {
+        return Err(format!("invalid filename: {}", filename));
+    }
+    if filename == "." || filename == ".." {
+        return Err(format!("invalid filename: {}", filename));
+    }
+    Ok(kb_dir(repo).join(filename))
+}
+
 #[tauri::command]
 pub fn kb_init(repo: String) -> Result<String, String> {
     let dir = kb_dir(&repo);
@@ -94,7 +115,7 @@ pub fn kb_list_local(repo: String) -> Result<Vec<KbLocalFile>, String> {
 
 #[tauri::command]
 pub fn kb_read_file(repo: String, filename: String) -> Result<String, String> {
-    let path = kb_dir(&repo).join(&filename);
+    let path = safe_kb_path(&repo, &filename)?;
     fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
@@ -110,9 +131,8 @@ pub fn kb_write_file(repo: String, filename: String, content: String) -> Result<
             ext
         ));
     }
-    let dir = kb_dir(&repo);
-    ensure_dir(&dir)?;
-    let path = dir.join(&filename);
+    let path = safe_kb_path(&repo, &filename)?;
+    ensure_dir(&kb_dir(&repo))?;
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
@@ -131,10 +151,18 @@ pub fn kb_write_file_bytes(repo: String, filename: String, bytes: Vec<u8>) -> Re
             ext
         ));
     }
-    let dir = kb_dir(&repo);
-    ensure_dir(&dir)?;
-    let path = dir.join(&filename);
+    let path = safe_kb_path(&repo, &filename)?;
+    ensure_dir(&kb_dir(&repo))?;
     fs::write(&path, &bytes).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn kb_delete_file(repo: String, filename: String) -> Result<(), String> {
+    let path = safe_kb_path(&repo, &filename)?;
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -269,7 +297,7 @@ pub async fn kb_upload_file(
     skills_base_url: String,
     access_token: String,
 ) -> Result<KbUploadResult, String> {
-    let path = kb_dir(&repo).join(&filename);
+    let path = safe_kb_path(&repo, &filename)?;
     if !path.exists() {
         return Err(format!("file not found: {}", path.display()));
     }
@@ -336,13 +364,21 @@ pub async fn kb_upload_file(
     })
 }
 
+/// Percent-encode `s` per RFC 3986 unreserved set, encoding each UTF-8 byte
+/// individually so non-ASCII (e.g. accented collection names) round-trips
+/// correctly. `c as u32` would emit the codepoint, which is wrong for any
+/// multi-byte char.
 fn urlencode(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            _ => format!("%{:02X}", c as u32),
-        })
-        .collect()
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
 
 /// Best-effort MIME from extension. Server detects, so this is just a hint.
@@ -396,9 +432,8 @@ pub async fn kb_download_to_local(
     }
     let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
 
-    let dir = kb_dir(&repo);
-    ensure_dir(&dir)?;
-    let path = dir.join(&filename);
+    let path = safe_kb_path(&repo, &filename)?;
+    ensure_dir(&kb_dir(&repo))?;
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -557,4 +592,57 @@ pub fn entity_clear_dir(repo: String, subdir: String) -> Result<(), String> {
     }
     ensure_dir(&dir)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn urlencode_handles_ascii_unreserved() {
+        assert_eq!(urlencode("abcXYZ012-_.~"), "abcXYZ012-_.~");
+    }
+
+    #[test]
+    fn urlencode_encodes_reserved_ascii() {
+        assert_eq!(urlencode("a/b c"), "a%2Fb%20c");
+        assert_eq!(urlencode("a+b&c=d"), "a%2Bb%26c%3Dd");
+    }
+
+    #[test]
+    fn urlencode_encodes_utf8_bytes_not_codepoints() {
+        // `é` is U+00E9 — codepoint 0xE9 — but UTF-8 is the two bytes
+        // 0xC3 0xA9. The old impl emitted "%E9"; we want "%C3%A9".
+        assert_eq!(urlencode("é"), "%C3%A9");
+        assert_eq!(urlencode("café"), "caf%C3%A9");
+        // 4-byte char (😀) → F0 9F 98 80
+        assert_eq!(urlencode("😀"), "%F0%9F%98%80");
+    }
+
+    #[test]
+    fn safe_kb_path_accepts_plain_filename() {
+        let p = safe_kb_path("/tmp/repo", "notes.md").unwrap();
+        assert!(p.ends_with("knowledge-base/notes.md"));
+    }
+
+    #[test]
+    fn safe_kb_path_rejects_traversal_and_separators() {
+        assert!(safe_kb_path("/tmp/repo", "../etc/passwd").is_err());
+        assert!(safe_kb_path("/tmp/repo", "../../etc/passwd").is_err());
+        assert!(safe_kb_path("/tmp/repo", "sub/dir/file.md").is_err());
+        assert!(safe_kb_path("/tmp/repo", "/abs/path.md").is_err());
+        assert!(safe_kb_path("/tmp/repo", "..").is_err());
+        assert!(safe_kb_path("/tmp/repo", ".").is_err());
+        assert!(safe_kb_path("/tmp/repo", "").is_err());
+        assert!(safe_kb_path("/tmp/repo", "a\\b.md").is_err());
+    }
+
+    #[test]
+    fn safe_kb_path_allows_dotfiles_and_spaces() {
+        // Leading-dot files are filtered out elsewhere (kb_list_local skips
+        // them); the path resolver itself shouldn't reject them.
+        assert!(safe_kb_path("/tmp/repo", ".env").is_ok());
+        assert!(safe_kb_path("/tmp/repo", "Q1 plan.md").is_ok());
+        assert!(safe_kb_path("/tmp/repo", "café notes.md").is_ok());
+    }
 }

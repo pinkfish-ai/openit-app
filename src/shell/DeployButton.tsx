@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { onDeployExit, onDeployLine, pinkitDeploy } from "../lib/api";
-import { getSyncStatus, pullNow, pushAllToKb, startKbSync } from "../lib/kbSync";
+import {
+  getSyncStatus,
+  kbHasServerShadowFiles,
+  pullNow,
+  pushAllToKb,
+  startKbSync,
+} from "../lib/kbSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 
 export function DeployButton({
@@ -8,21 +14,28 @@ export function DeployButton({
   env,
   onLine,
   onExit,
+  dirty = false,
+  pendingCount = 0,
 }: {
   repo: string | null;
   env: string;
   onLine: (line: string) => void;
   onExit: (code: number | null) => void;
+  /** Working tree has uncommitted changes. When true, push is disabled. */
+  dirty?: boolean;
+  /** Number of user commits since the last sync. Drives both the badge and
+   *  the enabled state — if zero, there's nothing for the user to push. */
+  pendingCount?: number;
 }) {
   const [running, setRunning] = useState(false);
   const [confirming, setConfirming] = useState(false);
+
+  const nothingToPush = pendingCount === 0;
 
   const start = async () => {
     if (!repo) return;
     setRunning(true);
 
-    // Step 1: push the local knowledge-base/ folder to Pinkfish before
-    // running the deploy script. Skip silently if no creds / collection.
     let collection = getSyncStatus().collection;
     const creds = await loadCreds().catch(() => null);
     // If kb sync hasn't resolved a collection yet (e.g. user clicked Deploy
@@ -38,14 +51,28 @@ export function DeployButton({
       }
     }
     if (collection && creds) {
+      const shadowBefore = await kbHasServerShadowFiles(repo);
+      if (shadowBefore) {
+        onLine(
+          "✗ kb: merge shadow files (.server.) still in knowledge-base/ — ask Claude to resolve, then deploy again.",
+        );
+        setRunning(false);
+        return;
+      }
       // Pull first so deploys don't blow away teammate edits with stale local state.
       onLine("▸ pulling knowledge base");
       try {
         await pullNow({ creds, repo, collection });
         const conflicts = getSyncStatus().conflicts;
-        if (conflicts.length > 0) {
-          onLine(`✗ kb pull found ${conflicts.length} conflict(s) — resolve before deploying:`);
+        const hasShadow = await kbHasServerShadowFiles(repo);
+        if (conflicts.length > 0 || hasShadow) {
+          onLine(
+            "✗ kb pull: merge conflict(s) — ask Claude to resolve (see File explorer), then deploy again:",
+          );
           for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
+          if (hasShadow && conflicts.length === 0) {
+            onLine("  • server shadow files present under knowledge-base/ (remove after merge)");
+          }
           setRunning(false);
           return;
         }
@@ -104,10 +131,22 @@ export function DeployButton({
         type="button"
         className="deploy-btn"
         onClick={handleClick}
-        disabled={!repo || running}
-        title={repo ? `Deploy to ${env}` : "Open a project folder to deploy"}
+        disabled={!repo || running || dirty || nothingToPush}
+        title={
+          !repo
+            ? "Open a project folder first"
+            : dirty
+            ? "Commit your changes first"
+            : nothingToPush
+            ? "Nothing new to push"
+            : `Push ${pendingCount} commit${pendingCount === 1 ? "" : "s"} to Pinkfish (${env})`
+        }
       >
-        {running ? "Deploying…" : "Deploy"}
+        {running
+          ? "Pushing…"
+          : pendingCount > 0
+          ? `Push to Pinkfish (${pendingCount})`
+          : "Push to Pinkfish"}
       </button>
       {confirming && (
         <div className="confirm-modal" role="dialog" aria-label="Confirm production deploy">

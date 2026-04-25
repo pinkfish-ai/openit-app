@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
-import { DeployButton } from "./shell/DeployButton";
-import { keychainProbe, projectBootstrap, stateLoad, stateSave } from "./lib/api";
+import { projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
@@ -37,11 +36,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!import.meta.env.VITE_DEV_CLIENT_ID) {
-      keychainProbe()
-        .then((ok) => console.log("[keychain] probe round-trip ok?", ok))
-        .catch((e) => console.error("[keychain] probe failed:", e));
-    }
     Promise.all([stateLoad(), startAuth(), loadCreds()])
       .then(([s, _token, creds]) => {
         setRepo(s.last_repo);
@@ -49,18 +43,13 @@ function App() {
         // If we relaunched into a fully-connected state with a project folder,
         // skip the onboarding screen entirely AND restart KB sync against the
         // existing folder so polling resumes without onboarding.
-        console.log("[app] startup state", {
-          repo: s.last_repo,
-          hasCreds: !!creds,
-        });
         if (creds && s.last_repo) {
           setBypassOnboarding(true);
           // We don't have orgName cached on relaunch — re-fetch it lazily.
-          // For now, the KB collection is already named openit-<slug> where
+          // The KB collection is already named openit-<slug> where
           // slug == basename(repo). Use that as both slug and a placeholder
           // name; resolveProjectKb will find the existing collection by name.
           const slug = basename(s.last_repo);
-          console.log("[app] kicking off startKbSync on relaunch", { slug });
           startKbSync({
             creds,
             repo: s.last_repo,
@@ -71,8 +60,6 @@ function App() {
             creds,
             repo: s.last_repo,
           }).catch((e) => console.error("filestore sync init failed:", e));
-        } else {
-          console.log("[app] not auto-syncing kb — missing creds or repo");
         }
         setLoaded(true);
       })
@@ -156,15 +143,16 @@ function App() {
             ? `Pinkfish: ${orgName ?? "connected"}`
             : "Connect Pinkfish"}
         </button>
-        <DeployButton
-          repo={repo}
-          env="dev"
-          onLine={onDeployLine}
-          onExit={(code) => onDeployLine(`▸ exit ${code ?? "?"}`)}
-        />
       </header>
       <section className="app-pane">
-        <Shell key={repo ?? "none"} repo={repo} deployLines={deployLines} />
+        <Shell
+          key={repo ?? "none"}
+          repo={repo}
+          env="dev"
+          deployLines={deployLines}
+          onDeployLine={onDeployLine}
+          onDeployExit={(code) => onDeployLine(`▸ exit ${code ?? "?"}`)}
+        />
       </section>
     </main>
   );

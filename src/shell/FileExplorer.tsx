@@ -1,21 +1,58 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fsList,
-  kbStateLoad,
+  gitStatusShort,
+  kbDeleteFile,
   kbWriteFileBytes,
   type FileNode,
-  type KbStatePersisted,
+  type GitFileStatus,
 } from "../lib/api";
-import { subscribeSync, type SyncStatus } from "../lib/kbSync";
+import { refreshFromServer, subscribeSync, type SyncStatus } from "../lib/kbSync";
 import { subscribeFilestoreSync, type FilestoreSyncStatus } from "../lib/filestoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk } from "../lib/datastoreSync";
 import { resolveProjectAgents, syncAgentsToDisk, type Agent } from "../lib/agentSync";
 import { resolveProjectWorkflows, syncWorkflowsToDisk, type Workflow } from "../lib/workflowSync";
 import type { DataCollection, MemoryItem } from "../lib/skillsApi";
-import type { ViewerSource } from "./types";
 
-const KB_DIRNAME = "knowledge-base";
+function relPath(repo: string, absPath: string): string {
+  const prefix = `${repo}/`;
+  return absPath.startsWith(prefix) ? absPath.slice(prefix.length) : absPath;
+}
+
+function gitStatusForPath(rel: string, rows: GitFileStatus[]): GitFileStatus | undefined {
+  const direct = rows.find((r) => r.path === rel);
+  if (direct) return direct;
+  return rows.find((r) => rel.startsWith(`${r.path}/`));
+}
+
+function fileColorClass(n: FileNode, repo: string, gitRows: GitFileStatus[]): string {
+  if (n.is_dir) return "";
+  const rel = relPath(repo, n.path);
+  if (rel.includes(".server.")) return "file-color-conflict";
+  const st = gitStatusForPath(rel, gitRows);
+  if (!st) return "";
+  if (st.status === "UU") return "file-color-conflict";
+  if (st.status === "?") return "file-color-untracked";
+  if (st.status === "M") return "file-color-modified";
+  if (st.status === "A") return "file-color-added";
+  if (st.status === "D") return "file-color-deleted";
+  return "";
+}
+
+function fileStatusBadge(n: FileNode, repo: string, gitRows: GitFileStatus[]): string | null {
+  if (n.is_dir) return null;
+  const rel = relPath(repo, n.path);
+  if (rel.includes(".server.")) return "C";
+  const st = gitStatusForPath(rel, gitRows);
+  if (!st) return null;
+  if (st.status === "UU") return "C";
+  if (st.status === "?") return "U";
+  if (st.status === "M") return "M";
+  if (st.status === "A") return "A";
+  if (st.status === "D") return "D";
+  return null;
+}
 
 const KB_SUPPORTED_EXTENSIONS = new Set([
   "pdf", "txt", "md", "markdown", "json", "csv",
@@ -37,17 +74,21 @@ function isKbSupported(filename: string): boolean {
 export function FileExplorer({
   repo,
   onSelect,
+  fsTick,
+  onFsChange,
 }: {
   repo: string | null;
-  onSelect: (source: ViewerSource) => void;
+  onSelect: (path: string) => void;
+  fsTick?: number;
+  onFsChange?: () => void;
 }) {
   const [nodes, setNodes] = useState<FileNode[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [sync, setSync] = useState<SyncStatus | null>(null);
-  const [kbState, setKbState] = useState<KbStatePersisted | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
+  const [gitRows, setGitRows] = useState<GitFileStatus[]>([]);
 
   // Virtual resource state
   const [datastores, setDatastores] = useState<DataCollection[]>([]);
@@ -58,8 +99,6 @@ export function FileExplorer({
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [, setLoadingResources] = useState(false);
 
-  // (virtual section state removed — entities are real files now)
-
   const [fsSync, setFsSync] = useState<FilestoreSyncStatus | null>(null);
   useEffect(() => subscribeSync(setSync), []);
   useEffect(() => subscribeFilestoreSync(setFsSync), []);
@@ -67,7 +106,6 @@ export function FileExplorer({
   const reload = useCallback(() => {
     if (!repo) {
       setNodes([]);
-      setKbState(null);
       return;
     }
     fsList(repo)
@@ -80,12 +118,23 @@ export function FileExplorer({
         }
       })
       .catch((e) => setError(String(e)));
-    kbStateLoad(repo).then(setKbState).catch(() => setKbState(null));
   }, [repo]);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refreshFromServer();
+    } finally {
+      reload();
+      onFsChange?.();
+      setRefreshing(false);
+    }
+  }, [reload, onFsChange]);
 
   useEffect(() => {
     reload();
-  }, [reload]);
+  }, [reload, fsTick]);
 
   useEffect(() => {
     if (sync?.phase === "ready") reload();
@@ -94,6 +143,22 @@ export function FileExplorer({
   useEffect(() => {
     if (fsSync?.phase === "ready") reload();
   }, [fsSync?.phase, fsSync?.lastPullAt, reload]);
+
+  // Git status polling
+  useEffect(() => {
+    if (!repo) {
+      setGitRows([]);
+      return;
+    }
+    const tick = () => {
+      gitStatusShort(repo)
+        .then(setGitRows)
+        .catch(() => setGitRows([]));
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => clearInterval(id);
+  }, [repo]);
 
   const [initialLoadDone, setInitialLoadDone] = useState(false);
 
@@ -177,23 +242,6 @@ export function FileExplorer({
     });
   }, [nodes, collapsed, repo]);
 
-  /// True when this node is a file under knowledge-base/ that hasn't been
-  /// pushed yet (not in manifest) or has been edited since last sync (local
-  /// mtime > pulled_at_mtime_ms).
-  const isUnsynced = useCallback(
-    (n: FileNode): boolean => {
-      if (!repo || n.is_dir) return false;
-      const kbPrefix = repo + "/" + KB_DIRNAME + "/";
-      if (!n.path.startsWith(kbPrefix)) return false;
-      if (!kbState) return true; // no manifest yet -> treat as unsynced
-      const filename = n.path.slice(kbPrefix.length);
-      const tracked = kbState.files?.[filename];
-      if (!tracked) return true; // never pushed/pulled
-      return false;
-    },
-    [kbState, repo],
-  );
-
   const onDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
@@ -242,6 +290,20 @@ export function FileExplorer({
       return next;
     });
 
+  const KB_PREFIX = "knowledge-base/";
+  const isDeletable = (node: FileNode) => {
+    if (node.is_dir || !repo) return false;
+    return relPath(repo, node.path).startsWith(KB_PREFIX);
+  };
+
+  const handleDelete = async (node: FileNode) => {
+    if (!isDeletable(node) || !repo) return;
+    const filename = relPath(repo, node.path).slice(KB_PREFIX.length);
+    await kbDeleteFile(repo, filename);
+    reload();
+    onFsChange?.();
+  };
+
   const allDirs = nodes.filter((n) => n.is_dir).map((n) => n.path);
   const allCollapsed = allDirs.length > 0 && allDirs.every((d) => collapsed.has(d));
   const toggleAll = () => {
@@ -262,23 +324,10 @@ export function FileExplorer({
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
     >
-      <div className="explorer-header">
-        <span className="explorer-name">{repo.split("/").pop()}</span>
-        <button
-          type="button"
-          className="explorer-toggle"
-          onClick={reload}
-          title="Refresh tree"
-        >
-          Refresh
-        </button>
-        <button
-          type="button"
-          className="explorer-toggle"
-          onClick={toggleAll}
-          title={allCollapsed ? "Expand all" : "Collapse all"}
-        >
-          {allCollapsed ? "Expand all" : "Collapse all"}
+      <div className="explorer-toolbar">
+        <button type="button" className="explorer-icon-btn" onClick={handleRefresh} disabled={refreshing} title="Sync from Pinkfish &amp; refresh">{refreshing ? "⟳" : "↻"}</button>
+        <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={allCollapsed ? "Expand all" : "Collapse all"}>
+          {allCollapsed ? "⊞" : "⊟"}
         </button>
       </div>
       <ul className="tree">
@@ -287,61 +336,19 @@ export function FileExplorer({
           const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.name;
           const depth = rel.split("/").length - 1;
           const isCollapsedRow = collapsed.has(n.path);
-          const unsynced = isUnsynced(n);
+          const colorClass = repo ? fileColorClass(n, repo, gitRows) : "";
+          const badge = repo ? fileStatusBadge(n, repo, gitRows) : null;
           return (
             <li
               key={n.path}
-              className={n.is_dir ? "tree-item dir" : "tree-item file"}
+              className={`tree-item ${n.is_dir ? "dir" : "file"} ${colorClass}`}
               style={{ paddingLeft: 8 + depth * 12 }}
               onClick={() => {
                 if (n.is_dir) {
                   toggle(n.path);
-                  // If clicking a databases/<collection> dir, show the table view
-                  const dbMatch = rel.match(/^databases\/([^/]+)$/);
-                  if (dbMatch) {
-                    const col = datastores.find((d) => d.name === dbMatch[1]);
-                    if (col) {
-                      onSelect({
-                        kind: "datastore-table",
-                        collection: col,
-                        items: datastoreItems[col.id]?.items,
-                        hasMore: datastoreItems[col.id]?.hasMore,
-                      });
-                    }
-                  }
                   return;
                 }
-                // Rich view for entities in special directories
-                if (rel.startsWith("agents/") && rel.endsWith(".json")) {
-                  const agent = agents.find((a) => {
-                    const safeName = a.name.replace(/[/\\:*?"<>|]/g, "_");
-                    return rel === `agents/${safeName}.json`;
-                  });
-                  if (agent) { onSelect({ kind: "agent", agent }); return; }
-                }
-                if (rel.startsWith("workflows/") && rel.endsWith(".json")) {
-                  const wf = workflows.find((w) => {
-                    const safeName = w.name.replace(/[/\\:*?"<>|]/g, "_");
-                    return rel === `workflows/${safeName}.json`;
-                  });
-                  if (wf) { onSelect({ kind: "workflow", workflow: wf }); return; }
-                }
-                if (rel.match(/^databases\/[^/]+\/[^/]+\.json$/) && !rel.endsWith("_schema.json")) {
-                  const parts = rel.split("/");
-                  const colName = parts[1];
-                  const col = datastores.find((d) => d.name === colName);
-                  if (col) {
-                    const rowKey = parts[2].replace(/\.json$/, "");
-                    const item = datastoreItems[col.id]?.items.find((i) => (i.key || i.id) === rowKey);
-                    if (item) { onSelect({ kind: "datastore-row", collection: col, item }); return; }
-                  }
-                }
-                if (rel.match(/^databases\/[^/]+\/_schema\.json$/)) {
-                  const colName = rel.split("/")[1];
-                  const col = datastores.find((d) => d.name === colName);
-                  if (col) { onSelect({ kind: "datastore-schema", collection: col }); return; }
-                }
-                onSelect({ kind: "file", path: n.path });
+                onSelect(n.path);
               }}
               draggable={!n.is_dir || rel.match(/^databases\/[^/]+$/) !== null}
               onDragStart={(e) => {
@@ -381,8 +388,21 @@ export function FileExplorer({
               }}
             >
               {n.is_dir ? (isCollapsedRow ? "▸ " : "▾ ") : ""}
-              {n.name}
-              {unsynced && <span className="unsynced-dot" title="Not yet synced" />}
+              <span className="tree-item-name">{n.name}</span>
+              {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
+              {isDeletable(n) && (
+                <button
+                  type="button"
+                  className="tree-delete-btn"
+                  title={`Delete ${n.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(n);
+                  }}
+                >
+                  ✕
+                </button>
+              )}
             </li>
           );
         })}
@@ -414,11 +434,24 @@ export function FileExplorer({
 
       {sync && sync.conflicts.length > 0 && (
         <div className="kb-conflicts">
-          <div className="kb-conflicts-header">Warning: KB conflicts</div>
+          <div className="kb-conflicts-header">Merge conflicts</div>
+          <p className="kb-conflicts-hint">
+            Server copies saved as <code>*.server.*</code> next to yours. Use the{" "}
+            <strong>Resolve merge conflicts</strong> prompt below Claude, then delete the shadow
+            files when done.
+          </p>
           <ul>
             {sync.conflicts.map((c) => (
               <li key={c.filename}>
-                <code>{c.filename}</code> edited locally and remotely. Rename your local copy to keep it.
+                <button
+                  type="button"
+                  className="kb-conflict-link"
+                  onClick={() =>
+                    onSelect(`${repo}/knowledge-base/${c.filename}`)
+                  }
+                >
+                  <code>{c.filename}</code>
+                </button>
               </li>
             ))}
           </ul>
