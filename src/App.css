@@ -690,6 +690,70 @@ body,
   cursor: not-allowed;
 }
 
+.sc-sparkle-btn {
+  background: var(--surface-soft);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  min-width: 28px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s ease, border-color 0.1s ease,
+    box-shadow 0.1s ease, transform 0.05s ease;
+}
+
+.sc-sparkle-btn:hover:not(:disabled) {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.sc-sparkle-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.sc-sparkle-btn:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Generating state: visually depressed + active accent, NOT dimmed.
+   Wins over the :disabled opacity so the user sees it as "working". */
+.sc-sparkle-btn.is-generating,
+.sc-sparkle-btn.is-generating:disabled {
+  opacity: 1;
+  color: var(--accent);
+  background: var(--surface);
+  border-color: var(--accent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  transform: translateY(1px);
+  cursor: progress;
+}
+
+/* 12px ring spinner that picks up currentColor (= --accent in the
+   .is-generating state). Pure CSS, no extra deps. */
+.sc-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: sc-spin 0.7s linear infinite;
+  display: inline-block;
+}
+
+@keyframes sc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .sc-deploy-row {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);

@@ -1,5 +1,5 @@
 import {
-  gitAddAndCommit,
+  gitCommitPaths,
   gitEnsureRepo,
   gitStatusShort,
   kbDeleteFile,
@@ -58,6 +58,16 @@ let activeSyncArgs: { creds: PinkfishCreds; repo: string; collection: KbCollecti
 
 const POLL_INTERVAL_MS = 60_000;
 
+/// Single in-flight serializer for pull / push so the 60s poller and a
+/// user-triggered Push can't race and corrupt the manifest. All KB-mutating
+/// work runs through this.
+let syncQueue: Promise<unknown> = Promise.resolve();
+function withSyncLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = syncQueue.catch(() => undefined).then(fn);
+  syncQueue = next.catch(() => undefined);
+  return next;
+}
+
 /// Server-side copy filename for merge conflicts, e.g. `runbook.md` → `runbook.server.md`.
 export function kbServerShadowFilename(filename: string): string {
   const dot = filename.lastIndexOf(".");
@@ -111,7 +121,6 @@ export async function startKbSync(args: {
   orgName: string;
 }): Promise<void> {
   const { creds, repo, orgSlug, orgName } = args;
-  console.log("[kbsync] start", { repo, orgSlug, orgName });
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
@@ -121,24 +130,22 @@ export async function startKbSync(args: {
   try {
     await gitEnsureRepo(repo);
   } catch (e) {
-    console.error("[kbsync] gitEnsureRepo failed:", e);
+    console.error("kb sync: gitEnsureRepo failed:", e);
     update({ phase: "error", lastError: String(e) });
     return;
   }
   try {
-    const dir = await kbInit(repo);
-    console.log("[kbsync] kbInit ok →", dir);
+    await kbInit(repo);
   } catch (e) {
-    console.error("[kbsync] kbInit failed:", e);
+    console.error("kb sync: kbInit failed:", e);
     update({ phase: "error", lastError: String(e) });
     return;
   }
   let collection: KbCollection;
   try {
     collection = await resolveProjectKb(creds, orgSlug, orgName);
-    console.log("[kbsync] resolved collection", collection);
   } catch (e) {
-    console.error("[kbsync] resolveProjectKb failed:", e);
+    console.error("kb sync: resolveProjectKb failed:", e);
     update({ phase: "error", lastError: String(e) });
     return;
   }
@@ -155,9 +162,9 @@ export async function startKbSync(args: {
     });
   }
 
-  await pullOnce({ creds, repo, collection });
+  await withSyncLock(() => pullOnce({ creds, repo, collection }));
   pollTimer = setInterval(() => {
-    pullOnce({ creds, repo, collection }).catch((e) =>
+    withSyncLock(() => pullOnce({ creds, repo, collection })).catch((e) =>
       console.error("kb pull failed:", e),
     );
   }, POLL_INTERVAL_MS);
@@ -173,19 +180,20 @@ export function stopKbSync() {
 }
 
 /// Run a single pull (e.g. immediately before a push). Public wrapper.
+/// Goes through the in-flight lock so it can't race the background poller.
 export async function pullNow(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: KbCollection;
 }): Promise<void> {
-  return pullOnce(args);
+  return withSyncLock(() => pullOnce(args));
 }
 
 /// Trigger a pull using the active sync credentials. Designed for the UI
 /// refresh button — no args needed; returns false if sync isn't active.
 export async function refreshFromServer(): Promise<boolean> {
   if (!activeSyncArgs) return false;
-  await pullOnce(activeSyncArgs);
+  await withSyncLock(() => pullOnce(activeSyncArgs!));
   return true;
 }
 
@@ -228,16 +236,21 @@ async function pullOnce(args: {
   const persisted: KbStatePersisted = await kbStateLoad(repo);
   const conflicts: ConflictFile[] = [];
 
+  // Repo-relative paths the pull touched (downloaded, replaced, deleted).
+  // Used to scope the auto-commit so we never sweep up unrelated user WIP.
+  const touched = new Set<string>();
+  const kbPath = (filename: string) => `knowledge-base/${filename}`;
+
   for (const r of remote) {
     if (!r.filename || !r.downloadUrl) continue;
     const localFile = localMap.get(r.filename);
     const tracked = persisted.files[r.filename];
 
     if (!tracked && !localFile) {
-      // New remote file → pull
       try {
         await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
-        persisted.files[r.filename] = mkState(r, repo);
+        persisted.files[r.filename] = mkState(r);
+        touched.add(kbPath(r.filename));
       } catch (e) {
         console.error(`pull ${r.filename} failed:`, e);
       }
@@ -255,6 +268,7 @@ async function pullOnce(args: {
         if (!hasShadow && r.downloadUrl) {
           try {
             await kbDownloadToLocal(repo, shadowName, r.downloadUrl);
+            touched.add(kbPath(shadowName));
           } catch (e) {
             console.error(`pull conflict shadow ${shadowName} failed:`, e);
           }
@@ -265,7 +279,8 @@ async function pullOnce(args: {
       if (remoteChanged && !localChanged) {
         try {
           await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
-          persisted.files[r.filename] = mkState(r, repo);
+          persisted.files[r.filename] = mkState(r);
+          touched.add(kbPath(r.filename));
         } catch (e) {
           console.error(`pull ${r.filename} failed:`, e);
         }
@@ -292,24 +307,26 @@ async function pullOnce(args: {
     try {
       await kbDeleteFile(repo, filename);
       delete persisted.files[filename];
-      console.log(`[kbsync] deleted local ${filename} (removed on server)`);
+      touched.add(kbPath(filename));
     } catch (e) {
-      console.error(`[kbsync] failed to delete local ${filename}:`, e);
+      console.error(`failed to delete local ${filename}:`, e);
     }
   }
 
   await kbStateSave(repo, persisted);
   update({ phase: "ready", conflicts, lastPullAt: Date.now(), lastError: null });
 
-  try {
-    const ts = new Date().toISOString();
-    await gitAddAndCommit(repo, `sync: pull @ ${ts}`);
-  } catch (e) {
-    console.warn("[kbsync] git commit after pull:", e);
+  if (touched.size > 0) {
+    try {
+      const ts = new Date().toISOString();
+      await gitCommitPaths(repo, Array.from(touched), `sync: pull @ ${ts}`);
+    } catch (e) {
+      console.warn("git commit after pull:", e);
+    }
   }
 }
 
-function mkState(r: { updatedAt: string }, _repo: string) {
+function mkState(r: { updatedAt: string }) {
   return {
     remote_version: r.updatedAt,
     pulled_at_mtime_ms: Date.now(),
@@ -319,7 +336,17 @@ function mkState(r: { updatedAt: string }, _repo: string) {
 /// Push every local file to the KB. Updates manifest with the post-push
 /// remote_version (which we approximate as "now" since the API doesn't
 /// return one synchronously). Caller is the Deploy button.
+/// Goes through the in-flight lock so it can't race the background poller.
 export async function pushAllToKb(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  collection: KbCollection;
+  onLine?: (msg: string) => void;
+}): Promise<{ pushed: number; failed: number }> {
+  return withSyncLock(() => pushAllToKbInner(args));
+}
+
+async function pushAllToKbInner(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: KbCollection;
@@ -420,11 +447,14 @@ export async function pushAllToKb(args: {
   await kbStateSave(repo, persisted);
   update({ phase: "ready" });
 
-  try {
-    const ts = new Date().toISOString();
-    await gitAddAndCommit(repo, `sync: deployed @ ${ts}`);
-  } catch (e) {
-    console.warn("[kbsync] git commit after push:", e);
+  if (pushedNames.size > 0) {
+    try {
+      const ts = new Date().toISOString();
+      const paths = Array.from(pushedNames).map((n) => `knowledge-base/${n}`);
+      await gitCommitPaths(repo, paths, `sync: deployed @ ${ts}`);
+    } catch (e) {
+      console.warn("git commit after push:", e);
+    }
   }
   return { pushed, failed };
 }

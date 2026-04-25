@@ -15,7 +15,7 @@ export function DeployButton({
   onLine,
   onExit,
   dirty = false,
-  latestCommitSubject = null,
+  pendingCount = 0,
 }: {
   repo: string | null;
   env: string;
@@ -23,19 +23,14 @@ export function DeployButton({
   onExit: (code: number | null) => void;
   /** Working tree has uncommitted changes. When true, push is disabled. */
   dirty?: boolean;
-  /** Subject of the most recent commit. Used to detect "nothing new to push". */
-  latestCommitSubject?: string | null;
+  /** Number of user commits since the last sync. Drives both the badge and
+   *  the enabled state — if zero, there's nothing for the user to push. */
+  pendingCount?: number;
 }) {
   const [running, setRunning] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
-  // If the most recent commit is a sync/init commit, there's nothing the user
-  // has done since the last pull or push that hasn't been replicated already.
-  const nothingToPush =
-    latestCommitSubject !== null &&
-    (latestCommitSubject.startsWith("sync:") ||
-      latestCommitSubject.startsWith("init:") ||
-      latestCommitSubject.startsWith("pre-deploy"));
+  const nothingToPush = pendingCount === 0;
 
   const start = async () => {
     if (!repo) return;
@@ -144,10 +139,14 @@ export function DeployButton({
             ? "Commit your changes first"
             : nothingToPush
             ? "Nothing new to push"
-            : `Push to Pinkfish (${env})`
+            : `Push ${pendingCount} commit${pendingCount === 1 ? "" : "s"} to Pinkfish (${env})`
         }
       >
-        {running ? "Pushing…" : "Push to Pinkfish"}
+        {running
+          ? "Pushing…"
+          : pendingCount > 0
+          ? `Push to Pinkfish (${pendingCount})`
+          : "Push to Pinkfish"}
       </button>
       {confirming && (
         <div className="confirm-modal" role="dialog" aria-label="Confirm production deploy">

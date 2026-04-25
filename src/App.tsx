@@ -42,26 +42,19 @@ function App() {
         // If we relaunched into a fully-connected state with a project folder,
         // skip the onboarding screen entirely AND restart KB sync against the
         // existing folder so polling resumes without onboarding.
-        console.log("[app] startup state", {
-          repo: s.last_repo,
-          hasCreds: !!creds,
-        });
         if (creds && s.last_repo) {
           setBypassOnboarding(true);
           // We don't have orgName cached on relaunch — re-fetch it lazily.
-          // For now, the KB collection is already named openit-<slug> where
+          // The KB collection is already named openit-<slug> where
           // slug == basename(repo). Use that as both slug and a placeholder
           // name; resolveProjectKb will find the existing collection by name.
           const slug = basename(s.last_repo);
-          console.log("[app] kicking off startKbSync on relaunch", { slug });
           startKbSync({
             creds,
             repo: s.last_repo,
             orgSlug: slug,
             orgName: slug,
           }).catch((e) => console.error("kb sync init failed:", e));
-        } else {
-          console.log("[app] not auto-syncing kb — missing creds or repo");
         }
         setLoaded(true);
       })

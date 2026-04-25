@@ -159,14 +159,16 @@ export function FileExplorer({
       return next;
     });
 
+  const KB_PREFIX = "knowledge-base/";
+  const isDeletable = (node: FileNode) => {
+    if (node.is_dir || !repo) return false;
+    return relPath(repo, node.path).startsWith(KB_PREFIX);
+  };
+
   const handleDelete = async (node: FileNode) => {
-    if (node.is_dir || !repo) return;
-    const rel = relPath(repo, node.path);
-    const kbPrefix = "knowledge-base/";
-    if (rel.startsWith(kbPrefix)) {
-      const filename = rel.slice(kbPrefix.length);
-      await kbDeleteFile(repo, filename);
-    }
+    if (!isDeletable(node) || !repo) return;
+    const filename = relPath(repo, node.path).slice(KB_PREFIX.length);
+    await kbDeleteFile(repo, filename);
     reload();
     onFsChange?.();
   };
@@ -221,7 +223,7 @@ export function FileExplorer({
               {n.is_dir ? (isCollapsedRow ? "▸ " : "▾ ") : ""}
               <span className="tree-item-name">{n.name}</span>
               {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
-              {!n.is_dir && (
+              {isDeletable(n) && (
                 <button
                   type="button"
                   className="tree-delete-btn"

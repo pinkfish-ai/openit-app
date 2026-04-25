@@ -40,6 +40,16 @@ export async function gitAddAndCommit(repo: string, message: string): Promise<bo
   return invoke("git_add_and_commit", { repo, message });
 }
 
+/// Stage exactly the given paths (relative to repo root) and commit. Used by
+/// the sync layer so auto-commits never sweep up unrelated user WIP.
+export async function gitCommitPaths(
+  repo: string,
+  paths: string[],
+  message: string,
+): Promise<boolean> {
+  return invoke("git_commit_paths", { repo, paths, message });
+}
+
 export type GitFileStatus = { path: string; status: string; staged: boolean };
 
 export async function gitStatusShort(repo: string): Promise<GitFileStatus[]> {
@@ -152,6 +162,13 @@ export type OrgRow = {
 
 export async function claudeDetect(): Promise<string | null> {
   return invoke("claude_detect");
+}
+
+/// Ask the user's Claude CLI (`claude -p`) to summarize the staged diff into
+/// a single commit subject line, matching the style of the recent log.
+/// Returns the trimmed first line; throws on missing CLI or empty staging.
+export async function claudeGenerateCommitMessage(repo: string): Promise<string> {
+  return invoke("claude_generate_commit_message", { repo });
 }
 
 export type BootstrapResult = { path: string; created: boolean };
