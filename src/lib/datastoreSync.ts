@@ -48,6 +48,7 @@ async function createSampleItems(
   // Create items via MCP
   if (samples.length > 0) {
     try {
+      console.log(`[datastoreSync] creating ${samples.length} sample items for ${templateId}`);
       await pinkfishMcpCall({
         accessToken,
         orgId: creds.orgId,
@@ -63,6 +64,8 @@ async function createSampleItems(
     } catch (e) {
       console.warn(`[datastoreSync] failed to create sample items for ${templateId}:`, e);
     }
+  } else {
+    console.log(`[datastoreSync] no sample items template for ${templateId}`);
   }
 }
 

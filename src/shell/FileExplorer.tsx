@@ -192,9 +192,12 @@ export function FileExplorer({
         await Promise.all(
           ds.map(async (col) => {
             try {
+              console.log(`[FileExplorer] fetching items for datastore: ${col.name}`);
               const resp = await fetchDatastoreItems(creds, col.id, 100, 0);
               itemsMap[col.id] = { items: resp.items, hasMore: resp.pagination.hasNextPage };
-            } catch {
+              console.log(`[FileExplorer] fetched ${resp.items.length} items for ${col.name}`);
+            } catch (e) {
+              console.warn(`[FileExplorer] failed to fetch items for ${col.name}:`, e);
               itemsMap[col.id] = { items: [], hasMore: false };
             }
           }),
