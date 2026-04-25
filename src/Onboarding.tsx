@@ -2,7 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { claudeDetect, pinkfishListConnections, type UserConnection } from "./lib/api";
 import { PinkfishOauthModal } from "./PinkfishOauthModal";
-import { getToken, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
+import {
+  DEFAULT_TOKEN_URL,
+  derivedUrls,
+  getToken,
+  loadCreds,
+  subscribeToken,
+  type PinkfishCreds,
+} from "./lib/pinkfishAuth";
 
 const CLAUDE_INSTALL_DOCS = "https://docs.anthropic.com/claude/docs/claude-code";
 const CONNECTIONS_NEW_URL = "https://app.pinkfish.ai/tools/connections/new";
@@ -99,22 +106,26 @@ export function Onboarding({
       .catch(() => setClaudePath(null));
   }, []);
 
-  const refreshChat = useCallback(() => {
+  const refreshChat = useCallback(async () => {
     const token = getToken();
     if (!token) {
       setChat({ state: "idle", slack: null, teams: null });
       return;
     }
     setChat((c) => ({ ...c, state: "loading" }));
-    pinkfishListConnections({ accessToken: token.accessToken })
-      .then((conns) => {
-        const { slack, teams } = findChat(conns);
-        setChat({ state: "ready", slack, teams });
-      })
-      .catch((e) => {
-        console.error("list connections failed:", e);
-        setChat({ state: "ready", slack: null, teams: null });
+    try {
+      const creds = await loadCreds();
+      const urls = derivedUrls(creds?.tokenUrl ?? DEFAULT_TOKEN_URL);
+      const conns = await pinkfishListConnections({
+        accessToken: token.accessToken,
+        connectionsUrl: urls.connectionsUrl,
       });
+      const { slack, teams } = findChat(conns);
+      setChat({ state: "ready", slack, teams });
+    } catch (e) {
+      console.error("list connections failed:", e);
+      setChat({ state: "ready", slack: null, teams: null });
+    }
   }, []);
 
   // Re-fetch connections whenever the token transitions (initial load or

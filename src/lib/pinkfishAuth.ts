@@ -6,8 +6,37 @@ const SLOT_ORG_ID = "pinkfish.org_id";
 const SLOT_TOKEN_URL = "pinkfish.token_url";
 
 export const DEFAULT_TOKEN_URL = "https://app-api.app.pinkfish.ai/oauth/token";
-export const DEFAULT_TEST_URL = "https://mcp.app.pinkfish.ai/weather";
 const REFRESH_BUFFER_SECONDS = 60;
+
+export type PinkfishUrls = {
+  tokenUrl: string;
+  accountUrl: string; // mcp.<env>.pinkfish.<tld>/pf-account
+  connectionsUrl: string; // proxy(-stage).pinkfish.ai/manage/user-connections?format=light
+};
+
+/// Derive related Pinkfish URLs from the user-configured token URL. All
+/// dev environments live on `*.pinkfish.dev` and use the stage proxy;
+/// prod is `*.pinkfish.ai` on the production proxy.
+export function derivedUrls(tokenUrl: string): PinkfishUrls {
+  let host: string;
+  let protocol = "https:";
+  try {
+    const parsed = new URL(tokenUrl);
+    host = parsed.host;
+    protocol = parsed.protocol;
+  } catch {
+    // Fall back to prod if the token URL is malformed.
+    host = "app-api.app.pinkfish.ai";
+  }
+  const mcpHost = host.replace(/^app-api\./, "mcp.");
+  const isDev = host.endsWith(".pinkfish.dev") || /\.dev\d/i.test(host);
+  const proxyHost = isDev ? "proxy-stage.pinkfish.ai" : "proxy.pinkfish.ai";
+  return {
+    tokenUrl,
+    accountUrl: `${protocol}//${mcpHost}/pf-account`,
+    connectionsUrl: `https://${proxyHost}/manage/user-connections?format=light`,
+  };
+}
 
 export type PinkfishCreds = {
   clientId: string;

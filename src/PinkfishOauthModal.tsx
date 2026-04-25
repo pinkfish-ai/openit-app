@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { pinkfishListOrgs } from "./lib/api";
 import {
   DEFAULT_TOKEN_URL,
+  derivedUrls,
   loadCreds,
   refresh,
   saveCreds,
@@ -41,9 +42,11 @@ export function PinkfishOauthModal({
     try {
       const token = await refresh(creds);
       // Validate by calling list_orgs and look up the bound org's display name.
+      const urls = derivedUrls(creds.tokenUrl);
       const orgs = await pinkfishListOrgs({
         accessToken: token.accessToken,
         orgId: creds.orgId,
+        accountUrl: urls.accountUrl,
       });
       const me = orgs.find((o) => o.id === creds.orgId);
       const orgName = me?.name ?? null;
