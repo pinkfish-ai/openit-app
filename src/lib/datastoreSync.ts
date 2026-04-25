@@ -617,10 +617,34 @@ async function pullDatastoresOnceImpl(args: {
   let pulled = 0;
 
   for (const col of collections) {
-    let remote: MemoryItem[];
+    // Fully paginate the remote list. The server-deletion logic at the
+    // bottom of this loop assumes `remote` is the AUTHORITATIVE complete
+    // set — anything tracked but not in `remote` is treated as deleted
+    // on the server. If we only fetch a partial page, items beyond the
+    // limit would be wrongly classified as deleted, dropping their
+    // manifest entries and breaking conflict detection on the next pull.
+    const PAGE = 1000;
+    let remote: MemoryItem[] = [];
+    let listFailed = false;
     try {
-      const resp = await fetchDatastoreItems(creds, col.id, 1000, 0);
-      remote = resp.items;
+      let offset = 0;
+      while (true) {
+        const resp = await fetchDatastoreItems(creds, col.id, PAGE, offset);
+        remote = remote.concat(resp.items);
+        const hasMore = resp.pagination?.hasNextPage === true;
+        if (!hasMore || resp.items.length === 0) break;
+        offset += resp.items.length;
+        // Safety bail-out — defend against a backend that always claims
+        // hasNextPage=true. 100k rows is well past any realistic openit-*
+        // collection size; if we hit it, log and stop.
+        if (remote.length >= 100_000) {
+          console.warn(
+            `[datastoreSync] ${col.name}: stopped paginating at ${remote.length} items; skipping server-delete pass`,
+          );
+          listFailed = true;
+          break;
+        }
+      }
     } catch (e) {
       console.error(`[datastoreSync] list ${col.name} failed:`, e);
       continue;
@@ -718,14 +742,21 @@ async function pullDatastoresOnceImpl(args: {
     // that's NOT in the remote response — server deleted. We do NOT delete
     // the local file (user might still want it); we just drop the manifest
     // entry so a subsequent push doesn't try to re-create from stale state.
-    const remoteKeys = new Set(remote.map((r) => (r.key ?? r.id ?? "").toString()));
-    for (const mKey of Object.keys(persisted.files)) {
-      if (!mKey.startsWith(`${col.name}/`)) continue;
-      const key = mKey.slice(col.name.length + 1);
-      if (remoteKeys.has(key)) continue;
-      // Don't delete the local file (push semantics handle that). Just drop
-      // the manifest entry so the row is no longer "tracked".
-      delete persisted.files[mKey];
+    //
+    // SAFETY: only run this if `remote` is the AUTHORITATIVE complete set.
+    // If pagination bailed out early (huge collection), skip the deletion
+    // pass — items beyond the bail-out point would otherwise be wrongly
+    // classified as deleted, dropping their manifest entries.
+    if (!listFailed) {
+      const remoteKeys = new Set(remote.map((r) => (r.key ?? r.id ?? "").toString()));
+      for (const mKey of Object.keys(persisted.files)) {
+        if (!mKey.startsWith(`${col.name}/`)) continue;
+        const key = mKey.slice(col.name.length + 1);
+        if (remoteKeys.has(key)) continue;
+        // Don't delete the local file (push semantics handle that). Just drop
+        // the manifest entry so the row is no longer "tracked".
+        delete persisted.files[mKey];
+      }
     }
   }
 
