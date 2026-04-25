@@ -229,7 +229,7 @@ export function Shell({
                 className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
                 onClick={() => setLeftTab("source-control")}
               >
-                Sync
+                Deploy
                 {changeCount > 0 && (
                   <span className="left-tab-badge" aria-label={`${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`}>
                     {changeCount}
