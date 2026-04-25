@@ -765,7 +765,12 @@ async function pullDatastoresOnceImpl(args: {
                 ? JSON.stringify(r.content, null, 2)
                 : (r.content as unknown as string);
               await entityWriteFile(repo, subdir, shadowFilename, content);
-              touched.push(`${subdir}/${shadowFilename}`);
+              // Do NOT add the shadow path to `touched` — `databases/**/*.server.json`
+              // is gitignored, so passing it to `git add` (via gitCommitPaths)
+              // would fail with non-zero exit and the wrapper would bail out
+              // WITHOUT committing the legitimate row updates already in
+              // `touched`. Shadow files exist on disk for the user/Claude to
+              // resolve; they're never auto-committed by sync.
             } catch (e) {
               console.error(`[datastoreSync] shadow ${mKey} failed:`, e);
             }
