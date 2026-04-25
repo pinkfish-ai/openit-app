@@ -1,7 +1,56 @@
 # Bidirectional sync for all OpenIT entities
 
 **Date:** 2026-04-25
-**Status:** Plan, not yet implemented
+**Status:** Phase 2 (datastore pull) shipped via PR #9. `syncEngine.ts` refactor (R1–R5 below) is the next-up work.
+
+---
+
+## Resuming this work in a fresh session
+
+**You are here:**
+- Branch `feat/datastore-pull-poll` (PR #9, `https://github.com/pinkfish-ai/openit-app/pull/9`) — datastore push + pull + 60s poll, plus connect-sync waste-reduction, plus manual ↻ button. 5 BugBot iterations, 16 findings (4 High, 8 Medium, 4 Low), all fixed. Last commit is the refactor plan + iter-5 log (`e2a11bf` or descendants).
+- Branch `main` may be ahead of `origin/main` by 1 commit (`ad0eb59` = BugBot fix #2 from PR #8). If so, it needs a push.
+- Pre-existing CI red on main (cargo fmt diffs in `claude.rs` + `filestore.rs`, TS6133 in firebase-helpers + a few app files). NOT regressions from this work — these were red before PR #8 even landed.
+
+**Immediate next action options (pick one):**
+1. **Trigger BugBot iter 6** to confirm clean run on the iter-5 fix → if clean, declare PR #9 ready to merge. Command: `gh pr comment 9 --repo pinkfish-ai/openit-app --body "@cursor review"` then poll `gh api repos/pinkfish-ai/openit-app/commits/$(git rev-parse HEAD)/check-runs` until done.
+2. **Merge PR #9 as-is** (5 iters of validation is sufficient).
+3. **Start the `syncEngine.ts` refactor** (see "Architectural retrospective" section below). Recommended path per the user's request to step back. New branch off `main` after PR #9 merges.
+
+**Where the existing entity-sync code lives:**
+- `src/lib/kbSync.ts` (456 lines) — the cleanest reference; uses `withSyncLock`
+- `src/lib/filestoreSync.ts` (625 lines)
+- `src/lib/datastoreSync.ts` (940 lines) — biggest, most recently churned
+- `src/lib/agentSync.ts` (122 lines), `src/lib/workflowSync.ts` (134 lines) — read-only today
+- `src-tauri/src/kb.rs` — all entity Rust commands live here (split is sloppy; the file is misnamed for filestore + datastore content)
+- `src-tauri/src/git_ops.rs` — git_ensure_repo, git_commit_paths, untrack_gitignored_paths
+- `src/PinkfishOauthModal.tsx` — connect-time bootstrap orchestration
+- `src/App.tsx` — start/stop wiring on relaunch + first-run paths
+- `src/shell/Shell.tsx` — manual ↻ pull button + sync output viewer auto-open
+- `src/shell/SourceControl.tsx` — Deploy tab UI + commit→push flow
+
+**Local dev essentials:**
+- Dev creds: `.env.development` (gitignored). Has `VITE_DEV_CLIENT_ID/SECRET/ORG_ID/TOKEN_URL` for stage.
+- Run: `npm run tauri dev` (Vite + Cargo). User's session typically already running on port 1420; don't kill it without checking.
+- Project root: `~/OpenIT/<orgId>/` (was `~/Documents/OpenIT/<orgId>/` before; macOS TCC blocked Documents access).
+- Skills API: `https://skills-stage.pinkfish.ai/` for dev. Auth: `Auth-Token: Bearer <runtime-token>` for memory/resources/datacollection; `Authorization: Bearer …` for `/user-agents` and `/automations`.
+
+**Process pointers:**
+- BugBot loop: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/07-bugbot-review.md`
+- Plan review: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/02-implementation-plan-review.md`
+- Implementation: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/03-implementation.md`
+- Project brief: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/00-projectbrief.md`
+- Wider product context: `/Users/benrigby/Documents/GitHub/autonomous-dev/research/itsm/pinkfish-itsm-concept.md`
+
+**Critical invariants discovered through iter 1–5 (must hold in any future entity work):**
+1. Manifest save MUST happen inside the per-repo lock alongside any git commit — releasing the lock before the commit causes index-lock races.
+2. Conflict shadow files (`*.server.*`) MUST NOT be added to the auto-commit `touched` array — they're gitignored, and `git add` on a gitignored path makes git_commit_paths fail and silently drop the legitimate items in the same batch.
+3. Pull list MUST be fully paginated before the server-side-deletion check runs — otherwise items beyond the first page get wrongly classified as deleted.
+4. Manifest reconcile after push MUST also paginate — same reason.
+5. Pull, push, and bootstrap-write MUST all serialize on the same per-repo lock — separate locks per operation lets manifest mutations race.
+6. The bootstrap path (modal connect) and steady-state poll path MUST converge on the same manifest invariants — easy to drift since they're in different files.
+
+These are exactly the things `syncEngine.ts` enforces by construction.
 
 ---
 
@@ -1202,3 +1251,245 @@ Phases 1-4 are fully unblocked. Phase 5 is unblocked via REST per the 2026-04-25
 | Initial plan had multiple architectural directions (manifest-vs-git, bash-vs-Node, in-app-vs-script). Resolved through prior discussion to one path; review confirms no remaining ambiguity. | (resolved before review) |
 
 No `incoherent` findings. No `systematic` findings — the chosen patterns match existing project conventions (scripts in plugin, REST-via-fetch, Tauri Rust commands, git for state).
+
+---
+
+## BugBot Review Log
+
+### Iteration 1 (2026-04-25, PR #9 — `feat/datastore-pull-poll`)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Shadow files pushed to remote as regular items | High | Fixed | `57a90f3` |
+| 2 | No concurrency guard allows overlapping pull passes | Medium | Fixed | `d252255` |
+| 3 | Server-deletion logic uses incomplete paginated response as authoritative | High | Fixed | `a7e148e` |
+| 4 | Conflict shadow rewritten unconditionally every poll cycle | Medium | Fixed | `3185e51` |
+| 5 | Datastore manifest not added to gitignore defaults | Medium | Fixed | `5e80b6a` |
+
+All findings real, all fixed in iteration 1. Replies posted on each thread; threads resolved.
+
+### Iteration 2 (2026-04-25, PR #9)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Pull never seeds manifest for bootstrapped datastore rows | High | Fixed | `214ba33` |
+
+Caught a real gap from iteration 1's design: the `!tracked && localFile` case (modal-bootstrap-seeded rows) was unhandled, so manifest entries never got written for bootstrapped rows. Subsequent polls treated them as permanently undiffable. Fix seeds the manifest on first encounter without rewriting the file.
+
+### Iteration 3 (2026-04-25, PR #9)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Gitignored shadow paths in touched array break commit | High | Fixed | `53905e1` |
+| 2 | Datastore push never updates manifest causing false conflicts | High | Fixed | `c3ca5bb` |
+| 3 | Removed only consumer of `refreshFromServer`, leaving dead code | Low | Fixed | `1f99d5a` + `a3c4283` |
+
+Both #1 and #2 were cascading bugs introduced by iter-1 fixes (gitignore broadening + iter-1 manifest awareness). #3 was the natural follow-up to the FileExplorer ↻ button removal. All three real, all fixed.
+
+### Iteration 4 (2026-04-25, PR #9)
+
+| # | Finding | Severity | Disposition | Commit |
+|---|---------|----------|-------------|--------|
+| 1 | Push reconciliation doesn't paginate, causing false conflicts | Medium | Fixed | `efda528` |
+| 2 | Unused exported function `subscribeDatastoreSync` | Low | Fixed | `abbdeb8` |
+| 3 | Dead variable `totalFiles` kept with void suppression | Low | Fixed | `c2c4397` |
+| 4 | Untrack helper may commit unrelated staged changes | Medium | Fixed | `1befabf` |
+| 5 | Filestore pull lacks concurrency guard unlike KB/datastore | Medium | Fixed | `3c33039` |
+| 6 | Parallel manual pulls cause concurrent git index conflicts | Medium | Fixed | `6bccc0d` |
+
+Patterns this round: cascading from previous fixes (push manifest reconcile in iter 3 inherited the pagination gap from the original list call; manual-pull `Promise.all` introduced index-lock races; my untrack helper from iter-2's gitignore broadening had over-broad scope). Tightening each — paginated reconcile, scoped pathspec on commit, sequenced pulls, mirrored the existing concurrency-guard pattern from KB/datastore over to filestore. The two Low findings were honest dead-code leftovers from the rapid iteration.
+
+### Iteration 5 (2026-04-25, PR #9)
+
+| # | Finding | Severity | Disposition | Commit |
+|---|---------|----------|-------------|--------|
+| 1 | Bootstrap sync and pull poll race on manifest | Medium | Fixed | `ce5d1d4` |
+
+Single finding, exact same root cause as iter 4's manual-pull race: the in-flight lock guarded one entry point (`pullDatastoresOnce`) but not the other two manifest-mutating ops (`syncDatastoresToDisk`, `pushAllToDatastores`). Fix: replace the per-pull `inflightPull` map with a single per-repo `withDatastoreLock` queue (mirrors kbSync's `withSyncLock`); all three entry points serialize on it.
+
+This iteration's finding is the canonical proof that the per-entity duplication pattern is structurally unsafe — every new manifest-mutating operation we add re-discovers the "you forgot to serialize this one" gap. The next phase (below) addresses this at the architectural level.
+
+---
+
+## Architectural retrospective: the case for `syncEngine.ts`
+
+After 5 BugBot iterations on PR #9 (16 findings total: 4 High, 8 Medium, 4 Low), the pattern is unmistakable. **The core sync model is correct** — manifest + date-diff + conflict shadow + auto-commit, exactly what KB and filestore have shipped successfully for months. **What's churning** is that we're implementing it three independent times (KB / filestore / datastore) and each implementation rediscovers the same edge cases on its own.
+
+### The audit (post-iter-5)
+
+| Property | KB | Filestore | Datastore |
+|---|---|---|---|
+| Manifest file | `.openit/kb-state.json` | `.openit/fs-state.json` | `.openit/datastore-state.json` |
+| Concurrency guard | Promise queue (whole module) | Map per `repo+collection` | Per-repo queue (post-fix) |
+| Pull pagination | None | None | Paginated + 100k bail |
+| Server-delete check | Deletes file + manifest | **Doesn't run** | Deletes manifest only, gated on full pagination |
+| Conflict shadow | Created + committed | **Not created** | Created, **not** committed (gitignored) |
+| Poll interval | 60s | **5 min** | 60s |
+| Bootstrap path | `startKbSync` (resolve + pull + start poll) | `resolve` + manual `pullOnce` + later `startFilestoreSync` | `syncDatastoresToDisk` then `startDatastoreSync` |
+| Re-resolve on poll | No (closure capture) | Every 5 min | Every 60s |
+| Push reconcile | Single fetch | Single fetch | Paginated |
+
+Every row that differs is either a bug we shipped (filestore: no shadow, no delete-detection), a gap we fixed mid-PR (datastore: pagination, concurrency), or a drift waiting to bite us (re-resolve frequency, poll interval). The audit lives in the conversation around iter-5; this table is the canonical summary.
+
+### Code by the numbers
+
+```
+src/lib/kbSync.ts             456 lines
+src/lib/filestoreSync.ts      625 lines
+src/lib/datastoreSync.ts      940 lines  ← grew 3x in PR #9
+src/lib/agentSync.ts          122 lines
+src/lib/workflowSync.ts       134 lines
+                            2,277 lines total
+
+Rust state commands (kb.rs):
+  kb_state_load/save                ─┐ three copies of identical 5 lines
+  fs_store_state_load/save          ─┤ same shape, different file path
+  datastore_state_load/save         ─┘
+  kb_list_local                     ─┐ three copies of "walk dir, return mtime"
+  fs_store_list_local               ─┤
+  datastore_list_local              ─┘ collection-scoped variant
+```
+
+Roughly 60-70% of the lines in kbSync/filestoreSync/datastoreSync implement the same six-stage pipeline (load manifest → in-flight check → list with pagination → per-row diff → save manifest → auto-commit). Each entity reimplements the pipeline; each one drifts a little.
+
+### The real cost
+
+Every entity we add (agents pull, workflows pull, banner UI, future entity types) inherits this surface. Pattern projection:
+
+- Agents pull = ~3-4 BugBot iterations to discover all the same gaps (concurrency, pagination, shadow handling, manifest reconcile, etc.)
+- Workflows pull = same
+- Banner UI = same drift across the three subscribe APIs
+
+If we keep going on the current architecture, each of the next 3 PRs will likely cost what PR #9 cost: ~6 hours of BugBot loops per entity. With one shared engine, the next PR is the engine itself, then each entity adapter is hours not days.
+
+---
+
+## Refactor plan: extract `src/lib/syncEngine.ts`
+
+### Goal
+
+One implementation of the sync pipeline. Each entity is a 50–100 line adapter that supplies entity-specific bits (`list`, `write`, `apiUpsert`, `apiDelete`, dirs). Everything else — manifest, concurrency, pagination, conflict shadow, auto-commit, gitignore filter, lock release timing — lives in the engine and is enforced by construction.
+
+### Non-goals (for this refactor)
+
+- Not switching to the script-based plugin architecture (that's the bigger Phase 0 from the original plan; this refactor is the **bridge step** that makes Phase 0 cheaper later).
+- Not adding new entities. Agents pull and workflows pull come AFTER this refactor.
+- Not changing the manifest file format or the wire protocol.
+- Not changing user-visible behavior. The Sync output viewer, the Deploy tab, the manual ↻ button — all unchanged. Only internals.
+
+### What the engine surface looks like
+
+```ts
+// src/lib/syncEngine.ts
+
+export type EntityAdapter<TItem> = {
+  /** Stable string used in the manifest file name + lock keys. */
+  prefix: "kb" | "filestore" | "datastore" | "agent" | "workflow";
+
+  /** Working-tree directories the engine is allowed to write/delete inside. */
+  dirs: string[];                                  // e.g. ["databases"]
+
+  /** Fully-paginated list of remote items with their `updatedAt` + content fetcher. */
+  list(): AsyncIterable<{
+    path: string;                                  // working-tree-relative
+    updatedAt: string;
+    fetchContent(): Promise<string | Uint8Array>;
+  }>;
+
+  /** Write item to disk. Engine handles atomicity + mtime mgmt. */
+  write(path: string, content: string | Uint8Array): Promise<void>;
+
+  /** Push side, optional. Engine wires content-equality + manifest reconcile. */
+  apiUpsert?(path: string, content: string | Uint8Array): Promise<{ remoteUpdatedAt: string }>;
+  apiDelete?(path: string): Promise<void>;
+
+  /** Format the conflict shadow filename. Default: `<base>.server.<ext>`. */
+  shadowName?(path: string): string;
+};
+
+export function pullEntity<T>(adapter: EntityAdapter<T>, repo: string): Promise<PullResult>;
+export function pushEntity<T>(adapter: EntityAdapter<T>, repo: string): Promise<PushResult>;
+export function startEntitySync<T>(adapter: EntityAdapter<T>, repo: string, opts?: { pollMs?: number }): () => void;
+```
+
+The engine internally enforces, in one place each:
+- **Concurrency**: per-repo Promise queue, held across the entire pull/push including the auto-commit. Lock release timing is a single spot.
+- **Pagination**: list returns an async iterable; engine consumes until exhausted; "server-delete" check only runs on a fully-consumed iterator.
+- **Manifest**: load at start, save before return. One central mtime/version diff. Adapter never touches the manifest directly.
+- **Conflict shadow**: writes shadow if remote+local both moved AND no shadow already exists. **Never** added to the auto-commit `touched` array.
+- **Gitignore-aware touched**: filters paths that match the repo's `.gitignore` before passing to `git add`.
+- **Auto-commit**: `sync: pull @ <ts>` on pull, `sync: push @ <ts>` on push, scoped to adapter's `dirs`. Empty diff → no-op. Index-lock failures retry once.
+
+Adapters look like ~50 lines:
+
+```ts
+// src/lib/entities/datastore.ts
+export const datastoreAdapter: EntityAdapter<MemoryItem> = {
+  prefix: "datastore",
+  dirs: ["databases"],
+  async *list() {
+    const collections = await resolveProjectDatastores(creds);
+    for (const col of collections) {
+      let offset = 0;
+      while (true) {
+        const resp = await fetchDatastoreItems(creds, col.id, 1000, offset);
+        for (const r of resp.items) {
+          yield {
+            path: `databases/${col.name}/${r.key}.json`,
+            updatedAt: r.updatedAt,
+            fetchContent: async () => JSON.stringify(r.content, null, 2),
+          };
+        }
+        if (!resp.pagination?.hasNextPage) break;
+        offset += resp.items.length;
+      }
+    }
+  },
+  write: (path, content) => entityWriteFile(repo, dirname(path), basename(path), String(content)),
+  apiUpsert: …,
+  apiDelete: …,
+};
+```
+
+### Implementation phases
+
+**R1. Engine skeleton + ports KB/filestore/datastore.** ~6 hours.
+- New `src/lib/syncEngine.ts` with the contract above.
+- Three adapter files: `src/lib/entities/{kb,filestore,datastore}.ts` (~80 lines each).
+- Existing `kbSync.ts` / `filestoreSync.ts` / `datastoreSync.ts` keep their public exports (`startKbSync`, `pushAllToKb`, etc.) but delegate internally to the engine.
+- Manifest format unchanged. State file paths unchanged. Wire protocol unchanged. Lock semantics unified (KB's `withSyncLock` wins, applied to all three).
+
+**R2. Consolidate Rust state commands.** ~1 hour.
+- Replace `kb_state_load` / `fs_store_state_load` / `datastore_state_load` with one parameterized `entity_state_load(repo, name)` reading `.openit/<name>-state.json`. Same for save and list_local. (TS wrappers stay distinct for readability.)
+- Lib.rs invoke handler list shrinks by 6 entries.
+
+**R3. Bootstrap-vs-poll handoff cleanup.** ~2 hours.
+- Single contract: connect-time = `startEntitySync()` (no separate `syncXToDisk` step). The engine's first pull seeds the manifest correctly.
+- Removes `syncDatastoresToDisk`, `syncAgentsToDisk`, `syncWorkflowsToDisk` once the engine handles bootstrap. (Agents/workflows are read-only; their adapters skip push.)
+- Modal log gets one consistent format from the engine.
+
+**R4. Add agents + workflows pull.** ~1 hour each (was estimated at 3-4 BugBot iterations of effort under the old pattern).
+- Two new adapters; engine handles everything else.
+
+**R5. Conflict banner UI.** Future PR.
+- One `subscribeConflicts(fn)` API on the engine; banner subscribes once and shows aggregate.
+
+### Risks & mitigations
+
+- **R1 risks regression in KB/filestore**: they're stable. Mitigation: keep all exports identical, snapshot the wire format with smoke tests before refactor, run the same smoke tests after.
+- **Bootstrap behavior change**: `syncDatastoresToDisk` currently writes synchronously during the modal. Engine bootstrap might delay by hundreds of ms. Mitigation: time the modal sync before/after; if it regresses by >1s, eager-prefetch in parallel.
+- **Module-level state churn**: kbSync's `syncQueue` is module-level; engine version is per-repo. If a user opens two repos in quick succession this changes lock semantics. Mitigation: per-repo is correct anyway (today's KB is over-locked); document the behavior change.
+
+### Success criteria
+
+- After the refactor, the next 3 BugBot review iterations on a new entity adapter PR (agents pull, then workflows pull, then banner UI) average **≤ 1 finding per iteration**, vs the 3-6 we've been hitting on per-entity PRs.
+- All five entities use the same poll interval default (60s; configurable per adapter).
+- Manifest save and auto-commit both happen inside the same lock.
+- Zero `*.server.*` paths ever land in the auto-commit `touched` array (engine-level gitignore filter).
+- Total `src/lib/*Sync.ts` line count drops to ≤ 600 (from 2,277).
+
+### When to do this
+
+**Immediately after PR #9 lands.** Don't add agents/workflows pull (Phase 3 of the original plan) on the current per-entity architecture — they'll just inherit the drift. Refactor first, then the next PR pattern is: write a 50-line adapter, get reviewed, ship.
+
+This is the **B path** from the architectural review: capture the BugBot-validated correctness of PR #9 in shared code so the validation transfers to future entities.

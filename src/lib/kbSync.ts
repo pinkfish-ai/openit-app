@@ -54,7 +54,6 @@ function update(patch: Partial<SyncStatus>) {
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let activeSyncArgs: { creds: PinkfishCreds; repo: string; collection: KbCollection } | null = null;
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -151,7 +150,6 @@ export async function startKbSync(args: {
     return null;
   }
   update({ collection });
-  activeSyncArgs = { creds, repo, collection };
 
   // Persist the collection id alongside the file manifest.
   const persisted = await kbStateLoad(repo);
@@ -177,7 +175,6 @@ export function stopKbSync() {
     clearInterval(pollTimer);
     pollTimer = null;
   }
-  activeSyncArgs = null;
   update({ phase: "idle", collection: null, conflicts: [], lastError: null });
 }
 
@@ -191,13 +188,6 @@ export async function pullNow(args: {
   await withSyncLock(() => pullOnce(args));
 }
 
-/// Trigger a pull using the active sync credentials. Designed for the UI
-/// refresh button — no args needed; returns false if sync isn't active.
-export async function refreshFromServer(): Promise<boolean> {
-  if (!activeSyncArgs) return false;
-  await withSyncLock(() => pullOnce(activeSyncArgs!));
-  return true;
-}
 
 /// Run one pull pass: list remote files, reconcile against local manifest,
 /// pull new/updated files, surface conflicts.

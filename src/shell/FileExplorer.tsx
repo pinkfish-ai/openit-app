@@ -9,7 +9,7 @@ import {
   type FileNode,
   type GitFileStatus,
 } from "../lib/api";
-import { refreshFromServer, subscribeSync, type SyncStatus } from "../lib/kbSync";
+import { subscribeSync, type SyncStatus } from "../lib/kbSync";
 import { subscribeFilestoreSync, type FilestoreSyncStatus } from "../lib/filestoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk, fetchDatastoreSchema } from "../lib/datastoreSync";
@@ -27,6 +27,22 @@ function gitStatusForPath(rel: string, rows: GitFileStatus[]): GitFileStatus | u
   const direct = rows.find((r) => r.path === rel);
   if (direct) return direct;
   return rows.find((r) => rel.startsWith(`${r.path}/`));
+}
+
+/**
+ * Display-only name transform. The actual on-disk folder name is the
+ * collection's full Pinkfish name (e.g. `openit-people-653713545258`),
+ * but in the tree we strip the `openit-` prefix and the trailing
+ * `-<orgId>` so users see just `people` / `tickets`. Only applies to
+ * top-level `databases/openit-*` directories — leaves filenames inside
+ * them untouched.
+ */
+function prettyName(name: string, rel: string): string {
+  if (rel.match(/^databases\/openit-[^/]+$/)) {
+    const stripped = name.replace(/^openit-/, "").replace(/-\d+$/, "");
+    if (stripped) return stripped;
+  }
+  return name;
 }
 
 function fileColorClass(n: FileNode, repo: string, gitRows: GitFileStatus[]): string {
@@ -155,17 +171,6 @@ export function FileExplorer({
       .catch((e) => setError(String(e)));
   }, [repo]);
 
-  const [refreshing, setRefreshing] = useState(false);
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await refreshFromServer();
-    } finally {
-      reload();
-      onFsChange?.();
-      setRefreshing(false);
-    }
-  }, [reload, onFsChange]);
 
   useEffect(() => {
     reload();
@@ -393,7 +398,6 @@ export function FileExplorer({
       onDrop={onDrop}
     >
       <div className="explorer-toolbar">
-        <button type="button" className="explorer-icon-btn" onClick={handleRefresh} disabled={refreshing} title="Sync from Pinkfish &amp; refresh">{refreshing ? "⟳" : "↻"}</button>
         <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={allCollapsed ? "Expand all" : "Collapse all"}>
           {allCollapsed ? "⊞" : "⊟"}
         </button>
@@ -476,7 +480,7 @@ export function FileExplorer({
               }}
             >
               {n.is_dir ? (isCollapsedRow ? "▸ " : "▾ ") : ""}
-              <span className="tree-item-name">{n.name}</span>
+              <span className="tree-item-name">{prettyName(n.name, rel)}</span>
               {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
               {isDeletable(n) && (
                 <button

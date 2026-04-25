@@ -1,4 +1,4 @@
-import { pinkfishMcpCall, entityWriteFile } from "./api";
+import { pinkfishMcpCall, entityWriteFile, fsRead } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 
 export type Workflow = {
@@ -110,9 +110,25 @@ export async function resolveProjectWorkflows(
   return filtered;
 }
 
-export async function syncWorkflowsToDisk(repo: string, workflows: Workflow[]): Promise<void> {
+export async function syncWorkflowsToDisk(
+  repo: string,
+  workflows: Workflow[],
+): Promise<{ written: number; unchanged: number }> {
+  // Content-equality: skip writes when the on-disk file already matches.
+  let written = 0;
+  let unchanged = 0;
   for (const wf of workflows) {
     const filename = wf.name.replace(/[/\\:*?"<>|]/g, "_") + ".json";
-    await entityWriteFile(repo, "workflows", filename, JSON.stringify(wf, null, 2));
+    const content = JSON.stringify(wf, null, 2);
+    const absPath = `${repo}/workflows/${filename}`;
+    let existing: string | null = null;
+    try { existing = await fsRead(absPath); } catch { /* missing */ }
+    if (existing === content) {
+      unchanged += 1;
+      continue;
+    }
+    await entityWriteFile(repo, "workflows", filename, content);
+    written += 1;
   }
+  return { written, unchanged };
 }

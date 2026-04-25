@@ -5,6 +5,7 @@ import { projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
+import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
 import { syncSkillsToDisk, type Bubble as ManifestBubble } from "./lib/skillsSync";
 import { type Bubble as PromptBubble } from "./shell/PromptBubbles";
 import "./App.css";
@@ -84,6 +85,10 @@ function App() {
             creds,
             repo: lastRepo,
           }).catch((e) => console.error("filestore sync init failed:", e));
+          startDatastoreSync({
+            creds,
+            repo: lastRepo,
+          }).catch((e) => console.error("datastore sync init failed:", e));
         } else if (creds && !lastRepo && !repo && !stale) {
           // First run with dev creds — auto-bootstrap. Skipped when stale so
           // the user lands on the connect screen and re-connects deliberately.
@@ -114,6 +119,10 @@ function App() {
               creds,
               repo: result.path,
             }).catch((e) => console.error("filestore sync init failed:", e));
+            startDatastoreSync({
+              creds,
+              repo: result.path,
+            }).catch((e) => console.error("datastore sync init failed:", e));
             syncSkillsToDisk(result.path, creds)
               .then((manifest) => {
                 console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
@@ -132,6 +141,7 @@ function App() {
       unsub();
       stopKbSync();
       stopFilestoreSync();
+      stopDatastoreSync();
     };
   }, []);
 
@@ -170,6 +180,10 @@ function App() {
           creds: fullCreds,
           repo: result.path,
         }).catch((e) => console.error("filestore sync init failed:", e));
+        startDatastoreSync({
+          creds: fullCreds,
+          repo: result.path,
+        }).catch((e) => console.error("datastore sync init failed:", e));
         syncSkillsToDisk(result.path, fullCreds)
           .then((manifest) => {
             console.log("[app] skill sync complete, bubbles:", manifest.bubbles);

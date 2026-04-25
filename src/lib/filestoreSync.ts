@@ -7,7 +7,7 @@ import {
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
-import { fsStoreStateLoad, fsStoreStateSave } from "./api";
+import { fsStoreStateLoad, fsStoreStateSave, gitCommitPaths } from "./api";
 import {
   fsStoreInit,
   fsStoreListLocal,
@@ -393,7 +393,34 @@ export function stopFilestoreSync() {
   resolvedRepos.clear();
 }
 
+// Per-repo+collection in-flight pull lock. Mirrors the kbSync withSyncLock
+// and datastoreSync inflightPull patterns. Without this, a manual pull and
+// the 5-minute background poll can race for the same collection — both
+// load the manifest, both write changes, and the second save clobbers the
+// first.
+const inflightFilestorePull = new Map<
+  string,
+  Promise<{ downloaded: number; total: number }>
+>();
+
 export async function pullOnce(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  collection: FilestoreCollection;
+}): Promise<{ downloaded: number; total: number }> {
+  const lockKey = `${args.repo}:${args.collection.id}`;
+  const existing = inflightFilestorePull.get(lockKey);
+  if (existing) return existing;
+  const promise = pullOnceImpl(args);
+  inflightFilestorePull.set(lockKey, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightFilestorePull.delete(lockKey);
+  }
+}
+
+async function pullOnceImpl(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: FilestoreCollection;
@@ -433,6 +460,7 @@ export async function pullOnce(args: {
   const localMap = new Map(local.map((f) => [f.filename, f]));
   const persisted: KbStatePersisted = await fsStoreStateLoad(repo);
   const conflicts: ConflictFile[] = [];
+  const touched: string[] = [];
   let downloaded = 0;
 
   for (const r of remote) {
@@ -448,6 +476,7 @@ export async function pullOnce(args: {
           remote_version: r.updatedAt,
           pulled_at_mtime_ms: Date.now(),
         };
+        touched.push(`filestore/${r.filename}`);
         downloaded += 1;
       } catch (e) {
         console.error(`filestore pull ${r.filename} failed:`, e);
@@ -476,6 +505,7 @@ export async function pullOnce(args: {
             remote_version: r.updatedAt,
             pulled_at_mtime_ms: Date.now(),
           };
+          touched.push(`filestore/${r.filename}`);
           downloaded += 1;
         } catch (e) {
           console.error(`filestore pull ${r.filename} failed:`, e);
@@ -487,6 +517,18 @@ export async function pullOnce(args: {
   }
 
   await fsStoreStateSave(repo, persisted);
+
+  // Auto-commit downloaded files so they don't show up as untracked in the
+  // Deploy tab. Matches the KB and datastore pull patterns.
+  if (touched.length > 0) {
+    try {
+      const ts = new Date().toISOString();
+      await gitCommitPaths(repo, touched, `sync: pull @ ${ts}`);
+    } catch (e) {
+      console.warn("filestore git commit after pull:", e);
+    }
+  }
+
   update({
     phase: "ready",
     conflicts,

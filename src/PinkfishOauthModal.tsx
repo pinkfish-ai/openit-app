@@ -116,16 +116,13 @@ export function PinkfishOauthModal({
             const datastores = await resolveProjectDatastores(creds, addLog);
             const itemsByCollection: Record<string, { items: any[]; hasMore: boolean }> = {};
             let totalItems = 0;
-            let schemaFiles = 0;
             for (const ds of datastores) {
               const data = await fetchDatastoreItems(creds, ds.id);
               itemsByCollection[ds.id] = data;
               totalItems += data.items.length;
-              if (ds.schema) schemaFiles += 1;
             }
-            await syncDatastoresToDisk(repo, datastores, itemsByCollection);
-            const fileCount = totalItems + schemaFiles;
-            addLog(`    ${datastores.length} collection(s), ${totalItems} item(s) — ${fileCount} file(s) written`);
+            const { written, unchanged } = await syncDatastoresToDisk(repo, datastores, itemsByCollection);
+            addLog(`    ${datastores.length} collection(s), ${totalItems} item(s) — ${written} file(s) written, ${unchanged} unchanged`);
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
@@ -140,8 +137,8 @@ export function PinkfishOauthModal({
             for (const a of agents) {
               addLog(`  ✓ ${a.name ?? "(unnamed)"}  (id: ${(a as any).id ?? "?"})`);
             }
-            await syncAgentsToDisk(repo, agents);
-            addLog(`    ${agents.length} agent(s) — ${agents.length} file(s) written`);
+            const a = await syncAgentsToDisk(repo, agents);
+            addLog(`    ${agents.length} agent(s) — ${a.written} file(s) written, ${a.unchanged} unchanged`);
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
@@ -156,8 +153,8 @@ export function PinkfishOauthModal({
             for (const w of workflows) {
               addLog(`  ✓ ${w.name}  (id: ${w.id})`);
             }
-            await syncWorkflowsToDisk(repo, workflows);
-            addLog(`    ${workflows.length} workflow(s) — ${workflows.length} file(s) written`);
+            const w = await syncWorkflowsToDisk(repo, workflows);
+            addLog(`    ${workflows.length} workflow(s) — ${w.written} file(s) written, ${w.unchanged} unchanged`);
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;

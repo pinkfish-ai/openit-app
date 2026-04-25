@@ -5,8 +5,15 @@ import {
   buildKbConflictPrompt,
   getSyncStatus,
   kbHasServerShadowFiles,
+  pullNow,
   subscribeSync,
 } from "../lib/kbSync";
+import {
+  getFilestoreSyncStatus,
+  pullOnce as filestorePullOnce,
+} from "../lib/filestoreSync";
+import { pullDatastoresOnce } from "../lib/datastoreSync";
+import { loadCreds } from "../lib/pinkfishAuth";
 import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
 import { ChatPane } from "./ChatPane";
 import { FileExplorer } from "./FileExplorer";
@@ -36,7 +43,80 @@ export function Shell({
   const [leftTab, setLeftTab] = useState<LeftTab>("files");
   const [fsTick, setFsTick] = useState(0);
   const [changeCount, setChangeCount] = useState(0);
+  const [pulling, setPulling] = useState(false);
   const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
+
+  const handleManualPull = useCallback(async () => {
+    if (!repo || pulling) return;
+    setPulling(true);
+    onSyncLine("─── manual pull ───");
+    try {
+      const creds = await loadCreds().catch(() => null);
+      if (!creds) {
+        onSyncLine("✗ pull: not authenticated");
+        return;
+      }
+
+      // Run pulls SEQUENTIALLY, not in parallel — each pull's auto-commit
+      // takes the .git/index.lock briefly, and concurrent commits race on
+      // that lock. Losing the race surfaces as a warning + uncommitted
+      // pulled files showing up in the Deploy tab. Sequencing is fine
+      // perf-wise (each pull is ~hundreds of ms; user-facing) and aligns
+      // the streaming output too.
+
+      // KB pull
+      const kbStatus = getSyncStatus();
+      if (kbStatus.collection) {
+        onSyncLine("▸ pull: kb");
+        try {
+          await pullNow({ creds, repo, collection: kbStatus.collection });
+          onSyncLine("  ✓ kb pull complete");
+        } catch (e) {
+          console.error("[manual pull] kb failed:", e);
+          onSyncLine(`  ✗ kb pull failed: ${String(e)}`);
+        }
+      } else {
+        onSyncLine("▸ pull: kb skipped (no collection)");
+      }
+
+      // Filestore pull
+      const fsCollections = getFilestoreSyncStatus().collections;
+      if (fsCollections.length === 0) {
+        onSyncLine("▸ pull: filestore skipped (no collections)");
+      } else {
+        onSyncLine(`▸ pull: filestore (${fsCollections.length} collection${fsCollections.length === 1 ? "" : "s"})`);
+        for (const c of fsCollections) {
+          try {
+            const r = await filestorePullOnce({ creds, repo, collection: c });
+            onSyncLine(`  ✓ ${c.name} — ${r.downloaded}/${r.total} downloaded`);
+          } catch (e) {
+            console.error(`[manual pull] filestore (${c.name}) failed:`, e);
+            onSyncLine(`  ✗ ${c.name} failed: ${String(e)}`);
+          }
+        }
+      }
+
+      // Datastore pull
+      onSyncLine("▸ pull: datastores");
+      try {
+        const r = await pullDatastoresOnce({ creds, repo });
+        onSyncLine(
+          `  ✓ datastore pull complete — ${r.pulled} row(s) updated, ${r.conflicts.length} conflict${r.conflicts.length === 1 ? "" : "s"}`,
+        );
+        for (const c of r.conflicts) {
+          onSyncLine(`    ⚠ conflict: ${c.collectionName}/${c.key}.json — ${c.reason}`);
+        }
+      } catch (e) {
+        console.error("[manual pull] datastore failed:", e);
+        onSyncLine(`  ✗ datastore pull failed: ${String(e)}`);
+      }
+
+      onSyncLine("─── pull done ───");
+      bumpFs();
+    } finally {
+      setPulling(false);
+    }
+  }, [repo, pulling, bumpFs, onSyncLine]);
 
   useEffect(() => {
     stateLoad().then(setState).catch(console.error);
@@ -149,12 +229,22 @@ export function Shell({
                 className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
                 onClick={() => setLeftTab("source-control")}
               >
-                Sync
+                Deploy
                 {changeCount > 0 && (
                   <span className="left-tab-badge" aria-label={`${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`}>
                     {changeCount}
                   </span>
                 )}
+              </button>
+              <button
+                type="button"
+                className="left-tab-pull-btn"
+                onClick={handleManualPull}
+                disabled={!repo || pulling}
+                aria-label="Pull from Pinkfish now"
+                title={pulling ? "Pulling…" : "Pull from Pinkfish"}
+              >
+                <span className={`left-tab-pull-glyph${pulling ? " is-pulling" : ""}`}>↻</span>
               </button>
             </div>
             {/* Keep both panels mounted so typed-but-uncommitted state
