@@ -95,6 +95,8 @@ const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventu
 export async function resolveProjectFilestores(
   creds: PinkfishCreds,
 ): Promise<FilestoreCollection[]> {
+  console.log("----BEGIN FILESTORE SYNC----");
+  console.log("[filestore] resolveProjectFilestores called");
   const token = getToken();
   if (!token) throw new Error("not authenticated");
   const urls = derivedUrls(creds.tokenUrl);
@@ -104,6 +106,8 @@ export async function resolveProjectFilestores(
   let matching = all
     .filter((c) => defaults.some((d) => d.name === c.name))
     .map((c) => ({ id: c.id, name: c.name, description: c.description }));
+  
+  console.log(`[filestore] ✓ Found ${all.length} filestore collections, ${matching.length} matching defaults`);
 
   // If list returned nothing, check our in-memory cache of recently created collections
   if (matching.length === 0 && createdCollections.size > 0) {
@@ -185,6 +189,7 @@ export async function resolveProjectFilestores(
     }
   }
 
+  console.log("----END FILESTORE SYNC----");
   return matching;
 }
 

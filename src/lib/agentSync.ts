@@ -75,6 +75,7 @@ async function call(
 export async function resolveProjectAgents(
   creds: PinkfishCreds,
 ): Promise<Agent[]> {
+  console.log("----BEGIN AGENT SYNC----");
   const raw = (await call(creds, "agent-management", "agent_list", {})) as {
     agents?: Array<Record<string, unknown>>;
   } | null;
@@ -91,7 +92,10 @@ export async function resolveProjectAgents(
     isShared: typeof a.isShared === "boolean" ? a.isShared : undefined,
   }));
 
-  return agents.filter((a) => a.name.startsWith(PREFIX));
+  const filtered = agents.filter((a) => a.name.startsWith(PREFIX));
+  console.log(`[agent] ✓ Found ${filtered.length} agents`);
+  console.log("----END AGENT SYNC----");
+  return filtered;
 }
 
 export async function syncAgentsToDisk(repo: string, agents: Agent[]): Promise<void> {

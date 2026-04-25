@@ -35,6 +35,7 @@ const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventu
 export async function resolveProjectDatastores(
   creds: PinkfishCreds,
 ): Promise<DataCollection[]> {
+  console.log("----BEGIN DATASTORE SYNC----");
   console.log("[datastoreSync] resolveProjectDatastores called");
   const token = getToken();
   if (!token) throw new Error("not authenticated");
@@ -54,13 +55,14 @@ export async function resolveProjectDatastores(
 
     const result = (await response.json()) as DataCollection[] | null;
     const allCollections = Array.isArray(result) ? result : [];
-    console.log(`[datastoreSync] list_collections returned ${allCollections.length} datastore collections`);
-    allCollections.forEach((c: DataCollection) => console.log(`  - ${c.name} (id: ${c.id})`));
+    console.log(`[datastoreSync] ✓ Found ${allCollections.length} datastore collections`);
+    allCollections.forEach((c: DataCollection) => console.log(`  • ${c.name} (id: ${c.id})`));
     const defaults = DEFAULT_DATASTORES.map((d) => ({
       ...d,
       name: `${d.name}-${creds.orgId}`,
     }));
     let matching = allCollections.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
+    console.log(`[datastoreSync] ✓ Matching default collections: ${matching.length}`);
 
     // If list returned nothing, check our in-memory cache of recently created collections
     if (matching.length === 0 && createdCollections.size > 0) {
@@ -163,8 +165,10 @@ export async function resolveProjectDatastores(
       }
     }
 
+    console.log("----END DATASTORE SYNC----");
     return matching;
   } catch (error) {
+    console.log("----END DATASTORE SYNC (error)----");
     console.error("[datastoreSync] resolveProjectDatastores failed:", error);
     throw error;
   }

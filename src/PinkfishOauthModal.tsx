@@ -9,6 +9,9 @@ import {
   saveCreds,
   type PinkfishCreds,
 } from "./lib/pinkfishAuth";
+import { resolveProjectDatastores } from "./lib/datastoreSync";
+import { resolveProjectAgents } from "./lib/agentSync";
+import { resolveProjectWorkflows } from "./lib/workflowSync";
 
 const SIGNUP_URL = "https://app.pinkfish.ai/coworker/public";
 
@@ -26,8 +29,15 @@ export function PinkfishOauthModal({
   const [orgId, setOrgId] = useState(initial?.orgId ?? "");
   const [tokenUrl, setTokenUrl] = useState(initial?.tokenUrl ?? DEFAULT_TOKEN_URL);
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncLogs, setSyncLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const addLog = (msg: string) => {
+    console.log(msg);
+    setSyncLogs((prev) => [...prev, msg]);
+  };
 
   const submit = async () => {
     setBusy(true);
@@ -52,8 +62,42 @@ export function PinkfishOauthModal({
       const orgName = me?.name ?? null;
       await saveCreds(creds);
       setSuccess(`Connected${orgName ? ` to ${orgName}` : ""}.`);
-      onConnected(orgName);
-      setTimeout(onClose, 600);
+      
+      // Start syncing collections
+      setSyncing(true);
+      setSyncLogs([]);
+      addLog("----BEGIN SYNC----");
+      addLog("Syncing datastores, agents, and workflows...");
+      
+      try {
+        addLog("[sync] Resolving datastores...");
+        await resolveProjectDatastores(creds).catch((e) => {
+          addLog(`[sync] ⚠ Datastore sync failed: ${e}`);
+        });
+        addLog("[sync] ✓ Datastores synced");
+        
+        addLog("[sync] Resolving agents...");
+        await resolveProjectAgents(creds).catch((e) => {
+          addLog(`[sync] ⚠ Agent sync failed: ${e}`);
+        });
+        addLog("[sync] ✓ Agents synced");
+        
+        addLog("[sync] Resolving workflows...");
+        await resolveProjectWorkflows(creds).catch((e) => {
+          addLog(`[sync] ⚠ Workflow sync failed: ${e}`);
+        });
+        addLog("[sync] ✓ Workflows synced");
+        
+        addLog("----END SYNC----");
+        setSyncing(false);
+        onConnected(orgName);
+        setTimeout(onClose, 1000);
+      } catch (syncErr) {
+        addLog(`[sync] Error: ${syncErr}`);
+        setSyncing(false);
+        setError(`Sync failed: ${syncErr}`);
+        setBusy(false);
+      }
     } catch (e) {
       setError(String(e));
       setBusy(false);
@@ -64,67 +108,103 @@ export function PinkfishOauthModal({
     <div className="confirm-modal" role="dialog" aria-label="Connect Pinkfish">
       <div className="confirm-modal-body wide">
         <h3>Connect Pinkfish</h3>
-        <p>
-          OAuth client credentials for your Pinkfish org.{" "}
-          <a
-            href={SIGNUP_URL}
-            onClick={(e) => {
-              e.preventDefault();
-              openUrl(SIGNUP_URL).catch(console.error);
-            }}
-          >
-            Create an account or sign in
-          </a>{" "}
-          to get your client_id, client_secret, and org id. Stored in your OS keychain — never on disk.
-        </p>
+        
+        {syncing ? (
+          <div style={{ marginTop: "20px" }}>
+            <p style={{ fontSize: "14px", marginBottom: "10px", color: "#666" }}>
+              🔄 Syncing collections and resources...
+            </p>
+            <div
+              style={{
+                backgroundColor: "#f5f5f5",
+                border: "1px solid #ddd",
+                borderRadius: "4px",
+                padding: "12px",
+                fontSize: "12px",
+                fontFamily: "monospace",
+                maxHeight: "300px",
+                overflowY: "auto",
+                marginBottom: "15px",
+                lineHeight: "1.6",
+              }}
+            >
+              {syncLogs.map((log, i) => (
+                <div key={i}>{log}</div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <>
+            <p>
+              OAuth client credentials for your Pinkfish org.{" "}
+              <a
+                href={SIGNUP_URL}
+                onClick={(e) => {
+                  e.preventDefault();
+                  openUrl(SIGNUP_URL).catch(console.error);
+                }}
+              >
+                Create an account or sign in
+              </a>{" "}
+              to get your client_id, client_secret, and org id. Stored in your OS keychain — never on disk.
+            </p>
 
-        <label className="key-label">Client ID</label>
-        <input
-          autoFocus
-          className="key-input"
-          placeholder="d7lvo7pfgqvs73j8nnr0"
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-        />
+            <label className="key-label">Client ID</label>
+            <input
+              autoFocus
+              className="key-input"
+              placeholder="d7lvo7pfgqvs73j8nnr0"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              disabled={busy}
+            />
 
-        <label className="key-label">Client Secret</label>
-        <input
-          type="password"
-          className="key-input"
-          placeholder="pf_live_..."
-          value={clientSecret}
-          onChange={(e) => setClientSecret(e.target.value)}
-        />
+            <label className="key-label">Client Secret</label>
+            <input
+              type="password"
+              className="key-input"
+              placeholder="pf_live_..."
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+              disabled={busy}
+            />
 
-        <label className="key-label">Org ID</label>
-        <input
-          className="key-input"
-          placeholder="689584191634"
-          value={orgId}
-          onChange={(e) => setOrgId(e.target.value)}
-        />
+            <label className="key-label">Org ID</label>
+            <input
+              className="key-input"
+              placeholder="689584191634"
+              value={orgId}
+              onChange={(e) => setOrgId(e.target.value)}
+              disabled={busy}
+            />
 
-        <label className="key-label">Token URL</label>
-        <input
-          className="key-input"
-          placeholder={DEFAULT_TOKEN_URL}
-          value={tokenUrl}
-          onChange={(e) => setTokenUrl(e.target.value)}
-        />
+            <label className="key-label">Token URL</label>
+            <input
+              className="key-input"
+              placeholder={DEFAULT_TOKEN_URL}
+              value={tokenUrl}
+              onChange={(e) => setTokenUrl(e.target.value)}
+              disabled={busy}
+            />
 
-        {error && <div className="key-error">{error}</div>}
-        {success && <div className="key-success">{success}</div>}
+            {error && <div className="key-error">{error}</div>}
+            {success && <div className="key-success">{success}</div>}
+          </>
+        )}
+        
         <div className="key-actions">
-          <button onClick={onClose} disabled={busy}>
-            Cancel
+          <button onClick={onClose} disabled={busy || syncing}>
+            {syncing ? "Syncing..." : "Cancel"}
           </button>
-          <button
-            onClick={submit}
-            disabled={busy || !clientId || !clientSecret || !orgId}
-            className="key-save"
-          >
-            {busy ? "Connecting…" : "Connect"}
-          </button>
+          {!syncing && (
+            <button
+              onClick={submit}
+              disabled={busy || !clientId || !clientSecret || !orgId}
+              className="key-save"
+            >
+              {busy ? "Connecting…" : "Connect"}
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -74,6 +74,7 @@ async function call(
 export async function resolveProjectWorkflows(
   creds: PinkfishCreds,
 ): Promise<Workflow[]> {
+  console.log("----BEGIN WORKFLOW SYNC----");
   const raw = (await call(
     creds,
     "pinkfish-sidekick",
@@ -104,7 +105,10 @@ export async function resolveProjectWorkflows(
       : undefined,
   }));
 
-  return workflows.filter((w) => w.name.startsWith(PREFIX));
+  const filtered = workflows.filter((w) => w.name.startsWith(PREFIX));
+  console.log(`[workflow] ✓ Found ${filtered.length} workflows`);
+  console.log("----END WORKFLOW SYNC----");
+  return filtered;
 }
 
 export async function syncWorkflowsToDisk(repo: string, workflows: Workflow[]): Promise<void> {
