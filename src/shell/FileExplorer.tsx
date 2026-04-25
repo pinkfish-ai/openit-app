@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fsList,
   gitStatusShort,
+  kbDeleteFile,
   kbWriteFileBytes,
   type FileNode,
   type GitFileStatus,
 } from "../lib/api";
-import { subscribeSync, type SyncStatus } from "../lib/kbSync";
+import { refreshFromServer, subscribeSync, type SyncStatus } from "../lib/kbSync";
 
 function relPath(repo: string, absPath: string): string {
   const prefix = `${repo}/`;
@@ -50,9 +51,13 @@ function fileStatusBadge(n: FileNode, repo: string, gitRows: GitFileStatus[]): s
 export function FileExplorer({
   repo,
   onSelect,
+  fsTick,
+  onFsChange,
 }: {
   repo: string | null;
   onSelect: (path: string) => void;
+  fsTick?: number;
+  onFsChange?: () => void;
 }) {
   const [nodes, setNodes] = useState<FileNode[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -76,9 +81,21 @@ export function FileExplorer({
       .catch((e) => setError(String(e)));
   }, [repo]);
 
+  const [refreshing, setRefreshing] = useState(false);
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refreshFromServer();
+    } finally {
+      reload();
+      onFsChange?.();
+      setRefreshing(false);
+    }
+  }, [reload, onFsChange]);
+
   useEffect(() => {
     reload();
-  }, [reload]);
+  }, [reload, fsTick]);
 
   useEffect(() => {
     if (sync?.phase === "ready") reload();
@@ -93,11 +110,12 @@ export function FileExplorer({
       gitStatusShort(repo)
         .then(setGitRows)
         .catch(() => setGitRows([]));
+      reload();
     };
     tick();
     const id = setInterval(tick, 3000);
     return () => clearInterval(id);
-  }, [repo]);
+  }, [repo, reload]);
 
   const visible = useMemo(() => {
     if (!repo) return [];
@@ -141,6 +159,18 @@ export function FileExplorer({
       return next;
     });
 
+  const handleDelete = async (node: FileNode) => {
+    if (node.is_dir || !repo) return;
+    const rel = relPath(repo, node.path);
+    const kbPrefix = "knowledge-base/";
+    if (rel.startsWith(kbPrefix)) {
+      const filename = rel.slice(kbPrefix.length);
+      await kbDeleteFile(repo, filename);
+    }
+    reload();
+    onFsChange?.();
+  };
+
   const allDirs = nodes.filter((n) => n.is_dir).map((n) => n.path);
   const allCollapsed = allDirs.length > 0 && allDirs.every((d) => collapsed.has(d));
   const toggleAll = () => {
@@ -161,23 +191,10 @@ export function FileExplorer({
       onDragLeave={() => setDragOver(false)}
       onDrop={onDrop}
     >
-      <div className="explorer-header">
-        <span className="explorer-name">{repo.split("/").pop()}</span>
-        <button
-          type="button"
-          className="explorer-toggle"
-          onClick={reload}
-          title="Refresh tree"
-        >
-          Refresh
-        </button>
-        <button
-          type="button"
-          className="explorer-toggle"
-          onClick={toggleAll}
-          title={allCollapsed ? "Expand all" : "Collapse all"}
-        >
-          {allCollapsed ? "Expand all" : "Collapse all"}
+      <div className="explorer-toolbar">
+        <button type="button" className="explorer-icon-btn" onClick={handleRefresh} disabled={refreshing} title="Sync from Pinkfish &amp; refresh">{refreshing ? "⟳" : "↻"}</button>
+        <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={allCollapsed ? "Expand all" : "Collapse all"}>
+          {allCollapsed ? "⊞" : "⊟"}
         </button>
       </div>
       <ul className="tree">
@@ -204,6 +221,19 @@ export function FileExplorer({
               {n.is_dir ? (isCollapsedRow ? "▸ " : "▾ ") : ""}
               <span className="tree-item-name">{n.name}</span>
               {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
+              {!n.is_dir && (
+                <button
+                  type="button"
+                  className="tree-delete-btn"
+                  title={`Delete ${n.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(n);
+                  }}
+                >
+                  ✕
+                </button>
+              )}
             </li>
           );
         })}

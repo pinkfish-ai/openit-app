@@ -58,6 +58,10 @@ export async function gitCommitStaged(repo: string, message: string): Promise<bo
   return invoke("git_commit_staged", { repo, message });
 }
 
+export async function gitDiscard(repo: string, paths: string[]): Promise<void> {
+  return invoke("git_discard", { repo, paths });
+}
+
 export async function gitFileDiff(repo: string, path: string): Promise<string> {
   return invoke("git_file_diff", { repo, path });
 }
@@ -202,6 +206,10 @@ export async function kbInit(repo: string): Promise<string> {
 
 export async function kbListLocal(repo: string): Promise<KbLocalFile[]> {
   return invoke("kb_list_local", { repo });
+}
+
+export async function kbDeleteFile(repo: string, filename: string): Promise<void> {
+  return invoke("kb_delete_file", { repo, filename });
 }
 
 export async function kbReadFile(repo: string, filename: string): Promise<string> {

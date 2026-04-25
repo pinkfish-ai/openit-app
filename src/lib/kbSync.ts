@@ -2,6 +2,7 @@ import {
   gitAddAndCommit,
   gitEnsureRepo,
   gitStatusShort,
+  kbDeleteFile,
   kbDownloadToLocal,
   kbInit,
   kbListLocal,
@@ -53,6 +54,7 @@ function update(patch: Partial<SyncStatus>) {
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let activeSyncArgs: { creds: PinkfishCreds; repo: string; collection: KbCollection } | null = null;
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -141,6 +143,7 @@ export async function startKbSync(args: {
     return;
   }
   update({ collection });
+  activeSyncArgs = { creds, repo, collection };
 
   // Persist the collection id alongside the file manifest.
   const persisted = await kbStateLoad(repo);
@@ -165,6 +168,7 @@ export function stopKbSync() {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  activeSyncArgs = null;
   update({ phase: "idle", collection: null, conflicts: [], lastError: null });
 }
 
@@ -175,6 +179,14 @@ export async function pullNow(args: {
   collection: KbCollection;
 }): Promise<void> {
   return pullOnce(args);
+}
+
+/// Trigger a pull using the active sync credentials. Designed for the UI
+/// refresh button — no args needed; returns false if sync isn't active.
+export async function refreshFromServer(): Promise<boolean> {
+  if (!activeSyncArgs) return false;
+  await pullOnce(activeSyncArgs);
+  return true;
 }
 
 /// Run one pull pass: list remote files, reconcile against local manifest,
@@ -261,7 +273,29 @@ async function pullOnce(args: {
       // remote unchanged: nothing to do
       continue;
     }
-    // tracked but missing locally → user deleted, leave alone
+    // tracked but missing locally → user deleted locally, leave alone
+  }
+
+  // Detect server-side deletions: files the manifest says we synced from the
+  // server but that are no longer in the remote list → server deleted them.
+  // We deliberately do NOT delete files that aren't in the manifest — those
+  // are local-only files (e.g. just added, just committed, never pushed).
+  const remoteNames = new Set(remote.map((r) => r.filename));
+  for (const filename of Object.keys(persisted.files)) {
+    if (filename.includes(".server.")) continue;
+    if (remoteNames.has(filename)) continue;
+    const localFile = localMap.get(filename);
+    if (!localFile) {
+      delete persisted.files[filename];
+      continue;
+    }
+    try {
+      await kbDeleteFile(repo, filename);
+      delete persisted.files[filename];
+      console.log(`[kbsync] deleted local ${filename} (removed on server)`);
+    } catch (e) {
+      console.error(`[kbsync] failed to delete local ${filename}:`, e);
+    }
   }
 
   await kbStateSave(repo, persisted);
@@ -319,7 +353,12 @@ export async function pushAllToKb(args: {
     if (f.filename.includes(".server.")) return false;
     const tracked = persisted.files[f.filename];
     if (!tracked) return true;
-    return dirtyPaths.has(f.filename);
+    if (dirtyPaths.has(f.filename)) return true;
+    // After a commit, the working tree is clean but mtime is newer than
+    // what we recorded at last sync. That means the user committed edits
+    // we haven't pushed yet.
+    if (f.mtime_ms != null && f.mtime_ms > tracked.pulled_at_mtime_ms) return true;
+    return false;
   });
 
   if (toPush.length === 0) {

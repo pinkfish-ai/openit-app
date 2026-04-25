@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   gitCommitStaged,
   gitDiff,
+  gitDiscard,
   gitFileDiff,
   gitLog,
   gitStage,
@@ -18,6 +19,7 @@ type Props = {
   onShowDiff: (text: string) => void;
   onDeployLine: (line: string) => void;
   onDeployExit: (code: number | null) => void;
+  onFsChange?: () => void;
 };
 
 function statusLabel(s: string): string {
@@ -44,11 +46,11 @@ function statusColorClass(s: string): string {
   return "";
 }
 
-function commitIcon(subject: string): string {
-  if (subject.startsWith("sync: pull")) return "↓";
-  if (subject.startsWith("sync: deployed")) return "↑";
-  if (subject.startsWith("init:")) return "●";
-  return "";
+function commitDotClass(subject: string): string {
+  if (subject.startsWith("sync: pull")) return "sc-commit-dot dot-pull";
+  if (subject.startsWith("sync: deployed")) return "sc-commit-dot dot-push";
+  if (subject.startsWith("init:") || subject.startsWith("pre-deploy")) return "sc-commit-dot dot-init";
+  return "sc-commit-dot";
 }
 
 function relativeTime(dateStr: string): string {
@@ -65,7 +67,7 @@ function relativeTime(dateStr: string): string {
   return dateStr.split("T")[0];
 }
 
-export function SourceControl({ repo, env, onShowDiff, onDeployLine, onDeployExit }: Props) {
+export function SourceControl({ repo, env, onShowDiff, onDeployLine, onDeployExit, onFsChange }: Props) {
   const [files, setFiles] = useState<GitFileStatus[]>([]);
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [commitMsg, setCommitMsg] = useState("");
@@ -107,6 +109,22 @@ export function SourceControl({ repo, env, onShowDiff, onDeployLine, onDeployExi
   const handleStageAll = () => handleStage(unstaged.map((f) => f.path));
   const handleUnstageAll = () => handleUnstage(staged.map((f) => f.path));
 
+  const handleDiscard = async (paths: string[]) => {
+    if (!repo) return;
+    console.log("[sc] discard", { repo, paths });
+    try {
+      await gitDiscard(repo, paths);
+      console.log("[sc] discard ok", paths);
+    } catch (e) {
+      console.error("[sc] discard failed", paths, e);
+      setError(`Discard failed: ${String(e)}`);
+    }
+    refresh();
+    onFsChange?.();
+  };
+
+  const handleDiscardAll = () => handleDiscard(unstaged.map((f) => f.path));
+
   const handleCommit = async () => {
     if (!repo || !commitMsg.trim() || staged.length === 0) return;
     setCommitting(true);
@@ -119,6 +137,7 @@ export function SourceControl({ repo, env, onShowDiff, onDeployLine, onDeployExi
         setError("Nothing to commit");
       }
       refresh();
+      onFsChange?.();
     } catch (e) {
       setError(String(e));
     } finally {
@@ -169,131 +188,101 @@ export function SourceControl({ repo, env, onShowDiff, onDeployLine, onDeployExi
       </div>
       {error && <div className="sc-error">{error}</div>}
 
-      {/* Deploy = push to main */}
       <div className="sc-deploy-row">
-        <DeployButton repo={repo} env={env} onLine={onDeployLine} onExit={onDeployExit} />
-        <span className="sc-deploy-hint">Push to Pinkfish</span>
+        <DeployButton
+          repo={repo}
+          env={env}
+          onLine={onDeployLine}
+          onExit={onDeployExit}
+          dirty={files.length > 0}
+          latestCommitSubject={commits[0]?.subject ?? null}
+        />
       </div>
 
-      {/* Staged changes */}
-      <div className="sc-section">
-        <div className="sc-section-header">
-          <span className="sc-section-title">
-            Staged Changes
-            {staged.length > 0 && <span className="sc-count">{staged.length}</span>}
-          </span>
-          {staged.length > 0 && (
-            <button
-              type="button"
-              className="sc-action"
-              onClick={handleUnstageAll}
-              title="Unstage all"
-            >
-              −
-            </button>
-          )}
-        </div>
-        {staged.length === 0 && <div className="sc-empty-hint">No staged changes</div>}
-        <ul className="sc-file-list">
-          {staged.map((f) => (
-            <li key={`s-${f.path}`} className="sc-file-row">
-              <button
-                type="button"
-                className="sc-file-name"
-                onClick={() => handleFileDiff(f.path)}
-                title={f.path}
-              >
-                {f.path.split("/").pop()}
-              </button>
-              <span className="sc-file-dir">{f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ""}</span>
-              <span className={`sc-badge ${statusColorClass(f.status)}`} title={statusTitle(f.status)}>
-                {statusLabel(f.status)}
-              </span>
-              <button
-                type="button"
-                className="sc-action"
-                onClick={() => handleUnstage([f.path])}
-                title="Unstage"
-              >
-                −
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+      {/* Staged + Changes — tight VS Code-style layout, no dividers */}
+      <div className="sc-changes">
+        {staged.length > 0 && (
+          <>
+            <div className="sc-group-header">
+              <span className="sc-group-label">Staged Changes</span>
+              <span className="sc-count">{staged.length}</span>
+              <button type="button" className="sc-hdr-action" onClick={handleUnstageAll} title="Unstage all">−</button>
+            </div>
+            <ul className="sc-file-list">
+              {staged.map((f) => (
+                <li key={`s-${f.path}`} className="sc-file-row">
+                  <button type="button" className="sc-file-name" onClick={() => handleFileDiff(f.path)} title={f.path}>
+                    {f.path.split("/").pop()}
+                  </button>
+                  <span className="sc-file-dir">{f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ""}</span>
+                  <span className={`sc-badge ${statusColorClass(f.status)}`} title={statusTitle(f.status)}>
+                    {statusLabel(f.status)}
+                  </span>
+                  <button type="button" className="sc-row-action" onClick={() => handleUnstage([f.path])} title="Unstage">−</button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
 
-      {/* Unstaged changes */}
-      <div className="sc-section">
-        <div className="sc-section-header">
-          <span className="sc-section-title">
-            Changes
-            {unstaged.length > 0 && <span className="sc-count">{unstaged.length}</span>}
-          </span>
-          {unstaged.length > 0 && (
-            <button
-              type="button"
-              className="sc-action"
-              onClick={handleStageAll}
-              title="Stage all"
-            >
-              +
-            </button>
-          )}
-        </div>
-        {unstaged.length === 0 && <div className="sc-empty-hint">No changes</div>}
-        <ul className="sc-file-list">
-          {unstaged.map((f) => (
-            <li key={`u-${f.path}`} className="sc-file-row">
-              <button
-                type="button"
-                className="sc-file-name"
-                onClick={() => handleFileDiff(f.path)}
-                title={f.path}
-              >
-                {f.path.split("/").pop()}
-              </button>
-              <span className="sc-file-dir">{f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ""}</span>
-              <span className={`sc-badge ${statusColorClass(f.status)}`} title={statusTitle(f.status)}>
-                {statusLabel(f.status)}
-              </span>
-              <button
-                type="button"
-                className="sc-action"
-                onClick={() => handleStage([f.path])}
-                title="Stage"
-              >
-                +
-              </button>
-            </li>
-          ))}
-        </ul>
+        {unstaged.length > 0 && (
+          <>
+            <div className="sc-group-header">
+              <span className="sc-group-label">Changes</span>
+              <span className="sc-count">{unstaged.length}</span>
+              <button type="button" className="sc-hdr-action sc-hdr-discard" onClick={handleDiscardAll} title="Discard all changes">↺</button>
+              <button type="button" className="sc-hdr-action" onClick={handleStageAll} title="Stage all">+</button>
+            </div>
+            <ul className="sc-file-list">
+              {unstaged.map((f) => (
+                <li key={`u-${f.path}`} className="sc-file-row">
+                  <button type="button" className="sc-file-name" onClick={() => handleFileDiff(f.path)} title={f.path}>
+                    {f.path.split("/").pop()}
+                  </button>
+                  <span className="sc-file-dir">{f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ""}</span>
+                  <span className={`sc-badge ${statusColorClass(f.status)}`} title={statusTitle(f.status)}>
+                    {statusLabel(f.status)}
+                  </span>
+                  <button type="button" className="sc-row-action sc-row-discard" onClick={() => handleDiscard([f.path])} title="Discard changes">↺</button>
+                  <button type="button" className="sc-row-action" onClick={() => handleStage([f.path])} title="Stage">+</button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {staged.length === 0 && unstaged.length === 0 && (
+          <div className="sc-empty-hint">No changes</div>
+        )}
       </div>
 
       {/* Commit history */}
-      <div className="sc-section sc-history">
-        <div className="sc-section-header">
-          <span className="sc-section-title">Commits</span>
+      <div className="sc-history">
+        <div className="sc-group-header">
+          <span className="sc-group-label">Commits</span>
+          <span className="sc-count">{commits.length}</span>
+          <button type="button" className="sc-hdr-action" onClick={refresh} title="Refresh commits">↻</button>
         </div>
         <ul className="sc-commit-list">
-          {commits.map((c) => {
-            const icon = commitIcon(c.subject);
-            return (
-              <li
-                key={c.sha}
-                className="sc-commit-row"
-                onClick={() => repo && gitDiff(repo, c.sha).then(onShowDiff).catch(console.error)}
-              >
-                <div className="sc-commit-subject">
-                  {icon && <span className="sc-commit-icon">{icon}</span>}
-                  {c.subject}
-                </div>
+          {commits.map((c, i) => (
+            <li
+              key={c.sha}
+              className="sc-commit-row"
+              onClick={() => repo && gitDiff(repo, c.sha).then(onShowDiff).catch(console.error)}
+            >
+              <div className="sc-timeline">
+                <span className={commitDotClass(c.subject)} />
+                {i < commits.length - 1 && <span className="sc-timeline-line" />}
+              </div>
+              <div className="sc-commit-body">
+                <div className="sc-commit-subject">{c.subject}</div>
                 <div className="sc-commit-meta">
                   <code className="sc-sha">{c.short_sha}</code>
                   <span>{relativeTime(c.date)}</span>
                 </div>
-              </li>
-            );
-          })}
+              </div>
+            </li>
+          ))}
         </ul>
       </div>
     </div>

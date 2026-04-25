@@ -144,7 +144,8 @@ pub fn git_status_short(repo: String) -> Result<Vec<GitFileStatus>, String> {
     if !git_dir(&repo).exists() {
         return Ok(Vec::new());
     }
-    let output = run_git(&repo, &["status", "--porcelain"])?;
+    // -uall lists individual untracked files instead of collapsing to directory names
+    let output = run_git(&repo, &["status", "--porcelain", "-uall"])?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }
@@ -167,9 +168,9 @@ pub fn git_status_short(repo: String) -> Result<Vec<GitFileStatus>, String> {
         }
 
         let path = if let Some(idx) = rest.rfind(" -> ") {
-            rest[idx + 4..].trim().to_string()
+            rest[idx + 4..].trim().trim_end_matches('/').to_string()
         } else {
-            rest.to_string()
+            rest.trim_end_matches('/').to_string()
         };
 
         if x == '?' && y == '?' {
@@ -261,6 +262,48 @@ pub fn git_commit_staged(repo: String, message: String) -> Result<bool, String> 
         return Err(stderr.into_owned());
     }
     Ok(true)
+}
+
+/// Discard working-tree changes for specific paths.
+/// For tracked files: `git checkout HEAD -- <path>`.
+/// For untracked files: removes them from disk.
+#[tauri::command]
+pub fn git_discard(repo: String, paths: Vec<String>) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let output = run_git(&repo, &["status", "--porcelain", "-uall"])?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let untracked: std::collections::HashSet<String> = text
+        .lines()
+        .filter(|l| l.starts_with("??"))
+        .filter_map(|l| l.get(3..))
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .collect();
+
+    let mut tracked_paths = Vec::new();
+    for p in &paths {
+        if untracked.contains(p.as_str()) {
+            let full = Path::new(&repo).join(p);
+            if full.is_file() {
+                fs::remove_file(&full).map_err(|e| format!("remove {}: {}", p, e))?;
+            } else if full.is_dir() {
+                fs::remove_dir_all(&full).map_err(|e| format!("remove {}: {}", p, e))?;
+            }
+        } else {
+            tracked_paths.push(p.as_str());
+        }
+    }
+
+    if !tracked_paths.is_empty() {
+        let mut args = vec!["checkout", "HEAD", "--"];
+        args.extend(tracked_paths);
+        let out = run_git(&repo, &args)?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+        }
+    }
+    Ok(())
 }
 
 /// Unified diff of `path` against `HEAD`.

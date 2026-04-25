@@ -34,6 +34,8 @@ export function Shell({
   const [source, setSource] = useState<ViewerSource>(null);
   const [conflictBubbles, setConflictBubbles] = useState<Bubble[]>([]);
   const [leftTab, setLeftTab] = useState<LeftTab>("files");
+  const [fsTick, setFsTick] = useState(0);
+  const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
 
   useEffect(() => {
     stateLoad().then(setState).catch(console.error);
@@ -111,17 +113,26 @@ export function Shell({
                 Source Control
               </button>
             </div>
-            {leftTab === "files" ? (
-              <FileExplorer repo={repo} onSelect={(path) => setSource({ kind: "file", path })} />
-            ) : (
+            {/* Keep both panels mounted so typed-but-uncommitted state
+                (e.g. the commit message) survives tab switches. */}
+            <div className="left-tab-panel" hidden={leftTab !== "files"}>
+              <FileExplorer
+                repo={repo}
+                onSelect={(path) => setSource({ kind: "file", path })}
+                fsTick={fsTick}
+                onFsChange={bumpFs}
+              />
+            </div>
+            <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
               <SourceControl
                 repo={repo}
                 env={env}
                 onShowDiff={(text) => setSource({ kind: "diff", text })}
                 onDeployLine={onDeployLine}
                 onDeployExit={onDeployExit}
+                onFsChange={bumpFs}
               />
-            )}
+            </div>
           </div>
         </Panel>
         <PanelResizeHandle className="resize-handle" />

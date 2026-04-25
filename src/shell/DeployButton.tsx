@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { gitAddAndCommit, onDeployExit, onDeployLine, pinkitDeploy } from "../lib/api";
+import { onDeployExit, onDeployLine, pinkitDeploy } from "../lib/api";
 import {
   getSyncStatus,
   kbHasServerShadowFiles,
@@ -14,28 +14,32 @@ export function DeployButton({
   env,
   onLine,
   onExit,
+  dirty = false,
+  latestCommitSubject = null,
 }: {
   repo: string | null;
   env: string;
   onLine: (line: string) => void;
   onExit: (code: number | null) => void;
+  /** Working tree has uncommitted changes. When true, push is disabled. */
+  dirty?: boolean;
+  /** Subject of the most recent commit. Used to detect "nothing new to push". */
+  latestCommitSubject?: string | null;
 }) {
   const [running, setRunning] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
+  // If the most recent commit is a sync/init commit, there's nothing the user
+  // has done since the last pull or push that hasn't been replicated already.
+  const nothingToPush =
+    latestCommitSubject !== null &&
+    (latestCommitSubject.startsWith("sync:") ||
+      latestCommitSubject.startsWith("init:") ||
+      latestCommitSubject.startsWith("pre-deploy"));
+
   const start = async () => {
     if (!repo) return;
     setRunning(true);
-
-    // Snapshot local state before touching the server. This is the
-    // "push to main" model — commit everything locally first so the
-    // deploy has a clean git trail to roll back to if needed.
-    try {
-      const committed = await gitAddAndCommit(repo, `pre-deploy @ ${new Date().toISOString()}`);
-      if (committed) onLine("▸ committed local changes");
-    } catch (e) {
-      onLine(`⚠ git commit skipped: ${String(e)}`);
-    }
 
     let collection = getSyncStatus().collection;
     const creds = await loadCreds().catch(() => null);
@@ -132,10 +136,18 @@ export function DeployButton({
         type="button"
         className="deploy-btn"
         onClick={handleClick}
-        disabled={!repo || running}
-        title={repo ? `Deploy to ${env}` : "Open a project folder to deploy"}
+        disabled={!repo || running || dirty || nothingToPush}
+        title={
+          !repo
+            ? "Open a project folder first"
+            : dirty
+            ? "Commit your changes first"
+            : nothingToPush
+            ? "Nothing new to push"
+            : `Push to Pinkfish (${env})`
+        }
       >
-        {running ? "Deploying…" : "Deploy"}
+        {running ? "Pushing…" : "Push to Pinkfish"}
       </button>
       {confirming && (
         <div className="confirm-modal" role="dialog" aria-label="Confirm production deploy">

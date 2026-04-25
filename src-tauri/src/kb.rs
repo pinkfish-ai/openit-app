@@ -118,6 +118,15 @@ pub fn kb_write_file_bytes(repo: String, filename: String, bytes: Vec<u8>) -> Re
 }
 
 #[tauri::command]
+pub fn kb_delete_file(repo: String, filename: String) -> Result<(), String> {
+    let path = kb_dir(&repo).join(&filename);
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn kb_state_load(repo: String) -> Result<KbState, String> {
     let path = state_path(&repo);
     if !path.exists() {

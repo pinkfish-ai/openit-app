@@ -29,27 +29,19 @@ pub struct DeployExit {
 pub fn pinkit_deploy<R: Runtime>(app: AppHandle<R>, args: DeployArgs) -> Result<(), String> {
     let DeployArgs { repo, env } = args;
 
-    let (program, prog_args): (String, Vec<String>) = if which::which("pinkit").is_ok() {
-        ("pinkit".into(), vec!["deploy".into(), "--env".into(), env])
-    } else if std::env::var("OPENIT_PINKIT_STUB").ok().as_deref() == Some("1") {
-        let stub = std::path::Path::new(&repo).join("scripts/pinkit-stub.sh");
-        (
-            stub.to_string_lossy().into_owned(),
-            vec!["deploy".into(), "--env".into(), env],
-        )
-    } else {
-        return Err(
-            "pinkit not found on PATH (set OPENIT_PINKIT_STUB=1 to use the local stub)".into(),
-        );
-    };
+    if which::which("pinkit").is_err() {
+        let _ = app.emit("cli://deploy-line", DeployLine { stream: "stdout", line: "▸ pinkit not installed — skipping infrastructure deploy".into() });
+        let _ = app.emit("cli://deploy-exit", DeployExit { code: Some(0) });
+        return Ok(());
+    }
 
-    let mut child = Command::new(&program)
-        .args(&prog_args)
+    let mut child = Command::new("pinkit")
+        .args(["deploy", "--env", &env])
         .current_dir(&repo)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("failed to spawn {}: {}", program, e))?;
+        .map_err(|e| format!("failed to spawn pinkit: {}", e))?;
 
     if let Some(stdout) = child.stdout.take() {
         let app2 = app.clone();
