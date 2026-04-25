@@ -89,6 +89,8 @@ export async function resolveProjectDatastores(
     })) as { collections?: DataCollection[] } | null;
 
     const all = result?.collections ?? [];
+    console.log(`[datastoreSync] list_collections returned ${all.length} collections`);
+    all.forEach((c: DataCollection) => console.log(`  - ${c.name} (id: ${c.id})`));
     const defaults = DEFAULT_DATASTORES.map((d) => ({
       ...d,
       name: `${d.name}-${creds.orgId}`,

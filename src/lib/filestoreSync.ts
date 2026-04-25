@@ -151,7 +151,10 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
       baseUrl: urls.mcpBaseUrl,
     })) as { collections?: DataCollection[] } | null;
 
-    return result?.collections ?? [];
+    const collections = result?.collections ?? [];
+    console.log(`[filestore] list_collections returned ${collections.length} collections`);
+    collections.forEach((c) => console.log(`  - ${c.name} (id: ${c.id})`));
+    return collections;
   } catch (error) {
     console.error("[filestore] Failed to list collections:", error);
     throw error;
