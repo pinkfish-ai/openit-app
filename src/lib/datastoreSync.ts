@@ -70,6 +70,7 @@ function setLastCreationTime(orgId: string, time: number): void {
 const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventual consistency
 export async function resolveProjectDatastores(
   creds: PinkfishCreds,
+  onLog?: (msg: string) => void,
 ): Promise<DataCollection[]> {
   console.log("[datastoreSync] resolveProjectDatastores called for org:", creds.orgId);
   const token = getToken();
@@ -136,6 +137,7 @@ export async function resolveProjectDatastores(
         continue;
       }
 
+      onLog?.(`[CREATE] new datastore: ${def.name}`);
       try {
         const createUrl = new URL("/datacollection/", urls.skillsBaseUrl);
         const createResponse = await fetchFn(createUrl.toString(), {

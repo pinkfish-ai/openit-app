@@ -13,6 +13,7 @@ import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk } f
 import { resolveProjectAgents, syncAgentsToDisk } from "./lib/agentSync";
 import { resolveProjectWorkflows, syncWorkflowsToDisk } from "./lib/workflowSync";
 import { resolveProjectFilestores, pullOnce } from "./lib/filestoreSync";
+import { startKbSync } from "./lib/kbSync";
 
 const SIGNUP_URL = "https://app.pinkfish.ai/coworker/public";
 
@@ -31,6 +32,7 @@ export function PinkfishOauthModal({
   const [tokenUrl, setTokenUrl] = useState(initial?.tokenUrl ?? DEFAULT_TOKEN_URL);
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncDone, setSyncDone] = useState(false);
   const [syncLogs, setSyncLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -100,7 +102,7 @@ export function PinkfishOauthModal({
         if (!syncErrors) {
           addLog("[sync] Resolving and syncing datastores...");
           try {
-            const datastores = await resolveProjectDatastores(creds);
+            const datastores = await resolveProjectDatastores(creds, addLog);
             addLog(`[sync] Found ${datastores.length} datastores`);
 
             // Fetch and sync data for each datastore
@@ -150,7 +152,7 @@ export function PinkfishOauthModal({
         if (!syncErrors) {
           addLog("[sync] Syncing filestore files...");
           try {
-            const filestores = await resolveProjectFilestores(creds);
+            const filestores = await resolveProjectFilestores(creds, addLog);
             addLog(`[sync] Found ${filestores.length} filestore collections`);
 
             for (const fs of filestores) {
@@ -165,24 +167,45 @@ export function PinkfishOauthModal({
           }
         }
 
+        if (!syncErrors) {
+          addLog("[sync] Syncing knowledge base...");
+          try {
+            const orgSlug = repo.split("/").filter(Boolean).pop() ?? repo;
+            await startKbSync({
+              creds,
+              repo,
+              orgSlug,
+              orgName: orgName || creds.orgId,
+              onLog: addLog,
+            });
+            addLog("[sync] ✓ Knowledge base synced");
+          } catch (e) {
+            addLog(`[sync] ✗ Knowledge base sync failed: ${e}`);
+            syncErrors = true;
+          }
+        }
+
         clearTimeout(timeoutHandle);
         
         if (syncErrors) {
           addLog("----END SYNC (FAILED)----");
           setSyncing(false);
+          setSyncDone(true);
           setError("Sync failed. Check logs above for details.");
           setBusy(false);
           return;
         }
-        
+
         addLog("----END SYNC----");
         setSyncing(false);
+        setSyncDone(true);
+        setBusy(false);
         onConnected(orgName);
-        setTimeout(onClose, 1000);
       } catch (syncErr) {
         clearTimeout(timeoutHandle);
         addLog(`[sync] Unexpected error: ${syncErr}`);
         setSyncing(false);
+        setSyncDone(true);
         setError(`Sync failed: ${syncErr}`);
         setBusy(false);
       }
@@ -197,10 +220,14 @@ export function PinkfishOauthModal({
       <div className="confirm-modal-body wide">
         <h3>Connect Pinkfish</h3>
         
-        {syncing ? (
+        {syncing || syncDone ? (
           <div style={{ marginTop: "20px" }}>
             <p style={{ fontSize: "14px", marginBottom: "10px", color: "#666" }}>
-              🔄 Syncing collections and resources...
+              {syncing
+                ? "🔄 Syncing collections and resources..."
+                : error
+                ? "✗ Sync finished with errors. Review the log below."
+                : "✓ Sync complete. Review the log below."}
             </p>
             <div
               style={{
@@ -282,9 +309,9 @@ export function PinkfishOauthModal({
         
         <div className="key-actions">
           <button onClick={onClose} disabled={busy || syncing}>
-            {syncing ? "Syncing..." : "Cancel"}
+            {syncing ? "Syncing..." : syncDone ? "Close" : "Cancel"}
           </button>
-          {!syncing && (
+          {!syncing && !syncDone && (
             <button
               onClick={submit}
               disabled={busy || !clientId || !clientSecret || !orgId}

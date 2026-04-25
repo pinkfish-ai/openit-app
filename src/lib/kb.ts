@@ -80,11 +80,13 @@ export async function resolveProjectKb(
   creds: PinkfishCreds,
   orgSlug: string,
   orgName: string,
+  onLog?: (msg: string) => void,
 ): Promise<KbCollection> {
   const expected = kbName(orgSlug);
   const collections = await listCollections(creds);
   const existing = collections.find((c) => c.name === expected);
   if (existing) return existing;
+  onLog?.(`[CREATE] new knowledge base: ${expected}`);
   return createCollection(
     creds,
     expected,

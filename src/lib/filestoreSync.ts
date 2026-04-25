@@ -54,6 +54,10 @@ let resolvedRepos = new Set<string>(); // Track which repos have had collections
 let createdCollections = new Map<string, Map<string, FilestoreCollection>>();
 let lastCreationAttemptTime = new Map<string, number>();
 
+// Per-org in-flight resolve promise — concurrent callers share the same operation
+// so we never race two list-then-create sequences against each other.
+const inflightResolve = new Map<string, Promise<FilestoreCollection[]>>();
+
 /**
  * Get or create org-specific cache for created collections.
  */
@@ -114,6 +118,45 @@ const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventu
  */
 export async function resolveProjectFilestores(
   creds: PinkfishCreds,
+  onLog?: (msg: string) => void,
+): Promise<FilestoreCollection[]> {
+  const existing = inflightResolve.get(creds.orgId);
+  if (existing) {
+    console.log("[filestore] joining in-flight resolve for org:", creds.orgId);
+    return existing;
+  }
+  const promise = resolveProjectFilestoresImpl(creds, onLog);
+  inflightResolve.set(creds.orgId, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightResolve.delete(creds.orgId);
+  }
+}
+
+/**
+ * Pick one collection per default name. If the API returned multiple
+ * collections with the same name (legacy duplicates), keep the lexicographically
+ * smallest id so every caller in the same session converges on the same one.
+ */
+function dedupeByName(
+  all: DataCollection[],
+  defaults: ReturnType<typeof getDefaultFilestores>,
+): FilestoreCollection[] {
+  const byName = new Map<string, FilestoreCollection>();
+  for (const c of all) {
+    if (!defaults.some((d) => d.name === c.name)) continue;
+    const existing = byName.get(c.name);
+    if (!existing || String(c.id) < existing.id) {
+      byName.set(c.name, { id: String(c.id), name: c.name, description: c.description });
+    }
+  }
+  return Array.from(byName.values());
+}
+
+async function resolveProjectFilestoresImpl(
+  creds: PinkfishCreds,
+  onLog?: (msg: string) => void,
 ): Promise<FilestoreCollection[]> {
   console.log("[filestore] resolveProjectFilestores called for org:", creds.orgId);
   const token = getToken();
@@ -122,19 +165,24 @@ export async function resolveProjectFilestores(
 
   const all = await listFilestoreCollections(creds);
   const defaults = getDefaultFilestores(creds.orgId);
-  let matching = all.filter((c) => defaults.some((d) => d.name === c.name));
+  const matching = dedupeByName(all, defaults);
 
-  console.log(`[filestore] ✓ Found ${all.length} filestore collections, ${matching.length} matching defaults`);
+  const rawMatchCount = all.filter((c) => defaults.some((d) => d.name === c.name)).length;
+  console.log(
+    `[filestore] ✓ Found ${all.length} filestore collections, ${rawMatchCount} matching defaults` +
+      (rawMatchCount > matching.length ? ` (deduped to ${matching.length})` : ""),
+  );
+  if (rawMatchCount > matching.length) {
+    console.warn(
+      `[filestore] WARNING: ${rawMatchCount - matching.length} duplicate default filestore(s) detected on remote. Using id ${matching.map((m) => m.id).join(", ")}.`,
+    );
+  }
 
-  // Get org-specific cache
   const orgCache = getOrgCache(creds.orgId);
 
-  // If list returned matching collections, we're done
+  // If list returned matching collections, we're done — never create.
   if (matching.length > 0) {
-    // Update cache with verified collections from API
-    for (const m of matching) {
-      orgCache.set(m.name, m);
-    }
+    for (const m of matching) orgCache.set(m.name, m);
     return matching;
   }
 
@@ -142,75 +190,81 @@ export async function resolveProjectFilestores(
   // Only return cache if we attempted creation recently (within cooldown)
   const now = Date.now();
   const lastCreationTime = getLastCreationTime(creds.orgId);
-  if (orgCache.size > 0 && (now - lastCreationTime < CREATION_COOLDOWN_MS)) {
+  if (orgCache.size > 0 && now - lastCreationTime < CREATION_COOLDOWN_MS) {
     console.log("[filestore] collections not yet visible in API list, returning cached collections");
     return Array.from(orgCache.values());
   }
-
-  // Nothing in API, and either no cache or cache is stale - try creating
   if (now - lastCreationTime < CREATION_COOLDOWN_MS) {
     console.log("[filestore] skipping creation (cooldown active)");
     return Array.from(orgCache.values());
   }
-    
-    console.log("[filestore] no openit-* filestores found — creating defaults");
-    setLastCreationTime(creds.orgId, now);
-    for (const def of defaults) {
-      // Check if we recently created this collection to avoid duplicates
-      if (orgCache.has(def.name)) {
-        const col = orgCache.get(def.name)!;
-        matching.push(col);
-        continue;
-      }
 
-      try {
-        const fetchFn = makeSkillsFetch(token.accessToken);
-        const url = new URL("/datacollection/", urls.skillsBaseUrl);
-        const response = await fetchFn(url.toString(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: def.name,
-            type: "filestorage",
-            description: def.description,
-            createdBy: creds.orgId,
-            createdByName: "OpenIT",
-          }),
-        });
-        
-        if (!response.ok) {
-          const errText = await response.text();
-          console.error("[filestore] response error:", errText);
-          // 409 means collection already exists, skip it
-          if (response.status === 409) {
-            console.log(`[filestore] collection ${def.name} already exists`);
-            continue;
-          }
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        let result: { id?: string | number } | null;
-        try {
-          result = (await response.json()) as { id?: string | number } | null;
-        } catch (e) {
-          console.error("[filestore] failed to parse response JSON:", e);
-          throw new Error(`Failed to parse collection creation response: ${e}`);
-        }
-        
-        if (result?.id) {
-          const col = { id: String(result.id), name: def.name, description: def.description };
-          matching.push(col);
-          orgCache.set(def.name, col);
-          console.log(`[filestore] created ${def.name} with id: ${result.id}`);
-        } else {
-          console.warn(`[filestore] no id found in response for ${def.name}. Response keys:`, Object.keys(result || {}));
-        }
-      } catch (e) {
-        console.warn(`[filestore] failed to create ${def.name}:`, e);
-      }
+  console.log("[filestore] no openit-* filestores found — creating defaults");
+  setLastCreationTime(creds.orgId, now);
+  const created: FilestoreCollection[] = [];
+  for (const def of defaults) {
+    if (orgCache.has(def.name)) {
+      created.push(orgCache.get(def.name)!);
+      continue;
     }
+    onLog?.(`[CREATE] new filestore: ${def.name}`);
+    try {
+      const fetchFn = makeSkillsFetch(token.accessToken);
+      const url = new URL("/datacollection/", urls.skillsBaseUrl);
+      const response = await fetchFn(url.toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: def.name,
+          type: "filestorage",
+          description: def.description,
+          createdBy: creds.orgId,
+          createdByName: "OpenIT",
+        }),
+      });
 
-  return matching;
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("[filestore] response error:", errText);
+        // 409 means collection already exists, skip it
+        if (response.status === 409) {
+          console.log(`[filestore] collection ${def.name} already exists`);
+          continue;
+        }
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = (await response.json()) as { id?: string | number } | null;
+      if (result?.id) {
+        const col = { id: String(result.id), name: def.name, description: def.description };
+        created.push(col);
+        orgCache.set(def.name, col);
+        console.log(`[filestore] created ${def.name} with id: ${result.id}`);
+      } else {
+        console.warn(`[filestore] no id found in response for ${def.name}. Response keys:`, Object.keys(result || {}));
+      }
+    } catch (e) {
+      console.warn(`[filestore] failed to create ${def.name}:`, e);
+    }
+  }
+
+  // Re-fetch authoritatively after creation (handles eventual consistency
+  // and ensures any concurrent creators converge on a single deduped set).
+  if (created.length > 0) {
+    try {
+      await new Promise((r) => setTimeout(r, 3000));
+      const refetched = await listFilestoreCollections(creds);
+      const verified = dedupeByName(refetched, defaults);
+      if (verified.length > 0) {
+        for (const m of verified) orgCache.set(m.name, m);
+        return verified;
+      }
+    } catch (e) {
+      console.warn("[filestore] post-create refetch failed:", e);
+    }
+  }
+
+  return created;
 }
 
 /**

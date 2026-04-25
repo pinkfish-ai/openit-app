@@ -119,8 +119,9 @@ export async function startKbSync(args: {
   repo: string;
   orgSlug: string;
   orgName: string;
+  onLog?: (msg: string) => void;
 }): Promise<void> {
-  const { creds, repo, orgSlug, orgName } = args;
+  const { creds, repo, orgSlug, orgName, onLog } = args;
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
@@ -143,7 +144,7 @@ export async function startKbSync(args: {
   }
   let collection: KbCollection;
   try {
-    collection = await resolveProjectKb(creds, orgSlug, orgName);
+    collection = await resolveProjectKb(creds, orgSlug, orgName, onLog);
   } catch (e) {
     console.error("kb sync: resolveProjectKb failed:", e);
     update({ phase: "error", lastError: String(e) });
