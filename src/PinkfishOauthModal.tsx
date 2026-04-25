@@ -11,8 +11,8 @@ import {
 } from "./lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk } from "./lib/datastoreSync";
 import { resolveProjectAgents } from "./lib/agentSync";
-import { resolveProjectWorkflows } from "./lib/workflowSync";
-import { resolveProjectFilestores, startFilestoreSync } from "./lib/filestoreSync";
+import { resolveProjectWorkflows, syncWorkflowsToDisk } from "./lib/workflowSync";
+import { resolveProjectFilestores, pullOnce } from "./lib/filestoreSync";
 
 const SIGNUP_URL = "https://app.pinkfish.ai/coworker/public";
 
@@ -133,10 +133,12 @@ export function PinkfishOauthModal({
         }
 
         if (!syncErrors) {
-          addLog("[sync] Resolving workflows...");
+          addLog("[sync] Syncing workflows...");
           try {
-            await resolveProjectWorkflows(creds);
-            addLog("[sync] ✓ Workflows resolved");
+            const workflows = await resolveProjectWorkflows(creds);
+            addLog(`[sync] Found ${workflows.length} workflows`);
+            await syncWorkflowsToDisk(repo, workflows);
+            addLog("[sync] ✓ Workflows synced to disk");
           } catch (e) {
             addLog(`[sync] ✗ Workflow sync failed: ${e}`);
             syncErrors = true;
@@ -146,7 +148,14 @@ export function PinkfishOauthModal({
         if (!syncErrors) {
           addLog("[sync] Syncing filestore files...");
           try {
-            await startFilestoreSync({ creds, repo });
+            const filestores = await resolveProjectFilestores(creds);
+            addLog(`[sync] Found ${filestores.length} filestore collections`);
+
+            for (const fs of filestores) {
+              addLog(`[sync] Downloading files from ${fs.name}...`);
+              await pullOnce({ creds, repo, collection: fs });
+            }
+
             addLog("[sync] ✓ Filestore files synced to disk");
           } catch (e) {
             addLog(`[sync] ✗ Filestore sync failed: ${e}`);

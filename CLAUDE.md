@@ -12,6 +12,9 @@ On Connect, we sync:
 * agents
 
 In each of these cases, we're looking for entities prefixed with "openit-"
+Everything should SYNC after connect. ALL assets (that have dates newer than what's on the file system). 
+
+And then every 60s, we check for new assets on the remote (that have dates newer than what's on the file system). 
 
 
 # OpenIT

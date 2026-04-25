@@ -331,7 +331,7 @@ export function stopFilestoreSync() {
   resolvedRepos.clear();
 }
 
-async function pullOnce(args: {
+export async function pullOnce(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: FilestoreCollection;
