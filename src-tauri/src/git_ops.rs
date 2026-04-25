@@ -67,18 +67,26 @@ fn untrack_gitignored_paths(repo: &str) -> Result<(), String> {
     args.extend_from_slice(PATHS);
     let _ = run_git(repo, &args)?;
 
-    // If anything was actually unstaged (i.e. the file was tracked), there's
-    // now a staged deletion in the index. Commit it as a housekeeping
-    // commit so it doesn't hang around as a phantom "staged change."
-    let cached = run_git(repo, &["diff", "--cached", "--quiet"])?;
+    // Only act if the rm actually staged something under .openit/.
+    // SCOPE: pathspec on both the diff check AND the commit, so we don't
+    // sweep up unrelated staged changes the user may have left behind in
+    // the SourceControl tab. `git commit -- <pathspec>` commits only
+    // staged changes that match the pathspec.
+    let cached = run_git(
+        repo,
+        &["diff", "--cached", "--quiet", "--", ".openit/"],
+    )?;
     if !cached.status.success() {
-        // diff --cached --quiet exits 1 when there are staged changes.
+        // diff --cached --quiet exits 1 when there are staged changes
+        // matching the pathspec.
         let _ = run_git(
             repo,
             &[
                 "commit",
                 "-m",
                 "init: untrack .openit/ manifest dir (now in gitignore)",
+                "--",
+                ".openit/",
             ],
         )?;
     }
