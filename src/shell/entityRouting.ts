@@ -37,9 +37,16 @@ export async function resolvePathToSource(
     try {
       const raw = await fsRead(path);
       const content = JSON.parse(raw);
+      // Read schema from the same collection directory
+      let schema;
+      try {
+        const schemaPath = `${repo}/databases/${rowMatch[1]}/_schema.json`;
+        const schemaRaw = await fsRead(schemaPath);
+        schema = JSON.parse(schemaRaw);
+      } catch { /* no schema file */ }
       return {
         kind: "datastore-row",
-        collection: { id: "", name: rowMatch[1], type: "datastore", numItems: 0 },
+        collection: { id: "", name: rowMatch[1], type: "datastore", numItems: 0, schema },
         item: { id: rowMatch[2], key: rowMatch[2], content, createdAt: "", updatedAt: "" },
       };
     } catch {
