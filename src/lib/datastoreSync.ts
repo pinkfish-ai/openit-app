@@ -7,6 +7,7 @@ import {
 } from "./skillsApi";
 import { entityWriteFile, pinkfishMcpCall } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
+import { makeSkillsFetch } from "./api/fetchAdapter";
 
 const PREFIX = "openit-";
 
@@ -38,15 +39,16 @@ export async function resolveProjectDatastores(
   const urls = derivedUrls(creds.tokenUrl);
 
   try {
-    const result = (await pinkfishMcpCall({
-      accessToken: token.accessToken,
-      orgId: creds.orgId,
-      server: "datastore-structured",
-      tool: "datastore-structured_list_collections",
-      arguments: {},
-      baseUrl: urls.mcpBaseUrl,
-    })) as { collections?: DataCollection[] } | null;
+    // Use REST API for listing (GET works, MCP tool returns 0)
+    const fetchFn = makeSkillsFetch(token.accessToken);
+    const url = new URL("/datacollection/?type=datastore", urls.skillsBaseUrl);
+    const response = await fetchFn(url.toString());
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
 
+    const result = (await response.json()) as { collections?: DataCollection[] } | null;
     const all = result?.collections ?? [];
     console.log(`[datastoreSync] list_collections returned ${all.length} collections`);
     all.forEach((c: DataCollection) => console.log(`  - ${c.name} (id: ${c.id})`));

@@ -7,6 +7,7 @@ import {
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { pinkfishMcpCall } from "./api";
+import { makeSkillsFetch } from "./api/fetchAdapter";
 
 // These will be added to api.ts — importing ahead of time.
 // They invoke fs_store_init, fs_store_list_local, fs_store_state_load,
@@ -137,7 +138,7 @@ export async function resolveProjectFilestores(
 }
 
 /**
- * List filestore collections via MCP (same pattern as KB).
+ * List filestore collections via REST API (GET works, POST doesn't).
  */
 async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataCollection[]> {
   const token = getToken();
@@ -145,15 +146,15 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
   const urls = derivedUrls(creds.tokenUrl);
 
   try {
-    const result = (await pinkfishMcpCall({
-      accessToken: token.accessToken,
-      orgId: creds.orgId,
-      server: "filestorage",
-      tool: "filestorage_list_collections",
-      arguments: {},
-      baseUrl: urls.mcpBaseUrl,
-    })) as { collections?: DataCollection[] } | null;
+    const fetchFn = makeSkillsFetch(token.accessToken);
+    const url = new URL("/datacollection/?type=filestorage", urls.skillsBaseUrl);
+    const response = await fetchFn(url.toString());
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
 
+    const result = (await response.json()) as { collections?: DataCollection[] } | null;
     const collections = result?.collections ?? [];
     console.log(`[filestore] list_collections returned ${collections.length} collections`);
     collections.forEach((c) => console.log(`  - ${c.name} (id: ${c.id})`));
