@@ -57,30 +57,33 @@ export function Shell({
         return;
       }
 
+      // Run pulls SEQUENTIALLY, not in parallel — each pull's auto-commit
+      // takes the .git/index.lock briefly, and concurrent commits race on
+      // that lock. Losing the race surfaces as a warning + uncommitted
+      // pulled files showing up in the Deploy tab. Sequencing is fine
+      // perf-wise (each pull is ~hundreds of ms; user-facing) and aligns
+      // the streaming output too.
+
       // KB pull
       const kbStatus = getSyncStatus();
-      const kbTask = kbStatus.collection
-        ? (async () => {
-            onSyncLine("▸ pull: kb");
-            try {
-              await pullNow({ creds, repo, collection: kbStatus.collection! });
-              onSyncLine("  ✓ kb pull complete");
-            } catch (e) {
-              console.error("[manual pull] kb failed:", e);
-              onSyncLine(`  ✗ kb pull failed: ${String(e)}`);
-            }
-          })()
-        : (async () => {
-            onSyncLine("▸ pull: kb skipped (no collection)");
-          })();
+      if (kbStatus.collection) {
+        onSyncLine("▸ pull: kb");
+        try {
+          await pullNow({ creds, repo, collection: kbStatus.collection });
+          onSyncLine("  ✓ kb pull complete");
+        } catch (e) {
+          console.error("[manual pull] kb failed:", e);
+          onSyncLine(`  ✗ kb pull failed: ${String(e)}`);
+        }
+      } else {
+        onSyncLine("▸ pull: kb skipped (no collection)");
+      }
 
       // Filestore pull
       const fsCollections = getFilestoreSyncStatus().collections;
-      const fsTask = (async () => {
-        if (fsCollections.length === 0) {
-          onSyncLine("▸ pull: filestore skipped (no collections)");
-          return;
-        }
+      if (fsCollections.length === 0) {
+        onSyncLine("▸ pull: filestore skipped (no collections)");
+      } else {
         onSyncLine(`▸ pull: filestore (${fsCollections.length} collection${fsCollections.length === 1 ? "" : "s"})`);
         for (const c of fsCollections) {
           try {
@@ -91,26 +94,23 @@ export function Shell({
             onSyncLine(`  ✗ ${c.name} failed: ${String(e)}`);
           }
         }
-      })();
+      }
 
       // Datastore pull
-      const dsTask = (async () => {
-        onSyncLine("▸ pull: datastores");
-        try {
-          const r = await pullDatastoresOnce({ creds, repo });
-          onSyncLine(
-            `  ✓ datastore pull complete — ${r.pulled} row(s) updated, ${r.conflicts.length} conflict${r.conflicts.length === 1 ? "" : "s"}`,
-          );
-          for (const c of r.conflicts) {
-            onSyncLine(`    ⚠ conflict: ${c.collectionName}/${c.key}.json — ${c.reason}`);
-          }
-        } catch (e) {
-          console.error("[manual pull] datastore failed:", e);
-          onSyncLine(`  ✗ datastore pull failed: ${String(e)}`);
+      onSyncLine("▸ pull: datastores");
+      try {
+        const r = await pullDatastoresOnce({ creds, repo });
+        onSyncLine(
+          `  ✓ datastore pull complete — ${r.pulled} row(s) updated, ${r.conflicts.length} conflict${r.conflicts.length === 1 ? "" : "s"}`,
+        );
+        for (const c of r.conflicts) {
+          onSyncLine(`    ⚠ conflict: ${c.collectionName}/${c.key}.json — ${c.reason}`);
         }
-      })();
+      } catch (e) {
+        console.error("[manual pull] datastore failed:", e);
+        onSyncLine(`  ✗ datastore pull failed: ${String(e)}`);
+      }
 
-      await Promise.all([kbTask, fsTask, dsTask]);
       onSyncLine("─── pull done ───");
       bumpFs();
     } finally {
