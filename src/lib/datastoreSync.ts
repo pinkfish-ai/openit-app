@@ -41,7 +41,7 @@ export async function resolveProjectDatastores(
   try {
     // Use REST API for listing (GET works, MCP tool returns 0)
     const fetchFn = makeSkillsFetch(token.accessToken);
-    const url = new URL("/datacollection/?type=datastore", urls.skillsBaseUrl);
+    const url = new URL("/datacollection/?type=all", urls.skillsBaseUrl);
     const response = await fetchFn(url.toString());
     
     if (!response.ok) {
@@ -49,8 +49,10 @@ export async function resolveProjectDatastores(
     }
 
     const result = (await response.json()) as { collections?: DataCollection[] } | null;
-    const all = result?.collections ?? [];
-    console.log(`[datastoreSync] list_collections returned ${all.length} collections`);
+    const allCollections = result?.collections ?? [];
+    // Filter to only datastore type
+    const all = allCollections.filter((c: DataCollection) => c.type === "datastore");
+    console.log(`[datastoreSync] list_collections returned ${all.length} datastore collections`);
     all.forEach((c: DataCollection) => console.log(`  - ${c.name} (id: ${c.id})`));
     const defaults = DEFAULT_DATASTORES.map((d) => ({
       ...d,
