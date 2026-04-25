@@ -35,6 +35,7 @@ export function Shell({
   const [conflictBubbles, setConflictBubbles] = useState<Bubble[]>([]);
   const [leftTab, setLeftTab] = useState<LeftTab>("files");
   const [fsTick, setFsTick] = useState(0);
+  const [changeCount, setChangeCount] = useState(0);
   const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
 
   useEffect(() => {
@@ -149,6 +150,11 @@ export function Shell({
                 onClick={() => setLeftTab("source-control")}
               >
                 Sync
+                {changeCount > 0 && (
+                  <span className="left-tab-badge" aria-label={`${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`}>
+                    {changeCount}
+                  </span>
+                )}
               </button>
             </div>
             {/* Keep both panels mounted so typed-but-uncommitted state
@@ -167,9 +173,11 @@ export function Shell({
             <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
               <SourceControl
                 repo={repo}
+                active={leftTab === "source-control"}
                 onShowDiff={(text) => setSource({ kind: "diff", text })}
                 onSyncLine={onSyncLine}
                 onFsChange={bumpFs}
+                onChangeCount={setChangeCount}
               />
             </div>
           </div>

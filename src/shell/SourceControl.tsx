@@ -19,9 +19,15 @@ import { loadCreds } from "../lib/pinkfishAuth";
 
 type Props = {
   repo: string | null;
+  /** True when the Sync tab is the active left-pane tab. Drives commit-msg
+   *  pre-fill so the user lands on a ready-to-click form. */
+  active?: boolean;
   onShowDiff: (text: string) => void;
   onSyncLine: (line: string) => void;
   onFsChange?: () => void;
+  /** Called whenever the count of uncommitted changes changes — used to
+   *  drive the badge on the Sync tab label. */
+  onChangeCount?: (n: number) => void;
 };
 
 function statusLabel(s: string): string {
@@ -205,7 +211,7 @@ function relativeTime(dateStr: string): string {
   return dateStr.split("T")[0];
 }
 
-export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Props) {
+export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange, onChangeCount }: Props) {
   const [files, setFiles] = useState<GitFileStatus[]>([]);
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [commitMsg, setCommitMsg] = useState("");
@@ -237,6 +243,24 @@ export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Prop
 
   const staged = files.filter((f) => f.staged);
   const unstaged = files.filter((f) => !f.staged);
+
+  // Bubble the change count up so the Sync tab can show a badge.
+  useEffect(() => {
+    onChangeCount?.(files.length);
+  }, [files.length, onChangeCount]);
+
+  // When the user focuses the Sync tab and there are changes but no typed
+  // message, pre-fill with the auto-derived subject so they can just click
+  // Commit. Re-pre-fill if the change set evolves while they're on the tab.
+  useEffect(() => {
+    if (!active) return;
+    if (files.length === 0) return;
+    if (commitMsg.trim().length > 0) return;
+    setCommitMsg(defaultCommitMessage(files));
+    // We intentionally re-evaluate whenever `files` changes — if the user
+    // adds another change while the tab is focused, the message updates.
+    // Only "trim() > 0" stops re-fill, so once they type, we leave them be.
+  }, [active, files, commitMsg]);
 
   const handleDiscard = async (paths: string[]) => {
     if (!repo) return;
