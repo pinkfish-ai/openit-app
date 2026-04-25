@@ -1226,3 +1226,13 @@ All findings real, all fixed in iteration 1. Replies posted on each thread; thre
 | 1 | Pull never seeds manifest for bootstrapped datastore rows | High | Fixed | `214ba33` |
 
 Caught a real gap from iteration 1's design: the `!tracked && localFile` case (modal-bootstrap-seeded rows) was unhandled, so manifest entries never got written for bootstrapped rows. Subsequent polls treated them as permanently undiffable. Fix seeds the manifest on first encounter without rewriting the file.
+
+### Iteration 3 (2026-04-25, PR #9)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Gitignored shadow paths in touched array break commit | High | Fixed | `53905e1` |
+| 2 | Datastore push never updates manifest causing false conflicts | High | Fixed | `c3ca5bb` |
+| 3 | Removed only consumer of `refreshFromServer`, leaving dead code | Low | Fixed | `1f99d5a` + `a3c4283` |
+
+Both #1 and #2 were cascading bugs introduced by iter-1 fixes (gitignore broadening + iter-1 manifest awareness). #3 was the natural follow-up to the FileExplorer ↻ button removal. All three real, all fixed.
