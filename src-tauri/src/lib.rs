@@ -15,7 +15,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_http::init())
+        .plugin(
+            tauri_plugin_http::init()
+                .scope_allowlist(vec![
+                    "https://dev*.pinkfish.dev/**".to_string(),
+                    "https://dev*.pinkfish.ai/**".to_string(),
+                    "https://app.pinkfish.ai/**".to_string(),
+                    "https://app-stage.pinkfish.ai/**".to_string(),
+                ])
+        )
         .setup(|app| {
             #[cfg(debug_assertions)]
             {
