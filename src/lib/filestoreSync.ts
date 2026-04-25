@@ -55,6 +55,34 @@ let status: FilestoreSyncStatus = {
 const listeners = new Set<(s: FilestoreSyncStatus) => void>();
 let resolvedRepos = new Set<string>(); // Track which repos have had collections resolved
 
+// Org-scoped cache to prevent collections from one org leaking into another
+let createdCollections = new Map<string, Map<string, FilestoreCollection>>();
+let lastCreationAttemptTime = new Map<string, number>();
+
+/**
+ * Get or create org-specific cache for created collections.
+ */
+function getOrgCache(orgId: string): Map<string, FilestoreCollection> {
+  if (!createdCollections.has(orgId)) {
+    createdCollections.set(orgId, new Map());
+  }
+  return createdCollections.get(orgId)!;
+}
+
+/**
+ * Get the last creation attempt time for an org (default 0 if never attempted).
+ */
+function getLastCreationTime(orgId: string): number {
+  return lastCreationAttemptTime.get(orgId) ?? 0;
+}
+
+/**
+ * Update the last creation attempt time for an org.
+ */
+function setLastCreationTime(orgId: string, time: number): void {
+  lastCreationAttemptTime.set(orgId, time);
+}
+
 export function subscribeFilestoreSync(
   fn: (s: FilestoreSyncStatus) => void,
 ): () => void {
@@ -79,13 +107,10 @@ const POLL_INTERVAL_MS = 300_000; // 5 minutes — reduce duplicate creation att
 // Resolve helpers — REST API via skillsApi
 // ---------------------------------------------------------------------------
 
-let createdCollections = new Map<string, FilestoreCollection>();
-
 /**
  * Find or create openit-* Filestorage collections. Creates defaults if none
  * exist. Uses the skills REST API (GET /datacollection/all).
  */
-let lastCreationAttemptTime = 0;
 const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventual consistency
 
 /**
@@ -95,40 +120,50 @@ const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventu
 export async function resolveProjectFilestores(
   creds: PinkfishCreds,
 ): Promise<FilestoreCollection[]> {
-  console.log("----BEGIN FILESTORE SYNC----");
-  console.log("[filestore] resolveProjectFilestores called");
+  console.log("[filestore] resolveProjectFilestores called for org:", creds.orgId);
   const token = getToken();
   if (!token) throw new Error("not authenticated");
   const urls = derivedUrls(creds.tokenUrl);
 
   const all = await listFilestoreCollections(creds);
   const defaults = getDefaultFilestores(creds.orgId);
-  let matching = all
-    .filter((c) => defaults.some((d) => d.name === c.name))
-    .map((c) => ({ id: c.id, name: c.name, description: c.description }));
+  let matching: FilestoreCollection[] = [];
   
   console.log(`[filestore] ✓ Found ${all.length} filestore collections, ${matching.length} matching defaults`);
 
-  // If list returned nothing, check our in-memory cache of recently created collections
-  if (matching.length === 0 && createdCollections.size > 0) {
-    console.log(`[filestore] using ${createdCollections.size} recently created collections`);
-    matching = Array.from(createdCollections.values());
+  // Get org-specific cache
+  const orgCache = getOrgCache(creds.orgId);
+
+  // If list returned matching collections, we're done
+  if (matching.length > 0) {
+    // Update cache with verified collections from API
+    for (const m of matching) {
+      orgCache.set(m.name, m);
+    }
+    return matching;
   }
 
-  if (matching.length === 0) {
-    const now = Date.now();
-    // Skip creation if we tried recently (eventual consistency delay)
-    if (now - lastCreationAttemptTime < CREATION_COOLDOWN_MS) {
-      console.log("[filestore] skipping creation (cooldown active), using cached collections");
-      return Array.from(createdCollections.values());
-    }
+  // List is empty - check if we recently created collections
+  // Only return cache if we attempted creation recently (within cooldown)
+  const now = Date.now();
+  const lastCreationTime = getLastCreationTime(creds.orgId);
+  if (orgCache.size > 0 && (now - lastCreationTime < CREATION_COOLDOWN_MS)) {
+    console.log("[filestore] collections not yet visible in API list, returning cached collections");
+    return Array.from(orgCache.values());
+  }
+
+  // Nothing in API, and either no cache or cache is stale - try creating
+  if (now - lastCreationTime < CREATION_COOLDOWN_MS) {
+    console.log("[filestore] skipping creation (cooldown active)");
+    return Array.from(orgCache.values());
+  }
     
     console.log("[filestore] no openit-* filestores found — creating defaults");
-    lastCreationAttemptTime = now;
+    setLastCreationTime(creds.orgId, now);
     for (const def of defaults) {
       // Check if we recently created this collection to avoid duplicates
-      if (createdCollections.has(def.name)) {
-        const col = createdCollections.get(def.name)!;
+      if (orgCache.has(def.name)) {
+        const col = orgCache.get(def.name)!;
         matching.push(col);
         continue;
       }
@@ -159,38 +194,28 @@ export async function resolveProjectFilestores(
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
-        const result = (await response.json()) as { id?: string | number } | null;
+        let result: { id?: string | number } | null;
+        try {
+          result = (await response.json()) as { id?: string | number } | null;
+        } catch (e) {
+          console.error("[filestore] failed to parse response JSON:", e);
+          throw new Error(`Failed to parse collection creation response: ${e}`);
+        }
+        
         if (result?.id) {
           const col = { id: String(result.id), name: def.name, description: def.description };
           matching.push(col);
-          createdCollections.set(def.name, col);
-          console.log(`[filestore] created ${def.name}`);
+          orgCache.set(def.name, col);
+          console.log(`[filestore] created ${def.name} with id: ${result.id}`);
+        } else {
+          console.warn(`[filestore] no id found in response for ${def.name}. Response keys:`, Object.keys(result || {}));
         }
       } catch (e) {
         console.warn(`[filestore] failed to create ${def.name}:`, e);
       }
     }
-    
-    // After creation, re-fetch to ensure we have the authoritative list
-    if (matching.length > 0) {
-      try {
-        // Wait for API eventual consistency (collections take ~5 seconds to appear)
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        const updated = await listFilestoreCollections(creds);
-        const updatedMatching = updated.filter((c) => defaults.some((d) => d.name === c.name));
-        if (updatedMatching.length > matching.length) {
-          console.log("[filestore] re-fetched collections after creation");
-          return updatedMatching.map((c) => ({ id: c.id, name: c.name, description: c.description }));
-        }
-      } catch (e) {
-        console.warn("[filestore] failed to re-fetch after creation:", e);
-      }
-    }
-  }
 
-  console.log("----END FILESTORE SYNC----");
-  return matching;
+  return [];
 }
 
 /**
@@ -205,17 +230,24 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
     const fetchFn = makeSkillsFetch(token.accessToken);
     const url = new URL("/datacollection/", urls.skillsBaseUrl);
     url.searchParams.set("type", "filestorage");
-    console.log("[filestore] Fetching from:", url.toString(), "base:", urls.skillsBaseUrl);
+    console.log("[filestore] Fetching from:", url.toString());
     const response = await fetchFn(url.toString());
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const result = (await response.json()) as DataCollection[] | null;
+    let result: DataCollection[] | null;
+    try {
+      result = (await response.json()) as DataCollection[] | null;
+    } catch (e) {
+      console.error("[filestore] failed to parse list response JSON:", e);
+      throw new Error(`Failed to parse collection list: ${e}`);
+    }
+    
     const collections = Array.isArray(result) ? result : [];
     console.log(`[filestore] list_collections returned ${collections.length} filestorage collections`);
-    collections.forEach((c) => console.log(`  - ${c.name} (id: ${c.id})`));
+    collections.forEach((c) => console.log(`  • ${c.name} (id: ${c.id})`));
     return collections;
   } catch (error) {
     console.error("[filestore] Failed to list collections:", error);

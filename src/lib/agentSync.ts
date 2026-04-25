@@ -75,7 +75,7 @@ async function call(
 export async function resolveProjectAgents(
   creds: PinkfishCreds,
 ): Promise<Agent[]> {
-  console.log("----BEGIN AGENT SYNC----");
+  console.log("[agent] resolveProjectAgents called");
   const raw = (await call(creds, "agent-management", "agent_list", {})) as {
     agents?: Array<Record<string, unknown>>;
   } | null;
@@ -94,7 +94,6 @@ export async function resolveProjectAgents(
 
   const filtered = agents.filter((a) => a.name.startsWith(PREFIX));
   console.log(`[agent] ✓ Found ${filtered.length} agents`);
-  console.log("----END AGENT SYNC----");
   return filtered;
 }
 

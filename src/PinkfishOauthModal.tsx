@@ -69,31 +69,66 @@ export function PinkfishOauthModal({
       addLog("----BEGIN SYNC----");
       addLog("Syncing datastores, agents, and workflows...");
       
+      let syncErrors = false;
+      
+      // Set a 30-second timeout for the entire sync process
+      const syncTimeoutMs = 30_000;
+      const timeoutHandle = setTimeout(() => {
+        addLog("[sync] ✗ Sync timed out after 30 seconds");
+        setSyncing(false);
+        setError("Sync timed out. Check your connection and try again.");
+        setBusy(false);
+      }, syncTimeoutMs);
+      
       try {
         addLog("[sync] Resolving datastores...");
-        await resolveProjectDatastores(creds).catch((e) => {
-          addLog(`[sync] ⚠ Datastore sync failed: ${e}`);
-        });
-        addLog("[sync] ✓ Datastores synced");
+        try {
+          await resolveProjectDatastores(creds);
+          addLog("[sync] ✓ Datastores synced");
+        } catch (e) {
+          addLog(`[sync] ✗ Datastore sync failed: ${e}`);
+          syncErrors = true;
+        }
         
-        addLog("[sync] Resolving agents...");
-        await resolveProjectAgents(creds).catch((e) => {
-          addLog(`[sync] ⚠ Agent sync failed: ${e}`);
-        });
-        addLog("[sync] ✓ Agents synced");
+        if (!syncErrors) {
+          addLog("[sync] Resolving agents...");
+          try {
+            await resolveProjectAgents(creds);
+            addLog("[sync] ✓ Agents synced");
+          } catch (e) {
+            addLog(`[sync] ✗ Agent sync failed: ${e}`);
+            syncErrors = true;
+          }
+        }
         
-        addLog("[sync] Resolving workflows...");
-        await resolveProjectWorkflows(creds).catch((e) => {
-          addLog(`[sync] ⚠ Workflow sync failed: ${e}`);
-        });
-        addLog("[sync] ✓ Workflows synced");
+        if (!syncErrors) {
+          addLog("[sync] Resolving workflows...");
+          try {
+            await resolveProjectWorkflows(creds);
+            addLog("[sync] ✓ Workflows synced");
+          } catch (e) {
+            addLog(`[sync] ✗ Workflow sync failed: ${e}`);
+            syncErrors = true;
+          }
+        }
+        
+        clearTimeout(timeoutHandle);
+        
+        if (syncErrors) {
+          addLog("----END SYNC (FAILED)----");
+          setSyncing(false);
+          setError("Sync failed. Check logs above for details.");
+          setBusy(false);
+          return;
+        }
         
         addLog("----END SYNC----");
         setSyncing(false);
         onConnected(orgName);
         setTimeout(onClose, 1000);
       } catch (syncErr) {
-        addLog(`[sync] Error: ${syncErr}`);
+        clearTimeout(timeoutHandle);
+        addLog(`[sync] Unexpected error: ${syncErr}`);
         setSyncing(false);
         setError(`Sync failed: ${syncErr}`);
         setBusy(false);

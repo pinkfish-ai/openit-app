@@ -9,6 +9,17 @@ import { entityWriteFile } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
 
+// Type definitions for API responses
+type CreateCollectionResponse = {
+  message?: string;
+  id?: string | number;
+  schema?: Record<string, unknown>;
+  isStructured?: boolean;
+  [key: string]: unknown;
+};
+
+type ListCollectionsResponse = DataCollection[] | null;
+
 const PREFIX = "openit-";
 
 const DEFAULT_DATASTORES = [
@@ -24,29 +35,53 @@ const DEFAULT_DATASTORES = [
   },
 ];
 
-let createdCollections = new Map<string, DataCollection>();
+// Org-scoped cache to prevent collections from one org leaking into another
+let createdCollections = new Map<string, Map<string, DataCollection>>();
+let lastCreationAttemptTime = new Map<string, number>();
+
+/**
+ * Get or create org-specific cache for created collections.
+ */
+function getOrgCache(orgId: string): Map<string, DataCollection> {
+  if (!createdCollections.has(orgId)) {
+    createdCollections.set(orgId, new Map());
+  }
+  return createdCollections.get(orgId)!;
+}
+
+/**
+ * Get the last creation attempt time for an org (default 0 if never attempted).
+ */
+function getLastCreationTime(orgId: string): number {
+  return lastCreationAttemptTime.get(orgId) ?? 0;
+}
+
+/**
+ * Update the last creation attempt time for an org.
+ */
+function setLastCreationTime(orgId: string, time: number): void {
+  lastCreationAttemptTime.set(orgId, time);
+}
 
 /**
  * Find or create openit-* Datastore collections. Creates defaults if none
- * exist. Uses the skills REST API (GET /datacollection/all).
+ * exist. Uses the skills REST API (GET /datacollection/?type=datastore).
  */
-let lastCreationAttemptTime = 0;
 const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventual consistency
 export async function resolveProjectDatastores(
   creds: PinkfishCreds,
 ): Promise<DataCollection[]> {
-  console.log("----BEGIN DATASTORE SYNC----");
-  console.log("[datastoreSync] resolveProjectDatastores called");
+  console.log("[datastoreSync] resolveProjectDatastores called for org:", creds.orgId);
   const token = getToken();
   if (!token) throw new Error("not authenticated");
   const urls = derivedUrls(creds.tokenUrl);
 
   try {
-    // Use REST API for listing (GET works, MCP tool returns 0)
+    // Use REST API for listing
     const fetchFn = makeSkillsFetch(token.accessToken);
     const url = new URL("/datacollection/", urls.skillsBaseUrl);
     url.searchParams.set("type", "datastore");
-    console.log("[datastoreSync] Fetching from:", url.toString(), "base:", urls.skillsBaseUrl);
+    console.log("[datastoreSync] Fetching from:", url.toString());
     const response = await fetchFn(url.toString());
     
     if (!response.ok) {
@@ -64,82 +99,100 @@ export async function resolveProjectDatastores(
     let matching = allCollections.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
     console.log(`[datastoreSync] ✓ Matching default collections: ${matching.length}`);
 
-    // If list returned nothing, check our in-memory cache of recently created collections
-    if (matching.length === 0 && createdCollections.size > 0) {
-      console.log(`[datastoreSync] using ${createdCollections.size} recently created collections`);
-      matching = Array.from(createdCollections.values());
+    // Get org-specific cache
+    const orgCache = getOrgCache(creds.orgId);
+
+    // If list returned matching collections, we're done
+    if (matching.length > 0) {
+      // Update cache with verified collections from API
+      for (const m of matching) {
+        orgCache.set(m.name, m);
+      }
+      return matching;
     }
 
-    if (matching.length === 0) {
-      const now = Date.now();
-      // Skip creation if we tried recently (eventual consistency delay)
-      if (now - lastCreationAttemptTime < CREATION_COOLDOWN_MS) {
-        console.log("[datastoreSync] skipping creation (cooldown active), using cached collections");
-        return Array.from(createdCollections.values());
+    // List is empty - check if we recently created collections
+    // Only return cache if we attempted creation recently (within cooldown)
+    const now = Date.now();
+    const lastCreationTime = getLastCreationTime(creds.orgId);
+    if (orgCache.size > 0 && (now - lastCreationTime < CREATION_COOLDOWN_MS)) {
+      console.log("[datastoreSync] collections not yet visible in API list, returning cached collections");
+      return Array.from(orgCache.values());
+    }
+
+    // Nothing in API, and either no cache or cache is stale - try creating
+    if (now - lastCreationTime < CREATION_COOLDOWN_MS) {
+      console.log("[datastoreSync] skipping creation (cooldown active)");
+      return Array.from(orgCache.values());
+    }
+
+    console.log("[datastoreSync] no openit-* datastores found — creating defaults");
+    setLastCreationTime(creds.orgId, now);
+    for (const def of defaults) {
+      // Check if we recently created this collection to avoid duplicates
+      if (orgCache.has(def.name)) {
+        const col = orgCache.get(def.name)!;
+        matching.push(col);
+        continue;
       }
-      
-      console.log("[datastoreSync] no openit-* datastores found — creating defaults");
-      lastCreationAttemptTime = now;
-      for (const def of defaults) {
-        // Check if we recently created this collection to avoid duplicates
-        if (createdCollections.has(def.name)) {
-          const col = createdCollections.get(def.name)!;
-          matching.push(col);
-          continue;
+
+      try {
+        const createUrl = new URL("/datacollection/", urls.skillsBaseUrl);
+        const createResponse = await fetchFn(createUrl.toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: def.name,
+            type: "datastore",
+            templateId: def.templateId,
+            description: def.description,
+            createdBy: creds.orgId,
+            createdByName: "OpenIT",
+            triggerUrls: [],
+            isStructured: true,
+          }),
+        });
+        
+        console.log(`[datastoreSync] POST /datacollection/ response status: ${createResponse.status} ${createResponse.statusText}`);
+        
+        if (!createResponse.ok) {
+          const errText = await createResponse.text();
+          console.error("[datastoreSync] response error:", errText);
+          // 409 means collection already exists, skip it
+          if (createResponse.status === 409) {
+            console.log(`[datastoreSync] collection ${def.name} already exists`);
+            continue;
+          }
+          throw new Error(`HTTP ${createResponse.status}: ${createResponse.statusText}`);
         }
 
+        let createResult: any;
         try {
-          const fetchFn = makeSkillsFetch(token.accessToken);
-          const url = new URL("/datacollection/", urls.skillsBaseUrl);
-          const response = await fetchFn(url.toString(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: def.name,
-              type: "datastore",
-              templateId: def.templateId,
-              description: def.description,
-              createdBy: creds.orgId,
-              createdByName: "OpenIT",
-              triggerUrls: [],
-              isStructured: true,
-            }),
-          });
-          
-          console.log(`[datastoreSync] POST /datacollection/ response status: ${response.status} ${response.statusText}`);
-          
-          if (!response.ok) {
-            const errText = await response.text();
-            console.error("[datastoreSync] response error:", errText);
-            // 409 means collection already exists, skip it
-            if (response.status === 409) {
-              console.log(`[datastoreSync] collection ${def.name} already exists`);
-              continue;
-            }
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-          }
-
-          const result = (await response.json()) as any;
-          console.log(`[datastoreSync] create response for ${def.name}:`, JSON.stringify(result));
-          
-          // Check for id in different possible formats
-          const id = result?.id || result?.data?.id || result?.collection?.id;
-          if (id) {
-            const col = {
-              id: String(id),
-              name: def.name,
-              type: "datastore",
-              description: def.description,
-            } as DataCollection;
-            matching.push(col);
-            createdCollections.set(def.name, col);
-            console.log(`[datastoreSync] cached ${def.name} with id: ${id}`);
-          } else {
-            console.warn(`[datastoreSync] no id found in response for ${def.name}. Response keys:`, Object.keys(result || {}));
-          }
+          createResult = await createResponse.json();
         } catch (e) {
-          console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
+          console.error("[datastoreSync] failed to parse create response JSON:", e);
+          throw new Error(`Failed to parse collection creation response: ${e}`);
         }
+        
+        console.log(`[datastoreSync] create response for ${def.name}:`, JSON.stringify(createResult));
+        
+        // Check for id in different possible formats
+        const id = createResult?.id || createResult?.data?.id || createResult?.collection?.id;
+        if (id) {
+          const col = {
+            id: String(id),
+            name: def.name,
+            type: "datastore",
+            description: def.description,
+          } as DataCollection;
+          matching.push(col);
+          orgCache.set(def.name, col);
+          console.log(`[datastoreSync] cached ${def.name} with id: ${id}`);
+        } else {
+          console.warn(`[datastoreSync] no id found in response for ${def.name}. Response keys:`, Object.keys(createResult || {}));
+        }
+      } catch (e) {
+        console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
       }
     }
 
@@ -147,15 +200,22 @@ export async function resolveProjectDatastores(
     if (matching.length > 0) {
       try {
         // Wait for API eventual consistency (collections take ~5 seconds to appear)
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 5000));
         
-        const fetchFn = makeSkillsFetch(token.accessToken);
-        const url = new URL("/datacollection/", urls.skillsBaseUrl);
-        url.searchParams.set("type", "datastore");
-        const refetchResponse = await fetchFn(url.toString());
-        const refetched = (await refetchResponse.json()) as DataCollection[] | null;
-        const allCollections = Array.isArray(refetched) ? refetched : [];
-        const updatedMatching = allCollections.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
+        const refetchUrl = new URL("/datacollection/", urls.skillsBaseUrl);
+        refetchUrl.searchParams.set("type", "datastore");
+        const refetchResponse = await fetchFn(refetchUrl.toString());
+        
+        let refetchResult: any;
+        try {
+          refetchResult = await refetchResponse.json();
+        } catch (e) {
+          console.error("[datastoreSync] failed to parse refetch response JSON:", e);
+          throw new Error(`Failed to parse refetch response: ${e}`);
+        }
+        
+        const refetched = Array.isArray(refetchResult) ? refetchResult : [];
+        const updatedMatching = refetched.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
         if (updatedMatching.length > matching.length) {
           console.log("[datastoreSync] re-fetched collections after creation");
           return updatedMatching;
@@ -165,7 +225,6 @@ export async function resolveProjectDatastores(
       }
     }
 
-    console.log("----END DATASTORE SYNC----");
     return matching;
   } catch (error) {
     console.log("----END DATASTORE SYNC (error)----");
