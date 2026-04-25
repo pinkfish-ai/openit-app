@@ -1,6 +1,12 @@
 import { useState } from "react";
-import { onDeployExit, onDeployLine, pinkitDeploy } from "../lib/api";
-import { getSyncStatus, pullNow, pushAllToKb, startKbSync } from "../lib/kbSync";
+import { gitAddAndCommit, onDeployExit, onDeployLine, pinkitDeploy } from "../lib/api";
+import {
+  getSyncStatus,
+  kbHasServerShadowFiles,
+  pullNow,
+  pushAllToKb,
+  startKbSync,
+} from "../lib/kbSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 
 export function DeployButton({
@@ -21,8 +27,16 @@ export function DeployButton({
     if (!repo) return;
     setRunning(true);
 
-    // Step 1: push the local knowledge-base/ folder to Pinkfish before
-    // running the deploy script. Skip silently if no creds / collection.
+    // Snapshot local state before touching the server. This is the
+    // "push to main" model — commit everything locally first so the
+    // deploy has a clean git trail to roll back to if needed.
+    try {
+      const committed = await gitAddAndCommit(repo, `pre-deploy @ ${new Date().toISOString()}`);
+      if (committed) onLine("▸ committed local changes");
+    } catch (e) {
+      onLine(`⚠ git commit skipped: ${String(e)}`);
+    }
+
     let collection = getSyncStatus().collection;
     const creds = await loadCreds().catch(() => null);
     // If kb sync hasn't resolved a collection yet (e.g. user clicked Deploy
@@ -38,14 +52,28 @@ export function DeployButton({
       }
     }
     if (collection && creds) {
+      const shadowBefore = await kbHasServerShadowFiles(repo);
+      if (shadowBefore) {
+        onLine(
+          "✗ kb: merge shadow files (.server.) still in knowledge-base/ — ask Claude to resolve, then deploy again.",
+        );
+        setRunning(false);
+        return;
+      }
       // Pull first so deploys don't blow away teammate edits with stale local state.
       onLine("▸ pulling knowledge base");
       try {
         await pullNow({ creds, repo, collection });
         const conflicts = getSyncStatus().conflicts;
-        if (conflicts.length > 0) {
-          onLine(`✗ kb pull found ${conflicts.length} conflict(s) — resolve before deploying:`);
+        const hasShadow = await kbHasServerShadowFiles(repo);
+        if (conflicts.length > 0 || hasShadow) {
+          onLine(
+            "✗ kb pull: merge conflict(s) — ask Claude to resolve (see File explorer), then deploy again:",
+          );
           for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
+          if (hasShadow && conflicts.length === 0) {
+            onLine("  • server shadow files present under knowledge-base/ (remove after merge)");
+          }
           setRunning(false);
           return;
         }

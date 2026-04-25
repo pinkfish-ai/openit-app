@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { gitDiff, gitLog, type GitCommit } from "../lib/api";
 
+function commitIcon(subject: string): string {
+  if (subject.startsWith("sync: pull")) return "↓";
+  if (subject.startsWith("sync: deployed")) return "↑";
+  if (subject.startsWith("init:")) return "●";
+  return "";
+}
+
 export function VersionsDrawer({
   repo,
   open,
@@ -37,25 +44,35 @@ export function VersionsDrawer({
     <div className="versions-drawer">
       <div className="versions-header">
         <span>Versions</span>
-        <button className="icon-btn" onClick={onClose} aria-label="Close versions drawer">
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Close versions drawer">
           ×
         </button>
       </div>
       {error && <div className="versions-error">{error}</div>}
       <ul className="versions-list">
-        {commits.map((c) => (
-          <li
-            key={c.sha}
-            className="commit"
-            onClick={() => repo && gitDiff(repo, c.sha).then(onShowDiff).catch(console.error)}
-          >
-            <code className="sha">{c.short_sha}</code>
-            <span className="subject">{c.subject}</span>
-            <span className="meta">
-              {c.author} · {c.date.split("T")[0]}
-            </span>
-          </li>
-        ))}
+        {commits.map((c) => {
+          const icon = commitIcon(c.subject);
+          return (
+            <li
+              key={c.sha}
+              className="commit"
+              onClick={() => repo && gitDiff(repo, c.sha).then(onShowDiff).catch(console.error)}
+            >
+              <code className="sha">{c.short_sha}</code>
+              <span className="subject">
+                {icon ? (
+                  <span className="commit-sync-icon" title="Sync">
+                    {icon}{" "}
+                  </span>
+                ) : null}
+                {c.subject}
+              </span>
+              <span className="meta">
+                {c.author} · {c.date.split("T")[0]}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

@@ -32,6 +32,44 @@ export async function gitDiff(repo: string, sha: string): Promise<string> {
   return invoke("git_diff", { repo, sha });
 }
 
+export async function gitEnsureRepo(repo: string): Promise<void> {
+  return invoke("git_ensure_repo", { repo });
+}
+
+export async function gitAddAndCommit(repo: string, message: string): Promise<boolean> {
+  return invoke("git_add_and_commit", { repo, message });
+}
+
+export type GitFileStatus = { path: string; status: string; staged: boolean };
+
+export async function gitStatusShort(repo: string): Promise<GitFileStatus[]> {
+  return invoke("git_status_short", { repo });
+}
+
+export async function gitStage(repo: string, paths: string[]): Promise<void> {
+  return invoke("git_stage", { repo, paths });
+}
+
+export async function gitUnstage(repo: string, paths: string[]): Promise<void> {
+  return invoke("git_unstage", { repo, paths });
+}
+
+export async function gitCommitStaged(repo: string, message: string): Promise<boolean> {
+  return invoke("git_commit_staged", { repo, message });
+}
+
+export async function gitFileDiff(repo: string, path: string): Promise<string> {
+  return invoke("git_file_diff", { repo, path });
+}
+
+export async function gitHasConflictMarkers(repo: string): Promise<boolean> {
+  return invoke("git_has_conflict_markers", { repo });
+}
+
+export async function gitDiffNameOnly(repo: string, baseSha: string): Promise<string[]> {
+  return invoke("git_diff_name_only", { repo, baseSha });
+}
+
 export async function pinkitDeploy(repo: string, env: string): Promise<void> {
   return invoke("pinkit_deploy", { args: { repo, env } });
 }

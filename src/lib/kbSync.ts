@@ -1,4 +1,7 @@
 import {
+  gitAddAndCommit,
+  gitEnsureRepo,
+  gitStatusShort,
   kbDownloadToLocal,
   kbInit,
   kbListLocal,
@@ -53,6 +56,50 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const POLL_INTERVAL_MS = 60_000;
 
+/// Server-side copy filename for merge conflicts, e.g. `runbook.md` → `runbook.server.md`.
+export function kbServerShadowFilename(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  if (dot <= 0 || dot === filename.length - 1) return `${filename}.server`;
+  return `${filename.slice(0, dot)}.server.${filename.slice(dot + 1)}`;
+}
+
+export function kbHasServerShadowFiles(repo: string): Promise<boolean> {
+  return kbListLocal(repo).then((files) =>
+    files.some((f) => f.filename.includes(".server.")),
+  );
+}
+
+/// Reconstruct canonical filename from a shadow like `runbook.server.md` → `runbook.md`.
+export function kbBaseFromShadowFilename(shadow: string): string {
+  const marker = ".server.";
+  const i = shadow.indexOf(marker);
+  if (i < 0) return shadow;
+  return `${shadow.slice(0, i)}.${shadow.slice(i + marker.length)}`;
+}
+
+/// Prompt text for Claude Code to resolve KB merge conflicts (pairs yours vs server shadow).
+export async function buildKbConflictPrompt(repo: string): Promise<string> {
+  const sync = getSyncStatus();
+  const local = await kbListLocal(repo);
+  const shadowNames = local.map((f) => f.filename).filter((n) => n.includes(".server."));
+  const lines: string[] = [];
+  for (const c of sync.conflicts) {
+    const sh = kbServerShadowFilename(c.filename);
+    lines.push(`- knowledge-base/${c.filename} (yours) vs knowledge-base/${sh} (server)`);
+  }
+  for (const sh of shadowNames) {
+    if (sync.conflicts.some((c) => kbServerShadowFilename(c.filename) === sh)) continue;
+    const base = kbBaseFromShadowFilename(sh);
+    lines.push(`- knowledge-base/${base} (yours) vs knowledge-base/${sh} (server)`);
+  }
+  if (lines.length === 0) return "";
+  return `There are merge conflicts in the knowledge base. For each pair below, read both files, merge them intelligently into the main file (the one without ".server." in the name), then delete the .server. shadow file(s).
+
+${lines.join("\n")}
+
+For binary files (e.g. PDF), pick the correct version or replace manually, then delete the shadow file.`;
+}
+
 /// Resolve (find or create) the OpenIT-managed KB for this org and run the
 /// initial pull. Idempotent — safe to call again on org change.
 export async function startKbSync(args: {
@@ -69,6 +116,13 @@ export async function startKbSync(args: {
   }
 
   update({ phase: "resolving", lastError: null });
+  try {
+    await gitEnsureRepo(repo);
+  } catch (e) {
+    console.error("[kbsync] gitEnsureRepo failed:", e);
+    update({ phase: "error", lastError: String(e) });
+    return;
+  }
   try {
     const dir = await kbInit(repo);
     console.log("[kbsync] kbInit ok →", dir);
@@ -184,6 +238,15 @@ async function pullOnce(args: {
         localFile.mtime_ms != null && localFile.mtime_ms > tracked.pulled_at_mtime_ms;
 
       if (remoteChanged && localChanged) {
+        const shadowName = kbServerShadowFilename(r.filename);
+        const hasShadow = local.some((f) => f.filename === shadowName);
+        if (!hasShadow && r.downloadUrl) {
+          try {
+            await kbDownloadToLocal(repo, shadowName, r.downloadUrl);
+          } catch (e) {
+            console.error(`pull conflict shadow ${shadowName} failed:`, e);
+          }
+        }
         conflicts.push({ filename: r.filename, reason: "local-and-remote-changed" });
         continue;
       }
@@ -203,6 +266,13 @@ async function pullOnce(args: {
 
   await kbStateSave(repo, persisted);
   update({ phase: "ready", conflicts, lastPullAt: Date.now(), lastError: null });
+
+  try {
+    const ts = new Date().toISOString();
+    await gitAddAndCommit(repo, `sync: pull @ ${ts}`);
+  } catch (e) {
+    console.warn("[kbsync] git commit after pull:", e);
+  }
 }
 
 function mkState(r: { updatedAt: string }, _repo: string) {
@@ -235,13 +305,21 @@ export async function pushAllToKb(args: {
   const local = await kbListLocal(repo);
   const persisted = await kbStateLoad(repo);
 
-  // Only push files that are new (not in manifest) or changed (local mtime
-  // is newer than the last sync). Untouched files are skipped.
+  // Use git status (content hash) instead of mtime to decide what to push.
+  // Files that git reports as modified/untracked under knowledge-base/ are
+  // the ones that actually changed since the last commit.
+  const gitFiles = await gitStatusShort(repo).catch(() => []);
+  const dirtyPaths = new Set(
+    gitFiles
+      .filter((g) => g.path.startsWith("knowledge-base/"))
+      .map((g) => g.path.replace(/^knowledge-base\//, "")),
+  );
+
   const toPush = local.filter((f) => {
+    if (f.filename.includes(".server.")) return false;
     const tracked = persisted.files[f.filename];
     if (!tracked) return true;
-    if (f.mtime_ms == null) return true;
-    return f.mtime_ms > tracked.pulled_at_mtime_ms;
+    return dirtyPaths.has(f.filename);
   });
 
   if (toPush.length === 0) {
@@ -302,5 +380,12 @@ export async function pushAllToKb(args: {
 
   await kbStateSave(repo, persisted);
   update({ phase: "ready" });
+
+  try {
+    const ts = new Date().toISOString();
+    await gitAddAndCommit(repo, `sync: deployed @ ${ts}`);
+  } catch (e) {
+    console.warn("[kbsync] git commit after push:", e);
+  }
   return { pushed, failed };
 }

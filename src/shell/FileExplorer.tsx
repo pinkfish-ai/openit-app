@@ -1,14 +1,51 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fsList,
-  kbStateLoad,
+  gitStatusShort,
   kbWriteFileBytes,
   type FileNode,
-  type KbStatePersisted,
+  type GitFileStatus,
 } from "../lib/api";
 import { subscribeSync, type SyncStatus } from "../lib/kbSync";
 
-const KB_DIRNAME = "knowledge-base";
+function relPath(repo: string, absPath: string): string {
+  const prefix = `${repo}/`;
+  return absPath.startsWith(prefix) ? absPath.slice(prefix.length) : absPath;
+}
+
+function gitStatusForPath(rel: string, rows: GitFileStatus[]): GitFileStatus | undefined {
+  const direct = rows.find((r) => r.path === rel);
+  if (direct) return direct;
+  return rows.find((r) => rel.startsWith(`${r.path}/`));
+}
+
+function fileColorClass(n: FileNode, repo: string, gitRows: GitFileStatus[]): string {
+  if (n.is_dir) return "";
+  const rel = relPath(repo, n.path);
+  if (rel.includes(".server.")) return "file-color-conflict";
+  const st = gitStatusForPath(rel, gitRows);
+  if (!st) return "";
+  if (st.status === "UU") return "file-color-conflict";
+  if (st.status === "?") return "file-color-untracked";
+  if (st.status === "M") return "file-color-modified";
+  if (st.status === "A") return "file-color-added";
+  if (st.status === "D") return "file-color-deleted";
+  return "";
+}
+
+function fileStatusBadge(n: FileNode, repo: string, gitRows: GitFileStatus[]): string | null {
+  if (n.is_dir) return null;
+  const rel = relPath(repo, n.path);
+  if (rel.includes(".server.")) return "C";
+  const st = gitStatusForPath(rel, gitRows);
+  if (!st) return null;
+  if (st.status === "UU") return "C";
+  if (st.status === "?") return "U";
+  if (st.status === "M") return "M";
+  if (st.status === "A") return "A";
+  if (st.status === "D") return "D";
+  return null;
+}
 
 export function FileExplorer({
   repo,
@@ -21,15 +58,14 @@ export function FileExplorer({
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [sync, setSync] = useState<SyncStatus | null>(null);
-  const [kbState, setKbState] = useState<KbStatePersisted | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [gitRows, setGitRows] = useState<GitFileStatus[]>([]);
 
   useEffect(() => subscribeSync(setSync), []);
 
   const reload = useCallback(() => {
     if (!repo) {
       setNodes([]);
-      setKbState(null);
       return;
     }
     fsList(repo)
@@ -38,7 +74,6 @@ export function FileExplorer({
         setError(null);
       })
       .catch((e) => setError(String(e)));
-    kbStateLoad(repo).then(setKbState).catch(() => setKbState(null));
   }, [repo]);
 
   useEffect(() => {
@@ -49,6 +84,21 @@ export function FileExplorer({
     if (sync?.phase === "ready") reload();
   }, [sync?.phase, sync?.lastPullAt, reload]);
 
+  useEffect(() => {
+    if (!repo) {
+      setGitRows([]);
+      return;
+    }
+    const tick = () => {
+      gitStatusShort(repo)
+        .then(setGitRows)
+        .catch(() => setGitRows([]));
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => clearInterval(id);
+  }, [repo]);
+
   const visible = useMemo(() => {
     if (!repo) return [];
     return nodes.filter((n) => {
@@ -58,26 +108,6 @@ export function FileExplorer({
       return true;
     });
   }, [nodes, collapsed, repo]);
-
-  /// True when this node is a file under knowledge-base/ that hasn't been
-  /// pushed yet (not in manifest) or has been edited since last sync (local
-  /// mtime > pulled_at_mtime_ms).
-  const isUnsynced = useCallback(
-    (n: FileNode): boolean => {
-      if (!repo || n.is_dir) return false;
-      const kbPrefix = repo + "/" + KB_DIRNAME + "/";
-      if (!n.path.startsWith(kbPrefix)) return false;
-      if (!kbState) return true; // no manifest yet → treat as unsynced
-      const filename = n.path.slice(kbPrefix.length);
-      const tracked = kbState.files?.[filename];
-      if (!tracked) return true; // never pushed/pulled
-      // We don't have local mtime in FileNode (Rust fs_list doesn't return it).
-      // For now: presence in manifest = synced. Modifications detect on next
-      // poll/push when local mtime is read.
-      return false;
-    },
-    [kbState, repo],
-  );
 
   const onDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -155,11 +185,12 @@ export function FileExplorer({
           const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.name;
           const depth = rel.split("/").length - 1;
           const isCollapsedRow = collapsed.has(n.path);
-          const unsynced = isUnsynced(n);
+          const colorClass = repo ? fileColorClass(n, repo, gitRows) : "";
+          const badge = repo ? fileStatusBadge(n, repo, gitRows) : null;
           return (
             <li
               key={n.path}
-              className={n.is_dir ? "tree-item dir" : "tree-item file"}
+              className={`tree-item ${n.is_dir ? "dir" : "file"} ${colorClass}`}
               style={{ paddingLeft: 8 + depth * 12 }}
               onClick={() => (n.is_dir ? toggle(n.path) : onSelect(n.path))}
               draggable={!n.is_dir}
@@ -171,19 +202,32 @@ export function FileExplorer({
               }}
             >
               {n.is_dir ? (isCollapsedRow ? "▸ " : "▾ ") : ""}
-              {n.name}
-              {unsynced && <span className="unsynced-dot" title="Not yet synced" />}
+              <span className="tree-item-name">{n.name}</span>
+              {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
             </li>
           );
         })}
       </ul>
       {sync && sync.conflicts.length > 0 && (
         <div className="kb-conflicts">
-          <div className="kb-conflicts-header">⚠ KB conflicts</div>
+          <div className="kb-conflicts-header">Merge conflicts</div>
+          <p className="kb-conflicts-hint">
+            Server copies saved as <code>*.server.*</code> next to yours. Use the{" "}
+            <strong>Resolve merge conflicts</strong> prompt below Claude, then delete the shadow
+            files when done.
+          </p>
           <ul>
             {sync.conflicts.map((c) => (
               <li key={c.filename}>
-                <code>{c.filename}</code> edited locally and remotely. Rename your local copy to keep it.
+                <button
+                  type="button"
+                  className="kb-conflict-link"
+                  onClick={() =>
+                    onSelect(`${repo}/knowledge-base/${c.filename}`)
+                  }
+                >
+                  <code>{c.filename}</code>
+                </button>
               </li>
             ))}
           </ul>
