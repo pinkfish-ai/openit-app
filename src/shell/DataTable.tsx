@@ -6,6 +6,7 @@ type Props = {
   items: MemoryItem[];
   hasMore?: boolean;
   onLoadMore?: () => void;
+  onRowClick?: (key: string) => void;
 };
 
 type SortState = { fieldId: string; direction: "asc" | "desc" } | null;
@@ -16,7 +17,7 @@ function formatCell(value: unknown, fieldType: string): string {
   return String(value);
 }
 
-export function DataTable({ collection, items, hasMore, onLoadMore }: Props) {
+export function DataTable({ collection, items, hasMore, onLoadMore, onRowClick }: Props) {
   const [sort, setSort] = useState<SortState>(null);
 
   const fields = collection.schema?.fields ?? [];
@@ -102,7 +103,11 @@ export function DataTable({ collection, items, hasMore, onLoadMore }: Props) {
         </thead>
         <tbody>
           {sortedRows.map((row, idx) => (
-            <tr key={row.key || idx} className="data-table-row">
+            <tr
+              key={row.key || idx}
+              className={`data-table-row${onRowClick ? " data-table-row-clickable" : ""}`}
+              onClick={onRowClick && row.key ? () => onRowClick(row.key) : undefined}
+            >
               <td className="data-table-cell">{row.key}</td>
               {fields.map((field) => (
                 <td key={field.id} className="data-table-cell">

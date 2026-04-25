@@ -7,6 +7,7 @@ import {
   kbHasServerShadowFiles,
   subscribeSync,
 } from "../lib/kbSync";
+import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
 import { ChatPane } from "./ChatPane";
 import { FileExplorer } from "./FileExplorer";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
@@ -87,6 +88,28 @@ export function Shell({
     if (deployLines.length > 0) setSource({ kind: "deploy", lines: deployLines });
   }, [deployLines]);
 
+  // Native filesystem watcher — emits fsTick bumps on real changes
+  useEffect(() => {
+    if (!repo) return;
+    let unlisten: (() => void) | null = null;
+
+    (async () => {
+      try {
+        await fsWatchStart(repo);
+        unlisten = await onFsChanged((_paths) => {
+          bumpFs();
+        });
+      } catch (e) {
+        console.warn("[shell] fs watcher failed to start:", e);
+      }
+    })();
+
+    return () => {
+      unlisten?.();
+      fsWatchStop().catch(() => {});
+    };
+  }, [repo, bumpFs]);
+
   const persist = useCallback(
     (patch: Partial<AppPersistedState>) => {
       const next: AppPersistedState = {
@@ -159,7 +182,7 @@ export function Shell({
         </Panel>
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[1]} minSize={20}>
-          <Viewer source={source} />
+          <Viewer source={source} repo={repo ?? ""} fsTick={fsTick} />
         </Panel>
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[2]} minSize={25}>

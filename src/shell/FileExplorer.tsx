@@ -178,21 +178,16 @@ export function FileExplorer({
     if (fsSync?.phase === "ready") reload();
   }, [fsSync?.phase, fsSync?.lastPullAt, reload]);
 
-  // Git status polling
+  // Git status — refreshes on fs watcher events (fsTick) instead of polling
   useEffect(() => {
     if (!repo) {
       setGitRows([]);
       return;
     }
-    const tick = () => {
-      gitStatusShort(repo)
-        .then(setGitRows)
-        .catch(() => setGitRows([]));
-    };
-    tick();
-    const id = setInterval(tick, 3000);
-    return () => clearInterval(id);
-  }, [repo]);
+    gitStatusShort(repo)
+      .then(setGitRows)
+      .catch(() => setGitRows([]));
+  }, [repo, fsTick]);
 
   const initialLoadDoneRef = useRef(false);
   const hasCollapsedOnceRef = useRef(false);

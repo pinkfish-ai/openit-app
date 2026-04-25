@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { fsRead, fsReadBytes } from "../lib/api";
+import { fsRead, fsReadBytes, fsList } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
@@ -9,6 +9,7 @@ import { ImageViewer } from "./viewers/ImageViewer";
 import { PdfViewer } from "./viewers/PdfViewer";
 import { SpreadsheetViewer } from "./viewers/SpreadsheetViewer";
 import { OfficeViewer } from "./viewers/OfficeViewer";
+import { writeToActiveSession } from "./activeSession";
 import type { ViewerSource } from "./types";
 
 export type { ViewerSource };
@@ -47,7 +48,7 @@ function mimeForPath(path: string): string {
   return map[ext] ?? "application/octet-stream";
 }
 
-export function Viewer({ source }: { source: ViewerSource }) {
+export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: string; fsTick?: number }) {
   const [content, setContent] = useState<string>("");
   const [binaryData, setBinaryData] = useState<Uint8Array | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +158,36 @@ export function Viewer({ source }: { source: ViewerSource }) {
     }
   }, [source]);
 
+  // Re-read disk-based datastore tables when filesystem changes (fsTick from native watcher)
+  useEffect(() => {
+    if (!source || source.kind !== "datastore-table" || source.collection.id || !repo) return;
+    // Skip the initial render (fsTick === 0 is handled by the source-loading effect above)
+    if (fsTick === 0) return;
+    const dirPath = `${repo}/databases/${source.collection.name}`;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const nodes = await fsList(dirPath);
+        const items: MemoryItem[] = [];
+        for (const node of nodes) {
+          if (node.is_dir || node.name === "_schema.json") continue;
+          try {
+            const raw = await fsRead(node.path);
+            const content = JSON.parse(raw);
+            const key = node.name.replace(/\.json$/, "");
+            items.push({ id: key, key, content, createdAt: "", updatedAt: "" });
+          } catch { /* skip unparseable */ }
+        }
+        if (!cancelled) setTableItems(items);
+      } catch (e) {
+        console.warn("[Viewer] fs change reload failed:", e);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [fsTick, source, repo]);
+
   if (!source) {
     return <div className="viewer empty">Select a file from the explorer</div>;
   }
@@ -230,6 +261,10 @@ export function Viewer({ source }: { source: ViewerSource }) {
             } catch (e) {
               console.warn("[Viewer] load more failed:", e);
             }
+          }}
+          onRowClick={(key) => {
+            const filePath = `${repo}/databases/${source.collection.name}/${key}.json`;
+            writeToActiveSession(filePath + " ");
           }}
         />
       );

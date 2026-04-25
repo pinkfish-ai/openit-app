@@ -11,6 +11,7 @@ mod project;
 mod pty;
 mod skills;
 mod state;
+mod watcher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -30,6 +31,7 @@ pub fn run() {
             Ok(())
         })
         .manage(pty::PtyState::default())
+        .manage(watcher::WatcherState::default())
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_write,
@@ -93,6 +95,8 @@ pub fn run() {
             skills::skills_fetch_file,
             filestore::filestore_list_collections,
             filestore::datastore_list_collections,
+            watcher::fs_watch_start,
+            watcher::fs_watch_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

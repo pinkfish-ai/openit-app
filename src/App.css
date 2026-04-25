@@ -1624,6 +1624,10 @@ body,
   background: var(--accent-soft);
 }
 
+.data-table-row-clickable {
+  cursor: pointer;
+}
+
 .data-table-load-more {
   display: block;
   width: 100%;

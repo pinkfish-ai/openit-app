@@ -17,7 +17,7 @@ Everything should SYNC after connect. ALL assets (that have dates newer than wha
 And then every 60s, we check for new assets on the remote (that have dates newer than what's on the file system). 
 
 
-# OpenIT
+# Tech
 
 Tauri desktop wrapper for Claude Code, targeted at IT admins building Pinkfish ITSM solutions.
 
