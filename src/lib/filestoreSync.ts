@@ -88,6 +88,7 @@ export async function resolveProjectFilestores(
 ): Promise<FilestoreCollection[]> {
   const token = getToken();
   if (!token) throw new Error("not authenticated");
+  const urls = derivedUrls(creds.tokenUrl);
 
   const all = await listFilestoreCollections(creds);
   const defaults = getDefaultFilestores(creds.orgId);
@@ -118,7 +119,6 @@ export async function resolveProjectFilestores(
         }
       } catch (e) {
         console.warn(`[filestore] failed to create ${def.name}:`, e);
-        // If creation fails, don't try again in future calls — collection may already exist
       }
     }
     // After attempting creation, re-list to get any collections that may have already existed
