@@ -40,38 +40,22 @@ export async function resolveProjectDatastores(
     const result = (await pinkfishMcpCall({
       accessToken: token.accessToken,
       orgId: creds.orgId,
-      server: "knowledge-base",
-      tool: "knowledge-base_list_collections",
+      server: "datastore-structured",
+      tool: "datastore-structured_list_collections",
       arguments: {},
       baseUrl: urls.mcpBaseUrl,
     })) as { collections?: DataCollection[] } | null;
 
     const all = result?.collections ?? [];
-    let matching = all.filter((c: DataCollection) => c.name.startsWith(PREFIX));
+    const defaults = DEFAULT_DATASTORES.map((d) => ({
+      ...d,
+      name: `${d.name}-${creds.orgId}`,
+    }));
+    let matching = all.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
 
     if (matching.length === 0) {
-      console.log("[datastoreSync] no openit-* datastores found — attempting to create defaults");
-      for (const def of DEFAULT_DATASTORES) {
-        try {
-          const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
-            name: def.name,
-            type: "datastore",
-            isStructured: true,
-            templateId: def.templateId,
-            description: def.description,
-            createdBy: creds.orgId,
-            createdByName: "OpenIT",
-          });
-          matching.push(created);
-        } catch (e) {
-          console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
-        }
-      }
-      // If creation failed, try to find existing collections by name
-      if (matching.length === 0) {
-        const all = result?.collections ?? [];
-        matching = all.filter((c: DataCollection) => DEFAULT_DATASTORES.some((d) => d.name === c.name));
-      }
+      console.log("[datastoreSync] no openit-* datastores found");
+      // Don't try to create — assume they exist or user will create via web UI
     }
 
     return matching;

@@ -36,12 +36,14 @@ export type FilestoreSyncStatus = {
 
 const PREFIX = "openit-";
 
-const DEFAULT_FILESTORES = [
-  {
-    name: "openit-docs",
-    description: "Shared document storage for OpenIT",
-  },
-];
+function getDefaultFilestores(orgId: string) {
+  return [
+    {
+      name: `openit-docs-${orgId}`,
+      description: "Shared document storage for OpenIT",
+    },
+  ];
+}
 
 let status: FilestoreSyncStatus = {
   phase: "idle",
@@ -88,34 +90,14 @@ export async function resolveProjectFilestores(
   if (!token) throw new Error("not authenticated");
 
   const all = await listFilestoreCollections(creds);
+  const defaults = getDefaultFilestores(creds.orgId);
   let matching = all
-    .filter((c) => c.name.startsWith(PREFIX))
+    .filter((c) => defaults.some((d) => d.name === c.name))
     .map((c) => ({ id: c.id, name: c.name, description: c.description }));
 
   if (matching.length === 0) {
-    console.log("[filestore] no openit-* filestores found — attempting to create defaults");
-    const urls = derivedUrls(creds.tokenUrl);
-    for (const def of DEFAULT_FILESTORES) {
-      try {
-        const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
-          name: def.name,
-          type: "filestorage",
-          description: def.description,
-          createdBy: creds.orgId,
-          createdByName: "OpenIT",
-        });
-        matching.push({ id: created.id, name: created.name, description: created.description });
-      } catch (e) {
-        console.warn(`[filestore] failed to create ${def.name}:`, e);
-      }
-    }
-    // If creation failed, try to find existing collections by name
-    if (matching.length === 0) {
-      const all = await listFilestoreCollections(creds);
-      matching = all
-        .filter((c) => DEFAULT_FILESTORES.some((d) => d.name === c.name))
-        .map((c) => ({ id: c.id, name: c.name, description: c.description }));
-    }
+    console.log("[filestore] no openit-* filestores found");
+    // Don't try to create — assume they exist or user will create via web UI
   }
 
   return matching;
@@ -133,8 +115,8 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
     const result = (await pinkfishMcpCall({
       accessToken: token.accessToken,
       orgId: creds.orgId,
-      server: "knowledge-base",
-      tool: "knowledge-base_list_collections",
+      server: "filestorage",
+      tool: "filestorage_list_collections",
       arguments: {},
       baseUrl: urls.mcpBaseUrl,
     })) as { collections?: DataCollection[] } | null;
