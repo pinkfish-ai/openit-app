@@ -79,6 +79,20 @@ export function getToken(): PinkfishTokenState | null {
 }
 
 export async function loadCreds(): Promise<PinkfishCreds | null> {
+  // In dev mode, check for env-provided creds first to avoid keychain prompts
+  const envClientId = import.meta.env.VITE_DEV_CLIENT_ID;
+  const envClientSecret = import.meta.env.VITE_DEV_CLIENT_SECRET;
+  const envOrgId = import.meta.env.VITE_DEV_ORG_ID;
+  if (envClientId && envClientSecret && envOrgId) {
+    console.log("[auth] using dev env creds (skipping keychain)");
+    return {
+      clientId: envClientId,
+      clientSecret: envClientSecret,
+      orgId: envOrgId,
+      tokenUrl: import.meta.env.VITE_DEV_TOKEN_URL || DEFAULT_TOKEN_URL,
+    };
+  }
+
   const [clientId, clientSecret, orgId, tokenUrl] = await Promise.all([
     keychainGet(SLOT_CLIENT_ID),
     keychainGet(SLOT_CLIENT_SECRET),
@@ -96,6 +110,12 @@ export async function loadCreds(): Promise<PinkfishCreds | null> {
 }
 
 export async function saveCreds(creds: PinkfishCreds): Promise<void> {
+  // Skip keychain writes when using dev env creds
+  if (import.meta.env.VITE_DEV_CLIENT_ID) {
+    console.log("[auth] dev mode — skipping keychain write");
+    return;
+  }
+
   console.log("[auth] saveCreds called with", {
     client_id_len: creds.clientId.length,
     client_secret_len: creds.clientSecret.length,

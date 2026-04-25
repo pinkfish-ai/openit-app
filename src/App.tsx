@@ -5,6 +5,7 @@ import { DeployButton } from "./shell/DeployButton";
 import { keychainProbe, projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
+import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
 import "./App.css";
 
 function basename(p: string): string {
@@ -36,9 +37,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    keychainProbe()
-      .then((ok) => console.log("[keychain] probe round-trip ok?", ok))
-      .catch((e) => console.error("[keychain] probe failed:", e));
+    if (!import.meta.env.VITE_DEV_CLIENT_ID) {
+      keychainProbe()
+        .then((ok) => console.log("[keychain] probe round-trip ok?", ok))
+        .catch((e) => console.error("[keychain] probe failed:", e));
+    }
     Promise.all([stateLoad(), startAuth(), loadCreds()])
       .then(([s, _token, creds]) => {
         setRepo(s.last_repo);
@@ -64,6 +67,10 @@ function App() {
             orgSlug: slug,
             orgName: slug,
           }).catch((e) => console.error("kb sync init failed:", e));
+          startFilestoreSync({
+            creds,
+            repo: s.last_repo,
+          }).catch((e) => console.error("filestore sync init failed:", e));
         } else {
           console.log("[app] not auto-syncing kb — missing creds or repo");
         }
@@ -74,6 +81,7 @@ function App() {
     return () => {
       unsub();
       stopKbSync();
+      stopFilestoreSync();
     };
   }, []);
 
@@ -106,6 +114,10 @@ function App() {
           orgSlug: basename(result.path),
           orgName: incoming,
         }).catch((e) => console.error("kb sync init failed:", e));
+        startFilestoreSync({
+          creds: fullCreds,
+          repo: result.path,
+        }).catch((e) => console.error("filestore sync init failed:", e));
       }
     } catch (e) {
       console.error("project bootstrap failed:", e);

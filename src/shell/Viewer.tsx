@@ -1,40 +1,91 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { fsRead } from "../lib/api";
+import { fsRead, fsReadBytes } from "../lib/api";
+import { loadCreds } from "../lib/pinkfishAuth";
+import { fetchDatastoreItems } from "../lib/datastoreSync";
+import type { MemoryItem } from "../lib/skillsApi";
+import { DataTable } from "./DataTable";
+import { ImageViewer } from "./viewers/ImageViewer";
+import { PdfViewer } from "./viewers/PdfViewer";
+import { SpreadsheetViewer } from "./viewers/SpreadsheetViewer";
+import { OfficeViewer } from "./viewers/OfficeViewer";
+import type { ViewerSource } from "./types";
 
-export type ViewerSource =
-  | { kind: "file"; path: string }
-  | { kind: "deploy"; lines: string[] }
-  | { kind: "diff"; text: string }
-  | null;
+export type { ViewerSource };
 
-type ViewMode = "rendered" | "raw";
+type ViewMode = "rendered" | "raw" | "table";
 
 function isMarkdown(path: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(path);
 }
 
+function isImage(path: string): boolean {
+  return /\.(jpg|jpeg|png|gif|webp)$/i.test(path);
+}
+
+function isPdf(path: string): boolean {
+  return /\.pdf$/i.test(path);
+}
+
+function isSpreadsheet(path: string): boolean {
+  return /\.(xlsx|csv)$/i.test(path);
+}
+
+function isOfficeDoc(path: string): boolean {
+  return /\.(docx|pptx)$/i.test(path);
+}
+
+function mimeForPath(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    gif: "image/gif",
+    webp: "image/webp",
+  };
+  return map[ext] ?? "application/octet-stream";
+}
+
 export function Viewer({ source }: { source: ViewerSource }) {
   const [content, setContent] = useState<string>("");
+  const [binaryData, setBinaryData] = useState<Uint8Array | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("rendered");
 
+  // Self-loaded table data for datastore-table
+  const [tableItems, setTableItems] = useState<MemoryItem[]>([]);
+  const [tableHasMore, setTableHasMore] = useState(false);
+  const [tableLoading, setTableLoading] = useState(false);
+
   useEffect(() => {
     setError(null);
+    setBinaryData(null);
     if (!source) {
       setContent("");
       return;
     }
     if (source.kind === "file") {
       let cancelled = false;
-      // Default to rendered when opening a new markdown file; raw for everything else.
-      setMode(isMarkdown(source.path) ? "rendered" : "raw");
-      fsRead(source.path)
+      const path = source.path;
+
+      if (isImage(path) || isPdf(path) || isSpreadsheet(path)) {
+        setMode("rendered");
+        fsReadBytes(path)
+          .then((bytes) => !cancelled && setBinaryData(bytes))
+          .catch((e) => !cancelled && setError(String(e)));
+        return () => { cancelled = true; };
+      }
+      if (isOfficeDoc(path)) {
+        setMode("rendered");
+        setContent("");
+        return;
+      }
+      setMode(isMarkdown(path) ? "rendered" : "raw");
+      fsRead(path)
         .then((c) => !cancelled && setContent(c))
         .catch((e) => !cancelled && setError(String(e)));
-      return () => {
-        cancelled = true;
-      };
+      return () => { cancelled = true; };
     }
     if (source.kind === "deploy") {
       setMode("raw");
@@ -46,6 +97,61 @@ export function Viewer({ source }: { source: ViewerSource }) {
       setContent(source.text);
       return;
     }
+    if (source.kind === "datastore-table") {
+      setMode("table");
+      setContent("");
+      // Seed with any items passed in, then fetch fresh data
+      setTableItems(source.items ?? []);
+      setTableHasMore(source.hasMore ?? false);
+      setTableLoading(true);
+      let cancelled = false;
+      loadCreds().then(async (creds) => {
+        if (!creds || cancelled) { setTableLoading(false); return; }
+        try {
+          const resp = await fetchDatastoreItems(creds, source.collection.id, 100, 0);
+          if (!cancelled) {
+            setTableItems(resp.items);
+            setTableHasMore(resp.pagination.hasNextPage);
+          }
+        } catch (e) {
+          console.warn("[Viewer] failed to load table items:", e);
+        } finally {
+          if (!cancelled) setTableLoading(false);
+        }
+      });
+      return () => { cancelled = true; };
+    }
+    if (source.kind === "datastore-row") {
+      setMode("raw");
+      const raw = source.item.content;
+      if (raw == null) {
+        setContent("{}");
+      } else if (typeof raw === "object") {
+        setContent(JSON.stringify(raw, null, 2));
+      } else {
+        try {
+          setContent(JSON.stringify(JSON.parse(raw), null, 2));
+        } catch {
+          setContent(String(raw));
+        }
+      }
+      return;
+    }
+    if (source.kind === "datastore-schema") {
+      setMode("raw");
+      setContent(JSON.stringify(source.collection.schema, null, 2));
+      return;
+    }
+    if (source.kind === "agent") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
+    if (source.kind === "workflow") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
   }, [source]);
 
   if (!source) {
@@ -55,20 +161,183 @@ export function Viewer({ source }: { source: ViewerSource }) {
     return <div className="viewer error">{error}</div>;
   }
 
-  const title =
-    source.kind === "file"
-      ? source.path
-      : source.kind === "deploy"
-        ? "Deploy output"
-        : "Git diff";
+  // --- Title ---
+  const getTitle = (): string => {
+    switch (source.kind) {
+      case "file": return source.path;
+      case "deploy": return "Deploy output";
+      case "diff": return "Git diff";
+      case "datastore-table": return source.collection?.name ?? "Datastore";
+      case "datastore-schema": return `${source.collection?.name ?? "Datastore"} — Schema`;
+      case "datastore-row": return `${source.collection?.name ?? "Datastore"} / ${source.item?.key || source.item?.id || "Row"}`;
+      case "agent": return source.agent?.name ?? "Agent";
+      case "workflow": return source.workflow?.name ?? "Workflow";
+      default: return "";
+    }
+  };
+  const title = getTitle();
 
-  const showTabs = source.kind === "file" && isMarkdown(source.path);
+  // --- Tabs ---
+  const showFileTabs = source.kind === "file" && isMarkdown(source.path);
+  const showRowTabs = source.kind === "datastore-row";
+
+  // --- Render body ---
+  const renderBody = () => {
+    // File viewers
+    if (source.kind === "file") {
+      if (isImage(source.path) && binaryData) {
+        return <ImageViewer data={binaryData} mimeType={mimeForPath(source.path)} />;
+      }
+      if (isPdf(source.path) && binaryData) {
+        return <PdfViewer data={binaryData} />;
+      }
+      if (isSpreadsheet(source.path) && binaryData) {
+        return <SpreadsheetViewer data={binaryData} filename={source.path} />;
+      }
+      if (isOfficeDoc(source.path)) {
+        return <OfficeViewer filename={source.path} />;
+      }
+      if (mode === "rendered" && isMarkdown(source.path)) {
+        return (
+          <div className="viewer-md">
+            <ReactMarkdown>{content}</ReactMarkdown>
+          </div>
+        );
+      }
+      return <pre className="viewer-content">{content}</pre>;
+    }
+
+    // Datastore table view
+    if (source.kind === "datastore-table") {
+      if (tableLoading && tableItems.length === 0) {
+        return <div className="viewer-content" style={{ opacity: 0.5 }}>Loading table data...</div>;
+      }
+      return (
+        <DataTable
+          collection={source.collection}
+          items={tableItems}
+          hasMore={tableHasMore}
+          onLoadMore={async () => {
+            const creds = await loadCreds();
+            if (!creds) return;
+            try {
+              const resp = await fetchDatastoreItems(creds, source.collection.id, 100, tableItems.length);
+              setTableItems((prev) => [...prev, ...resp.items]);
+              setTableHasMore(resp.pagination.hasNextPage);
+            } catch (e) {
+              console.warn("[Viewer] load more failed:", e);
+            }
+          }}
+        />
+      );
+    }
+
+    // Datastore row view
+    if (source.kind === "datastore-row") {
+      if (mode === "table") {
+        return (
+          <DataTable
+            collection={source.collection}
+            items={[source.item]}
+          />
+        );
+      }
+      return <pre className="viewer-content">{content}</pre>;
+    }
+
+    // Agent summary
+    if (source.kind === "agent") {
+      const a = source.agent;
+      return (
+        <div className="viewer-summary">
+          <h2>{a.name}</h2>
+          {a.description && <p className="summary-desc">{a.description}</p>}
+          <div className="summary-section">
+            <h3>Details</h3>
+            <table className="summary-table">
+              <tbody>
+                {a.selectedModel && (
+                  <tr><td>Model</td><td>{a.selectedModel}</td></tr>
+                )}
+                {a.isShared !== undefined && (
+                  <tr><td>Shared</td><td>{a.isShared ? "Yes" : "No"}</td></tr>
+                )}
+                <tr><td>ID</td><td><code>{a.id}</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          {a.instructions && (
+            <div className="summary-section">
+              <h3>Instructions</h3>
+              <div className="viewer-md">
+                <ReactMarkdown>{a.instructions}</ReactMarkdown>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Workflow summary
+    if (source.kind === "workflow") {
+      const w = source.workflow;
+      return (
+        <div className="viewer-summary">
+          <h2>{w.name}</h2>
+          {w.description && <p className="summary-desc">{w.description}</p>}
+          {w.inputs && w.inputs.length > 0 && (
+            <div className="summary-section">
+              <h3>Inputs</h3>
+              <table className="summary-table">
+                <thead>
+                  <tr><th>Name</th><th>Type</th><th>Required</th></tr>
+                </thead>
+                <tbody>
+                  {w.inputs.map((inp, i) => (
+                    <tr key={i}>
+                      <td>{inp.name}</td>
+                      <td><code>{inp.type}</code></td>
+                      <td>{inp.required ? "Yes" : "No"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {w.triggers && w.triggers.length > 0 && (
+            <div className="summary-section">
+              <h3>Triggers</h3>
+              <ul>
+                {w.triggers.map((t, i) => (
+                  <li key={i}>
+                    {t.name}
+                    {t.url && <code className="trigger-url">{t.url}</code>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="summary-section">
+            <h3>Details</h3>
+            <table className="summary-table">
+              <tbody>
+                <tr><td>ID</td><td><code>{w.id}</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // Deploy / diff
+    return <pre className="viewer-content">{content}</pre>;
+  };
 
   return (
     <div className="viewer">
       <div className="viewer-header">
         <span className="viewer-title">{title}</span>
-        {showTabs && (
+        {showFileTabs && (
           <div className="viewer-tabs" role="tablist">
             <button
               role="tab"
@@ -88,14 +357,28 @@ export function Viewer({ source }: { source: ViewerSource }) {
             </button>
           </div>
         )}
+        {showRowTabs && (
+          <div className="viewer-tabs" role="tablist">
+            <button
+              role="tab"
+              aria-selected={mode === "raw"}
+              className={`viewer-tab ${mode === "raw" ? "active" : ""}`}
+              onClick={() => setMode("raw")}
+            >
+              Raw
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "table"}
+              className={`viewer-tab ${mode === "table" ? "active" : ""}`}
+              onClick={() => setMode("table")}
+            >
+              Table
+            </button>
+          </div>
+        )}
       </div>
-      {mode === "rendered" && showTabs ? (
-        <div className="viewer-md">
-          <ReactMarkdown>{content}</ReactMarkdown>
-        </div>
-      ) : (
-        <pre className="viewer-content">{content}</pre>
-      )}
+      {renderBody()}
     </div>
   );
 }

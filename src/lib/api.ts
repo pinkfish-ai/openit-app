@@ -251,6 +251,62 @@ export async function kbUploadFile(args: {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Filestore local commands (mirrors kb_* but for filestore/ directory)
+// ---------------------------------------------------------------------------
+
+export async function fsStoreInit(repo: string): Promise<string> {
+  return invoke("fs_store_init", { repo });
+}
+
+export async function fsStoreListLocal(repo: string): Promise<KbLocalFile[]> {
+  return invoke("fs_store_list_local", { repo });
+}
+
+export async function fsStoreReadFile(repo: string, filename: string): Promise<string> {
+  return invoke("fs_store_read_file", { repo, filename });
+}
+
+export async function fsStoreWriteFile(
+  repo: string,
+  filename: string,
+  content: string,
+): Promise<void> {
+  return invoke("fs_store_write_file", { repo, filename, content });
+}
+
+export async function fsStoreWriteFileBytes(
+  repo: string,
+  filename: string,
+  bytes: ArrayBuffer | Uint8Array,
+): Promise<void> {
+  const arr = bytes instanceof Uint8Array ? Array.from(bytes) : Array.from(new Uint8Array(bytes));
+  return invoke("fs_store_write_file_bytes", { repo, filename, bytes: arr });
+}
+
+export async function fsStoreStateLoad(repo: string): Promise<KbStatePersisted> {
+  return invoke("fs_store_state_load", { repo });
+}
+
+export async function fsStoreStateSave(
+  repo: string,
+  state: KbStatePersisted,
+): Promise<void> {
+  return invoke("fs_store_state_save", { repo, state });
+}
+
+export async function entityWriteFile(repo: string, subdir: string, filename: string, content: string): Promise<void> {
+  return invoke("entity_write_file", { repo, subdir, filename, content });
+}
+
+export async function entityClearDir(repo: string, subdir: string): Promise<void> {
+  return invoke("entity_clear_dir", { repo, subdir });
+}
+
+export async function kbSupportedExtensions(): Promise<string[]> {
+  return invoke("kb_supported_extensions");
+}
+
 /// Generic JSON-RPC tools/call against any Pinkfish MCP server. Returns the
 /// raw JSON-RPC envelope; callers pluck `.result.structuredContent` etc.
 export async function pinkfishMcpCall(args: {

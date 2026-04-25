@@ -6,6 +6,21 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "dialog:default"
+    "dialog:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://skills.pinkfish.ai/**" },
+        { "url": "https://skills-stage.pinkfish.ai/**" },
+        { "url": "https://mcp.app.pinkfish.ai/**" },
+        { "url": "https://mcp.app.pinkfish.dev/**" },
+        { "url": "https://proxy.pinkfish.ai/**" },
+        { "url": "https://proxy-stage.pinkfish.ai/**" },
+        { "url": "https://app-api.app.pinkfish.ai/**" },
+        { "url": "https://app-api.app.pinkfish.dev/**" },
+        { "url": "https://*.firebasestorage.googleapis.com/**" },
+        { "url": "https://view.officeapps.live.com/**" }
+      ]
+    }
   ]
 }

@@ -58,12 +58,21 @@ export function ChatPane({ cwd }: { cwd: string | null }) {
 
     // In-page drag-drop from the file explorer.
     const onDragOver = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes("application/x-openit-path")) {
+      if (e.dataTransfer?.types.includes("application/x-openit-path") ||
+          e.dataTransfer?.types.includes("application/x-openit-ref")) {
         e.preventDefault();
         e.dataTransfer.dropEffect = "copy";
       }
     };
     const onInPageDrop = (e: DragEvent) => {
+      // Entity reference drop (databases, agents, workflows, rows)
+      const ref = e.dataTransfer?.getData("application/x-openit-ref");
+      if (ref) {
+        e.preventDefault();
+        ptyWrite(SESSION_ID, ref + " ").catch((err) => console.error("pty bridge error:", err));
+        return;
+      }
+      // File path drop
       const path = e.dataTransfer?.getData("application/x-openit-path");
       if (!path) return;
       e.preventDefault();

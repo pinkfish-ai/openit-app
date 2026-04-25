@@ -4,7 +4,8 @@ import { stateLoad, stateSave, type AppPersistedState } from "../lib/api";
 import { ChatPane } from "./ChatPane";
 import { FileExplorer } from "./FileExplorer";
 import { PromptBubbles } from "./PromptBubbles";
-import { Viewer, type ViewerSource } from "./Viewer";
+import { Viewer } from "./Viewer";
+import type { ViewerSource } from "./types";
 
 const DEFAULT_SIZES = [18, 42, 40];
 
@@ -49,7 +50,7 @@ export function Shell({ repo, deployLines }: { repo: string | null; deployLines:
         onLayout={(s: number[]) => persist({ pane_sizes: s })}
       >
         <Panel defaultSize={sizes[0]} minSize={12}>
-          <FileExplorer repo={repo} onSelect={(path) => setSource({ kind: "file", path })} />
+          <FileExplorer repo={repo} onSelect={setSource} />
         </Panel>
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[1]} minSize={20}>

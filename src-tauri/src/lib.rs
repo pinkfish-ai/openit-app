@@ -13,6 +13,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_http::init())
         .setup(|app| {
             #[cfg(debug_assertions)]
             {
@@ -58,6 +59,16 @@ pub fn run() {
             kb::kb_download_to_local,
             kb::kb_upload_file,
             kb::kb_list_remote,
+            kb::kb_supported_extensions,
+            kb::fs_store_init,
+            kb::fs_store_list_local,
+            kb::fs_store_read_file,
+            kb::fs_store_write_file,
+            kb::fs_store_write_file_bytes,
+            kb::fs_store_state_load,
+            kb::fs_store_state_save,
+            kb::entity_write_file,
+            kb::entity_clear_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
