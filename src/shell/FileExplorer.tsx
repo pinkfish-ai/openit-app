@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fsList,
   gitStatusShort,
@@ -87,6 +87,7 @@ export function FileExplorer({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
   const [gitRows, setGitRows] = useState<GitFileStatus[]>([]);
 
@@ -97,7 +98,7 @@ export function FileExplorer({
   >({});
   const [agents, setAgents] = useState<Agent[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
-  const [, setLoadingResources] = useState(false);
+  // (loadingResources removed — initial load is fast enough)
 
   const [fsSync, setFsSync] = useState<FilestoreSyncStatus | null>(null);
   useEffect(() => subscribeSync(setSync), []);
@@ -160,80 +161,79 @@ export function FileExplorer({
     return () => clearInterval(id);
   }, [repo]);
 
-  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const initialLoadDoneRef = useRef(false);
 
-  // Shared loader for virtual resources — called on mount, periodically, and on entity click
-  const loadResources = useCallback(async () => {
-    const creds = await loadCreds();
-    if (!creds) return;
-
-    // Only show loading indicator on first load, not on background polls
-    if (!initialLoadDone) setLoadingResources(true);
-    try {
-      const [ds, ag, wf] = await Promise.all([
-        resolveProjectDatastores(creds).catch((e) => {
-          console.warn("[FileExplorer] failed to load datastores:", e);
-          return [] as DataCollection[];
-        }),
-        resolveProjectAgents(creds).catch((e) => {
-          console.warn("[FileExplorer] failed to load agents:", e);
-          return [] as Agent[];
-        }),
-        resolveProjectWorkflows(creds).catch((e) => {
-          console.warn("[FileExplorer] failed to load workflows:", e);
-          return [] as Workflow[];
-        }),
-      ]);
-
-      setDatastores(ds);
-      setAgents(ag);
-      setWorkflows(wf);
-
-      // Load first 100 items for each datastore
-      const itemsMap: Record<string, { items: MemoryItem[]; hasMore: boolean }> = {};
-      await Promise.all(
-        ds.map(async (col) => {
-          try {
-            const resp = await fetchDatastoreItems(creds, col.id, 100, 0);
-            itemsMap[col.id] = {
-              items: resp.items,
-              hasMore: resp.pagination.hasNextPage,
-            };
-          } catch (e) {
-            console.warn(`[FileExplorer] failed to load items for ${col.name}:`, e);
-            itemsMap[col.id] = { items: [], hasMore: false };
-          }
-        }),
-      );
-
-      setDatastoreItems(itemsMap);
-
-      // Write entities to disk so Claude Code can read them as files.
-      // Only sync to disk on initial load to avoid flickering and
-      // momentary empty directories during background polls.
-      if (repo && !initialLoadDone) {
-        await Promise.all([
-          syncDatastoresToDisk(repo, ds, itemsMap).catch((e) =>
-            console.warn("[FileExplorer] failed to sync datastores to disk:", e)),
-          syncAgentsToDisk(repo, ag).catch((e) =>
-            console.warn("[FileExplorer] failed to sync agents to disk:", e)),
-          syncWorkflowsToDisk(repo, wf).catch((e) =>
-            console.warn("[FileExplorer] failed to sync workflows to disk:", e)),
-        ]);
-        reload();
-      }
-    } finally {
-      setLoadingResources(false);
-      setInitialLoadDone(true);
-    }
-  }, [initialLoadDone, repo, reload]);
-
-  // Load on mount + poll every 60s
+  // Load resources once on mount, write to disk, then set up silent background polling
   useEffect(() => {
-    loadResources();
-    const interval = setInterval(loadResources, 60_000);
-    return () => clearInterval(interval);
-  }, [loadResources]);
+    let cancelled = false;
+
+    async function loadOnce() {
+      const creds = await loadCreds();
+      if (!creds || cancelled) return;
+
+      try {
+        const [ds, ag, wf] = await Promise.all([
+          resolveProjectDatastores(creds).catch(() => [] as DataCollection[]),
+          resolveProjectAgents(creds).catch(() => [] as Agent[]),
+          resolveProjectWorkflows(creds).catch(() => [] as Workflow[]),
+        ]);
+        if (cancelled) return;
+        setDatastores(ds);
+        setAgents(ag);
+        setWorkflows(wf);
+
+        const itemsMap: Record<string, { items: MemoryItem[]; hasMore: boolean }> = {};
+        await Promise.all(
+          ds.map(async (col) => {
+            try {
+              const resp = await fetchDatastoreItems(creds, col.id, 100, 0);
+              itemsMap[col.id] = { items: resp.items, hasMore: resp.pagination.hasNextPage };
+            } catch {
+              itemsMap[col.id] = { items: [], hasMore: false };
+            }
+          }),
+        );
+        if (cancelled) return;
+        setDatastoreItems(itemsMap);
+
+        // Write to disk on initial load only
+        if (repo) {
+          await Promise.all([
+            syncDatastoresToDisk(repo, ds, itemsMap).catch(() => {}),
+            syncAgentsToDisk(repo, ag).catch(() => {}),
+            syncWorkflowsToDisk(repo, wf).catch(() => {}),
+          ]);
+          reload();
+        }
+        initialLoadDoneRef.current = true;
+      } catch (e) {
+        console.warn("[FileExplorer] loadOnce failed:", e);
+      }
+    }
+
+    // Background poll — update state silently, no disk writes, no reload
+    async function pollSilently() {
+      if (!initialLoadDoneRef.current) return;
+      const creds = await loadCreds();
+      if (!creds || cancelled) return;
+      try {
+        const [ds, ag, wf] = await Promise.all([
+          resolveProjectDatastores(creds).catch(() => [] as DataCollection[]),
+          resolveProjectAgents(creds).catch(() => [] as Agent[]),
+          resolveProjectWorkflows(creds).catch(() => [] as Workflow[]),
+        ]);
+        if (cancelled) return;
+        setDatastores(ds);
+        setAgents(ag);
+        setWorkflows(wf);
+      } catch { /* silent */ }
+    }
+
+    loadOnce();
+    const interval = setInterval(pollSilently, 60_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repo]);
 
   const visible = useMemo(() => {
     if (!repo) return [];
@@ -248,11 +248,33 @@ export function FileExplorer({
   const onDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragOver(false);
+    const targetPath = dropTargetPath;
+    setDropTargetPath(null);
     setRejectedFiles([]);
     if (!repo) return;
     const files = Array.from(e.dataTransfer.files ?? []);
     if (files.length === 0) return;
 
+    // Determine which directory was the drop target
+    const targetRel = targetPath ? relPath(repo, targetPath) : null;
+    const isFilestoreTarget = targetRel?.startsWith("filestore") ?? false;
+
+    if (isFilestoreTarget) {
+      // Drop into filestore — no file type restriction
+      for (const f of files) {
+        try {
+          const buf = await f.arrayBuffer();
+          const { fsStoreWriteFileBytes } = await import("../lib/api");
+          await fsStoreWriteFileBytes(repo, f.name, buf);
+        } catch (err) {
+          console.error(`failed to import ${f.name} to filestore:`, err);
+        }
+      }
+      reload();
+      return;
+    }
+
+    // Default: drop into knowledge-base with file type filtering
     const accepted: File[] = [];
     const rejected: string[] = [];
     for (const f of files) {
@@ -262,10 +284,7 @@ export function FileExplorer({
         rejected.push(f.name);
       }
     }
-
-    if (rejected.length > 0) {
-      setRejectedFiles(rejected);
-    }
+    if (rejected.length > 0) setRejectedFiles(rejected);
 
     for (const f of accepted) {
       try {
@@ -344,8 +363,19 @@ export function FileExplorer({
           return (
             <li
               key={n.path}
-              className={`tree-item ${n.is_dir ? "dir" : "file"} ${colorClass}`}
+              className={`tree-item ${n.is_dir ? "dir" : "file"} ${colorClass}${dropTargetPath === n.path ? " drop-target" : ""}`}
               style={{ paddingLeft: 8 + depth * 12 }}
+              onDragOver={(e) => {
+                if (n.is_dir && e.dataTransfer.types.includes("Files")) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = "copy";
+                  setDropTargetPath(n.path);
+                }
+              }}
+              onDragLeave={() => {
+                if (dropTargetPath === n.path) setDropTargetPath(null);
+              }}
               onClick={() => {
                 if (n.is_dir) {
                   toggle(n.path);
