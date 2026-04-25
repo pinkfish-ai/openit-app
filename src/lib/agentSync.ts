@@ -1,4 +1,4 @@
-import { pinkfishMcpCall, entityWriteFile, entityClearDir } from "./api";
+import { pinkfishMcpCall, entityWriteFile } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 
 export type Agent = {
@@ -95,7 +95,7 @@ export async function resolveProjectAgents(
 }
 
 export async function syncAgentsToDisk(repo: string, agents: Agent[]): Promise<void> {
-  await entityClearDir(repo, "agents");
+  // Write/overwrite each file — don't clear first to avoid empty-dir flash
   for (const agent of agents) {
     const filename = agent.name.replace(/[/\\:*?"<>|]/g, "_") + ".json";
     await entityWriteFile(repo, "agents", filename, JSON.stringify(agent, null, 2));

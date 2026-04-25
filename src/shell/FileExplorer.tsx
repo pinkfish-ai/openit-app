@@ -208,15 +208,18 @@ export function FileExplorer({
 
       setDatastoreItems(itemsMap);
 
-      // Write entities to disk so Claude Code can read them as files
-      if (repo) {
-        syncDatastoresToDisk(repo, ds, itemsMap).catch((e) =>
-          console.warn("[FileExplorer] failed to sync datastores to disk:", e));
-        syncAgentsToDisk(repo, ag).catch((e) =>
-          console.warn("[FileExplorer] failed to sync agents to disk:", e));
-        syncWorkflowsToDisk(repo, wf).catch((e) =>
-          console.warn("[FileExplorer] failed to sync workflows to disk:", e));
-        // Refresh the file tree to show the new files
+      // Write entities to disk so Claude Code can read them as files.
+      // Only sync to disk on initial load to avoid flickering and
+      // momentary empty directories during background polls.
+      if (repo && !initialLoadDone) {
+        await Promise.all([
+          syncDatastoresToDisk(repo, ds, itemsMap).catch((e) =>
+            console.warn("[FileExplorer] failed to sync datastores to disk:", e)),
+          syncAgentsToDisk(repo, ag).catch((e) =>
+            console.warn("[FileExplorer] failed to sync agents to disk:", e)),
+          syncWorkflowsToDisk(repo, wf).catch((e) =>
+            console.warn("[FileExplorer] failed to sync workflows to disk:", e)),
+        ]);
         reload();
       }
     } finally {

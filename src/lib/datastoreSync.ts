@@ -7,7 +7,7 @@ import {
   type MemoryBqueryResponse,
   type MemoryItem,
 } from "./skillsApi";
-import { entityWriteFile, entityClearDir } from "./api";
+import { entityWriteFile } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 
 const PREFIX = "openit-";
@@ -110,7 +110,7 @@ export async function syncDatastoresToDisk(
 ): Promise<void> {
   for (const col of collections) {
     const subdir = `databases/${col.name}`;
-    await entityClearDir(repo, subdir);
+    // Write/overwrite — don't clear first to avoid empty-dir flash
     // Write schema
     if (col.schema) {
       await entityWriteFile(repo, subdir, "_schema.json", JSON.stringify(col.schema, null, 2));

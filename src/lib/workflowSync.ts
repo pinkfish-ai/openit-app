@@ -1,4 +1,4 @@
-import { pinkfishMcpCall, entityWriteFile, entityClearDir } from "./api";
+import { pinkfishMcpCall, entityWriteFile } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 
 export type Workflow = {
@@ -108,7 +108,6 @@ export async function resolveProjectWorkflows(
 }
 
 export async function syncWorkflowsToDisk(repo: string, workflows: Workflow[]): Promise<void> {
-  await entityClearDir(repo, "workflows");
   for (const wf of workflows) {
     const filename = wf.name.replace(/[/\\:*?"<>|]/g, "_") + ".json";
     await entityWriteFile(repo, "workflows", filename, JSON.stringify(wf, null, 2));
