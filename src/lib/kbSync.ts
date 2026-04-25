@@ -120,11 +120,6 @@ async function runPull(args: {
   try {
     const adapter = kbAdapter({ creds: args.creds, collection: args.collection });
     const result = await pullEntity(adapter, args.repo);
-    // `total` historically meant "number of remote items observed"; the
-    // engine doesn't track that explicitly. Re-list local for the count
-    // (cheap, already stat'd) — preserves the public return shape.
-    const local = await kbListLocal(args.repo);
-    const total = local.filter((f) => !f.filename.includes(".server.")).length;
     const conflicts: ConflictFile[] = result.conflicts.map((c) => ({
       filename: c.manifestKey,
       reason: "local-and-remote-changed",
@@ -135,7 +130,7 @@ async function runPull(args: {
       lastPullAt: Date.now(),
       lastError: null,
     });
-    return { pulled: result.pulled, total };
+    return { pulled: result.pulled, total: result.remoteCount };
   } catch (e) {
     update({ phase: "error", lastError: String(e) });
     throw e;

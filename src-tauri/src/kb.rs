@@ -792,6 +792,34 @@ pub fn entity_write_file(repo: String, subdir: String, filename: String, content
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+/// Delete `<repo>/<subdir>/<filename>` if it exists. No-op when missing.
+/// Used by sync engine adapters when a server-side delete needs to
+/// propagate to local. Path is sandboxed to the repo via `safe_kb_path`-
+/// style canonicalization on the parent dir.
+#[tauri::command]
+pub fn entity_delete_file(repo: String, subdir: String, filename: String) -> Result<(), String> {
+    let dir = Path::new(&repo).join(&subdir);
+    let path = dir.join(&filename);
+    // Only act if the resolved path stays inside the repo. Cheap check —
+    // canonicalize the parent (must exist if there's a file in it) and
+    // verify it descends from `repo`.
+    let repo_canon = fs::canonicalize(&repo).map_err(|e| e.to_string())?;
+    if let Some(parent) = path.parent() {
+        if let Ok(parent_canon) = fs::canonicalize(parent) {
+            if !parent_canon.starts_with(&repo_canon) {
+                return Err(format!("refusing to delete path outside repo: {}/{}", subdir, filename));
+            }
+        } else {
+            // Parent doesn't exist → nothing to delete.
+            return Ok(());
+        }
+    }
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Remove all files in `<repo>/<subdir>` then recreate it empty.
 /// Used to do a clean sync of entity directories.
 #[tauri::command]

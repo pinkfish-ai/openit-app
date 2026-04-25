@@ -91,6 +91,7 @@ pub fn run() {
             kb::fs_store_download_to_local,
             kb::fs_store_upload_file,
             kb::entity_write_file,
+            kb::entity_delete_file,
             kb::entity_clear_dir,
             skills::skills_fetch_manifest,
             skills::skills_fetch_file,

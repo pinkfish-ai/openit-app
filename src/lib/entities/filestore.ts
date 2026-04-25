@@ -5,6 +5,7 @@
 // shadow filename mirroring KB's `<base>.server.<ext>` convention.
 
 import {
+  entityDeleteFile,
   fsStoreDownloadToLocal,
   fsStoreListLocal,
   fsStoreStateLoad,
@@ -85,8 +86,27 @@ export function filestoreAdapter(args: {
       return out;
     },
 
-    // No onServerDelete: filestore historically only drops the manifest
-    // entry (not the local file) when the server deletes — engine's
-    // default behavior matches.
+    /// Server-deleted file → drop the manifest entry AND remove from disk.
+    /// This matches user expectation ("I deleted it on Pinkfish, why is it
+    /// still here") and mirrors KB's long-standing behavior. Skips shadow
+    /// files (engine should ignore those — they're local-only artifacts).
+    /// The deletion is added to `touched` so the auto-commit captures it.
+    async onServerDelete({ repo, manifestKey, manifest, touched }) {
+      if (isShadow(manifestKey)) return true;
+      const local = await fsStoreListLocal(repo);
+      const stillOnDisk = local.some((f) => f.filename === manifestKey);
+      if (!stillOnDisk) {
+        delete manifest.files[manifestKey];
+        return true;
+      }
+      try {
+        await entityDeleteFile(repo, DIR, manifestKey);
+        delete manifest.files[manifestKey];
+        touched.push(`${DIR}/${manifestKey}`);
+      } catch (e) {
+        console.error(`[filestore] failed to delete local ${manifestKey}:`, e);
+      }
+      return true;
+    },
   };
 }

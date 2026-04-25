@@ -304,8 +304,6 @@ async function runPull(args: {
   try {
     const adapter = filestoreAdapter({ creds: args.creds, collection: args.collection });
     const result = await pullEntity(adapter, args.repo);
-    const local = await fsStoreListLocal(args.repo);
-    const total = local.filter((f) => !f.filename.includes(".server.")).length;
     const conflicts: ConflictFile[] = result.conflicts.map((c) => ({
       filename: c.manifestKey,
       reason: "local-and-remote-changed",
@@ -316,7 +314,7 @@ async function runPull(args: {
       lastPullAt: Date.now(),
       lastError: null,
     });
-    return { downloaded: result.pulled, total };
+    return { downloaded: result.pulled, total: result.remoteCount };
   } catch (e) {
     update({ phase: "error", lastError: String(e) });
     throw e;

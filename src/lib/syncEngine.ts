@@ -53,6 +53,10 @@ export type Conflict = {
 
 export type PullResult = {
   pulled: number;
+  /// Total number of items in the remote list (pre-diff). Wrappers expose
+  /// this as their public `total` so callers see remote-side counts, not
+  /// local-side counts.
+  remoteCount: number;
   conflicts: Conflict[];
   /// True when listRemote bailed before exhausting pagination (e.g. safety
   /// cap on a runaway server). Engine skips the server-delete pass when
@@ -298,7 +302,7 @@ async function pullEntityImpl(
     await commitTouched(repo, touched, `sync: pull @ ${ts}`);
   }
 
-  return { pulled, conflicts, paginationFailed };
+  return { pulled, remoteCount: remote.length, conflicts, paginationFailed };
 }
 
 // ---------------------------------------------------------------------------

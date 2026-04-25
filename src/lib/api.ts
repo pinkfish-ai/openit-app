@@ -392,6 +392,10 @@ export async function entityWriteFile(repo: string, subdir: string, filename: st
   return invoke("entity_write_file", { repo, subdir, filename, content });
 }
 
+export async function entityDeleteFile(repo: string, subdir: string, filename: string): Promise<void> {
+  return invoke("entity_delete_file", { repo, subdir, filename });
+}
+
 export async function entityClearDir(repo: string, subdir: string): Promise<void> {
   return invoke("entity_clear_dir", { repo, subdir });
 }

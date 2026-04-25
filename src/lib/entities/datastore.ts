@@ -19,6 +19,7 @@ import {
   datastoreListLocal,
   datastoreStateLoad,
   datastoreStateSave,
+  entityDeleteFile,
   entityWriteFile,
   type KbLocalFile,
 } from "../api";
@@ -144,7 +145,29 @@ export function datastoreAdapter(args: {
       return out;
     },
 
-    // Default `onServerDelete` (drop manifest entry, leave file in place)
-    // matches the pre-engine behavior for datastores.
+    /// Server-deleted row → drop the manifest entry AND remove the JSON
+    /// file from disk. Matches the user-expected "if I delete on Pinkfish,
+    /// it should disappear locally" model. The engine only invokes this
+    /// when pagination is fully consumed, so we won't false-positive on a
+    /// truncated remote list.
+    async onServerDelete({ repo, manifestKey, manifest, touched }) {
+      const slash = manifestKey.indexOf("/");
+      if (slash < 0) {
+        delete manifest.files[manifestKey];
+        return true;
+      }
+      const colName = manifestKey.slice(0, slash);
+      const key = manifestKey.slice(slash + 1);
+      const subdir = `databases/${colName}`;
+      const filename = `${key}.json`;
+      try {
+        await entityDeleteFile(repo, subdir, filename);
+        delete manifest.files[manifestKey];
+        touched.push(`${subdir}/${filename}`);
+      } catch (e) {
+        console.error(`[datastore] failed to delete local ${manifestKey}:`, e);
+      }
+      return true;
+    },
   };
 }
