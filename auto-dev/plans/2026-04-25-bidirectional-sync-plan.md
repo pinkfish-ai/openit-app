@@ -633,7 +633,10 @@ The audit (2026-04-25) confirmed the surface. Per the channel-selection rules, *
 - **List items** ✓ — `GET /memory/bquery?collectionId=…&limit&offset` → `MemoryItem[]` with `id, key, content, updatedAt, createdAt`.
 - **Create item** ✓ — `POST /memory/items` with `MemoryCreateItemRequest` `{ key, content, … }`.
 - **Update item** ✓ — `PUT /memory/items/{id}` (full replace) or `PATCH /memory/items/{id}` (partial). Sync uses **PUT** (deterministic, "file is the truth").
-- **Delete item** ✓ — `DELETE /memory/items/{id}` or `DELETE /memory/items/{key}` (with optional `collectionId`).
+- **Delete item** ✓ — two distinct routes:
+  - by id: `DELETE /memory/items/id/{id}` (note the `/id/` segment — different from PUT's `/memory/items/{id}`)
+  - by key: `DELETE /memory/items/{key}`
+  Sync uses **delete-by-id** (we always have the id from the prior list).
 - **Auth header**: `Auth-Token: Bearer <token>`.
 
 ### Agents
