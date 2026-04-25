@@ -639,15 +639,6 @@ body,
   border-left: 1px solid var(--border);
 }
 
-.right-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-
 .icon-btn {
   background: var(--surface);
   border: 1px solid var(--border-strong);
@@ -662,15 +653,6 @@ body,
 .icon-btn:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
-}
-
-.env-select {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 12px;
 }
 
 .deploy-btn {

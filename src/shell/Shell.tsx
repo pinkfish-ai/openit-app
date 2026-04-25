@@ -189,7 +189,6 @@ export function Shell({
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[2]} minSize={25}>
           <div className="right-pane">
-            <div className="right-toolbar" />
             <div className="chat-area">
               <ChatPane cwd={repo} />
             </div>
