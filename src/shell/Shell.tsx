@@ -59,7 +59,7 @@ export function Shell({ repo, deployLines }: { repo: string | null; deployLines:
         <Panel defaultSize={sizes[2]} minSize={25}>
           <div className="right-pane">
             <div className="chat-area">
-              <ChatPane />
+              <ChatPane cwd={repo} />
             </div>
             <PromptBubbles />
           </div>

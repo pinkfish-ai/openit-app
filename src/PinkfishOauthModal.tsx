@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { pinkfishTestCall } from "./lib/api";
+import { pinkfishListOrgs } from "./lib/api";
 import {
   DEFAULT_TOKEN_URL,
+  derivedUrls,
   loadCreds,
   refresh,
   saveCreds,
@@ -18,7 +19,7 @@ export function PinkfishOauthModal({
 }: {
   initial: Partial<PinkfishCreds> | null;
   onClose: () => void;
-  onConnected: () => void;
+  onConnected: (orgName: string | null) => void;
 }) {
   const [clientId, setClientId] = useState(initial?.clientId ?? "");
   const [clientSecret, setClientSecret] = useState(initial?.clientSecret ?? "");
@@ -40,27 +41,19 @@ export function PinkfishOauthModal({
     };
     try {
       const token = await refresh(creds);
-      // Smoke-test the token against the public weather MCP.
-      try {
-        await pinkfishTestCall({
-          accessToken: token.accessToken,
-          orgId: creds.orgId,
-        });
-      } catch (testErr) {
-        // Token exchange worked but the test call failed — surface but don't roll back.
-        // The user may not have weather access; offer to save anyway.
-        setError(
-          `Got a token, but the test call failed: ${String(testErr)}\nSaved anyway — check your scope/permissions.`,
-        );
-        await saveCreds(creds);
-        setSuccess(null);
-        setBusy(false);
-        return;
-      }
+      // Validate by calling list_orgs and look up the bound org's display name.
+      const urls = derivedUrls(creds.tokenUrl);
+      const orgs = await pinkfishListOrgs({
+        accessToken: token.accessToken,
+        orgId: creds.orgId,
+        accountUrl: urls.accountUrl,
+      });
+      const me = orgs.find((o) => o.id === creds.orgId);
+      const orgName = me?.name ?? null;
       await saveCreds(creds);
-      setSuccess("Connected. Token will auto-refresh before expiry.");
-      onConnected();
-      setTimeout(onClose, 800);
+      setSuccess(`Connected${orgName ? ` to ${orgName}` : ""}.`);
+      onConnected(orgName);
+      setTimeout(onClose, 600);
     } catch (e) {
       setError(String(e));
       setBusy(false);

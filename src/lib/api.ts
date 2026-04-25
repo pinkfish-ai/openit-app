@@ -90,14 +90,53 @@ export async function pinkfishOauthExchange(args: {
   });
 }
 
-export async function pinkfishTestCall(args: {
+export type OrgRow = {
+  id: string;
+  name: string;
+  can_read: boolean;
+  can_write: boolean;
+  administer: boolean;
+  parent_id: string | null;
+};
+
+export async function claudeDetect(): Promise<string | null> {
+  return invoke("claude_detect");
+}
+
+export type BootstrapResult = { path: string; created: boolean };
+
+export async function projectBootstrap(args: {
+  orgName: string;
+  orgId: string;
+}): Promise<BootstrapResult> {
+  return invoke("project_bootstrap", { orgName: args.orgName, orgId: args.orgId });
+}
+
+export async function pinkfishListOrgs(args: {
   accessToken: string;
   orgId: string;
-  testUrl?: string | null;
-}): Promise<unknown> {
-  return invoke("pinkfish_test_call", {
+  accountUrl?: string | null;
+}): Promise<OrgRow[]> {
+  return invoke("pinkfish_list_orgs", {
     accessToken: args.accessToken,
     orgId: args.orgId,
-    testUrl: args.testUrl ?? null,
+    accountUrl: args.accountUrl ?? null,
+  });
+}
+
+export type UserConnection = {
+  id: string;
+  name: string;
+  service_key: string;
+  status: string;
+};
+
+export async function pinkfishListConnections(args: {
+  accessToken: string;
+  connectionsUrl?: string | null;
+}): Promise<UserConnection[]> {
+  return invoke("pinkfish_list_connections", {
+    accessToken: args.accessToken,
+    connectionsUrl: args.connectionsUrl ?? null,
   });
 }

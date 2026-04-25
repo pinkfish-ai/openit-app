@@ -194,6 +194,14 @@ pub fn pty_kill(state: State<'_, PtyState>, session_id: String) -> Result<(), St
     Ok(())
 }
 
+/// Detect whether `claude` is on PATH; returns the resolved path or null.
+#[tauri::command]
+pub fn claude_detect() -> Option<String> {
+    which::which("claude")
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
 /// Resolve which binary to spawn. Preference: explicit override → `claude` on PATH → user's $SHELL → /bin/bash.
 fn resolve_command(override_cmd: Option<&str>) -> Result<String> {
     if let Some(c) = override_cmd {
