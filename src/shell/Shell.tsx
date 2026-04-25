@@ -104,7 +104,7 @@ export function Shell({
                 className={`left-tab ${leftTab === "files" ? "active" : ""}`}
                 onClick={() => setLeftTab("files")}
               >
-                Files
+                Explorer
               </button>
               <button
                 type="button"
