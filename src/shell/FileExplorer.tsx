@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fsList,
   fsReveal,
+  gitAddAndCommit,
   gitStatusShort,
   kbDeleteFile,
   kbWriteFileBytes,
@@ -246,6 +247,8 @@ export function FileExplorer({
             syncAgentsToDisk(repo, ag).catch(() => {}),
             syncWorkflowsToDisk(repo, wf).catch(() => {}),
           ]);
+          // Auto-commit the synced baseline so files show as clean (no U badges)
+          await gitAddAndCommit(repo, "sync: update from Pinkfish").catch(() => {});
           reload();
         }
         initialLoadDoneRef.current = true;
