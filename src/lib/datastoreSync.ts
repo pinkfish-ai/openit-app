@@ -393,7 +393,14 @@ export async function pushAllToDatastores(args: {
     }
 
     // 2. Local files (flat, .json, exclude _schema.json).
+    // Track whether the directory actually exists. If `fsList` throws
+    // because the directory doesn't exist yet (e.g. user committed a KB
+    // file before the initial datastore pull ran), an empty `localFiles`
+    // does NOT mean "user deleted everything" — we have no signal to act
+    // on. Skip the deletion phase entirely in that case so we don't nuke
+    // remote rows.
     let localFiles: { key: string; absPath: string }[] = [];
+    let localDirExists = true;
     try {
       const nodes = await fsList(colDir);
       localFiles = nodes
@@ -405,9 +412,7 @@ export async function pushAllToDatastores(args: {
         )
         .map((n) => ({ key: n.name.replace(/\.json$/, ""), absPath: n.path }));
     } catch {
-      // Collection dir doesn't exist locally yet — nothing to push, but we
-      // still process deletions below if there are remote items left.
-      localFiles = [];
+      localDirExists = false;
     }
     const localKeys = new Set(localFiles.map((f) => f.key));
 
@@ -456,23 +461,31 @@ export async function pushAllToDatastores(args: {
     }
 
     // 4. Delete remote items that no longer have a local file.
-    for (const r of remote) {
-      const k = (r.key ?? r.id ?? "").toString();
-      if (!k || localKeys.has(k)) continue;
-      try {
-        const url = new URL(
-          `/memory/items/id/${encodeURIComponent(r.id)}`,
-          urls.skillsBaseUrl,
-        );
-        url.searchParams.set("collectionId", col.id);
-        const resp = await fetchFn(url.toString(), { method: "DELETE" });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-        onLine?.(`  − ${col.name}/${k}.json (deleted on remote)`);
-        totalPushed += 1;
-      } catch (e) {
-        onLine?.(`✗ datastore: delete ${col.name}/${k} — ${String(e)}`);
-        totalFailed += 1;
+    // SAFETY: only run this if the local collection dir actually exists.
+    // Otherwise an empty `localKeys` would be interpreted as "user deleted
+    // everything" and we'd nuke every remote row — which would happen on
+    // the very first commit if the datastore pull hadn't completed yet.
+    if (localDirExists) {
+      for (const r of remote) {
+        const k = (r.key ?? r.id ?? "").toString();
+        if (!k || localKeys.has(k)) continue;
+        try {
+          const url = new URL(
+            `/memory/items/id/${encodeURIComponent(r.id)}`,
+            urls.skillsBaseUrl,
+          );
+          url.searchParams.set("collectionId", col.id);
+          const resp = await fetchFn(url.toString(), { method: "DELETE" });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+          onLine?.(`  − ${col.name}/${k}.json (deleted on remote)`);
+          totalPushed += 1;
+        } catch (e) {
+          onLine?.(`✗ datastore: delete ${col.name}/${k} — ${String(e)}`);
+          totalFailed += 1;
+        }
       }
+    } else {
+      onLine?.(`▸ datastore: ${col.name} has no local dir yet — skipping deletion phase`);
     }
   }
 
