@@ -22,16 +22,6 @@
       "csp": null
     }
   },
-  "plugins": {
-    "http": {
-      "allow": [
-        "https://dev*.pinkfish.dev/**",
-        "https://dev*.pinkfish.ai/**",
-        "https://app.pinkfish.ai/**",
-        "https://app-stage.pinkfish.ai/**"
-      ]
-    }
-  },
   "bundle": {
     "active": true,
     "targets": "all",
