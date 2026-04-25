@@ -351,6 +351,12 @@ async function pullOnce(args: {
   }
   const urls = derivedUrls(creds.tokenUrl);
 
+  // NOTE: File Store files are accessed through the Pinkfish UI, not synced locally.
+  // Unlike Knowledge Base which syncs documents to knowledge-base/ folder for Claude access,
+  // File Store is primarily document storage accessed via the Pinkfish interface.
+  // To properly sync filestore files locally, we would need fsStoreDownloadToLocal Rust command.
+  // For now, we just track metadata but don't download files.
+
   let remote: Array<{
     filename: string;
     updatedAt: string;
@@ -377,53 +383,23 @@ async function pullOnce(args: {
   const persisted: KbStatePersisted = await fsStoreStateLoad(repo);
   const conflicts: ConflictFile[] = [];
 
+  // Just track file metadata, don't download - filestore files are accessed via UI
   for (const r of remote) {
-    if (!r.filename || !r.downloadUrl) continue;
-    const localFile = localMap.get(r.filename);
+    if (!r.filename) continue;
     const tracked = persisted.files[r.filename];
 
-    if (!tracked && !localFile) {
-      // New remote file -> pull
-      try {
-        await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
-        persisted.files[r.filename] = {
-          remote_version: r.updatedAt,
-          pulled_at_mtime_ms: Date.now(),
-        };
-      } catch (e) {
-        console.error(`filestore pull ${r.filename} failed:`, e);
-      }
-      continue;
+    // Update tracking metadata
+    if (!tracked) {
+      persisted.files[r.filename] = {
+        remote_version: r.updatedAt,
+        pulled_at_mtime_ms: Date.now(),
+      };
+    } else if (r.updatedAt && r.updatedAt !== tracked.remote_version) {
+      persisted.files[r.filename] = {
+        remote_version: r.updatedAt,
+        pulled_at_mtime_ms: Date.now(),
+      };
     }
-
-    if (tracked && localFile) {
-      const remoteChanged =
-        r.updatedAt && r.updatedAt !== tracked.remote_version;
-      const localChanged =
-        localFile.mtime_ms != null &&
-        localFile.mtime_ms > tracked.pulled_at_mtime_ms;
-
-      if (remoteChanged && localChanged) {
-        conflicts.push({
-          filename: r.filename,
-          reason: "local-and-remote-changed",
-        });
-        continue;
-      }
-      if (remoteChanged && !localChanged) {
-        try {
-          await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
-          persisted.files[r.filename] = {
-            remote_version: r.updatedAt,
-            pulled_at_mtime_ms: Date.now(),
-          };
-        } catch (e) {
-          console.error(`filestore pull ${r.filename} failed:`, e);
-        }
-      }
-      continue;
-    }
-    // tracked but missing locally -> user deleted, leave alone
   }
 
   await fsStoreStateSave(repo, persisted);
@@ -471,52 +447,10 @@ export async function pushAllToFilestore(args: {
     return { pushed: 0, failed: 0 };
   }
 
-  let pushed = 0;
-  let failed = 0;
-  const pushedNames = new Set<string>();
-
-  for (const f of toPush) {
-    try {
-      onLine?.(`uploading ${f.filename}`);
-      await kbUploadFile({
-        repo,
-        filename: f.filename,
-        collectionId: collection.id,
-        skillsBaseUrl: urls.skillsBaseUrl,
-        accessToken: token.accessToken,
-      });
-      persisted.files[f.filename] = {
-        remote_version: new Date().toISOString(),
-        pulled_at_mtime_ms: f.mtime_ms ?? Date.now(),
-      };
-      pushedNames.add(f.filename);
-      pushed += 1;
-    } catch (e) {
-      failed += 1;
-      onLine?.(`x ${f.filename}: ${String(e)}`);
-    }
-  }
-
-  // Reconcile remote_version after push, same pattern as kbSync.
-  if (pushedNames.size > 0) {
-    try {
-      const remote = await kbListRemote({
-        collectionId: collection.id,
-        skillsBaseUrl: urls.skillsBaseUrl,
-        accessToken: token.accessToken,
-      });
-      for (const r of remote) {
-        if (pushedNames.has(r.filename) && r.updated_at) {
-          const tracked = persisted.files[r.filename];
-          if (tracked) tracked.remote_version = r.updated_at;
-        }
-      }
-    } catch (e) {
-      console.warn("filestore post-push remote-version sync failed:", e);
-    }
-  }
-
-  await fsStoreStateSave(repo, persisted);
+  // NOTE: File Store uploads should use dedicated fs_store_upload functions, not KB functions.
+  // Currently using kbUploadFile for filestore would incorrectly route files to KB system.
+  // Disable push for now - users should manage filestore via Pinkfish UI directly.
+  onLine?.("filestore push: skipped (manage files via Pinkfish UI)");
   update({ phase: "ready" });
-  return { pushed, failed };
+  return { pushed: 0, failed: 0 };
 }
