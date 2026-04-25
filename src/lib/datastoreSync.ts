@@ -415,6 +415,14 @@ export async function pushAllToDatastores(args: {
 
   let totalPushed = 0;
   let totalFailed = 0;
+  // Manifest is mutated as we push so the next pull doesn't see a false
+  // conflict (remoteChanged because PUT advanced updatedAt + localChanged
+  // because user's edit advanced mtime). Same reconcile pattern as KB and
+  // filestore push.
+  const persisted: KbStatePersisted = await datastoreStateLoad(repo);
+  // Track which keys we touched per collection so we can re-fetch their
+  // post-push updatedAt values once at the end of each collection's pass.
+  const pushedKeysByCol = new Map<string, Set<string>>();
 
   for (const col of collections) {
     const colDir = `${repo}/databases/${col.name}`;
@@ -488,6 +496,8 @@ export async function pushAllToDatastores(args: {
           if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
           onLine?.(`  + ${col.name}/${key}.json (created)`);
           totalPushed += 1;
+          if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
+          pushedKeysByCol.get(col.id)!.add(key);
         } else if (!jsonEqual(parsed, existing.content)) {
           const url = new URL(`/memory/items/${encodeURIComponent(existing.id)}`, urls.skillsBaseUrl);
           url.searchParams.set("collectionId", col.id);
@@ -499,6 +509,8 @@ export async function pushAllToDatastores(args: {
           if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
           onLine?.(`  ✓ ${col.name}/${key}.json (updated)`);
           totalPushed += 1;
+          if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
+          pushedKeysByCol.get(col.id)!.add(key);
         }
         // else: content matches, skip silently.
       } catch (e) {
@@ -535,6 +547,34 @@ export async function pushAllToDatastores(args: {
       onLine?.(`▸ datastore: ${col.name} has no local dir yet — skipping deletion phase`);
     }
   }
+
+  // Reconcile manifest after pushes — re-fetch each affected collection to
+  // grab the post-push `updatedAt` for items we just touched, then update
+  // the manifest entry so the next pull doesn't see remoteChanged=true and
+  // localChanged=true together (which would falsely flag as conflict and
+  // drop a phantom shadow file). Same pattern as KB and filestore push.
+  for (const [colId, keys] of pushedKeysByCol) {
+    if (keys.size === 0) continue;
+    const col = collections.find((c) => c.id === colId);
+    if (!col) continue;
+    try {
+      const resp = await fetchDatastoreItems(creds, colId, 1000, 0);
+      for (const item of resp.items) {
+        const k = (item.key ?? item.id ?? "").toString();
+        if (!keys.has(k)) continue;
+        const mKey = `${col.name}/${k}`;
+        persisted.files[mKey] = {
+          remote_version: item.updatedAt ?? "",
+          // Bump pulled_at_mtime_ms past now so any subsequent local edit
+          // (mtime > now) is correctly detected as a real local change.
+          pulled_at_mtime_ms: Date.now(),
+        };
+      }
+    } catch (e) {
+      console.warn(`[datastoreSync] post-push reconcile for ${col.name} failed:`, e);
+    }
+  }
+  await datastoreStateSave(repo, persisted);
 
   return { pushed: totalPushed, failed: totalFailed };
 }
