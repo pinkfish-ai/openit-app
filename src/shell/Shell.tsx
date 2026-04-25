@@ -49,39 +49,74 @@ export function Shell({
   const handleManualPull = useCallback(async () => {
     if (!repo || pulling) return;
     setPulling(true);
+    onSyncLine("─── manual pull ───");
     try {
       const creds = await loadCreds().catch(() => null);
-      if (!creds) return;
-      // Run all three pulls in parallel; each catches its own errors so a
-      // single-entity failure doesn't block the others.
+      if (!creds) {
+        onSyncLine("✗ pull: not authenticated");
+        return;
+      }
+
+      // KB pull
       const kbStatus = getSyncStatus();
-      const tasks: Promise<unknown>[] = [];
-      if (kbStatus.collection) {
-        tasks.push(
-          pullNow({ creds, repo, collection: kbStatus.collection }).catch((e) =>
-            console.error("[manual pull] kb failed:", e),
-          ),
-        );
-      }
+      const kbTask = kbStatus.collection
+        ? (async () => {
+            onSyncLine("▸ pull: kb");
+            try {
+              await pullNow({ creds, repo, collection: kbStatus.collection! });
+              onSyncLine("  ✓ kb pull complete");
+            } catch (e) {
+              console.error("[manual pull] kb failed:", e);
+              onSyncLine(`  ✗ kb pull failed: ${String(e)}`);
+            }
+          })()
+        : (async () => {
+            onSyncLine("▸ pull: kb skipped (no collection)");
+          })();
+
+      // Filestore pull
       const fsCollections = getFilestoreSyncStatus().collections;
-      for (const c of fsCollections) {
-        tasks.push(
-          filestorePullOnce({ creds, repo, collection: c }).catch((e) =>
-            console.error(`[manual pull] filestore (${c.name}) failed:`, e),
-          ),
-        );
-      }
-      tasks.push(
-        pullDatastoresOnce({ creds, repo }).catch((e) =>
-          console.error("[manual pull] datastore failed:", e),
-        ),
-      );
-      await Promise.all(tasks);
+      const fsTask = (async () => {
+        if (fsCollections.length === 0) {
+          onSyncLine("▸ pull: filestore skipped (no collections)");
+          return;
+        }
+        onSyncLine(`▸ pull: filestore (${fsCollections.length} collection${fsCollections.length === 1 ? "" : "s"})`);
+        for (const c of fsCollections) {
+          try {
+            const r = await filestorePullOnce({ creds, repo, collection: c });
+            onSyncLine(`  ✓ ${c.name} — ${r.downloaded}/${r.total} downloaded`);
+          } catch (e) {
+            console.error(`[manual pull] filestore (${c.name}) failed:`, e);
+            onSyncLine(`  ✗ ${c.name} failed: ${String(e)}`);
+          }
+        }
+      })();
+
+      // Datastore pull
+      const dsTask = (async () => {
+        onSyncLine("▸ pull: datastores");
+        try {
+          const r = await pullDatastoresOnce({ creds, repo });
+          onSyncLine(
+            `  ✓ datastore pull complete — ${r.pulled} row(s) updated, ${r.conflicts.length} conflict${r.conflicts.length === 1 ? "" : "s"}`,
+          );
+          for (const c of r.conflicts) {
+            onSyncLine(`    ⚠ conflict: ${c.collectionName}/${c.key}.json — ${c.reason}`);
+          }
+        } catch (e) {
+          console.error("[manual pull] datastore failed:", e);
+          onSyncLine(`  ✗ datastore pull failed: ${String(e)}`);
+        }
+      })();
+
+      await Promise.all([kbTask, fsTask, dsTask]);
+      onSyncLine("─── pull done ───");
       bumpFs();
     } finally {
       setPulling(false);
     }
-  }, [repo, pulling, bumpFs]);
+  }, [repo, pulling, bumpFs, onSyncLine]);
 
   useEffect(() => {
     stateLoad().then(setState).catch(console.error);
@@ -203,13 +238,13 @@ export function Shell({
               </button>
               <button
                 type="button"
-                className={`left-tab-pull-btn${pulling ? " is-pulling" : ""}`}
+                className="left-tab-pull-btn"
                 onClick={handleManualPull}
                 disabled={!repo || pulling}
                 aria-label="Pull from Pinkfish now"
                 title={pulling ? "Pulling…" : "Pull from Pinkfish"}
               >
-                {pulling ? "⟳" : "↻"}
+                <span className={`left-tab-pull-glyph${pulling ? " is-pulling" : ""}`}>↻</span>
               </button>
             </div>
             {/* Keep both panels mounted so typed-but-uncommitted state
