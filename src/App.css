@@ -1287,6 +1287,24 @@ body,
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
+}
+
+.onboard-signup-btn {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.onboard-signup-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .onboard-continue {

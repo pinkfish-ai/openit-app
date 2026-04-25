@@ -42,6 +42,22 @@ export function Shell({
     stateLoad().then(setState).catch(console.error);
   }, []);
 
+  // Auto-open _welcome.md on first load
+  useEffect(() => {
+    if (repo && !source) {
+      const welcomePath = `${repo}/_welcome.md`;
+      console.log("[shell] opening welcome on first load:", welcomePath);
+      resolvePathToSource(welcomePath)
+        .then((s) => {
+          console.log("[shell] welcome resolved:", s);
+          setSource(s);
+        })
+        .catch((e) => {
+          console.error("[shell] welcome resolution failed:", e);
+        });
+    }
+  }, [repo, source]);
+
   useEffect(() => {
     if (!repo) {
       setConflictBubbles([]);

@@ -253,13 +253,21 @@ export function Onboarding({
 
         <div className="onboard-actions">
           <button
-            className="deploy-btn onboard-continue"
+            className="deploy-btn"
             onClick={onContinue}
             disabled={!canContinue}
             title={canContinue ? "" : "Connect Pinkfish to continue"}
           >
-            {pinkfishOrgName ? `Open ${pinkfishOrgName}` : "Continue to OpenIT"}
+            Continue
           </button>
+          {!pinkfishConnected && (
+            <button
+              className="onboard-signup-btn"
+              onClick={() => openUrl("https://app.pinkfish.ai/signup").catch(console.error)}
+            >
+              Sign Up
+            </button>
+          )}
         </div>
       </div>
 

@@ -68,9 +68,11 @@ pub fn git_ensure_repo(repo: String) -> Result<(), String> {
 
     write_gitignore(&repo)?;
 
-    // Ensure at least one tracked file for first commit (README may already exist).
+    // Ensure at least one tracked file for first commit. _welcome.md is created by
+    // project_bootstrap, so skip creating README.md if _welcome.md exists.
+    let welcome = Path::new(&repo).join("_welcome.md");
     let readme = Path::new(&repo).join("README.md");
-    if !readme.exists() {
+    if !welcome.exists() && !readme.exists() {
         fs::write(
             &readme,
             "# OpenIT project\n\nLocal git tracks sync history for this folder.\n",

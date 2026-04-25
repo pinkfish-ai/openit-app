@@ -37,7 +37,8 @@ function App() {
 
   useEffect(() => {
     Promise.all([stateLoad(), startAuth(), loadCreds()])
-      .then(([s, _token, creds]) => {
+      .then(async ([s, _token, creds]) => {
+        console.log("[app] startup state:", { hasRepo: !!s.last_repo, hasCreds: !!creds, orgId: creds?.orgId });
         setRepo(s.last_repo);
         setSavedCreds(creds);
         // If we relaunched into a fully-connected state with a project folder,
@@ -60,6 +61,31 @@ function App() {
             creds,
             repo: s.last_repo,
           }).catch((e) => console.error("filestore sync init failed:", e));
+        } else if (creds && !s.last_repo && !repo) {
+          // On first run with dev creds, bootstrap a project automatically
+          try {
+            console.log("[app] bootstrap on startup with dev creds");
+            const result = await projectBootstrap({
+              orgName: creds.orgId || "default",
+              orgId: creds.orgId,
+            });
+            console.log("[app] startup bootstrap result", result);
+            setRepo(result.path);
+            setConnected(true);
+            setBypassOnboarding(true);
+            startKbSync({
+              creds,
+              repo: result.path,
+              orgSlug: basename(result.path),
+              orgName: creds.orgId,
+            }).catch((e) => console.error("kb sync init failed:", e));
+            startFilestoreSync({
+              creds,
+              repo: result.path,
+            }).catch((e) => console.error("filestore sync init failed:", e));
+          } catch (e) {
+            console.error("[app] startup bootstrap failed:", e);
+          }
         }
         setLoaded(true);
       })
@@ -81,10 +107,12 @@ function App() {
     if (!incoming) return;
     try {
       const creds = await loadCreds();
+      console.log("[app] bootstrapping project", { orgName: incoming, orgId: creds?.orgId });
       const result = await projectBootstrap({
         orgName: incoming,
         orgId: creds?.orgId ?? "",
       });
+      console.log("[app] bootstrap result", result);
       setRepo(result.path);
       const current = await stateLoad().catch(() => null);
       await stateSave({
@@ -107,7 +135,7 @@ function App() {
         }).catch((e) => console.error("filestore sync init failed:", e));
       }
     } catch (e) {
-      console.error("project bootstrap failed:", e);
+      console.error("[app] project bootstrap failed:", e);
     }
   };
 
