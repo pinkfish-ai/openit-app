@@ -16,6 +16,10 @@ export async function fsReadBytes(path: string): Promise<Uint8Array> {
   return new Uint8Array(arr);
 }
 
+export async function fsReveal(path: string): Promise<void> {
+  return invoke("fs_reveal", { path });
+}
+
 export type GitCommit = {
   sha: string;
   short_sha: string;

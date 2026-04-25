@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::Serialize;
 use walkdir::WalkDir;
@@ -99,6 +100,33 @@ fn is_skipped(p: &Path, root: &Path) -> bool {
         let s = c.as_os_str().to_string_lossy();
         SKIP_DIRS.contains(&s.as_ref())
     })
+}
+
+#[tauri::command]
+pub fn fs_reveal(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .output()
+            .map_err(|e| format!("failed to reveal file: {}", e))?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // On Windows/Linux, open the parent directory
+        if let Some(parent) = Path::new(&path).parent() {
+            Command::new(if cfg!(target_os = "windows") {
+                "explorer"
+            } else {
+                "xdg-open"
+            })
+            .arg(parent)
+            .output()
+            .map_err(|e| format!("failed to reveal file: {}", e))?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

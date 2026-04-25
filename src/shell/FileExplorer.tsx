@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fsList,
+  fsReveal,
   gitStatusShort,
   kbDeleteFile,
   kbWriteFileBytes,
@@ -90,6 +91,7 @@ export function FileExplorer({
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
   const [gitRows, setGitRows] = useState<GitFileStatus[]>([]);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
   // Virtual resource state
   const [datastores, setDatastores] = useState<DataCollection[]>([]);
@@ -367,6 +369,10 @@ export function FileExplorer({
               key={n.path}
               className={`tree-item ${n.is_dir ? "dir" : "file"} ${colorClass}${dropTargetPath === n.path ? " drop-target" : ""}`}
               style={{ paddingLeft: 8 + depth * 12 }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu({ x: e.clientX, y: e.clientY, path: n.path });
+              }}
               onDragOver={(e) => {
                 if (n.is_dir && e.dataTransfer.types.includes("Files")) {
                   e.preventDefault();
@@ -495,6 +501,28 @@ export function FileExplorer({
             ))}
           </ul>
         </div>
+      )}
+      {contextMenu && (
+        <>
+          <div
+            className="context-menu-overlay"
+            onClick={() => setContextMenu(null)}
+          />
+          <div
+            className="context-menu"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+          >
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                fsReveal(contextMenu.path).catch(console.error);
+                setContextMenu(null);
+              }}
+            >
+              Reveal in Finder
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

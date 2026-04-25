@@ -37,6 +37,7 @@ pub fn run() {
             fs_tree::fs_list,
             fs_tree::fs_read,
             fs_tree::fs_read_bytes,
+            fs_tree::fs_reveal,
             git_history::git_log,
             git_history::git_diff,
             git_ops::git_ensure_repo,
