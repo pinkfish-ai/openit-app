@@ -28,8 +28,6 @@ export type FilestoreSyncStatus = {
   lastPullAt: number | null;
 };
 
-const PREFIX = "openit-";
-
 function getDefaultFilestores(orgId: string) {
   return [
     {

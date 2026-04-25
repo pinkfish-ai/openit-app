@@ -21,17 +21,13 @@ type LeftTab = "files" | "source-control";
 
 export function Shell({
   repo,
-  env,
-  deployLines,
-  onDeployLine,
-  onDeployExit,
+  syncLines,
+  onSyncLine,
   bubbles,
 }: {
   repo: string | null;
-  env: string;
-  deployLines: string[];
-  onDeployLine: (line: string) => void;
-  onDeployExit: (code: number | null) => void;
+  syncLines: string[];
+  onSyncLine: (line: string) => void;
   bubbles: Bubble[];
 }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
@@ -39,6 +35,7 @@ export function Shell({
   const [conflictBubbles, setConflictBubbles] = useState<Bubble[]>([]);
   const [leftTab, setLeftTab] = useState<LeftTab>("files");
   const [fsTick, setFsTick] = useState(0);
+  const [changeCount, setChangeCount] = useState(0);
   const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
 
   useEffect(() => {
@@ -85,8 +82,8 @@ export function Shell({
   }, [repo]);
 
   useEffect(() => {
-    if (deployLines.length > 0) setSource({ kind: "deploy", lines: deployLines });
-  }, [deployLines]);
+    if (syncLines.length > 0) setSource({ kind: "sync", lines: syncLines });
+  }, [syncLines]);
 
   // Native filesystem watcher — emits fsTick bumps on real changes
   useEffect(() => {
@@ -153,6 +150,11 @@ export function Shell({
                 onClick={() => setLeftTab("source-control")}
               >
                 Sync
+                {changeCount > 0 && (
+                  <span className="left-tab-badge" aria-label={`${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`}>
+                    {changeCount}
+                  </span>
+                )}
               </button>
             </div>
             {/* Keep both panels mounted so typed-but-uncommitted state
@@ -171,11 +173,11 @@ export function Shell({
             <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
               <SourceControl
                 repo={repo}
-                env={env}
+                active={leftTab === "source-control"}
                 onShowDiff={(text) => setSource({ kind: "diff", text })}
-                onDeployLine={onDeployLine}
-                onDeployExit={onDeployExit}
+                onSyncLine={onSyncLine}
                 onFsChange={bumpFs}
+                onChangeCount={setChangeCount}
               />
             </div>
           </div>
@@ -187,7 +189,6 @@ export function Shell({
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[2]} minSize={25}>
           <div className="right-pane">
-            <div className="right-toolbar" />
             <div className="chat-area">
               <ChatPane cwd={repo} />
             </div>

@@ -88,7 +88,7 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
         .catch((e) => !cancelled && setError(String(e)));
       return () => { cancelled = true; };
     }
-    if (source.kind === "deploy") {
+    if (source.kind === "sync") {
       setMode("raw");
       setContent(source.lines.join("\n"));
       return;
@@ -199,7 +199,7 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
   const getTitle = (): string => {
     switch (source.kind) {
       case "file": return source.path;
-      case "deploy": return "Deploy output";
+      case "sync": return "Sync output";
       case "diff": return "Git diff";
       case "datastore-table": return source.collection?.name ?? "Datastore";
       case "datastore-schema": return `${source.collection?.name ?? "Datastore"} — Schema`;
