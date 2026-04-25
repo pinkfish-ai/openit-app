@@ -191,13 +191,6 @@ export async function pullNow(args: {
   await withSyncLock(() => pullOnce(args));
 }
 
-/// Trigger a pull using the active sync credentials. Designed for the UI
-/// refresh button — no args needed; returns false if sync isn't active.
-export async function refreshFromServer(): Promise<boolean> {
-  if (!activeSyncArgs) return false;
-  await withSyncLock(() => pullOnce(activeSyncArgs!));
-  return true;
-}
 
 /// Run one pull pass: list remote files, reconcile against local manifest,
 /// pull new/updated files, surface conflicts.
