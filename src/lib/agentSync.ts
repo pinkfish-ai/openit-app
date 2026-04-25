@@ -1,4 +1,4 @@
-import { pinkfishMcpCall, entityWriteFile } from "./api";
+import { pinkfishMcpCall, entityWriteFile, fsRead } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 
 export type Agent = {
@@ -97,10 +97,26 @@ export async function resolveProjectAgents(
   return filtered;
 }
 
-export async function syncAgentsToDisk(repo: string, agents: Agent[]): Promise<void> {
-  // Write/overwrite each file — don't clear first to avoid empty-dir flash
+export async function syncAgentsToDisk(
+  repo: string,
+  agents: Agent[],
+): Promise<{ written: number; unchanged: number }> {
+  // Content-equality: skip writes when the on-disk file already matches.
+  // Avoids spurious mtime bumps that would otherwise look like local edits.
+  let written = 0;
+  let unchanged = 0;
   for (const agent of agents) {
     const filename = agent.name.replace(/[/\\:*?"<>|]/g, "_") + ".json";
-    await entityWriteFile(repo, "agents", filename, JSON.stringify(agent, null, 2));
+    const content = JSON.stringify(agent, null, 2);
+    const absPath = `${repo}/agents/${filename}`;
+    let existing: string | null = null;
+    try { existing = await fsRead(absPath); } catch { /* missing */ }
+    if (existing === content) {
+      unchanged += 1;
+      continue;
+    }
+    await entityWriteFile(repo, "agents", filename, content);
+    written += 1;
   }
+  return { written, unchanged };
 }

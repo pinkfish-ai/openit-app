@@ -296,30 +296,64 @@ export async function fetchDatastoreSchema(
   return collection.schema;
 }
 
+/**
+ * Bootstrap-time sync to disk. Manifest-aware: skips items whose remote
+ * `updatedAt` already matches the manifest's `remote_version`, so a
+ * reconnect doesn't blindly rewrite every row that's already on disk.
+ * Mirrors the date-based delta logic in pullDatastoresOnce.
+ */
 export async function syncDatastoresToDisk(
   repo: string,
   collections: DataCollection[],
   itemsByCollection: Record<string, { items: MemoryItem[]; hasMore: boolean }>,
-): Promise<void> {
+): Promise<{ written: number; unchanged: number }> {
+  const persisted: KbStatePersisted = await datastoreStateLoad(repo);
+  let written = 0;
+  let unchanged = 0;
   for (const col of collections) {
     const subdir = `databases/${col.name}`;
-    // Write/overwrite — don't clear first to avoid empty-dir flash
-    // Write schema
     if (col.schema) {
-      await entityWriteFile(repo, subdir, "_schema.json", JSON.stringify(col.schema, null, 2));
-    }
-    // Write each row
-    const data = itemsByCollection[col.id];
-    if (data) {
-      for (const item of data.items) {
-        const filename = (item.key || item.id) + ".json";
-        const content = typeof item.content === "object"
-          ? JSON.stringify(item.content, null, 2)
-          : item.content;
-        await entityWriteFile(repo, subdir, filename, content);
+      // Schema has no `updatedAt` to diff against. Compare content; only
+      // write if the on-disk schema differs.
+      const schemaContent = JSON.stringify(col.schema, null, 2);
+      const schemaPath = `${repo}/${subdir}/_schema.json`;
+      let existing: string | null = null;
+      try { existing = await fsRead(schemaPath); } catch { /* missing */ }
+      if (existing !== schemaContent) {
+        await entityWriteFile(repo, subdir, "_schema.json", schemaContent);
+        written += 1;
+      } else {
+        unchanged += 1;
       }
     }
+    const data = itemsByCollection[col.id];
+    if (!data) continue;
+    for (const item of data.items) {
+      const key = item.key || item.id;
+      const filename = `${key}.json`;
+      const mKey = `${col.name}/${key}`;
+      const tracked = persisted.files[mKey];
+      const remoteVer = item.updatedAt ?? "";
+      // Skip when remote `updatedAt` matches the last-pulled version.
+      if (tracked && remoteVer && tracked.remote_version === remoteVer) {
+        unchanged += 1;
+        continue;
+      }
+      const content = typeof item.content === "object"
+        ? JSON.stringify(item.content, null, 2)
+        : item.content;
+      await entityWriteFile(repo, subdir, filename, content);
+      // Seed/advance manifest so the pull engine doesn't redundantly
+      // re-detect this row as a fresh bootstrap on its first poll.
+      persisted.files[mKey] = {
+        remote_version: remoteVer,
+        pulled_at_mtime_ms: Date.now(),
+      };
+      written += 1;
+    }
   }
+  await datastoreStateSave(repo, persisted);
+  return { written, unchanged };
 }
 
 // ---------------------------------------------------------------------------

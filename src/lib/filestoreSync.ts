@@ -7,7 +7,7 @@ import {
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
-import { fsStoreStateLoad, fsStoreStateSave } from "./api";
+import { fsStoreStateLoad, fsStoreStateSave, gitCommitPaths } from "./api";
 import {
   fsStoreInit,
   fsStoreListLocal,
@@ -433,6 +433,7 @@ export async function pullOnce(args: {
   const localMap = new Map(local.map((f) => [f.filename, f]));
   const persisted: KbStatePersisted = await fsStoreStateLoad(repo);
   const conflicts: ConflictFile[] = [];
+  const touched: string[] = [];
   let downloaded = 0;
 
   for (const r of remote) {
@@ -448,6 +449,7 @@ export async function pullOnce(args: {
           remote_version: r.updatedAt,
           pulled_at_mtime_ms: Date.now(),
         };
+        touched.push(`filestore/${r.filename}`);
         downloaded += 1;
       } catch (e) {
         console.error(`filestore pull ${r.filename} failed:`, e);
@@ -476,6 +478,7 @@ export async function pullOnce(args: {
             remote_version: r.updatedAt,
             pulled_at_mtime_ms: Date.now(),
           };
+          touched.push(`filestore/${r.filename}`);
           downloaded += 1;
         } catch (e) {
           console.error(`filestore pull ${r.filename} failed:`, e);
@@ -487,6 +490,18 @@ export async function pullOnce(args: {
   }
 
   await fsStoreStateSave(repo, persisted);
+
+  // Auto-commit downloaded files so they don't show up as untracked in the
+  // Deploy tab. Matches the KB and datastore pull patterns.
+  if (touched.length > 0) {
+    try {
+      const ts = new Date().toISOString();
+      await gitCommitPaths(repo, touched, `sync: pull @ ${ts}`);
+    } catch (e) {
+      console.warn("filestore git commit after pull:", e);
+    }
+  }
+
   update({
     phase: "ready",
     conflicts,
