@@ -307,6 +307,16 @@ export async function syncDatastoresToDisk(
   collections: DataCollection[],
   itemsByCollection: Record<string, { items: MemoryItem[]; hasMore: boolean }>,
 ): Promise<{ written: number; unchanged: number }> {
+  return withDatastoreLock(repo, () =>
+    syncDatastoresToDiskImpl(repo, collections, itemsByCollection),
+  );
+}
+
+async function syncDatastoresToDiskImpl(
+  repo: string,
+  collections: DataCollection[],
+  itemsByCollection: Record<string, { items: MemoryItem[]; hasMore: boolean }>,
+): Promise<{ written: number; unchanged: number }> {
   const persisted: KbStatePersisted = await datastoreStateLoad(repo);
   let written = 0;
   let unchanged = 0;
@@ -394,6 +404,14 @@ function jsonEqual(a: unknown, b: unknown): boolean {
  * The bigger sync-engine plan replaces this with git-ref + content-hash diff.
  */
 export async function pushAllToDatastores(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLine?: (line: string) => void;
+}): Promise<PushResult> {
+  return withDatastoreLock(args.repo, () => pushAllToDatastoresImpl(args));
+}
+
+async function pushAllToDatastoresImpl(args: {
   creds: PinkfishCreds;
   repo: string;
   onLine?: (line: string) => void;
@@ -652,12 +670,22 @@ function manifestKey(collectionName: string, key: string): string {
 let datastorePollTimer: ReturnType<typeof setInterval> | null = null;
 const DATASTORE_POLL_INTERVAL_MS = 60_000;
 
-// Per-repo in-flight pull lock — prevents overlapping pull passes (e.g.
-// when a single pull takes longer than the 60s poll interval, or when a
-// user-triggered manual pull races the background poll). Without this,
-// two pulls could read stale manifest state and clobber each other's
-// updates when saving. Mirrors the kbSync `withSyncLock` pattern.
-const inflightPull = new Map<string, Promise<{ pulled: number; conflicts: DatastoreConflict[] }>>();
+// Per-repo serializer for ANY datastore manifest-mutating operation —
+// pull (poll/manual), push (commit), and bootstrap-sync (modal connect).
+// Without this, two operations can both load → mutate → save the manifest
+// concurrently and the second's save clobbers the first's updates. KB
+// uses the same pattern via withSyncLock; we mirror it here so all three
+// entry points serialize on a single lock per repo.
+const datastoreLocks = new Map<string, Promise<unknown>>();
+function withDatastoreLock<T>(repo: string, fn: () => Promise<T>): Promise<T> {
+  const previous = datastoreLocks.get(repo) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(fn);
+  datastoreLocks.set(
+    repo,
+    next.catch(() => undefined),
+  );
+  return next;
+}
 
 /**
  * Run one pull pass across every openit-* datastore collection. Diffs each
@@ -670,21 +698,7 @@ export async function pullDatastoresOnce(args: {
   creds: PinkfishCreds;
   repo: string;
 }): Promise<{ pulled: number; conflicts: DatastoreConflict[] }> {
-  // Concurrency guard — if a pull is already in flight for this repo,
-  // wait for it instead of starting a second one. Two concurrent pulls
-  // would both load the manifest, both write changed rows, and the
-  // second's saveManifest would clobber the first's updates.
-  const existing = inflightPull.get(args.repo);
-  if (existing) {
-    return existing;
-  }
-  const promise = pullDatastoresOnceImpl(args);
-  inflightPull.set(args.repo, promise);
-  try {
-    return await promise;
-  } finally {
-    inflightPull.delete(args.repo);
-  }
+  return withDatastoreLock(args.repo, () => pullDatastoresOnceImpl(args));
 }
 
 async function pullDatastoresOnceImpl(args: {
