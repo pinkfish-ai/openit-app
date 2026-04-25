@@ -1,5 +1,4 @@
 mod claude;
-mod cli;
 mod filestore;
 mod fs_tree;
 mod git_history;
@@ -56,7 +55,6 @@ pub fn run() {
             git_ops::git_has_conflict_markers,
             git_ops::git_diff_name_only,
             claude::claude_generate_commit_message,
-            cli::pinkit_deploy,
             state::state_load,
             state::state_save,
             keychain::keychain_set,

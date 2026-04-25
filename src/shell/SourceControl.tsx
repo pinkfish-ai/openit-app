@@ -13,14 +13,15 @@ import {
   type GitCommit,
   type GitFileStatus,
 } from "../lib/api";
-import { DeployButton } from "./DeployButton";
+import { getSyncStatus, kbHasServerShadowFiles, pullNow, pushAllToKb, startKbSync } from "../lib/kbSync";
+import { pushAllToFilestore, getFilestoreSyncStatus } from "../lib/filestoreSync";
+import { pushAllToDatastores } from "../lib/datastoreSync";
+import { loadCreds } from "../lib/pinkfishAuth";
 
 type Props = {
   repo: string | null;
-  env: string;
   onShowDiff: (text: string) => void;
-  onDeployLine: (line: string) => void;
-  onDeployExit: (code: number | null) => void;
+  onSyncLine: (line: string) => void;
   onFsChange?: () => void;
 };
 
@@ -50,9 +51,119 @@ function statusColorClass(s: string): string {
 
 function commitDotClass(subject: string): string {
   if (subject.startsWith("sync: pull")) return "sc-commit-dot dot-pull";
-  if (subject.startsWith("sync: deployed")) return "sc-commit-dot dot-push";
-  if (subject.startsWith("init:") || subject.startsWith("pre-deploy")) return "sc-commit-dot dot-init";
+  if (subject.startsWith("sync: push")) return "sc-commit-dot dot-push";
+  if (subject.startsWith("init:")) return "sc-commit-dot dot-init";
   return "sc-commit-dot";
+}
+
+/**
+ * After a successful local commit, push every bidirectional entity to
+ * Pinkfish. KB and filestore use their existing push functions; datastores
+ * use the new pushAllToDatastores. We pre-pull KB to avoid clobbering
+ * teammate edits, then push each entity in parallel and stream results.
+ */
+async function pushOnCommit(
+  repo: string,
+  onLine: (line: string) => void,
+): Promise<void> {
+  const creds = await loadCreds().catch(() => null);
+  if (!creds) {
+    onLine("✗ sync: not authenticated");
+    return;
+  }
+
+  onLine("▸ sync: starting push to Pinkfish");
+
+  // KB requires a resolved collection; if sync hasn't run yet (e.g. user
+  // commits before the initial pull completes), kick it off inline.
+  let kbCollection = getSyncStatus().collection;
+  if (!kbCollection) {
+    onLine("▸ sync: resolving knowledge base");
+    try {
+      const slug = (repo.split("/").pop() ?? "").trim();
+      await startKbSync({ creds, repo, orgSlug: slug, orgName: slug });
+      kbCollection = getSyncStatus().collection;
+    } catch (e) {
+      onLine(`✗ sync: kb resolve failed: ${String(e)}`);
+    }
+  }
+
+  // KB: pre-pull to detect remote/local conflicts before we clobber anything.
+  if (kbCollection) {
+    const shadowBefore = await kbHasServerShadowFiles(repo);
+    if (shadowBefore) {
+      onLine(
+        "✗ sync: kb has unresolved merge shadow (.server.) files — resolve and commit again",
+      );
+    } else {
+      onLine("▸ sync: kb pre-push pull");
+      try {
+        await pullNow({ creds, repo, collection: kbCollection });
+        const conflicts = getSyncStatus().conflicts;
+        const hasShadow = await kbHasServerShadowFiles(repo);
+        if (conflicts.length > 0 || hasShadow) {
+          onLine(
+            "✗ sync: kb pull surfaced conflicts — resolve in Claude, then commit again:",
+          );
+          for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
+          if (hasShadow && conflicts.length === 0) {
+            onLine("  • server shadow files present under knowledge-base/");
+          }
+        } else {
+          onLine("▸ sync: kb pushing");
+          try {
+            const { pushed, failed } = await pushAllToKb({
+              creds,
+              repo,
+              collection: kbCollection,
+              onLine,
+            });
+            onLine(`▸ sync: kb push complete — ${pushed} ok, ${failed} failed`);
+          } catch (e) {
+            onLine(`✗ sync: kb push failed: ${String(e)}`);
+          }
+        }
+      } catch (e) {
+        onLine(`✗ sync: kb pull failed: ${String(e)}`);
+      }
+    }
+  } else {
+    onLine("▸ sync: kb skipped (no collection)");
+  }
+
+  // Filestore push.
+  const fsCollections = getFilestoreSyncStatus().collections;
+  if (fsCollections.length > 0) {
+    onLine("▸ sync: filestore pushing");
+    for (const collection of fsCollections) {
+      try {
+        const { pushed, failed } = await pushAllToFilestore({
+          creds,
+          repo,
+          collection,
+          onLine,
+        });
+        onLine(
+          `▸ sync: filestore push (${collection.name}) — ${pushed} ok, ${failed} failed`,
+        );
+      } catch (e) {
+        onLine(`✗ sync: filestore push (${collection.name}) failed: ${String(e)}`);
+      }
+    }
+  } else {
+    onLine("▸ sync: filestore skipped (no collections)");
+  }
+
+  // Datastore push.
+  onLine("▸ sync: datastores pushing");
+  try {
+    const { pushed, failed } = await pushAllToDatastores({ creds, repo, onLine });
+    onLine(`▸ sync: datastore push complete — ${pushed} ok, ${failed} failed`);
+  } catch (e) {
+    onLine(`✗ sync: datastore push failed: ${String(e)}`);
+  }
+
+  onLine("▸ sync: done");
 }
 
 function relativeTime(dateStr: string): string {
@@ -69,7 +180,7 @@ function relativeTime(dateStr: string): string {
   return dateStr.split("T")[0];
 }
 
-export function SourceControl({ repo, env, onShowDiff, onDeployLine, onDeployExit, onFsChange }: Props) {
+export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Props) {
   const [files, setFiles] = useState<GitFileStatus[]>([]);
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [commitMsg, setCommitMsg] = useState("");
@@ -101,16 +212,6 @@ export function SourceControl({ repo, env, onShowDiff, onDeployLine, onDeployExi
 
   const staged = files.filter((f) => f.staged);
   const unstaged = files.filter((f) => !f.staged);
-
-  // User commits since the last sync — i.e. commits the user authored that
-  // haven't been replicated to Pinkfish yet. Stops counting at the first
-  // sync:/init:/pre-deploy commit. If the log has none, every commit counts.
-  const isSyncCommit = (subject: string) =>
-    subject.startsWith("sync:") ||
-    subject.startsWith("init:") ||
-    subject.startsWith("pre-deploy");
-  const firstSyncIdx = commits.findIndex((c) => isSyncCommit(c.subject));
-  const pendingCount = firstSyncIdx === -1 ? commits.length : firstSyncIdx;
 
   const handleStage = async (paths: string[]) => {
     if (!repo) return;
@@ -146,13 +247,16 @@ export function SourceControl({ repo, env, onShowDiff, onDeployLine, onDeployExi
     setError(null);
     try {
       const created = await gitCommitStaged(repo, commitMsg.trim());
-      if (created) {
-        setCommitMsg("");
-      } else {
+      if (!created) {
         setError("Nothing to commit");
+        return;
       }
+      setCommitMsg("");
       refresh();
       onFsChange?.();
+
+      // Auto-push to Pinkfish across all bidirectional entities.
+      await pushOnCommit(repo, onSyncLine);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -235,17 +339,6 @@ export function SourceControl({ repo, env, onShowDiff, onDeployLine, onDeployExi
         </button>
       </div>
       {error && <div className="sc-error">{error}</div>}
-
-      <div className="sc-deploy-row">
-        <DeployButton
-          repo={repo}
-          env={env}
-          onLine={onDeployLine}
-          onExit={onDeployExit}
-          dirty={files.length > 0}
-          pendingCount={pendingCount}
-        />
-      </div>
 
       {/* Staged + Changes — tight VS Code-style layout, no dividers */}
       <div className="sc-changes">

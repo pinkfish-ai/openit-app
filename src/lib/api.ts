@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type FileNode = { name: string; path: string; is_dir: boolean };
 
@@ -86,21 +85,6 @@ export async function gitHasConflictMarkers(repo: string): Promise<boolean> {
 
 export async function gitDiffNameOnly(repo: string, baseSha: string): Promise<string[]> {
   return invoke("git_diff_name_only", { repo, baseSha });
-}
-
-export async function pinkitDeploy(repo: string, env: string): Promise<void> {
-  return invoke("pinkit_deploy", { args: { repo, env } });
-}
-
-export type DeployLine = { stream: "stdout" | "stderr"; line: string };
-export type DeployExit = { code: number | null };
-
-export async function onDeployLine(handler: (line: DeployLine) => void): Promise<UnlistenFn> {
-  return listen<DeployLine>("cli://deploy-line", (e) => handler(e.payload));
-}
-
-export async function onDeployExit(handler: (exit: DeployExit) => void): Promise<UnlistenFn> {
-  return listen<DeployExit>("cli://deploy-exit", (e) => handler(e.payload));
 }
 
 export type AppPersistedState = {

@@ -30,7 +30,7 @@ function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubbl
 function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [deployLines, setDeployLines] = useState<string[]>([]);
+  const [syncLines, setSyncLines] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
   const [orgName, setOrgName] = useState<string | null>(null);
   const [savedCreds, setSavedCreds] = useState<PinkfishCreds | null>(null);
@@ -135,7 +135,7 @@ function App() {
     };
   }, []);
 
-  const onDeployLine = (line: string) => setDeployLines((prev) => [...prev, line]);
+  const onSyncLine = (line: string) => setSyncLines((prev) => [...prev, line]);
 
   const onPinkfishConnected = async (incoming: string | null) => {
     setConnected(true);
@@ -219,10 +219,8 @@ function App() {
         <Shell
           key={repo ?? "none"}
           repo={repo}
-          env="dev"
-          deployLines={deployLines}
-          onDeployLine={onDeployLine}
-          onDeployExit={(code) => onDeployLine(`▸ exit ${code ?? "?"}`)}
+          syncLines={syncLines}
+          onSyncLine={onSyncLine}
           bubbles={bubbles}
         />
       </section>

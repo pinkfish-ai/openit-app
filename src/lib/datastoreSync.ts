@@ -5,7 +5,7 @@ import {
   type MemoryBqueryResponse,
   type MemoryItem,
 } from "./skillsApi";
-import { entityWriteFile } from "./api";
+import { entityWriteFile, fsList, fsRead } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
 
@@ -19,8 +19,6 @@ type CreateCollectionResponse = {
 };
 
 type ListCollectionsResponse = DataCollection[] | null;
-
-const PREFIX = "openit-";
 
 const DEFAULT_DATASTORES = [
   {
@@ -313,4 +311,170 @@ export async function syncDatastoresToDisk(
       }
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Push — upload locally edited datastore rows back to Pinkfish.
+// Called by the Sync tab's commit handler.
+// ---------------------------------------------------------------------------
+
+type PushResult = { pushed: number; failed: number };
+
+/**
+ * Loose deep-equal for JSON-shaped data — used to skip upload when local
+ * content already matches remote. Stringify with sorted keys for stability.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return `{${keys
+    .map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`)
+    .join(",")}}`;
+}
+
+function jsonEqual(a: unknown, b: unknown): boolean {
+  return stableStringify(a) === stableStringify(b);
+}
+
+/**
+ * Push local datastore rows to Pinkfish for every openit-* collection.
+ *
+ * Strategy: full reconcile per collection.
+ *   - For each local file (databases/<col>/<key>.json, excluding _schema.json):
+ *     - if remote has matching key + same content → skip
+ *     - if remote has matching key + different content → PUT /memory/items/{id}
+ *     - if remote has no matching key → POST /memory/items?collectionId=...
+ *   - For each remote item without a corresponding local file → DELETE.
+ *
+ * No manifest yet — content equality + key matching is the v1 approach.
+ * The bigger sync-engine plan replaces this with git-ref + content-hash diff.
+ */
+export async function pushAllToDatastores(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLine?: (line: string) => void;
+}): Promise<PushResult> {
+  const { creds, repo, onLine } = args;
+  const token = getToken();
+  if (!token) {
+    onLine?.("✗ datastore push: not authenticated");
+    return { pushed: 0, failed: 0 };
+  }
+  const urls = derivedUrls(creds.tokenUrl);
+  const fetchFn = makeSkillsFetch(token.accessToken);
+
+  const collections = await resolveProjectDatastores(creds);
+  if (collections.length === 0) {
+    onLine?.("▸ datastore push: no openit-* collections — nothing to push");
+    return { pushed: 0, failed: 0 };
+  }
+
+  let totalPushed = 0;
+  let totalFailed = 0;
+
+  for (const col of collections) {
+    const colDir = `${repo}/databases/${col.name}`;
+
+    // 1. Remote items keyed by their `key`.
+    let remote: MemoryItem[];
+    try {
+      const resp = await fetchDatastoreItems(creds, col.id, 1000, 0);
+      remote = resp.items;
+    } catch (e) {
+      onLine?.(`✗ datastore: list ${col.name} failed: ${String(e)}`);
+      totalFailed += 1;
+      continue;
+    }
+    const remoteByKey = new Map<string, MemoryItem>();
+    for (const r of remote) {
+      const k = (r.key ?? r.id ?? "").toString();
+      if (k) remoteByKey.set(k, r);
+    }
+
+    // 2. Local files (flat, .json, exclude _schema.json).
+    let localFiles: { key: string; absPath: string }[] = [];
+    try {
+      const nodes = await fsList(colDir);
+      localFiles = nodes
+        .filter(
+          (n) =>
+            !n.is_dir &&
+            n.name.endsWith(".json") &&
+            n.name !== "_schema.json",
+        )
+        .map((n) => ({ key: n.name.replace(/\.json$/, ""), absPath: n.path }));
+    } catch {
+      // Collection dir doesn't exist locally yet — nothing to push, but we
+      // still process deletions below if there are remote items left.
+      localFiles = [];
+    }
+    const localKeys = new Set(localFiles.map((f) => f.key));
+
+    // 3. Push local → remote (POST new, PUT changed, skip unchanged).
+    for (const { key, absPath } of localFiles) {
+      let parsed: unknown;
+      try {
+        const raw = await fsRead(absPath);
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        onLine?.(`✗ datastore: ${col.name}/${key}.json — invalid JSON: ${String(e)}`);
+        totalFailed += 1;
+        continue;
+      }
+
+      const existing = remoteByKey.get(key);
+      try {
+        if (!existing) {
+          const url = new URL("/memory/items", urls.skillsBaseUrl);
+          url.searchParams.set("collectionId", col.id);
+          const resp = await fetchFn(url.toString(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key, content: parsed }),
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+          onLine?.(`  + ${col.name}/${key}.json (created)`);
+          totalPushed += 1;
+        } else if (!jsonEqual(parsed, existing.content)) {
+          const url = new URL(`/memory/items/${encodeURIComponent(existing.id)}`, urls.skillsBaseUrl);
+          url.searchParams.set("collectionId", col.id);
+          const resp = await fetchFn(url.toString(), {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: parsed }),
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+          onLine?.(`  ✓ ${col.name}/${key}.json (updated)`);
+          totalPushed += 1;
+        }
+        // else: content matches, skip silently.
+      } catch (e) {
+        onLine?.(`✗ datastore: ${col.name}/${key}.json — ${String(e)}`);
+        totalFailed += 1;
+      }
+    }
+
+    // 4. Delete remote items that no longer have a local file.
+    for (const r of remote) {
+      const k = (r.key ?? r.id ?? "").toString();
+      if (!k || localKeys.has(k)) continue;
+      try {
+        const url = new URL(
+          `/memory/items/id/${encodeURIComponent(r.id)}`,
+          urls.skillsBaseUrl,
+        );
+        url.searchParams.set("collectionId", col.id);
+        const resp = await fetchFn(url.toString(), { method: "DELETE" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+        onLine?.(`  − ${col.name}/${k}.json (deleted on remote)`);
+        totalPushed += 1;
+      } catch (e) {
+        onLine?.(`✗ datastore: delete ${col.name}/${k} — ${String(e)}`);
+        totalFailed += 1;
+      }
+    }
+  }
+
+  return { pushed: totalPushed, failed: totalFailed };
 }

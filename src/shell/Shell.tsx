@@ -21,17 +21,13 @@ type LeftTab = "files" | "source-control";
 
 export function Shell({
   repo,
-  env,
-  deployLines,
-  onDeployLine,
-  onDeployExit,
+  syncLines,
+  onSyncLine,
   bubbles,
 }: {
   repo: string | null;
-  env: string;
-  deployLines: string[];
-  onDeployLine: (line: string) => void;
-  onDeployExit: (code: number | null) => void;
+  syncLines: string[];
+  onSyncLine: (line: string) => void;
   bubbles: Bubble[];
 }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
@@ -85,8 +81,8 @@ export function Shell({
   }, [repo]);
 
   useEffect(() => {
-    if (deployLines.length > 0) setSource({ kind: "deploy", lines: deployLines });
-  }, [deployLines]);
+    if (syncLines.length > 0) setSource({ kind: "sync", lines: syncLines });
+  }, [syncLines]);
 
   // Native filesystem watcher — emits fsTick bumps on real changes
   useEffect(() => {
@@ -171,10 +167,8 @@ export function Shell({
             <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
               <SourceControl
                 repo={repo}
-                env={env}
                 onShowDiff={(text) => setSource({ kind: "diff", text })}
-                onDeployLine={onDeployLine}
-                onDeployExit={onDeployExit}
+                onSyncLine={onSyncLine}
                 onFsChange={bumpFs}
               />
             </div>
