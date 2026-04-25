@@ -1,5 +1,4 @@
 import {
-  createCollection,
   getCollection,
   listItems,
   type DataCollection,
@@ -57,16 +56,29 @@ export async function resolveProjectDatastores(
       console.log("[datastoreSync] no openit-* datastores found — creating defaults");
       for (const def of defaults) {
         try {
-          const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
-            name: def.name,
-            type: "datastore",
-            isStructured: true,
-            templateId: def.templateId,
-            description: def.description,
-            createdBy: creds.orgId,
-            createdByName: "OpenIT",
-          });
-          matching.push(created);
+          const result = (await pinkfishMcpCall({
+            accessToken: token.accessToken,
+            orgId: creds.orgId,
+            server: "datastore-structured",
+            tool: "datastore-structured_create_collection",
+            arguments: {
+              name: def.name,
+              type: "datastore",
+              templateId: def.templateId,
+              description: def.description,
+              createdBy: creds.orgId,
+              createdByName: "OpenIT",
+            },
+            baseUrl: urls.mcpBaseUrl,
+          })) as { id?: string } | null;
+          if (result?.id) {
+            matching.push({
+              id: result.id,
+              name: def.name,
+              type: "datastore",
+              description: def.description,
+            } as DataCollection);
+          }
         } catch (e) {
           console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
         }

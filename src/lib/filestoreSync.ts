@@ -4,7 +4,7 @@ import {
   kbUploadFile,
   type KbStatePersisted,
 } from "./api";
-import { createCollection, type DataCollection } from "./skillsApi";
+import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { pinkfishMcpCall } from "./api";
 
@@ -100,14 +100,22 @@ export async function resolveProjectFilestores(
     const urls = derivedUrls(creds.tokenUrl);
     for (const def of defaults) {
       try {
-        const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
-          name: def.name,
-          type: "filestorage",
-          description: def.description,
-          createdBy: creds.orgId,
-          createdByName: "OpenIT",
-        });
-        matching.push({ id: created.id, name: created.name, description: created.description });
+        const result = (await pinkfishMcpCall({
+          accessToken: token.accessToken,
+          orgId: creds.orgId,
+          server: "filestorage",
+          tool: "filestorage_create_collection",
+          arguments: {
+            name: def.name,
+            description: def.description,
+            createdBy: creds.orgId,
+            createdByName: "OpenIT",
+          },
+          baseUrl: urls.mcpBaseUrl,
+        })) as { id?: string } | null;
+        if (result?.id) {
+          matching.push({ id: result.id, name: def.name, description: def.description });
+        }
       } catch (e) {
         console.warn(`[filestore] failed to create ${def.name}:`, e);
       }
