@@ -3,6 +3,20 @@ name: OpenIT
 description: IT operations and service management plugin for Claude Code. Manage tickets, provision employees, query systems, and automate workflows.
 ---
 
+## Thesis
+
+Claude Code is the substrate for modern IT ops — admins describe their service desk in plain English and Claude authors workflows, schemas, and integrations as files on disk. OpenIT is **scaffolding** around that, not architecture: a Tauri shell + a plugin (in `/web`) that ships skills, `CLAUDE.md` context, and **Node scripts**. Both the OpenIT app and Claude-in-the-terminal invoke the same scripts — single code path. A user without OpenIT can run Claude in `~/OpenIT/<org>/` and get identical behavior.
+
+Claude orchestrates by:
+- (a) calling MCPs (`knowledge-base`, `filestorage`, `agent-management`, …)
+- (b) running local scripts shipped with the plugin (sync, conflict resolution, entity-management — anything OpenIT could do, Claude can do)
+- (c) triggering Pinkfish workflows
+- (d) calling system CLIs already on the user's machine (`gcloud`, `bq`, `az`, `aws`, `kubectl`, `okta`, `gh`, etc.) — **if a CLI can answer the question well, prefer it.** Investigating an Azure AD permission, a BigQuery row count, a GCP IAM grant, a Kubernetes pod state? The native CLI is faster and more accurate than bespoke automation. Don't reinvent.
+
+Wider product context: `/Users/benrigby/Documents/GitHub/autonomous-dev/research/itsm/pinkfish-itsm-concept.md`.
+
+---
+
 On Connect, we sync: 
 * Claude plugin with manifest here: https://dev20.pinkfish.dev/openit-plugin/manifest.json (or whichever env user has set in their connect details)
 * databases (create 2 default dbs if none exist)
@@ -48,3 +62,16 @@ npm run tauri build
 ```
 
 Produces an unsigned `.app` / `.dmg` in `src-tauri/target/release/bundle/`. Code signing is tracked separately.
+
+## Repos
+/openit-app (this app)
+/web (claude plugin and scripts live here for public download)
+
+## Script dev workflow
+
+Sync logic lives in plugin scripts shipped from `/web/packages/app/public/openit-plugin/scripts/`. To iterate:
+
+1. Connect once — scripts land in `~/OpenIT/<orgId>/.claude/scripts/`.
+2. Edit them in place there. Test by running sync (or `node .claude/scripts/sync-pull.mjs` directly).
+3. When working, copy back to `/web/packages/app/public/openit-plugin/scripts/`, bump `manifest.json` version, push.
+4. Don't reconnect mid-dev — the manifest sync overwrites local edits with the canonical version.

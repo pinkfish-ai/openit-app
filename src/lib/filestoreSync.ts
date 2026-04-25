@@ -399,14 +399,14 @@ export async function pullOnce(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: FilestoreCollection;
-}): Promise<void> {
+}): Promise<{ downloaded: number; total: number }> {
   const { creds, repo, collection } = args;
   update({ phase: "pulling" });
 
   const token = getToken();
   if (!token) {
     update({ phase: "error", lastError: "not authenticated" });
-    return;
+    return { downloaded: 0, total: 0 };
   }
   const urls = derivedUrls(creds.tokenUrl);
 
@@ -428,13 +428,14 @@ export async function pullOnce(args: {
     }));
   } catch (e) {
     update({ phase: "error", lastError: String(e) });
-    return;
+    return { downloaded: 0, total: 0 };
   }
 
   const local = await fsStoreListLocal(repo);
   const localMap = new Map(local.map((f) => [f.filename, f]));
   const persisted: KbStatePersisted = await fsStoreStateLoad(repo);
   const conflicts: ConflictFile[] = [];
+  let downloaded = 0;
 
   for (const r of remote) {
     if (!r.filename || !r.downloadUrl) continue;
@@ -449,6 +450,7 @@ export async function pullOnce(args: {
           remote_version: r.updatedAt,
           pulled_at_mtime_ms: Date.now(),
         };
+        downloaded += 1;
       } catch (e) {
         console.error(`filestore pull ${r.filename} failed:`, e);
       }
@@ -476,6 +478,7 @@ export async function pullOnce(args: {
             remote_version: r.updatedAt,
             pulled_at_mtime_ms: Date.now(),
           };
+          downloaded += 1;
         } catch (e) {
           console.error(`filestore pull ${r.filename} failed:`, e);
         }
@@ -492,6 +495,7 @@ export async function pullOnce(args: {
     lastPullAt: Date.now(),
     lastError: null,
   });
+  return { downloaded, total: remote.length };
 }
 
 /**

@@ -120,7 +120,7 @@ export async function startKbSync(args: {
   orgSlug: string;
   orgName: string;
   onLog?: (msg: string) => void;
-}): Promise<void> {
+}): Promise<{ pulled: number; total: number } | null> {
   const { creds, repo, orgSlug, orgName, onLog } = args;
   if (pollTimer) {
     clearInterval(pollTimer);
@@ -133,14 +133,14 @@ export async function startKbSync(args: {
   } catch (e) {
     console.error("kb sync: gitEnsureRepo failed:", e);
     update({ phase: "error", lastError: String(e) });
-    return;
+    return null;
   }
   try {
     await kbInit(repo);
   } catch (e) {
     console.error("kb sync: kbInit failed:", e);
     update({ phase: "error", lastError: String(e) });
-    return;
+    return null;
   }
   let collection: KbCollection;
   try {
@@ -148,7 +148,7 @@ export async function startKbSync(args: {
   } catch (e) {
     console.error("kb sync: resolveProjectKb failed:", e);
     update({ phase: "error", lastError: String(e) });
-    return;
+    return null;
   }
   update({ collection });
   activeSyncArgs = { creds, repo, collection };
@@ -163,12 +163,13 @@ export async function startKbSync(args: {
     });
   }
 
-  await withSyncLock(() => pullOnce({ creds, repo, collection }));
+  const result = await withSyncLock(() => pullOnce({ creds, repo, collection }));
   pollTimer = setInterval(() => {
     withSyncLock(() => pullOnce({ creds, repo, collection })).catch((e) =>
       console.error("kb pull failed:", e),
     );
   }, POLL_INTERVAL_MS);
+  return result;
 }
 
 export function stopKbSync() {
@@ -187,7 +188,7 @@ export async function pullNow(args: {
   repo: string;
   collection: KbCollection;
 }): Promise<void> {
-  return withSyncLock(() => pullOnce(args));
+  await withSyncLock(() => pullOnce(args));
 }
 
 /// Trigger a pull using the active sync credentials. Designed for the UI
@@ -204,14 +205,14 @@ async function pullOnce(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: KbCollection;
-}): Promise<void> {
+}): Promise<{ pulled: number; total: number }> {
   const { creds, repo, collection } = args;
   update({ phase: "pulling" });
 
   const token = getToken();
   if (!token) {
     update({ phase: "error", lastError: "not authenticated" });
-    return;
+    return { pulled: 0, total: 0 };
   }
   const urls = derivedUrls(creds.tokenUrl);
 
@@ -229,13 +230,14 @@ async function pullOnce(args: {
     }));
   } catch (e) {
     update({ phase: "error", lastError: String(e) });
-    return;
+    return { pulled: 0, total: 0 };
   }
 
   const local = await kbListLocal(repo);
   const localMap = new Map(local.map((f) => [f.filename, f]));
   const persisted: KbStatePersisted = await kbStateLoad(repo);
   const conflicts: ConflictFile[] = [];
+  let pulled = 0;
 
   // Repo-relative paths the pull touched (downloaded, replaced, deleted).
   // Used to scope the auto-commit so we never sweep up unrelated user WIP.
@@ -252,6 +254,7 @@ async function pullOnce(args: {
         await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
         persisted.files[r.filename] = mkState(r);
         touched.add(kbPath(r.filename));
+        pulled += 1;
       } catch (e) {
         console.error(`pull ${r.filename} failed:`, e);
       }
@@ -282,6 +285,7 @@ async function pullOnce(args: {
           await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
           persisted.files[r.filename] = mkState(r);
           touched.add(kbPath(r.filename));
+          pulled += 1;
         } catch (e) {
           console.error(`pull ${r.filename} failed:`, e);
         }
@@ -325,6 +329,7 @@ async function pullOnce(args: {
       console.warn("git commit after pull:", e);
     }
   }
+  return { pulled, total: remote.length };
 }
 
 function mkState(r: { updatedAt: string }) {

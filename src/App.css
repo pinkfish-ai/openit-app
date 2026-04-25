@@ -1417,7 +1417,7 @@ body,
 
 /* Pinkfish OAuth */
 .confirm-modal-body.wide {
-  width: min(820px, 92vw);
+  width: min(620px, 92vw);
 }
 
 .key-label {

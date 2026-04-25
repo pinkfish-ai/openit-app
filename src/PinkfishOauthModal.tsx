@@ -116,13 +116,16 @@ export function PinkfishOauthModal({
             const datastores = await resolveProjectDatastores(creds, addLog);
             const itemsByCollection: Record<string, { items: any[]; hasMore: boolean }> = {};
             let totalItems = 0;
+            let schemaFiles = 0;
             for (const ds of datastores) {
               const data = await fetchDatastoreItems(creds, ds.id);
               itemsByCollection[ds.id] = data;
               totalItems += data.items.length;
+              if (ds.schema) schemaFiles += 1;
             }
             await syncDatastoresToDisk(repo, datastores, itemsByCollection);
-            addLog(`    ${datastores.length} collection(s), ${totalItems} item(s) — synced`);
+            const fileCount = totalItems + schemaFiles;
+            addLog(`    ${datastores.length} collection(s), ${totalItems} item(s) — ${fileCount} file(s) written`);
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
@@ -138,7 +141,7 @@ export function PinkfishOauthModal({
               addLog(`  ✓ ${a.name ?? "(unnamed)"}  (id: ${(a as any).id ?? "?"})`);
             }
             await syncAgentsToDisk(repo, agents);
-            addLog(`    ${agents.length} agent(s) — synced`);
+            addLog(`    ${agents.length} agent(s) — ${agents.length} file(s) written`);
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
@@ -154,7 +157,7 @@ export function PinkfishOauthModal({
               addLog(`  ✓ ${w.name}  (id: ${w.id})`);
             }
             await syncWorkflowsToDisk(repo, workflows);
-            addLog(`    ${workflows.length} workflow(s) — synced`);
+            addLog(`    ${workflows.length} workflow(s) — ${workflows.length} file(s) written`);
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
@@ -166,10 +169,14 @@ export function PinkfishOauthModal({
           addLog("▸ filestores");
           try {
             const filestores = await resolveProjectFilestores(creds, addLog);
+            let totalDownloaded = 0;
+            let totalRemote = 0;
             for (const fs of filestores) {
-              await pullOnce({ creds, repo, collection: fs });
+              const r = await pullOnce({ creds, repo, collection: fs });
+              totalDownloaded += r.downloaded;
+              totalRemote += r.total;
             }
-            addLog(`    ${filestores.length} collection(s) — synced`);
+            addLog(`    ${filestores.length} collection(s), ${totalRemote} file(s) on remote — ${totalDownloaded} downloaded`);
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
@@ -181,14 +188,16 @@ export function PinkfishOauthModal({
           addLog("▸ knowledge base");
           try {
             const orgSlug = repo.split("/").filter(Boolean).pop() ?? repo;
-            await startKbSync({
+            const r = await startKbSync({
               creds,
               repo,
               orgSlug,
               orgName: orgName || creds.orgId,
               onLog: addLog,
             });
-            addLog("    initial pull complete");
+            const pulled = r?.pulled ?? 0;
+            const total = r?.total ?? 0;
+            addLog(`    ${total} file(s) on remote — ${pulled} downloaded`);
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
@@ -240,7 +249,7 @@ export function PinkfishOauthModal({
 
   return (
     <div className="confirm-modal" role="dialog" aria-label="Connect Pinkfish">
-      <div className="confirm-modal-body wide">
+      <div className={`confirm-modal-body ${syncing || syncDone ? "wide" : ""}`}>
         <h3>Connect Pinkfish</h3>
         
         {syncing || syncDone ? (
