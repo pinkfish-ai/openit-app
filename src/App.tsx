@@ -5,12 +5,26 @@ import { projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
-import { syncSkillsToDisk } from "./lib/skillsSync";
+import { syncSkillsToDisk, type Bubble as ManifestBubble } from "./lib/skillsSync";
+import { type Bubble as PromptBubble } from "./shell/PromptBubbles";
 import "./App.css";
+
+const DEFAULT_BUBBLES: PromptBubble[] = [
+  { label: "Reports", prompt: "/reports weekly-digest" },
+  { label: "Access", prompt: "/access map" },
+  { label: "People", prompt: "/people" },
+];
 
 function basename(p: string): string {
   const parts = p.split("/").filter((s) => s.length > 0);
   return parts[parts.length - 1] ?? p;
+}
+
+function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubble[] {
+  return manifestBubbles.map((b) => ({
+    label: b.label,
+    prompt: b.skill,
+  }));
 }
 
 function App() {
@@ -21,6 +35,7 @@ function App() {
   const [orgName, setOrgName] = useState<string | null>(null);
   const [savedCreds, setSavedCreds] = useState<PinkfishCreds | null>(null);
   const [bypassOnboarding, setBypassOnboarding] = useState(false);
+  const [bubbles, setBubbles] = useState<PromptBubble[]>(DEFAULT_BUBBLES);
 
   useEffect(() => {
     // Stop the WebView from navigating to a dropped file when the drop
@@ -84,7 +99,12 @@ function App() {
               creds,
               repo: result.path,
             }).catch((e) => console.error("filestore sync init failed:", e));
-            syncSkillsToDisk(result.path, creds).catch((e) => console.error("skill sync failed:", e));
+            syncSkillsToDisk(result.path, creds)
+              .then((manifest) => {
+                console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
+                setBubbles(convertBubblesForPrompt(manifest.bubbles));
+              })
+              .catch((e) => console.error("skill sync failed:", e));
           } catch (e) {
             console.error("[app] startup bootstrap failed:", e);
           }
@@ -135,7 +155,12 @@ function App() {
           creds: fullCreds,
           repo: result.path,
         }).catch((e) => console.error("filestore sync init failed:", e));
-        syncSkillsToDisk(result.path, fullCreds).catch((e) => console.error("skill sync failed:", e));
+        syncSkillsToDisk(result.path, fullCreds)
+          .then((manifest) => {
+            console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
+            setBubbles(convertBubblesForPrompt(manifest.bubbles));
+          })
+          .catch((e) => console.error("skill sync failed:", e));
       }
     } catch (e) {
       console.error("[app] project bootstrap failed:", e);
@@ -183,6 +208,7 @@ function App() {
           deployLines={deployLines}
           onDeployLine={onDeployLine}
           onDeployExit={(code) => onDeployLine(`▸ exit ${code ?? "?"}`)}
+          bubbles={bubbles}
         />
       </section>
     </main>

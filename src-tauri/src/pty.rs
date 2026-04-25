@@ -72,6 +72,11 @@ pub fn pty_spawn<R: Runtime>(
         .map_err(|e| e.to_string())?;
 
     let mut cmd = CommandBuilder::new(&resolved);
+    // Allow Bash and Read operations for skills that need filesystem access
+    if resolved.ends_with("claude") {
+        cmd.arg("--allowedTools");
+        cmd.arg("Bash Read");
+    }
     for a in &cmd_args {
         cmd.arg(a);
     }

@@ -7,7 +7,17 @@ export type Skill = {
   path: string;
 };
 
-export async function fetchSkillsManifest(creds: PinkfishCreds): Promise<{ files: Array<{ path: string }> }> {
+export type Bubble = {
+  label: string;
+  skill: string;
+};
+
+export type PluginManifest = {
+  files: Array<{ path: string }>;
+  bubbles?: Array<Bubble>;
+};
+
+export async function fetchSkillsManifest(creds: PinkfishCreds): Promise<PluginManifest> {
   try {
     const manifestJson = await invoke<string>("skills_fetch_manifest", {
       appApiUrl: creds.tokenUrl,
@@ -31,7 +41,7 @@ export async function fetchSkillFile(skillPath: string, creds: PinkfishCreds): P
   }
 }
 
-export async function syncSkillsToDisk(repo: string, creds: PinkfishCreds): Promise<Skill[]> {
+export async function syncSkillsToDisk(repo: string, creds: PinkfishCreds): Promise<{ bubbles: Bubble[] }> {
   try {
     const manifest = await fetchSkillsManifest(creds);
 
@@ -95,9 +105,13 @@ ${skillContent}`;
       }
     }
 
-    return [];
+    return {
+      bubbles: manifest.bubbles ?? [],
+    };
   } catch (error) {
     console.error("[skillsSync] syncSkillsToDisk failed:", error);
-    return [];
+    return {
+      bubbles: [],
+    };
   }
 }

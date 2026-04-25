@@ -24,12 +24,14 @@ export function Shell({
   deployLines,
   onDeployLine,
   onDeployExit,
+  bubbles,
 }: {
   repo: string | null;
   env: string;
   deployLines: string[];
   onDeployLine: (line: string) => void;
   onDeployExit: (code: number | null) => void;
+  bubbles: Bubble[];
 }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
   const [source, setSource] = useState<ViewerSource>(null);
@@ -166,7 +168,7 @@ export function Shell({
             <div className="chat-area">
               <ChatPane cwd={repo} />
             </div>
-            <PromptBubbles extraBubbles={conflictBubbles} />
+            <PromptBubbles extraBubbles={conflictBubbles} bubbles={bubbles} />
           </div>
         </Panel>
       </PanelGroup>
