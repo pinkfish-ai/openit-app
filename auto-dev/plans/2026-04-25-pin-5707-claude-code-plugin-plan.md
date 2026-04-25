@@ -206,18 +206,34 @@ Proposed location: `platform/servers/agentic/mcp/src/servers/embedded/openit-plu
 
 Or simpler: a `plugin/` directory in the `openit-app` repo itself that contains the template files, and the app copies them into the project folder.
 
-### Step 2: Host plugin content on Pinkfish
+### Step 2: Host plugin content in the web repo's public directory
 
-The plugin content lives on the Pinkfish platform — NOT bundled in the app. This lets us push updates to CLAUDE.md and skills at any time without an app release.
+The plugin content lives in the web repo at `packages/app/public/openit-plugin/` — served as static files at the root URL. NOT bundled in the OpenIT app. This lets us push updates by merging a PR to the web repo.
 
-**Storage:** A Pinkfish filestore collection named `openit-plugin` containing:
-- `manifest.json` — version hash + file list
-- `CLAUDE.md.template` — the template with `{{mustache}}` vars
-- `skills/run-workflow.md`, `skills/query-database.md`, etc.
+**Location:** `packages/app/public/openit-plugin/`
 
-Or alternatively, a dedicated REST endpoint: `GET /openit-plugin/manifest` and `GET /openit-plugin/files/<path>`.
+**URLs:**
+- Prod: `https://app.pinkfish.ai/openit-plugin/manifest.json`
+- Dev: `https://<env>.pinkfish.dev/openit-plugin/manifest.json`
 
-**The app has zero bundled plugin files.** Everything is fetched from the API.
+**Files:**
+```
+packages/app/public/openit-plugin/
+  manifest.json                    ← version + file list + bubbles config
+  claude-md.template.md            ← CLAUDE.md template with {{mustache}} vars
+  skills/
+    run-workflow.md
+    query-database.md
+    create-agent.md
+    update-workflow.md
+    add-to-kb.md
+    deploy.md
+    get-started.md
+```
+
+**URL derivation in OpenIT:** The plugin base URL is derived from the user's token URL the same way other URLs are derived (see `pinkfishAuth.ts:derivedUrls`). For prod token URL → `https://app.pinkfish.ai/openit-plugin/`. For dev → `https://<env>.pinkfish.dev/openit-plugin/`.
+
+**The app has zero bundled plugin files.** Everything is fetched from the web app's static hosting.
 
 ### Step 3: Plugin sync module
 
@@ -318,15 +334,16 @@ The 5-minute poll is lightweight — just a manifest hash check (single GET). Ac
 |------|--------|
 | `src/lib/pluginSync.ts` | **New** — 5-min poll for remote plugin updates, CLAUDE.md template rendering |
 | `src/App.tsx` | **Modify** — start plugin sync on project open |
-| **Pinkfish platform (remote)** | |
-| `openit-plugin/manifest.json` | **New** — version hash + file list |
-| `openit-plugin/CLAUDE.md.template` | **New** — CLAUDE.md template with `{{mustache}}` vars |
-| `openit-plugin/skills/run-workflow.md` | **New** — skill to run workflows |
-| `openit-plugin/skills/query-database.md` | **New** — skill to query datastores |
-| `openit-plugin/skills/create-agent.md` | **New** — skill to create agents |
-| `openit-plugin/skills/update-workflow.md` | **New** — skill to update workflow code |
-| `openit-plugin/skills/add-to-kb.md` | **New** — skill to add files to KB |
-| `openit-plugin/skills/deploy.md` | **New** — skill to deploy changes |
+| **Web repo (`packages/app/public/openit-plugin/`)** | |
+| `manifest.json` | **New** — version hash + file list + bubbles config |
+| `claude-md.template.md` | **New** — CLAUDE.md template with `{{mustache}}` vars |
+| `skills/run-workflow.md` | **New** — skill to run workflows |
+| `skills/query-database.md` | **New** — skill to query datastores |
+| `skills/create-agent.md` | **New** — skill to create agents |
+| `skills/update-workflow.md` | **New** — skill to update workflow code |
+| `skills/add-to-kb.md` | **New** — skill to add files to KB |
+| `skills/deploy.md` | **New** — skill to deploy changes |
+| `skills/get-started.md` | **New** — onboarding skill for new users |
 
 ## Verification
 
