@@ -10,7 +10,7 @@ import {
   type PinkfishCreds,
 } from "./lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk } from "./lib/datastoreSync";
-import { resolveProjectAgents } from "./lib/agentSync";
+import { resolveProjectAgents, syncAgentsToDisk } from "./lib/agentSync";
 import { resolveProjectWorkflows, syncWorkflowsToDisk } from "./lib/workflowSync";
 import { resolveProjectFilestores, pullOnce } from "./lib/filestoreSync";
 
@@ -124,8 +124,10 @@ export function PinkfishOauthModal({
         if (!syncErrors) {
           addLog("[sync] Resolving agents...");
           try {
-            await resolveProjectAgents(creds);
-            addLog("[sync] ✓ Agents resolved");
+            const agents = await resolveProjectAgents(creds);
+            addLog(`[sync] Found ${agents.length} agents`);
+            await syncAgentsToDisk(repo, agents);
+            addLog("[sync] ✓ Agents synced to disk");
           } catch (e) {
             addLog(`[sync] ✗ Agent sync failed: ${e}`);
             syncErrors = true;
