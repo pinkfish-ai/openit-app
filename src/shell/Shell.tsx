@@ -209,7 +209,7 @@ export function Shell({
                 aria-label="Pull from Pinkfish now"
                 title={pulling ? "Pulling…" : "Pull from Pinkfish"}
               >
-                {pulling ? "⟳" : "↓"}
+                {pulling ? "⟳" : "↻"}
               </button>
             </div>
             {/* Keep both panels mounted so typed-but-uncommitted state

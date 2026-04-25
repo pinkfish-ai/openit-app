@@ -9,7 +9,7 @@ import {
   type FileNode,
   type GitFileStatus,
 } from "../lib/api";
-import { refreshFromServer, subscribeSync, type SyncStatus } from "../lib/kbSync";
+import { subscribeSync, type SyncStatus } from "../lib/kbSync";
 import { subscribeFilestoreSync, type FilestoreSyncStatus } from "../lib/filestoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk, fetchDatastoreSchema } from "../lib/datastoreSync";
@@ -155,17 +155,6 @@ export function FileExplorer({
       .catch((e) => setError(String(e)));
   }, [repo]);
 
-  const [refreshing, setRefreshing] = useState(false);
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await refreshFromServer();
-    } finally {
-      reload();
-      onFsChange?.();
-      setRefreshing(false);
-    }
-  }, [reload, onFsChange]);
 
   useEffect(() => {
     reload();
@@ -393,7 +382,6 @@ export function FileExplorer({
       onDrop={onDrop}
     >
       <div className="explorer-toolbar">
-        <button type="button" className="explorer-icon-btn" onClick={handleRefresh} disabled={refreshing} title="Sync from Pinkfish &amp; refresh">{refreshing ? "⟳" : "↻"}</button>
         <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={allCollapsed ? "Expand all" : "Collapse all"}>
           {allCollapsed ? "⊞" : "⊟"}
         </button>
