@@ -12,6 +12,7 @@ import {
 import { resolveProjectDatastores } from "./lib/datastoreSync";
 import { resolveProjectAgents } from "./lib/agentSync";
 import { resolveProjectWorkflows } from "./lib/workflowSync";
+import { resolveProjectFilestores } from "./lib/filestoreSync";
 
 const SIGNUP_URL = "https://app.pinkfish.ai/coworker/public";
 
@@ -111,7 +112,18 @@ export function PinkfishOauthModal({
             syncErrors = true;
           }
         }
-        
+
+        if (!syncErrors) {
+          addLog("[sync] Resolving filestore...");
+          try {
+            await resolveProjectFilestores(creds);
+            addLog("[sync] ✓ Filestore synced");
+          } catch (e) {
+            addLog(`[sync] ✗ Filestore sync failed: ${e}`);
+            syncErrors = true;
+          }
+        }
+
         clearTimeout(timeoutHandle);
         
         if (syncErrors) {
