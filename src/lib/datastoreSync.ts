@@ -70,10 +70,10 @@ export async function resolveProjectDatastores(
               createdByName: "OpenIT",
             },
             baseUrl: urls.mcpBaseUrl,
-          })) as { id?: string } | null;
+          })) as { id?: string | number } | null;
           if (result?.id) {
             matching.push({
-              id: result.id,
+              id: String(result.id),
               name: def.name,
               type: "datastore",
               description: def.description,

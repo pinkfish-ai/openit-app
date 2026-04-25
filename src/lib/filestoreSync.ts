@@ -112,9 +112,9 @@ export async function resolveProjectFilestores(
             createdByName: "OpenIT",
           },
           baseUrl: urls.mcpBaseUrl,
-        })) as { id?: string } | null;
+        })) as { id?: string | number } | null;
         if (result?.id) {
-          matching.push({ id: result.id, name: def.name, description: def.description });
+          matching.push({ id: String(result.id), name: def.name, description: def.description });
         }
       } catch (e) {
         console.warn(`[filestore] failed to create ${def.name}:`, e);
