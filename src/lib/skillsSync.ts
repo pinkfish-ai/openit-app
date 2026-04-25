@@ -34,42 +34,68 @@ export async function fetchSkillFile(skillPath: string, creds: PinkfishCreds): P
 export async function syncSkillsToDisk(repo: string, creds: PinkfishCreds): Promise<Skill[]> {
   try {
     const manifest = await fetchSkillsManifest(creds);
-    const skills: Skill[] = [];
 
     for (const file of manifest.files) {
-      if (!file.path.startsWith("skills/") || !file.path.endsWith(".md")) {
-        continue;
-      }
-
       try {
         const content = await fetchSkillFile(file.path, creds);
 
-        const skillName = file.path.replace("skills/", "").replace(".md", "");
-        const skillContent = content;
+        // Handle different file types
+        if (file.path === "claude-md.template.md") {
+          // Write template as CLAUDE.md to repo root
+          await invoke("entity_write_file", {
+            repo,
+            subdir: "",
+            filename: "CLAUDE.md",
+            content,
+          });
+          console.log("[skillsSync] Synced CLAUDE.md from template");
+        } else if (file.path.startsWith("skills/") && file.path.endsWith(".md")) {
+          // Write skills to .claude/skills/<skillName>/SKILL.md
+          const skillName = file.path.replace("skills/", "").replace(".md", "");
+          let skillContent = content;
 
-        await invoke("entity_write_file", {
-          repo,
-          subdir: ".claude/skills",
-          filename: `${skillName}.md`,
-          content: skillContent,
-        });
+          // Ensure proper SKILL.md format with frontmatter
+          if (!skillContent.startsWith("---")) {
+            const nameMatch = skillContent.match(/^name:\s*(.+?)$/m);
+            const descMatch = skillContent.match(/^description:\s*(.+?)$/m);
+            const skillTitle = nameMatch?.[1]?.trim() ?? skillName;
+            const description = descMatch?.[1]?.trim() ?? "";
+            
+            skillContent = `---
+name: ${skillTitle}
+description: ${description || skillName}
+---
 
-        const nameMatch = skillContent.match(/^name:\s*(.+)$/m);
-        const descMatch = skillContent.match(/^description:\s*(.+)$/m);
+${skillContent}`;
+          }
 
-        skills.push({
-          name: nameMatch?.[1] ?? skillName,
-          description: descMatch?.[1] ?? "",
-          path: `${repo}/.claude/skills/${skillName}.md`,
-        });
-
-        console.log(`[skillsSync] Synced skill: ${skillName}`);
+          await invoke("entity_write_file", {
+            repo,
+            subdir: `.claude/skills/${skillName}`,
+            filename: "SKILL.md",
+            content: skillContent,
+          });
+          console.log(`[skillsSync] Synced skill: ${skillName}`);
+        } else {
+          // Write other files preserving directory structure
+          const parts = file.path.split("/");
+          const filename = parts.pop() ?? file.path;
+          const subdir = parts.length > 0 ? parts.join("/") : "";
+          
+          await invoke("entity_write_file", {
+            repo,
+            subdir,
+            filename,
+            content,
+          });
+          console.log(`[skillsSync] Synced file: ${file.path}`);
+        }
       } catch (err) {
         console.warn(`[skillsSync] Failed to sync ${file.path}:`, err);
       }
     }
 
-    return skills;
+    return [];
   } catch (error) {
     console.error("[skillsSync] syncSkillsToDisk failed:", error);
     return [];

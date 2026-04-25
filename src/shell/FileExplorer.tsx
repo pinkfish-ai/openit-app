@@ -14,7 +14,7 @@ import { loadCreds } from "../lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk } from "../lib/datastoreSync";
 import { resolveProjectAgents, syncAgentsToDisk, type Agent } from "../lib/agentSync";
 import { resolveProjectWorkflows, syncWorkflowsToDisk, type Workflow } from "../lib/workflowSync";
-import { syncSkillsToDisk, type Skill } from "../lib/skillsSync";
+import { syncSkillsToDisk } from "../lib/skillsSync";
 import type { DataCollection, MemoryItem } from "../lib/skillsApi";
 
 function relPath(repo: string, absPath: string): string {
@@ -104,8 +104,6 @@ export function FileExplorer({
   // (loadingResources removed — initial load is fast enough)
 
   const [fsSync, setFsSync] = useState<FilestoreSyncStatus | null>(null);
-  const [skills, setSkills] = useState<Skill[]>([]);
-  const [skillsCollapsed, setSkillsCollapsed] = useState(false);
   
   useEffect(() => subscribeSync(setSync), []);
   useEffect(() => subscribeFilestoreSync(setFsSync), []);
@@ -180,17 +178,15 @@ export function FileExplorer({
       if (!creds || cancelled) return;
 
       try {
-        const [ds, ag, wf, sk] = await Promise.all([
+        const [ds, ag, wf] = await Promise.all([
           resolveProjectDatastores(creds).catch(() => [] as DataCollection[]),
           resolveProjectAgents(creds).catch(() => [] as Agent[]),
           resolveProjectWorkflows(creds).catch(() => [] as Workflow[]),
-          repo ? syncSkillsToDisk(repo, creds).catch(() => [] as Skill[]) : Promise.resolve([] as Skill[]),
         ]);
         if (cancelled) return;
         setDatastores(ds);
         setAgents(ag);
         setWorkflows(wf);
-        setSkills(sk);
 
         const itemsMap: Record<string, { items: MemoryItem[]; hasMore: boolean }> = {};
         await Promise.all(
@@ -362,36 +358,6 @@ export function FileExplorer({
           {allCollapsed ? "⊞" : "⊟"}
         </button>
       </div>
-
-      {skills.length > 0 && (
-        <div className="explorer-skills-section">
-          <div className="explorer-skills-header">
-            <button
-              type="button"
-              className="explorer-skills-toggle"
-              onClick={() => setSkillsCollapsed(!skillsCollapsed)}
-            >
-              {skillsCollapsed ? "▸" : "▾"} Skills
-            </button>
-          </div>
-          {!skillsCollapsed && (
-            <ul className="explorer-skills-list">
-              {skills.map((skill) => (
-                <li key={skill.name} className="explorer-skill-item">
-                  <button
-                    type="button"
-                    className="explorer-skill-button"
-                    title={skill.description}
-                    onClick={() => onSelect(skill.path)}
-                  >
-                    {skill.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
 
       <ul className="tree">
         {/* Real file tree */}
