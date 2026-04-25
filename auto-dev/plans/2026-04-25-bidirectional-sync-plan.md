@@ -9,8 +9,9 @@
 
 1. [Goal](#goal)
 2. [Vision alignment](#vision-alignment)
-3. [Where the sync logic lives](#where-the-sync-logic-lives)
-4. [Runtime choice: Node vs platform-specific scripts](#runtime-choice-node-vs-platform-specific-scripts)
+3. [Channel selection: when to use which](#channel-selection-when-to-use-which)
+4. [Where the sync logic lives](#where-the-sync-logic-lives)
+5. [Runtime choice: Node vs platform-specific scripts](#runtime-choice-node-vs-platform-specific-scripts)
 5. [Why git-native baseline beats per-entity manifests](#why-git-native-baseline-beats-per-entity-manifests)
 6. [Plugin layout](#plugin-layout)
 7. [Plugin contract](#plugin-contract)
@@ -60,6 +61,59 @@ The project vision is that **Claude is the orchestration layer**, capable of:
 - **(c) Triggering Pinkfish workflows** — already a remote concept; Claude composes them.
 
 This plan operationalizes (b) by making sync itself a set of scripts in the plugin. The OpenIT Tauri app and Claude-in-the-terminal both invoke those scripts. There's no separate "OpenIT-only" sync code path. A user without OpenIT, just running Claude in `~/OpenIT/<org>/`, gets the same behavior.
+
+---
+
+## Channel selection: when to use which
+
+Pinkfish exposes the same entities through multiple channels with different trade-offs. The sync engine and Claude both need a clear policy.
+
+### The channels
+
+| # | Channel | Auth | Best for |
+|---|---|---|---|
+| 1 | **Direct platform REST** (`/automations`, `/user-agents`, `/resources`, `/memory/items`, …) | `Auth-Token: Bearer <runtime-token>` | Canonical CRUD on Pinkfish-owned entities; anything mutating; full shapes; pagination; releases / sharing / billing |
+| 2 | **Direct built-in Pinkfish MCPs** (`pinkfish-sidekick`, `agent-management`, `knowledge-base`, `filestorage`, `datastore-structured`, `http-utils`) | Same runtime token via `pinkfishMcpCall` | Specialized read capabilities REST doesn't have (`knowledge-base_ask`, `datastore-structured_natural_query`, `datastore-structured_analytics_query`); cheap list polls; tools that map naturally onto user prompts |
+| 3 | **Gateway discover/invoke for third-party MCPs** (Slack, Zendesk, Salesforce, Jira, Okta, GitHub, GCP, AWS, Azure, …) | Same runtime token, routed via `mcp_discover` → `capabilities_discover` → `capability_details` → invoke | All third-party connectors. The gateway resolves *which* connection (per-org, per-account), handles connector OAuth refresh, and routes to the right endpoint. Direct invocation would break for orgs with multiple connections or freshly installed connectors. |
+| 4 | **System CLIs** (`gcloud`, `bq`, `az`, `aws`, `kubectl`, `okta`, `gh`) | The user's local credentials | Investigations the native tool already does well. Don't reinvent. |
+| 5 | **Local plugin scripts** (`.claude/scripts/*.mjs`) | Whatever they call (REST, MCP, or both internally) | The sync engine itself; conflict resolution; bulk operations the OpenIT app and Claude both invoke. |
+
+### Decision tree
+
+For any operation, walk this in order:
+
+1. **Is it a system-level investigation that a CLI handles well?** (`gcloud iam`, `bq query`, `az ad user show`, `kubectl describe`, `okta users list`) → use the CLI.
+2. **Is it a Pinkfish-owned entity?** (agent, workflow, datastore item, KB file, filestore file, resource collection)
+   - Mutating, or sync-critical, or needs full shape → **REST** (channel 1).
+   - Read-only and benefits from a specialized capability (semantic search, natural-language query, "ask") → **built-in MCP** (channel 2).
+3. **Is it a third-party connector?** (Slack, Zendesk, Salesforce, Jira, Okta, GitHub, GitLab, AWS, GCP, Azure, etc.) → **gateway discover/invoke** (channel 3). Never call third-party MCPs directly — they require connection routing.
+4. **Is it the OpenIT sync engine itself, or something OpenIT and Claude both run?** → it lives in **plugin scripts** (channel 5), which internally use channels 1–4.
+5. **Is the operation a multi-step business automation the user has built?** → invoke the corresponding **Pinkfish workflow**.
+
+### Concrete rules for the sync engine
+
+The sync engine in this plan is opinionated about its channels — it makes the same choice for every entity, every time, so behavior is predictable and bugs are easy to localize:
+
+- **Sync (pull, push, conflict detection): always channel 1 (REST).** REST is the canonical source. Every entity has full CRUD with `updatedAt` and consistent pagination. Mixing in MCP would mean dealing with the shape difference between MCP-flat and REST-deep representations on every diff.
+- **Read-only list polls, where REST also works: still channel 1.** No need to mix — uniform code path is worth more than the small latency win MCP would give.
+- **Specialized read capabilities Claude exposes to the user via slash commands** (`knowledge-base_ask`, `datastore-structured_natural_query`): channel 2. These have no REST equivalent. They're invoked from skills, not from sync code.
+- **Anything touching a third-party SaaS:** channel 3 only. The sync engine never speaks directly to Slack/Zendesk/etc. APIs — it goes through the gateway.
+
+### Concrete rules for Claude (in skills and CLAUDE.md)
+
+When Claude is helping the user (not running sync), the ranking shifts:
+
+- **Investigating?** Try CLI first. `gcloud projects list` beats wiring a GCP MCP for "what projects do I have."
+- **Pinkfish entity work?** Built-in MCP for reads (it's the natural surface inside a Claude prompt); REST for writes via the local scripts.
+- **Third-party SaaS?** Always discover/invoke. Never assume an integration is connected — `mcp_discover` first.
+
+### Why this matters
+
+Without an explicit policy, code drifts. We've already seen examples in the audit:
+- The current TS sync uses a mix: REST for datacollection list, MCP for `agent_list` and `workflow_list`. That's why agents/workflows don't have `updatedAt` — MCP doesn't expose it consistently. Fixing this means moving to REST for sync.
+- The current `DeployButton.tsx` shells out to a `pinkit` CLI which is yet another channel. That's fine for now (it does environment-publish, not entity sync), but it shouldn't expand without a clear reason.
+
+The strategy lets us answer "where does this call belong?" without rediscovering the trade-offs every time.
 
 ---
 
@@ -573,36 +627,66 @@ If one entity fails (e.g. the agents API is down), others still complete. Failed
 
 ## API mapping per entity
 
-What the scripts need from Pinkfish for each entity. Confirmed endpoints marked ✓; unconfirmed marked **VERIFY**.
+The audit (2026-04-25) confirmed the surface. Per the channel-selection rules, **the sync engine uses REST exclusively**. MCP tools are reserved for specialized reads in skills, not sync. This resolves the previous unknowns about `updatedAt` on `agent_list` / `workflow_list` — those MCP tools don't expose it consistently, but their REST equivalents do.
 
-### Datastores
-- **List items** ✓ — `GET /memory/bquery?collectionId=…&limit&offset`. Returns `{ items: MemoryItem[] }` with `id, key, content, updatedAt, createdAt`. Pagination via `limit` + `offset`.
-- **Get one item** ✓ — same endpoint with `key=` filter (or just take from the list response).
-- **Create / update item** **VERIFY** — likely `POST /memory` with `{ collectionId, key, content }` or `PUT /memory/{id}` with same. Need backend confirmation.
-- **Delete item** **VERIFY** — likely `DELETE /memory/{id}`.
+### Datastores (memory items inside `datastore`-type collections)
+- **List items** ✓ — `GET /memory/bquery?collectionId=…&limit&offset` → `MemoryItem[]` with `id, key, content, updatedAt, createdAt`.
+- **Create item** ✓ — `POST /memory/items` with `MemoryCreateItemRequest` `{ key, content, … }`.
+- **Update item** ✓ — `PUT /memory/items/{id}` (full replace) or `PATCH /memory/items/{id}` (partial). Sync uses **PUT** (deterministic, "file is the truth").
+- **Delete item** ✓ — `DELETE /memory/items/{id}` or `DELETE /memory/items/{key}` (with optional `collectionId`).
+- **Auth header**: `Auth-Token: Bearer <token>`.
 
 ### Agents
-- **List** ✓ — MCP `agent_list` returns `{ agents: [{ id, name, description, instructions, selectedModel, isShared, updatedAt? }] }`. **VERIFY** that `updatedAt` is present (current TS code doesn't surface it).
-- **Create** **VERIFY** — MCP `agent_create` shape and required fields.
-- **Update** **VERIFY** — MCP `agent_update`.
-- **Delete** **VERIFY** — MCP `agent_delete`.
+- **List** ✓ — `GET /user-agents` returns full agents with `updatedAt`. (Replaces our current MCP `agent_list` use, which omits `updatedAt`.)
+- **Get** ✓ — `GET /user-agents/{userAgentId}`.
+- **Create** ✓ — `POST /user-agents` with `PinkfishModelsUserAgent`.
+- **Update** ✓ — `PUT /user-agents/{userAgentId}`.
+- **Delete** ✓ — `DELETE /user-agents/{userAgentId}`.
+- **Auth header**: `Authorization: Bearer <token>`.
 
-### Workflows
-- **List** ✓ — MCP `workflow_list` returns `{ workflows, total, filter }`. **VERIFY** `updatedAt` field.
-- **Create / Update / Delete** **VERIFY** — workflows often authored in the Pinkfish web UI; partial-update semantics may not exist. If wholesale overwrite isn't safe, we restrict push to a safe subset (description, instructions) or disable workflow push entirely.
+### Workflows (called "automations" in REST, "workflows" in MCP — same entities)
+- **List** ✓ — `GET /automations` with `updatedAt`. (Replaces our current MCP `workflow_list` use.)
+- **Get** ✓ — `GET /automations/{automationId}`.
+- **Create** ✓ — `POST /automations`.
+- **Update** ✓ — `PUT /automations/{automationId}`.
+- **Delete** ✓ — `DELETE /automations/{automationId}`.
+- **Caveat — release vs draft.** Workflows have a draft (`releaseVersion: -1`) plus immutable releases (`1, 2, …`). Sync targets the **draft**; releases are explicit user actions via `POST /automations/{id}/release`. The plan does **not** auto-release on push — drafting is reversible, releasing is not. Document in CLAUDE.md so Claude doesn't auto-release either.
+- **Caveat — UI authorship.** Workflows are also edited in the Pinkfish web UI. Wholesale PUT could clobber concurrent UI edits. Mitigated by the standard pre-push pull + 3-way merge in the engine; if conflicts can't merge cleanly, the banner flow surfaces them.
+- **Auth header**: `Authorization: Bearer <token>`.
 
-### Knowledge base
-- All endpoints already exercised by `kb.ts` ✓ — list, signed-URL download, upload. No new work.
+### Knowledge base (KB collections + files)
+- **List collections** ✓ — `GET /resources?type=knowledge-base` (or current `/datacollection/?type=knowledge-base`; both work).
+- **List items in collection** ✓ — `GET /resources/{collectionId}/items` with `updatedAt` per item.
+- **Get item** ✓ — `GET /resources/{collectionId}/items/{itemId}`.
+- **Create item** ✓ — `POST /resources/{collectionId}/items`.
+- **Update item** ✓ — `PUT /resources/{collectionId}/items/{itemId}`.
+- **Delete item** ✓ — `DELETE /resources/{collectionId}/items/{itemId}`.
+- **Auth header**: `Auth-Token: Bearer <token>`.
+- **Note**: existing `kbSync.ts` uses an MCP-flavored path for upload; switching to REST `/resources/{id}/items` for sync is consistent with the channel rules and gives uniform pagination + `updatedAt`.
 
-### Filestore
-- All endpoints already exercised by `filestoreSync.ts` ✓.
+### Filestore (filestore collections + files)
+- Same surface as KB above (`/resources?type=filestorage`, `/resources/{id}/items`). Files are binary; download via `signed_url` from list response, upload via `POST /resources/{id}/items` with multipart.
+- **Auth header**: `Auth-Token: Bearer <token>`.
 
 ### Plugin (Claude Code) — read-only
-- List (manifest) + per-file fetch ✓. Already implemented in `skillsSync.ts`. Out of scope for bidirectional plan.
+- Manifest fetch + per-file fetch ✓. Already implemented in `skillsSync.ts`. Out of scope for bidirectional plan.
 
-### Action item before push phases
+### Auth header summary
 
-Confirm the **VERIFY** endpoints actually exist. Document gaps to the backend team. Phase 5 (push for datastores/agents/workflows) is blocked on this audit. Pull-only phases (1-4) don't need any new endpoints.
+| Group | Header |
+|---|---|
+| Memory items / Resources / DataCollections | `Auth-Token: Bearer <token>` |
+| Platform entities (`/user-agents`, `/automations`, …) | `Authorization: Bearer <token>` |
+
+The scripts' `lib/api.mjs` configures the right header per endpoint family. Both headers carry the same runtime token; no token swap needed. Documented in the engine's HTTP wrapper.
+
+### What the audit unblocked
+
+| Phase | Was blocked on | Now |
+|---|---|---|
+| Phase 5a (datastore push) | unconfirmed `POST /memory` etc. | **Unblocked** — full CRUD confirmed at `/memory/items/*`. |
+| Phase 5b (agent push) | unconfirmed MCP create/update | **Unblocked via REST** — full CRUD at `/user-agents/*`. The MCP gap is real but irrelevant given REST works. |
+| Phase 5c (workflow push) | unconfirmed mutation endpoints | **Unblocked via REST** — full CRUD at `/automations/*`. UI-authored-workflow risk handled by 3-way merge + banner. Drafts only; releases stay explicit user action. |
 
 ---
 
@@ -979,13 +1063,34 @@ The foundation. Two parallel sub-tracks:
 - `src/lib/skillsSync.ts` — extend to download `scripts/` files.
 - Migration of `.openit/kb-state.json` and `.openit/fs-state.json` runs inside the script (Phase 1's adapters trigger it).
 
-**Validation gate:** test on macOS, Linux (CI), and Windows (manual smoke). Phase 0 ships nothing user-visible — it's the harness.
+**Phase 0 deliverables (all must land before Phase 1):**
+- Plugin script harness with no-op test entity.
+- Tauri `sync_pull` / `sync_push` / `sync_status` commands.
+- `src/lib/syncEngine.ts` wrapper.
+- `skillsSync.ts` extended to download `scripts/`.
+- **Plugin-sync ordering moved from last to first in `PinkfishOauthModal.tsx`** (otherwise scripts aren't on disk when the engine tries to run).
+- **CI matrix passing on macOS-latest, ubuntu-latest, windows-latest.** Unit + integration. No manual sign-off — green CI gates the merge.
+- A canary script exec round-trip from Tauri returning JSON, verified on all three OSes.
+
+Phase 0 ships nothing user-visible — it's the harness.
 
 ### Phase 1 — port KB and filestore to the engine
 
 Rewrite `kbSync.ts` and `filestoreSync.ts` as thin wrappers over `syncEngine.ts`. The actual logic moves into `scripts/lib/entities/kb.mjs` and `scripts/lib/entities/filestore.mjs`.
 
 Ships zero new functionality. Validates the engine on entities that already had bidirectional sync.
+
+**Phase 1 deliverables:**
+- KB and filestore adapters in scripts/lib/entities/.
+- TS wrappers maintain existing public API (`startKbSync`, `pullOnce`, etc.) so call sites don't change.
+- Migrator `lib/migrate.mjs`: harvests `kb-state.json` / `fs-state.json` `remote_version` values into `sync-timestamps.json`, deletes the old files, sets `refs/openit/last-pull` to current HEAD. Idempotent.
+- **Backwards-compat smoke test** (gates merge): with a real prior-version repo on disk that has both pre-existing `.openit/*-state.json` files AND uncommitted local edits in `knowledge-base/`:
+  1. Start app at new version.
+  2. Verify migrator runs, old files are gone, `sync-timestamps.json` exists with the harvested entries.
+  3. Verify `git status` still shows the user's pre-existing local edits as `M`.
+  4. Verify a pull doesn't delete those local edits.
+  5. Verify a push uploads them and clears the diff.
+- A regression test that captures stderr from a sync run and greps for token-shaped strings (must be empty).
 
 ### Phase 2 — datastores on the engine
 
@@ -1009,41 +1114,88 @@ Independent of push. Works as soon as Phase 1 lands.
 
 ### Phase 5 — push for datastores, agents, workflows
 
-Gated on the API audit. Each entity adapter gains `apiUpsert(path, content)` / `apiDelete(path)`. Engine's `pushEntity` already exists from Phase 0.
+Audit completed (2026-04-25). All three are unblocked via REST. Each entity adapter gains `apiUpsert(path, content)` / `apiDelete(path)` calling the REST endpoints documented in *API mapping per entity*. Engine's `pushEntity` already exists from Phase 0.
+
+Sub-phases (ship independently):
+
+- **Phase 5a — datastore push.** Lowest risk. `/memory/items/*` is a clean CRUD surface, items are small JSON, no UI-author overlap.
+- **Phase 5b — agent push.** Medium risk. `/user-agents/*` works, but agents have richer metadata (skills, tags, public-version) that may surface conflicts we haven't seen on simpler entities.
+- **Phase 5c — workflow push.** Highest risk. `/automations/*` works for drafts, but UI-authored workflows are a real concurrent-edit risk. Manual cross-edit smoke test required before enabling for users. **Sync targets the draft only — never auto-release.**
 
 ### Phase 6 — Deploy/Sync button unification
 
-`DeployButton.tsx` currently shells out to `pinkit deploy`. Replace with `syncEngine.pushAll(repo)` which fans out to every entity. Decision on `pinkit` CLI's continued role made here.
+`DeployButton.tsx` currently shells out to `pinkit deploy`. Replace with `syncEngine.pushAll(repo)` which fans out to every entity.
+
+**Pre-Phase-6 decision required**: what happens to `pinkit deploy`?
+- **Option A** — retire it. Sync engine handles all writes; `pinkit` becomes vestigial.
+- **Option B** — keep as a separate "publish to environment" semantic, distinct from entity sync. Document the line.
+- **Option C** — coexist as one of the buttons in the Sync tab.
+
+This decision needs an owner and a date before Phase 6 starts. Track as a Phase-6-blocker, not deferred indefinitely.
 
 ---
 
 ## Open questions and risks
 
-1. **Datastore item update/delete endpoints** — not yet confirmed. Phase 5 blocked.
-2. **Workflows push semantics** — wholesale JSON overwrite may corrupt UI-authored workflows. Decide before Phase 5: limit to safe fields, or disable workflow push.
-3. **Schema mutation** — `_schema.json` read-only for v1. Future schema-update API enables real bidirectional schema sync.
-4. **Volatile API metadata** — strip-on-write contract per entity; document and lock down via tests.
-5. **JSON merge invalidation** — one-key-per-line formatting in adapters; conflict markers are still hand-resolvable in Claude.
-6. **Pre-existing user edits at migration time** — show up in the next push diff. Verify behavior with a manual test before shipping migration.
-7. **Plugin sync ordering** — must move plugin sync to *first* in the modal flow (currently last). Otherwise scripts aren't on disk when the engine tries to invoke them. Single-line refactor in `PinkfishOauthModal.tsx`.
-8. **`pinkit` CLI** — keep, retire, or coexist. Decided in Phase 6.
-9. **Embedded terminal Node availability** — at startup, verify `node --version`; if missing or < 18, surface a friendly setup message instead of letting sync fail mysteriously.
-10. **Banner persistence** — does the user expect "Resolve" to fully clear the banner, or just open Claude? Decide UX: I propose banner stays until `sync-status.mjs` reports zero conflicts. Dismiss is per-session only.
-11. **Concurrency between user-typed Claude commands and background poll** — both can spawn scripts. The lock prevents data corruption but the user might see brief "sync already in progress" messages. Acceptable.
-12. **Plugin update during active sync** — if plugin manifest version bumps mid-sync (script changes underneath us), the running script keeps using the old code on disk. Next invocation uses new. No mid-flight script swap.
-13. **Conflict on a deleted entity** — A deletes locally, B edits remotely. On A's next pull, B's edit appears as a "new file" (no base in `refs/openit/last-pull` for that path). Treat as "remote-resurrected", surface as conflict, let Claude decide.
-14. **Auth token logging** — scripts must NEVER log the token to stderr. Audit `lib/log.mjs` to make sure no helper accidentally string-interpolates the auth header.
+### Resolved by 2026-04-25 audit
+- ~~Datastore item update/delete endpoints~~ — **resolved**: `POST/PUT/PATCH/DELETE /memory/items` confirmed.
+- ~~`updatedAt` on `agent_list` / `workflow_list`~~ — **resolved**: irrelevant. Sync moves to REST (`/user-agents`, `/automations`) which exposes `updatedAt`. MCP shape is unchanged for skill-side use.
+- ~~Workflows push endpoints~~ — **resolved**: `POST/PUT/DELETE /automations/{id}` confirmed. Drafts only; releases stay explicit (`POST /automations/{id}/release` is *not* called by the sync engine).
+
+### Still open
+
+1. **Auth header per endpoint family.** Memory/Resources use `Auth-Token`; platform entities (`/user-agents`, `/automations`) use `Authorization`. Scripts' `lib/api.mjs` must dispatch the right header. Mistakes silently 401; cover with integration tests.
+2. **Workflow push safety in practice.** Audit confirms endpoints exist, but 3-way merge on `/automations/{id}` JSON has not been tested against a UI-edited draft. Phase 5c needs a manual cross-edit smoke test before enabling for users. If merges corrupt drafts in practice, fall back to: only allow workflow push when `git diff` is non-conflicting; otherwise require user to "make this the source of truth" explicit action.
+3. **Schema mutation.** `_schema.json` is read-only for v1. Future schema-update API enables real bidirectional schema sync. Until then: scripts write `_schema.json` on pull, ignore it on push, log a warning if a user has edited it locally.
+4. **Volatile API metadata.** Each entity adapter must strip `createdAt` / `updatedAt` (and similar) from `content` before writing to disk, otherwise every pull rewrites the file with a new timestamp. Per-entity contract; cover with tests.
+5. **JSON merge invalidation.** Line-based `git merge-file` can produce invalid JSON when both sides edit nearby keys. Mitigation: write canonical JSON (one key per line, sorted). Conflict markers still need hand-resolution in Claude.
+6. **Pre-existing user edits at migration time.** Migrating from the old per-entity manifests, any uncommitted local edits show up as "to push" in the next push diff. Manual smoke test before shipping the migrator.
+7. ~~Plugin sync ordering~~ — **promoted to Phase 0 deliverable.**
+8. **`pinkit` CLI** — keep / retire / coexist decision tracked as a **Phase-6 blocker** with an explicit owner and date, not as an indefinite deferral. See Phase 6 deliverables.
+9. **Embedded terminal Node availability.** At startup, verify `node --version`; if missing or < 18, surface a friendly setup message instead of letting sync fail mysteriously.
+10. **Banner persistence.** I propose: banner stays until `sync-status.mjs` reports zero conflicts. Dismiss is per-session only. Confirm with user.
+11. **Concurrency between user-typed Claude commands and background poll.** Both can spawn scripts. The lock prevents data corruption but the user may see brief "sync already in progress" messages. Acceptable; revisit if it becomes annoying.
+12. **Plugin update during active sync.** If the plugin manifest version bumps mid-sync, the running script keeps using the old code on disk. Next invocation uses new. No mid-flight script swap. (Generally safe; document.)
+13. **Conflict on a deleted entity.** A deletes locally, B edits remotely. On A's next pull, B's edit appears as a "new file" (no base in `refs/openit/last-pull` for that path). Treat as "remote-resurrected", surface as conflict, let Claude decide.
+14. **Auth token logging.** Scripts must NEVER log the token to stderr. Lock down `lib/log.mjs` and `lib/api.mjs` so no helper string-interpolates the auth header. Cover with a test that greps captured stderr for token-shaped strings.
+15. **Releases vs sync.** Document explicitly that the sync engine never auto-releases workflows. CLAUDE.md should also tell Claude not to release on the user's behalf without explicit instruction. Releases are publish operations; sync is editing operations.
 
 ---
 
 ## Recommended landing order
 
-1. **Phase 0** — plugin script harness + Tauri invoker. Largest single PR; everything downstream rides on it. Validate cross-platform with a no-op entity.
-2. **Phase 1** — port KB + filestore to the engine. Validates the engine on entities that already work; ships nothing user-visible except the manifest migration.
+1. **Phase 0** — plugin script harness + Tauri invoker. Largest single PR; everything downstream rides on it. Cross-platform CI (macOS / Linux / Windows) gates the merge.
+2. **Phase 1** — port KB + filestore to the engine. Backwards-compat smoke test gates the merge.
 3. **Phase 2** — datastores pull. Ships the original requested fix.
 4. **Phase 3** — agents + workflows pull.
 5. **Phase 4** — banner + Resolve-in-Claude UI.
-6. **API audit** for datastore/agent/workflow upsert/delete endpoints.
-7. **Phase 5 + 6** — push paths and Deploy unification, gated on the audit.
+6. **Phase 5a / 5b / 5c** — push paths, sub-phased by risk (datastore → agent → workflow).
+7. **Pre-Phase-6 decision** — `pinkit` CLI fate (named owner + date).
+8. **Phase 6** — Deploy/Sync button unification.
 
-Phases 1-4 are unblocked by API work and ship the bulk of the user-visible improvement. Phases 5-6 are real work but constrained by backend confirmation.
+Phases 1-4 are fully unblocked. Phase 5 is unblocked via REST per the 2026-04-25 audit. Phase 6 is gated on the `pinkit` decision.
+
+---
+
+## Plan Review Findings
+
+**Gate:** Plan Review (per `autonomous-dev/development_process/02-implementation-plan-review.md`)
+
+**Changes made:**
+- Folded the 2026-04-25 API audit into the API-mapping section; resolved three open questions; sub-phased Phase 5 by risk (datastore → agent → workflow).
+- Added a "Channel selection" architectural section codifying REST-for-sync, built-in-MCP-for-skills, gateway-for-third-party. Updated CLAUDE.md to match (light version).
+- Promoted "plugin sync ordering" from open question to Phase 0 deliverable.
+- Made cross-platform CI green an explicit Phase 0 merge gate.
+- Made backwards-compat migration smoke test an explicit Phase 1 merge gate, with the steps spelled out.
+- Promoted `pinkit` CLI decision from "deferred to Phase 6" to "Phase-6 blocker with named owner + date."
+- Added a stderr-token-leak regression test as a Phase 1 deliverable.
+
+| Finding | Error type |
+|---|---|
+| Plugin sync ordering buried in open questions; should be a phase deliverable since it's actionable today and Phase 0 depends on it. | omission |
+| Cross-platform CI mentioned but not gated to Phase 0 merge; risk of platform-specific regressions sneaking through. | omission |
+| Backwards-compat migration smoke test was implicit; needs to gate Phase 1 merge with concrete steps. | omission |
+| `pinkit` CLI fate left as "decided in Phase 6" with no owner — would block Phase 6 indefinitely. | omission |
+| Initial plan had multiple architectural directions (manifest-vs-git, bash-vs-Node, in-app-vs-script). Resolved through prior discussion to one path; review confirms no remaining ambiguity. | (resolved before review) |
+
+No `incoherent` findings. No `systematic` findings — the chosen patterns match existing project conventions (scripts in plugin, REST-via-fetch, Tauri Rust commands, git for state).

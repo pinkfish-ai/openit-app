@@ -8,12 +8,16 @@ description: IT operations and service management plugin for Claude Code. Manage
 Claude Code is the substrate for modern IT ops — admins describe their service desk in plain English and Claude authors workflows, schemas, and integrations as files on disk. OpenIT is **scaffolding** around that, not architecture: a Tauri shell + a plugin (in `/web`) that ships skills, `CLAUDE.md` context, and **Node scripts**. Both the OpenIT app and Claude-in-the-terminal invoke the same scripts — single code path. A user without OpenIT can run Claude in `~/OpenIT/<org>/` and get identical behavior.
 
 Claude orchestrates by:
-- (a) calling MCPs (`knowledge-base`, `filestorage`, `agent-management`, …)
-- (b) running local scripts shipped with the plugin (sync, conflict resolution, entity-management — anything OpenIT could do, Claude can do)
-- (c) triggering Pinkfish workflows
-- (d) calling system CLIs already on the user's machine (`gcloud`, `bq`, `az`, `aws`, `kubectl`, `okta`, `gh`, etc.) — **if a CLI can answer the question well, prefer it.** Investigating an Azure AD permission, a BigQuery row count, a GCP IAM grant, a Kubernetes pod state? The native CLI is faster and more accurate than bespoke automation. Don't reinvent.
+- (a) **calling Pinkfish-owned MCPs directly** (`pinkfish-sidekick`, `agent-management`, `knowledge-base`, `filestorage`, `datastore-structured`, `http-utils`) — for specialized reads like `knowledge-base_ask` or `datastore-structured_natural_query`. Stable contracts we own.
+- (b) **calling third-party MCPs via the gateway** — `mcp_discover` → `capabilities_discover` → `capability_details` → invoke. Anything touching a connector (Slack, Zendesk, Salesforce, Jira, Okta, GitHub, GCP, AWS, Azure, …). Never invoke third-party MCPs directly — the gateway resolves which connection to use per org.
+- (c) **calling the platform REST API directly** (`/automations`, `/user-agents`, `/resources`, `/memory/items`) — for any Pinkfish-entity CRUD. REST is the canonical source.
+- (d) **running local scripts shipped with the plugin** (sync, conflict resolution, entity-management — anything OpenIT could do, Claude can do)
+- (e) **triggering Pinkfish workflows** the user has built
+- (f) **calling system CLIs** on the user's machine (`gcloud`, `bq`, `az`, `aws`, `kubectl`, `okta`, `gh`, …) — **if a CLI can answer the question well, prefer it.** Investigating an Azure AD permission, a BigQuery row count, a GCP IAM grant, a Kubernetes pod state? The native CLI is faster and more accurate than bespoke automation. Don't reinvent.
 
-Wider product context: `/Users/benrigby/Documents/GitHub/autonomous-dev/research/itsm/pinkfish-itsm-concept.md`.
+**Quick decision tree:** investigating with a system tool → CLI. Pinkfish entity, mutating or syncing → REST. Pinkfish entity, specialized read (semantic / NL query / ask) → built-in MCP. Anything in a connected SaaS → gateway discover/invoke. Sync engine itself → plugin scripts.
+
+Wider product context: `/Users/benrigby/Documents/GitHub/autonomous-dev/research/itsm/pinkfish-itsm-concept.md`. Detailed channel strategy: `auto-dev/plans/2026-04-25-bidirectional-sync-plan.md` § "Channel selection".
 
 ---
 
