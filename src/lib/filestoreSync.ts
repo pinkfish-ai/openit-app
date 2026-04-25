@@ -96,8 +96,22 @@ export async function resolveProjectFilestores(
     .map((c) => ({ id: c.id, name: c.name, description: c.description }));
 
   if (matching.length === 0) {
-    console.log("[filestore] no openit-* filestores found");
-    // Don't try to create — assume they exist or user will create via web UI
+    console.log("[filestore] no openit-* filestores found — creating defaults");
+    const urls = derivedUrls(creds.tokenUrl);
+    for (const def of defaults) {
+      try {
+        const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
+          name: def.name,
+          type: "filestorage",
+          description: def.description,
+          createdBy: creds.orgId,
+          createdByName: "OpenIT",
+        });
+        matching.push({ id: created.id, name: created.name, description: created.description });
+      } catch (e) {
+        console.warn(`[filestore] failed to create ${def.name}:`, e);
+      }
+    }
   }
 
   return matching;

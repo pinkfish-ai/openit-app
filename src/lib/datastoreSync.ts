@@ -54,8 +54,23 @@ export async function resolveProjectDatastores(
     let matching = all.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
 
     if (matching.length === 0) {
-      console.log("[datastoreSync] no openit-* datastores found");
-      // Don't try to create — assume they exist or user will create via web UI
+      console.log("[datastoreSync] no openit-* datastores found — creating defaults");
+      for (const def of defaults) {
+        try {
+          const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
+            name: def.name,
+            type: "datastore",
+            isStructured: true,
+            templateId: def.templateId,
+            description: def.description,
+            createdBy: creds.orgId,
+            createdByName: "OpenIT",
+          });
+          matching.push(created);
+        } catch (e) {
+          console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
+        }
+      }
     }
 
     return matching;
