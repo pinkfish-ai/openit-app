@@ -1236,3 +1236,16 @@ Caught a real gap from iteration 1's design: the `!tracked && localFile` case (m
 | 3 | Removed only consumer of `refreshFromServer`, leaving dead code | Low | Fixed | `1f99d5a` + `a3c4283` |
 
 Both #1 and #2 were cascading bugs introduced by iter-1 fixes (gitignore broadening + iter-1 manifest awareness). #3 was the natural follow-up to the FileExplorer ↻ button removal. All three real, all fixed.
+
+### Iteration 4 (2026-04-25, PR #9)
+
+| # | Finding | Severity | Disposition | Commit |
+|---|---------|----------|-------------|--------|
+| 1 | Push reconciliation doesn't paginate, causing false conflicts | Medium | Fixed | `efda528` |
+| 2 | Unused exported function `subscribeDatastoreSync` | Low | Fixed | `abbdeb8` |
+| 3 | Dead variable `totalFiles` kept with void suppression | Low | Fixed | `c2c4397` |
+| 4 | Untrack helper may commit unrelated staged changes | Medium | Fixed | `1befabf` |
+| 5 | Filestore pull lacks concurrency guard unlike KB/datastore | Medium | Fixed | `3c33039` |
+| 6 | Parallel manual pulls cause concurrent git index conflicts | Medium | Fixed | `6bccc0d` |
+
+Patterns this round: cascading from previous fixes (push manifest reconcile in iter 3 inherited the pagination gap from the original list call; manual-pull `Promise.all` introduced index-lock races; my untrack helper from iter-2's gitignore broadening had over-broad scope). Tightening each — paginated reconcile, scoped pathspec on commit, sequenced pulls, mirrored the existing concurrency-guard pattern from KB/datastore over to filestore. The two Low findings were honest dead-code leftovers from the rapid iteration.
