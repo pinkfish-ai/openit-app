@@ -5,6 +5,7 @@ import { projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
+import { syncSkillsToDisk } from "./lib/skillsSync";
 import "./App.css";
 
 function basename(p: string): string {
@@ -83,6 +84,7 @@ function App() {
               creds,
               repo: result.path,
             }).catch((e) => console.error("filestore sync init failed:", e));
+            syncSkillsToDisk(result.path, creds).catch((e) => console.error("skill sync failed:", e));
           } catch (e) {
             console.error("[app] startup bootstrap failed:", e);
           }
@@ -133,6 +135,7 @@ function App() {
           creds: fullCreds,
           repo: result.path,
         }).catch((e) => console.error("filestore sync init failed:", e));
+        syncSkillsToDisk(result.path, fullCreds).catch((e) => console.error("skill sync failed:", e));
       }
     } catch (e) {
       console.error("[app] project bootstrap failed:", e);
