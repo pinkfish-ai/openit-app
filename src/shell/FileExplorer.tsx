@@ -346,6 +346,10 @@ export function FileExplorer({
               onClick={() => {
                 if (n.is_dir) {
                   toggle(n.path);
+                  // Also open table view for database collection directories
+                  if (rel.match(/^databases\/[^/]+$/)) {
+                    onSelect(n.path);
+                  }
                   return;
                 }
                 onSelect(n.path);

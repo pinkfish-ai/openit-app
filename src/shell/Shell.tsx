@@ -12,6 +12,7 @@ import { FileExplorer } from "./FileExplorer";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
 import { Viewer, type ViewerSource } from "./Viewer";
+import { resolvePathToSource } from "./entityRouting";
 
 const DEFAULT_SIZES = [18, 42, 40];
 
@@ -118,7 +119,10 @@ export function Shell({
             <div className="left-tab-panel" hidden={leftTab !== "files"}>
               <FileExplorer
                 repo={repo}
-                onSelect={(path) => setSource({ kind: "file", path })}
+                onSelect={async (path) => {
+                  const resolved = await resolvePathToSource(path, repo);
+                  setSource(resolved);
+                }}
                 fsTick={fsTick}
                 onFsChange={bumpFs}
               />
