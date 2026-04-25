@@ -28,7 +28,7 @@
         "https://dev*.pinkfish.dev/**",
         "https://dev*.pinkfish.ai/**",
         "https://app.pinkfish.ai/**",
-        "https://staging.pinkfish.ai/**"
+        "https://app-stage.pinkfish.ai/**"
       ]
     }
   },
