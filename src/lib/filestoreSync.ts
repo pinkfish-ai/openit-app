@@ -182,7 +182,10 @@ async function resolveProjectFilestoresImpl(
 
   // If list returned matching collections, we're done — never create.
   if (matching.length > 0) {
-    for (const m of matching) orgCache.set(m.name, m);
+    for (const m of matching) {
+      orgCache.set(m.name, m);
+      onLog?.(`  ✓ ${m.name}  (id: ${m.id})`);
+    }
     return matching;
   }
 
@@ -200,14 +203,14 @@ async function resolveProjectFilestoresImpl(
   }
 
   console.log("[filestore] no openit-* filestores found — creating defaults");
+  // API says nothing matches and we're past the eventual-consistency window —
+  // any cached entries are stale (e.g. user deleted the collection on the
+  // remote between sessions). Wipe before creating so we actually POST.
+  orgCache.clear();
   setLastCreationTime(creds.orgId, now);
   const created: FilestoreCollection[] = [];
+  let conflictHit = false;
   for (const def of defaults) {
-    if (orgCache.has(def.name)) {
-      created.push(orgCache.get(def.name)!);
-      continue;
-    }
-    onLog?.(`[CREATE] new filestore: ${def.name}`);
     try {
       const fetchFn = makeSkillsFetch(token.accessToken);
       const url = new URL("/datacollection/", urls.skillsBaseUrl);
@@ -226,9 +229,11 @@ async function resolveProjectFilestoresImpl(
       if (!response.ok) {
         const errText = await response.text();
         console.error("[filestore] response error:", errText);
-        // 409 means collection already exists, skip it
+        // 409 means the list was stale and the collection actually exists.
+        // Mark conflict so we force a refetch to grab the authoritative id.
         if (response.status === 409) {
-          console.log(`[filestore] collection ${def.name} already exists`);
+          console.log(`[filestore] collection ${def.name} already exists (409) — will refetch`);
+          conflictHit = true;
           continue;
         }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -240,6 +245,7 @@ async function resolveProjectFilestoresImpl(
         created.push(col);
         orgCache.set(def.name, col);
         console.log(`[filestore] created ${def.name} with id: ${result.id}`);
+        onLog?.(`  + ${def.name}  (id: ${result.id})  [created]`);
       } else {
         console.warn(`[filestore] no id found in response for ${def.name}. Response keys:`, Object.keys(result || {}));
       }
@@ -248,9 +254,10 @@ async function resolveProjectFilestoresImpl(
     }
   }
 
-  // Re-fetch authoritatively after creation (handles eventual consistency
-  // and ensures any concurrent creators converge on a single deduped set).
-  if (created.length > 0) {
+  // Refetch authoritatively whenever we touched the create path — handles
+  // eventual consistency, 409 conflicts (list was stale), and concurrent
+  // creators converging on a single deduped set.
+  if (created.length > 0 || conflictHit) {
     try {
       await new Promise((r) => setTimeout(r, 3000));
       const refetched = await listFilestoreCollections(creds);
@@ -258,6 +265,9 @@ async function resolveProjectFilestoresImpl(
       if (verified.length > 0) {
         for (const m of verified) orgCache.set(m.name, m);
         return verified;
+      }
+      if (conflictHit && created.length === 0) {
+        console.warn("[filestore] 409 conflict but refetch still returned no matches — API may be lagging");
       }
     } catch (e) {
       console.warn("[filestore] post-create refetch failed:", e);

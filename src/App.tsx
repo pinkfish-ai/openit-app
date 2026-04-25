@@ -54,31 +54,39 @@ function App() {
   useEffect(() => {
     Promise.all([stateLoad(), startAuth(), loadCreds()])
       .then(async ([s, _token, creds]) => {
-        console.log("[app] startup state:", { hasRepo: !!s.last_repo, hasCreds: !!creds, orgId: creds?.orgId });
-        setRepo(s.last_repo);
+        // Repos created before we moved out of ~/Documents are stale — TCC blocks
+        // fs/git ops there. Discard so we re-bootstrap into the new ~/OpenIT/ root.
+        const stale = s.last_repo?.includes("/Documents/OpenIT/") ?? false;
+        const lastRepo = stale ? null : s.last_repo;
+        if (stale) {
+          console.log("[app] discarding legacy ~/Documents/OpenIT/ last_repo — connect via modal to bootstrap into ~/OpenIT/");
+        }
+        console.log("[app] startup state:", { hasRepo: !!lastRepo, hasCreds: !!creds, orgId: creds?.orgId });
+        setRepo(lastRepo);
         setSavedCreds(creds);
         // If we relaunched into a fully-connected state with a project folder,
         // skip the onboarding screen entirely AND restart KB sync against the
         // existing folder so polling resumes without onboarding.
-        if (creds && s.last_repo) {
+        if (creds && lastRepo) {
           setBypassOnboarding(true);
           // We don't have orgName cached on relaunch — re-fetch it lazily.
           // The KB collection is already named openit-<slug> where
           // slug == basename(repo). Use that as both slug and a placeholder
           // name; resolveProjectKb will find the existing collection by name.
-          const slug = basename(s.last_repo);
+          const slug = basename(lastRepo);
           startKbSync({
             creds,
-            repo: s.last_repo,
+            repo: lastRepo,
             orgSlug: slug,
             orgName: slug,
           }).catch((e) => console.error("kb sync init failed:", e));
           startFilestoreSync({
             creds,
-            repo: s.last_repo,
+            repo: lastRepo,
           }).catch((e) => console.error("filestore sync init failed:", e));
-        } else if (creds && !s.last_repo && !repo) {
-          // On first run with dev creds, bootstrap a project automatically
+        } else if (creds && !lastRepo && !repo && !stale) {
+          // First run with dev creds — auto-bootstrap. Skipped when stale so
+          // the user lands on the connect screen and re-connects deliberately.
           try {
             console.log("[app] bootstrap on startup with dev creds");
             const result = await projectBootstrap({
@@ -89,6 +97,13 @@ function App() {
             setRepo(result.path);
             setConnected(true);
             setBypassOnboarding(true);
+            // Persist new repo path so we don't keep treating last_repo as stale.
+            await stateSave({
+              last_repo: result.path,
+              pane_sizes: s.pane_sizes ?? null,
+              pinned_bubbles: s.pinned_bubbles ?? null,
+              onboarding_complete: s.onboarding_complete ?? false,
+            });
             startKbSync({
               creds,
               repo: result.path,

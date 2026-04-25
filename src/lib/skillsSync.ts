@@ -41,9 +41,16 @@ export async function fetchSkillFile(skillPath: string, creds: PinkfishCreds): P
   }
 }
 
-export async function syncSkillsToDisk(repo: string, creds: PinkfishCreds): Promise<{ bubbles: Bubble[] }> {
+export async function syncSkillsToDisk(
+  repo: string,
+  creds: PinkfishCreds,
+  onLog?: (msg: string) => void,
+): Promise<{ bubbles: Bubble[] }> {
   try {
     const manifest = await fetchSkillsManifest(creds);
+    let skillCount = 0;
+    let fileCount = 0;
+    let bubbleCount = (manifest.bubbles ?? []).length;
 
     for (const file of manifest.files) {
       try {
@@ -59,6 +66,7 @@ export async function syncSkillsToDisk(repo: string, creds: PinkfishCreds): Prom
             content,
           });
           console.log("[skillsSync] Synced CLAUDE.md from template");
+          fileCount += 1;
         } else if (file.path.startsWith("skills/") && file.path.endsWith(".md")) {
           // Write skills to .claude/skills/<skillName>/SKILL.md
           const skillName = file.path.replace("skills/", "").replace(".md", "");
@@ -70,7 +78,7 @@ export async function syncSkillsToDisk(repo: string, creds: PinkfishCreds): Prom
             const descMatch = skillContent.match(/^description:\s*(.+?)$/m);
             const skillTitle = nameMatch?.[1]?.trim() ?? skillName;
             const description = descMatch?.[1]?.trim() ?? "";
-            
+
             skillContent = `---
 name: ${skillTitle}
 description: ${description || skillName}
@@ -86,12 +94,13 @@ ${skillContent}`;
             content: skillContent,
           });
           console.log(`[skillsSync] Synced skill: ${skillName}`);
+          skillCount += 1;
         } else {
           // Write other files preserving directory structure
           const parts = file.path.split("/");
           const filename = parts.pop() ?? file.path;
           const subdir = parts.length > 0 ? parts.join("/") : "";
-          
+
           await invoke("entity_write_file", {
             repo,
             subdir,
@@ -99,17 +108,21 @@ ${skillContent}`;
             content,
           });
           console.log(`[skillsSync] Synced file: ${file.path}`);
+          fileCount += 1;
         }
       } catch (err) {
         console.warn(`[skillsSync] Failed to sync ${file.path}:`, err);
+        onLog?.(`  ✗ ${file.path}: ${err}`);
       }
     }
 
+    onLog?.(`    ${fileCount} file(s), ${skillCount} skill(s), ${bubbleCount} bubble(s) — synced`);
     return {
       bubbles: manifest.bubbles ?? [],
     };
   } catch (error) {
     console.error("[skillsSync] syncSkillsToDisk failed:", error);
+    onLog?.(`    ✗ manifest fetch failed: ${error}`);
     return {
       bubbles: [],
     };

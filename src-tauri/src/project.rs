@@ -11,15 +11,17 @@ pub struct BootstrapResult {
     pub created: bool,
 }
 
-/// Make sure `~/Documents/OpenIT/<org_id>/` exists. Returns the absolute path
+/// Make sure `~/OpenIT/<org_id>/` exists. Returns the absolute path
 /// and whether it was newly created. Uses org_id for the folder name (stable, unique).
+/// Lives at the home root (not under ~/Documents) so macOS TCC doesn't block
+/// fs/git ops in dev or in unsigned builds.
 #[tauri::command]
 pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapResult, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
     if org_id.is_empty() {
         return Err("org_id cannot be empty".into());
     }
-    let path: PathBuf = [&home, "Documents", "OpenIT", &org_id].iter().collect();
+    let path: PathBuf = [&home, "OpenIT", &org_id].iter().collect();
 
     let already_existed = path.exists();
     if !already_existed {

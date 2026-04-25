@@ -39,6 +39,10 @@ const DEFAULT_DATASTORES = [
 let createdCollections = new Map<string, Map<string, DataCollection>>();
 let lastCreationAttemptTime = new Map<string, number>();
 
+// Per-org in-flight resolve promise — concurrent callers share the same operation
+// so we never race two list-then-create sequences against each other.
+const inflightResolve = new Map<string, Promise<DataCollection[]>>();
+
 /**
  * Get or create org-specific cache for created collections.
  */
@@ -69,6 +73,24 @@ function setLastCreationTime(orgId: string, time: number): void {
  */
 const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventual consistency
 export async function resolveProjectDatastores(
+  creds: PinkfishCreds,
+  onLog?: (msg: string) => void,
+): Promise<DataCollection[]> {
+  const existing = inflightResolve.get(creds.orgId);
+  if (existing) {
+    console.log("[datastoreSync] joining in-flight resolve for org:", creds.orgId);
+    return existing;
+  }
+  const promise = resolveProjectDatastoresImpl(creds, onLog);
+  inflightResolve.set(creds.orgId, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightResolve.delete(creds.orgId);
+  }
+}
+
+async function resolveProjectDatastoresImpl(
   creds: PinkfishCreds,
   onLog?: (msg: string) => void,
 ): Promise<DataCollection[]> {
@@ -105,9 +127,9 @@ export async function resolveProjectDatastores(
 
     // If list returned matching collections, we're done
     if (matching.length > 0) {
-      // Update cache with verified collections from API
       for (const m of matching) {
         orgCache.set(m.name, m);
+        onLog?.(`  ✓ ${m.name}  (id: ${m.id})`);
       }
       return matching;
     }
@@ -128,16 +150,12 @@ export async function resolveProjectDatastores(
     }
 
     console.log("[datastoreSync] no openit-* datastores found — creating defaults");
+    // API says nothing matches and we're past the eventual-consistency window —
+    // any cached entries are stale. Wipe before creating so we actually POST.
+    orgCache.clear();
     setLastCreationTime(creds.orgId, now);
+    let conflictHit = false;
     for (const def of defaults) {
-      // Check if we recently created this collection to avoid duplicates
-      if (orgCache.has(def.name)) {
-        const col = orgCache.get(def.name)!;
-        matching.push(col);
-        continue;
-      }
-
-      onLog?.(`[CREATE] new datastore: ${def.name}`);
       try {
         const createUrl = new URL("/datacollection/", urls.skillsBaseUrl);
         const createResponse = await fetchFn(createUrl.toString(), {
@@ -154,15 +172,17 @@ export async function resolveProjectDatastores(
             isStructured: true,
           }),
         });
-        
+
         console.log(`[datastoreSync] POST /datacollection/ response status: ${createResponse.status} ${createResponse.statusText}`);
-        
+
         if (!createResponse.ok) {
           const errText = await createResponse.text();
           console.error("[datastoreSync] response error:", errText);
-          // 409 means collection already exists, skip it
+          // 409 means the list was stale and the collection actually exists —
+          // force a refetch so we grab the authoritative id.
           if (createResponse.status === 409) {
-            console.log(`[datastoreSync] collection ${def.name} already exists`);
+            console.log(`[datastoreSync] collection ${def.name} already exists (409) — will refetch`);
+            conflictHit = true;
             continue;
           }
           throw new Error(`HTTP ${createResponse.status}: ${createResponse.statusText}`);
@@ -175,14 +195,14 @@ export async function resolveProjectDatastores(
           console.error("[datastoreSync] failed to parse create response JSON:", e);
           throw new Error(`Failed to parse collection creation response: ${e}`);
         }
-        
+
         console.log(`[datastoreSync] create response for ${def.name}:`, JSON.stringify(createResult));
-        
-        // Check for id in different possible formats
-        const id = createResult?.id || createResult?.data?.id || createResult?.collection?.id;
+
+        const idAny = createResult?.id as string | number | undefined;
+        const id = idAny != null ? String(idAny) : undefined;
         if (id) {
           const col = {
-            id: String(id),
+            id,
             name: def.name,
             type: "datastore",
             description: def.description,
@@ -190,6 +210,7 @@ export async function resolveProjectDatastores(
           matching.push(col);
           orgCache.set(def.name, col);
           console.log(`[datastoreSync] cached ${def.name} with id: ${id}`);
+          onLog?.(`  + ${def.name}  (id: ${id})  [created]`);
         } else {
           console.warn(`[datastoreSync] no id found in response for ${def.name}. Response keys:`, Object.keys(createResult || {}));
         }
@@ -198,12 +219,13 @@ export async function resolveProjectDatastores(
       }
     }
 
-    // After creation, re-fetch to ensure we have the authoritative list
-    if (matching.length > 0) {
+    // Refetch authoritatively whenever we touched the create path — handles
+    // eventual consistency, 409 conflicts (list was stale), and concurrent
+    // creators. Always prefer refetch as the source of truth.
+    if (matching.length > 0 || conflictHit) {
       try {
-        // Wait for API eventual consistency (collections take ~5 seconds to appear)
         await new Promise(resolve => setTimeout(resolve, 5000));
-        
+
         const refetchUrl = new URL("/datacollection/", urls.skillsBaseUrl);
         refetchUrl.searchParams.set("type", "datastore");
         const refetchResponse = await fetchFn(refetchUrl.toString());
@@ -215,12 +237,16 @@ export async function resolveProjectDatastores(
           console.error("[datastoreSync] failed to parse refetch response JSON:", e);
           throw new Error(`Failed to parse refetch response: ${e}`);
         }
-        
+
         const refetched = Array.isArray(refetchResult) ? refetchResult : [];
         const updatedMatching = refetched.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
-        if (updatedMatching.length > matching.length) {
+        if (updatedMatching.length >= matching.length && updatedMatching.length > 0) {
           console.log("[datastoreSync] re-fetched collections after creation");
+          for (const m of updatedMatching) orgCache.set(m.name, m);
           return updatedMatching;
+        }
+        if (conflictHit && matching.length === 0) {
+          console.warn("[datastoreSync] 409 conflict but refetch still returned no matches — API may be lagging");
         }
       } catch (e) {
         console.warn("[datastoreSync] failed to re-fetch after creation:", e);

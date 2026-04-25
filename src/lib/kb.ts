@@ -85,13 +85,17 @@ export async function resolveProjectKb(
   const expected = kbName(orgSlug);
   const collections = await listCollections(creds);
   const existing = collections.find((c) => c.name === expected);
-  if (existing) return existing;
-  onLog?.(`[CREATE] new knowledge base: ${expected}`);
-  return createCollection(
+  if (existing) {
+    onLog?.(`  ✓ ${existing.name}  (id: ${existing.id})`);
+    return existing;
+  }
+  const created = await createCollection(
     creds,
     expected,
     `OpenIT knowledge base for ${orgName}. Synced from local 'knowledge-base/' folder.`,
   );
+  onLog?.(`  + ${created.name}  (id: ${created.id})  [created]`);
+  return created;
 }
 
 export async function listFiles(

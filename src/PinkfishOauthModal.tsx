@@ -14,6 +14,7 @@ import { resolveProjectAgents, syncAgentsToDisk } from "./lib/agentSync";
 import { resolveProjectWorkflows, syncWorkflowsToDisk } from "./lib/workflowSync";
 import { resolveProjectFilestores, pullOnce } from "./lib/filestoreSync";
 import { startKbSync } from "./lib/kbSync";
+import { syncSkillsToDisk } from "./lib/skillsSync";
 
 const SIGNUP_URL = "https://app.pinkfish.ai/coworker/public";
 
@@ -36,6 +37,17 @@ export function PinkfishOauthModal({
   const [syncLogs, setSyncLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const copyLogs = async () => {
+    try {
+      await navigator.clipboard.writeText(syncLogs.join("\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      console.error("copy failed:", e);
+    }
+  };
 
   const addLog = (msg: string) => {
     console.log(msg);
@@ -69,8 +81,8 @@ export function PinkfishOauthModal({
       // Start syncing all assets
       setSyncing(true);
       setSyncLogs([]);
-      addLog("----BEGIN SYNC----");
-      addLog("Syncing all assets...");
+      addLog("─── connect sync ───");
+      addLog("");
 
       let syncErrors = false;
       let repo = "";
@@ -78,97 +90,95 @@ export function PinkfishOauthModal({
       // Set a 60-second timeout for the entire sync process
       const syncTimeoutMs = 60_000;
       const timeoutHandle = setTimeout(() => {
-        addLog("[sync] ✗ Sync timed out after 60 seconds");
+        addLog("✗ sync timed out after 60s");
         setSyncing(false);
         setError("Sync timed out. Check your connection and try again.");
         setBusy(false);
       }, syncTimeoutMs);
 
       try {
-        // Bootstrap project to create repo directory
-        addLog("[sync] Creating project directory...");
         try {
           const bootstrap = await projectBootstrap({
             orgName: orgName || creds.orgId,
             orgId: creds.orgId,
           });
           repo = bootstrap.path;
-          addLog(`[sync] ✓ Project directory created at ${repo}`);
+          addLog(`✓ project   ${repo}`);
         } catch (e) {
-          addLog(`[sync] ✗ Project bootstrap failed: ${e}`);
+          addLog(`✗ project bootstrap failed: ${e}`);
           syncErrors = true;
         }
 
         if (!syncErrors) {
-          addLog("[sync] Resolving and syncing datastores...");
+          addLog("");
+          addLog("▸ datastores");
           try {
             const datastores = await resolveProjectDatastores(creds, addLog);
-            addLog(`[sync] Found ${datastores.length} datastores`);
-
-            // Fetch and sync data for each datastore
             const itemsByCollection: Record<string, { items: any[]; hasMore: boolean }> = {};
+            let totalItems = 0;
             for (const ds of datastores) {
-              addLog(`[sync] Fetching items for ${ds.name}...`);
               const data = await fetchDatastoreItems(creds, ds.id);
               itemsByCollection[ds.id] = data;
-              addLog(`[sync] Fetched ${data.items.length} items from ${ds.name}`);
+              totalItems += data.items.length;
             }
-
-            // Write to disk
             await syncDatastoresToDisk(repo, datastores, itemsByCollection);
-            addLog("[sync] ✓ Datastores synced to disk");
+            addLog(`    ${datastores.length} collection(s), ${totalItems} item(s) — synced`);
           } catch (e) {
-            addLog(`[sync] ✗ Datastore sync failed: ${e}`);
+            addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
           }
         }
 
         if (!syncErrors) {
-          addLog("[sync] Resolving agents...");
+          addLog("");
+          addLog("▸ agents");
           try {
             const agents = await resolveProjectAgents(creds);
-            addLog(`[sync] Found ${agents.length} agents`);
+            for (const a of agents) {
+              addLog(`  ✓ ${a.name ?? "(unnamed)"}  (id: ${(a as any).id ?? "?"})`);
+            }
             await syncAgentsToDisk(repo, agents);
-            addLog("[sync] ✓ Agents synced to disk");
+            addLog(`    ${agents.length} agent(s) — synced`);
           } catch (e) {
-            addLog(`[sync] ✗ Agent sync failed: ${e}`);
+            addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
           }
         }
 
         if (!syncErrors) {
-          addLog("[sync] Syncing workflows...");
+          addLog("");
+          addLog("▸ workflows");
           try {
             const workflows = await resolveProjectWorkflows(creds);
-            addLog(`[sync] Found ${workflows.length} workflows`);
+            for (const w of workflows) {
+              addLog(`  ✓ ${w.name}  (id: ${w.id})`);
+            }
             await syncWorkflowsToDisk(repo, workflows);
-            addLog("[sync] ✓ Workflows synced to disk");
+            addLog(`    ${workflows.length} workflow(s) — synced`);
           } catch (e) {
-            addLog(`[sync] ✗ Workflow sync failed: ${e}`);
+            addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
           }
         }
 
         if (!syncErrors) {
-          addLog("[sync] Syncing filestore files...");
+          addLog("");
+          addLog("▸ filestores");
           try {
             const filestores = await resolveProjectFilestores(creds, addLog);
-            addLog(`[sync] Found ${filestores.length} filestore collections`);
-
             for (const fs of filestores) {
-              addLog(`[sync] Downloading files from ${fs.name}...`);
               await pullOnce({ creds, repo, collection: fs });
             }
-
-            addLog("[sync] ✓ Filestore files synced to disk");
+            addLog(`    ${filestores.length} collection(s) — synced`);
           } catch (e) {
-            addLog(`[sync] ✗ Filestore sync failed: ${e}`);
+            addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
           }
         }
 
         if (!syncErrors) {
-          addLog("[sync] Syncing knowledge base...");
+          addLog("");
+          addLog("▸ knowledge base");
           try {
             const orgSlug = repo.split("/").filter(Boolean).pop() ?? repo;
             await startKbSync({
@@ -178,9 +188,20 @@ export function PinkfishOauthModal({
               orgName: orgName || creds.orgId,
               onLog: addLog,
             });
-            addLog("[sync] ✓ Knowledge base synced");
+            addLog("    initial pull complete");
           } catch (e) {
-            addLog(`[sync] ✗ Knowledge base sync failed: ${e}`);
+            addLog(`    ✗ failed: ${e}`);
+            syncErrors = true;
+          }
+        }
+
+        if (!syncErrors) {
+          addLog("");
+          addLog("▸ plugin (Claude Code)");
+          try {
+            await syncSkillsToDisk(repo, creds, addLog);
+          } catch (e) {
+            addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
           }
         }
@@ -188,7 +209,8 @@ export function PinkfishOauthModal({
         clearTimeout(timeoutHandle);
         
         if (syncErrors) {
-          addLog("----END SYNC (FAILED)----");
+          addLog("");
+          addLog("─── sync failed ───");
           setSyncing(false);
           setSyncDone(true);
           setError("Sync failed. Check logs above for details.");
@@ -196,7 +218,8 @@ export function PinkfishOauthModal({
           return;
         }
 
-        addLog("----END SYNC----");
+        addLog("");
+        addLog("─── sync complete ───");
         setSyncing(false);
         setSyncDone(true);
         setBusy(false);
@@ -222,13 +245,29 @@ export function PinkfishOauthModal({
         
         {syncing || syncDone ? (
           <div style={{ marginTop: "20px" }}>
-            <p style={{ fontSize: "14px", marginBottom: "10px", color: "#666" }}>
-              {syncing
-                ? "🔄 Syncing collections and resources..."
-                : error
-                ? "✗ Sync finished with errors. Review the log below."
-                : "✓ Sync complete. Review the log below."}
-            </p>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "10px",
+              }}
+            >
+              <p style={{ fontSize: "14px", color: "#666", margin: 0 }}>
+                {syncing
+                  ? "🔄 Syncing collections and resources..."
+                  : error
+                  ? "✗ Sync finished with errors. Review the log below."
+                  : "✓ Sync complete. Review the log below."}
+              </p>
+              <button
+                onClick={copyLogs}
+                disabled={syncLogs.length === 0}
+                style={{ fontSize: "12px", padding: "4px 10px" }}
+              >
+                {copied ? "✓ Copied" : "Copy log"}
+              </button>
+            </div>
             <div
               style={{
                 backgroundColor: "#f5f5f5",
@@ -238,9 +277,10 @@ export function PinkfishOauthModal({
                 fontSize: "12px",
                 fontFamily: "monospace",
                 maxHeight: "300px",
-                overflowY: "auto",
+                overflow: "auto",
                 marginBottom: "15px",
                 lineHeight: "1.6",
+                whiteSpace: "pre",
               }}
             >
               {syncLogs.map((log, i) => (

@@ -152,7 +152,7 @@ export function Shell({
                 className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
                 onClick={() => setLeftTab("source-control")}
               >
-                Deploy
+                Sync
               </button>
             </div>
             {/* Keep both panels mounted so typed-but-uncommitted state
