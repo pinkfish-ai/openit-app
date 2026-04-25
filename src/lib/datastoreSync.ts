@@ -632,19 +632,13 @@ let datastoreStatus: DatastoreSyncStatus = {
   lastError: null,
   lastPullAt: null,
 };
-const datastoreListeners = new Set<(s: DatastoreSyncStatus) => void>();
 
-export function subscribeDatastoreSync(
-  fn: (s: DatastoreSyncStatus) => void,
-): () => void {
-  datastoreListeners.add(fn);
-  fn(datastoreStatus);
-  return () => datastoreListeners.delete(fn);
-}
-
+// NOTE: a `subscribeDatastoreSync` analog to KB/filestore will land with
+// the conflict-banner UI in a follow-up PR (Phase 4 of the plan). Until
+// there's an actual consumer, we don't export it — keeping the module
+// surface tight.
 function updateDatastoreStatus(patch: Partial<DatastoreSyncStatus>): void {
   datastoreStatus = { ...datastoreStatus, ...patch };
-  for (const l of datastoreListeners) l(datastoreStatus);
 }
 
 function shadowName(key: string): string {
