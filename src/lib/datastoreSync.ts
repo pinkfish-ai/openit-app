@@ -553,22 +553,46 @@ export async function pushAllToDatastores(args: {
   // the manifest entry so the next pull doesn't see remoteChanged=true and
   // localChanged=true together (which would falsely flag as conflict and
   // drop a phantom shadow file). Same pattern as KB and filestore push.
+  //
+  // Paginate: if a collection has > 1000 items, the pushed key may live
+  // past the first page, and a partial fetch would silently leave its
+  // manifest entry stale. Loop until we've seen the key (or the page list
+  // ends or we hit the safety bail-out), so the reconcile is correct
+  // regardless of collection size.
+  const RECONCILE_PAGE = 1000;
+  const RECONCILE_MAX = 100_000;
   for (const [colId, keys] of pushedKeysByCol) {
     if (keys.size === 0) continue;
     const col = collections.find((c) => c.id === colId);
     if (!col) continue;
+    const remaining = new Set(keys);
     try {
-      const resp = await fetchDatastoreItems(creds, colId, 1000, 0);
-      for (const item of resp.items) {
-        const k = (item.key ?? item.id ?? "").toString();
-        if (!keys.has(k)) continue;
-        const mKey = `${col.name}/${k}`;
-        persisted.files[mKey] = {
-          remote_version: item.updatedAt ?? "",
-          // Bump pulled_at_mtime_ms past now so any subsequent local edit
-          // (mtime > now) is correctly detected as a real local change.
-          pulled_at_mtime_ms: Date.now(),
-        };
+      let offset = 0;
+      let seen = 0;
+      while (remaining.size > 0) {
+        const resp = await fetchDatastoreItems(creds, colId, RECONCILE_PAGE, offset);
+        for (const item of resp.items) {
+          const k = (item.key ?? item.id ?? "").toString();
+          if (!remaining.has(k)) continue;
+          const mKey = `${col.name}/${k}`;
+          persisted.files[mKey] = {
+            remote_version: item.updatedAt ?? "",
+            // Bump pulled_at_mtime_ms past now so any subsequent local edit
+            // (mtime > now) is correctly detected as a real local change.
+            pulled_at_mtime_ms: Date.now(),
+          };
+          remaining.delete(k);
+        }
+        const hasMore = resp.pagination?.hasNextPage === true;
+        if (!hasMore || resp.items.length === 0) break;
+        offset += resp.items.length;
+        seen += resp.items.length;
+        if (seen >= RECONCILE_MAX) {
+          console.warn(
+            `[datastoreSync] post-push reconcile for ${col.name}: hit ${RECONCILE_MAX}-item safety cap; ${remaining.size} key(s) left unreconciled`,
+          );
+          break;
+        }
       }
     } catch (e) {
       console.warn(`[datastoreSync] post-push reconcile for ${col.name} failed:`, e);
