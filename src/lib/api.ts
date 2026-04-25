@@ -32,6 +32,58 @@ export async function gitDiff(repo: string, sha: string): Promise<string> {
   return invoke("git_diff", { repo, sha });
 }
 
+export async function gitEnsureRepo(repo: string): Promise<void> {
+  return invoke("git_ensure_repo", { repo });
+}
+
+export async function gitAddAndCommit(repo: string, message: string): Promise<boolean> {
+  return invoke("git_add_and_commit", { repo, message });
+}
+
+/// Stage exactly the given paths (relative to repo root) and commit. Used by
+/// the sync layer so auto-commits never sweep up unrelated user WIP.
+export async function gitCommitPaths(
+  repo: string,
+  paths: string[],
+  message: string,
+): Promise<boolean> {
+  return invoke("git_commit_paths", { repo, paths, message });
+}
+
+export type GitFileStatus = { path: string; status: string; staged: boolean };
+
+export async function gitStatusShort(repo: string): Promise<GitFileStatus[]> {
+  return invoke("git_status_short", { repo });
+}
+
+export async function gitStage(repo: string, paths: string[]): Promise<void> {
+  return invoke("git_stage", { repo, paths });
+}
+
+export async function gitUnstage(repo: string, paths: string[]): Promise<void> {
+  return invoke("git_unstage", { repo, paths });
+}
+
+export async function gitCommitStaged(repo: string, message: string): Promise<boolean> {
+  return invoke("git_commit_staged", { repo, message });
+}
+
+export async function gitDiscard(repo: string, paths: string[]): Promise<void> {
+  return invoke("git_discard", { repo, paths });
+}
+
+export async function gitFileDiff(repo: string, path: string): Promise<string> {
+  return invoke("git_file_diff", { repo, path });
+}
+
+export async function gitHasConflictMarkers(repo: string): Promise<boolean> {
+  return invoke("git_has_conflict_markers", { repo });
+}
+
+export async function gitDiffNameOnly(repo: string, baseSha: string): Promise<string[]> {
+  return invoke("git_diff_name_only", { repo, baseSha });
+}
+
 export async function pinkitDeploy(repo: string, env: string): Promise<void> {
   return invoke("pinkit_deploy", { args: { repo, env } });
 }
@@ -112,6 +164,13 @@ export async function claudeDetect(): Promise<string | null> {
   return invoke("claude_detect");
 }
 
+/// Ask the user's Claude CLI (`claude -p`) to summarize the staged diff into
+/// a single commit subject line, matching the style of the recent log.
+/// Returns the trimmed first line; throws on missing CLI or empty staging.
+export async function claudeGenerateCommitMessage(repo: string): Promise<string> {
+  return invoke("claude_generate_commit_message", { repo });
+}
+
 export type BootstrapResult = { path: string; created: boolean };
 
 export async function projectBootstrap(args: {
@@ -164,6 +223,10 @@ export async function kbInit(repo: string): Promise<string> {
 
 export async function kbListLocal(repo: string): Promise<KbLocalFile[]> {
   return invoke("kb_list_local", { repo });
+}
+
+export async function kbDeleteFile(repo: string, filename: string): Promise<void> {
+  return invoke("kb_delete_file", { repo, filename });
 }
 
 export async function kbReadFile(repo: string, filename: string): Promise<string> {

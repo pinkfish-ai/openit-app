@@ -1,22 +1,69 @@
 import { useCallback, useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { stateLoad, stateSave, type AppPersistedState } from "../lib/api";
+import {
+  buildKbConflictPrompt,
+  getSyncStatus,
+  kbHasServerShadowFiles,
+  subscribeSync,
+} from "../lib/kbSync";
 import { ChatPane } from "./ChatPane";
 import { FileExplorer } from "./FileExplorer";
-import { PromptBubbles } from "./PromptBubbles";
+import { PromptBubbles, type Bubble } from "./PromptBubbles";
+import { SourceControl } from "./SourceControl";
 import { Viewer, type ViewerSource } from "./Viewer";
 
 const DEFAULT_SIZES = [18, 42, 40];
 
-export function Shell({ repo, deployLines }: { repo: string | null; deployLines: string[] }) {
+type LeftTab = "files" | "source-control";
+
+export function Shell({
+  repo,
+  env,
+  deployLines,
+  onDeployLine,
+  onDeployExit,
+}: {
+  repo: string | null;
+  env: string;
+  deployLines: string[];
+  onDeployLine: (line: string) => void;
+  onDeployExit: (code: number | null) => void;
+}) {
   const [state, setState] = useState<AppPersistedState | null>(null);
   const [source, setSource] = useState<ViewerSource>(null);
+  const [conflictBubbles, setConflictBubbles] = useState<Bubble[]>([]);
+  const [leftTab, setLeftTab] = useState<LeftTab>("files");
+  const [fsTick, setFsTick] = useState(0);
+  const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
 
   useEffect(() => {
     stateLoad().then(setState).catch(console.error);
   }, []);
 
-  // When new deploy output arrives, route it into the viewer.
+  useEffect(() => {
+    if (!repo) {
+      setConflictBubbles([]);
+      return;
+    }
+    const refresh = async () => {
+      const hasShadow = await kbHasServerShadowFiles(repo);
+      const sync = getSyncStatus();
+      if (sync.conflicts.length > 0 || hasShadow) {
+        const prompt = await buildKbConflictPrompt(repo);
+        if (prompt) {
+          setConflictBubbles([{ label: "Resolve merge conflicts", prompt, variant: "conflict" }]);
+          return;
+        }
+      }
+      setConflictBubbles([]);
+    };
+    void refresh();
+    return subscribeSync(() => {
+      void refresh();
+    });
+  }, [repo]);
+
   useEffect(() => {
     if (deployLines.length > 0) setSource({ kind: "deploy", lines: deployLines });
   }, [deployLines]);
@@ -49,7 +96,44 @@ export function Shell({ repo, deployLines }: { repo: string | null; deployLines:
         onLayout={(s: number[]) => persist({ pane_sizes: s })}
       >
         <Panel defaultSize={sizes[0]} minSize={12}>
-          <FileExplorer repo={repo} onSelect={(path) => setSource({ kind: "file", path })} />
+          <div className="left-pane">
+            <div className="left-tabs">
+              <button
+                type="button"
+                className={`left-tab ${leftTab === "files" ? "active" : ""}`}
+                onClick={() => setLeftTab("files")}
+              >
+                Files
+              </button>
+              <button
+                type="button"
+                className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
+                onClick={() => setLeftTab("source-control")}
+              >
+                Source Control
+              </button>
+            </div>
+            {/* Keep both panels mounted so typed-but-uncommitted state
+                (e.g. the commit message) survives tab switches. */}
+            <div className="left-tab-panel" hidden={leftTab !== "files"}>
+              <FileExplorer
+                repo={repo}
+                onSelect={(path) => setSource({ kind: "file", path })}
+                fsTick={fsTick}
+                onFsChange={bumpFs}
+              />
+            </div>
+            <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
+              <SourceControl
+                repo={repo}
+                env={env}
+                onShowDiff={(text) => setSource({ kind: "diff", text })}
+                onDeployLine={onDeployLine}
+                onDeployExit={onDeployExit}
+                onFsChange={bumpFs}
+              />
+            </div>
+          </div>
         </Panel>
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[1]} minSize={20}>
@@ -58,10 +142,11 @@ export function Shell({ repo, deployLines }: { repo: string | null; deployLines:
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[2]} minSize={25}>
           <div className="right-pane">
+            <div className="right-toolbar" />
             <div className="chat-area">
               <ChatPane cwd={repo} />
             </div>
-            <PromptBubbles />
+            <PromptBubbles extraBubbles={conflictBubbles} />
           </div>
         </Panel>
       </PanelGroup>

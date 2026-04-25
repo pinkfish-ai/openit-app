@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::git_ops;
+
 #[derive(Serialize)]
 pub struct BootstrapResult {
     pub path: String,
@@ -51,6 +53,10 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
         fs::write(path.join("README.md"), readme)
             .map_err(|e| format!("could not write README: {}", e))?;
     }
+
+    // Local git for sync history (idempotent if `.git` already exists).
+    git_ops::git_ensure_repo(path.to_string_lossy().into_owned())
+        .map_err(|e| format!("git init failed: {}", e))?;
 
     Ok(BootstrapResult {
         path: path.to_string_lossy().into_owned(),

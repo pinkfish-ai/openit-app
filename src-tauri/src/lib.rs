@@ -1,6 +1,8 @@
+mod claude;
 mod cli;
 mod fs_tree;
 mod git_history;
+mod git_ops;
 mod kb;
 mod keychain;
 mod pinkfish;
@@ -36,6 +38,18 @@ pub fn run() {
             fs_tree::fs_read_bytes,
             git_history::git_log,
             git_history::git_diff,
+            git_ops::git_ensure_repo,
+            git_ops::git_add_and_commit,
+            git_ops::git_commit_paths,
+            git_ops::git_status_short,
+            git_ops::git_stage,
+            git_ops::git_unstage,
+            git_ops::git_commit_staged,
+            git_ops::git_discard,
+            git_ops::git_file_diff,
+            git_ops::git_has_conflict_markers,
+            git_ops::git_diff_name_only,
+            claude::claude_generate_commit_message,
             cli::pinkit_deploy,
             state::state_load,
             state::state_save,
@@ -50,6 +64,7 @@ pub fn run() {
             project::project_bootstrap,
             kb::kb_init,
             kb::kb_list_local,
+            kb::kb_delete_file,
             kb::kb_read_file,
             kb::kb_write_file,
             kb::kb_write_file_bytes,
