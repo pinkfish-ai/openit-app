@@ -78,7 +78,7 @@ export async function resolveProjectWorkflows(
     creds,
     "pinkfish-sidekick",
     "workflow_list",
-    { filter: "with_triggers" },
+    { filter: "all" },
   )) as {
     workflows?: Array<Record<string, unknown>>;
   } | null;
