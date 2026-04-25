@@ -362,6 +362,30 @@ export async function fsStoreStateSave(
   return invoke("fs_store_state_save", { repo, state });
 }
 
+export async function fsStoreDownloadToLocal(
+  repo: string,
+  filename: string,
+  url: string,
+): Promise<void> {
+  return invoke("fs_store_download_to_local", { repo, filename, url });
+}
+
+export async function fsStoreUploadFile(args: {
+  repo: string;
+  filename: string;
+  collectionId: string;
+  skillsBaseUrl: string;
+  accessToken: string;
+}): Promise<KbUploadResult> {
+  return invoke("fs_store_upload_file", {
+    repo: args.repo,
+    filename: args.filename,
+    collectionId: args.collectionId,
+    skillsBaseUrl: args.skillsBaseUrl,
+    accessToken: args.accessToken,
+  });
+}
+
 export async function entityWriteFile(repo: string, subdir: string, filename: string, content: string): Promise<void> {
   return invoke("entity_write_file", { repo, subdir, filename, content });
 }

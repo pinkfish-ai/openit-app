@@ -1,18 +1,13 @@
 import {
-  kbDownloadToLocal,
   kbListRemote,
-  kbUploadFile,
   type KbStatePersisted,
+  fsStoreDownloadToLocal,
+  fsStoreUploadFile,
 } from "./api";
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
 import { fsStoreStateLoad, fsStoreStateSave } from "./api";
-
-// These will be added to api.ts — importing ahead of time.
-// They invoke fs_store_init, fs_store_list_local, fs_store_state_load,
-// fs_store_state_save Rust commands (mirrors of the kb_* equivalents but
-// operating on the filestore/ local directory).
 import {
   fsStoreInit,
   fsStoreListLocal,
@@ -115,7 +110,7 @@ const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventu
 
 /**
  * Find or create openit-* Filestorage collections. Creates defaults if none
- * exist. Uses the skills REST API (GET /datacollection/?type=all).
+ * exist. Uses the skills REST API (GET /datacollection/?type=filestorage).
  */
 export async function resolveProjectFilestores(
   creds: PinkfishCreds,
@@ -127,8 +122,8 @@ export async function resolveProjectFilestores(
 
   const all = await listFilestoreCollections(creds);
   const defaults = getDefaultFilestores(creds.orgId);
-  let matching: FilestoreCollection[] = [];
-  
+  let matching = all.filter((c) => defaults.some((d) => d.name === c.name));
+
   console.log(`[filestore] ✓ Found ${all.length} filestore collections, ${matching.length} matching defaults`);
 
   // Get org-specific cache
@@ -215,7 +210,7 @@ export async function resolveProjectFilestores(
       }
     }
 
-  return [];
+  return matching;
 }
 
 /**
@@ -385,7 +380,7 @@ async function pullOnce(args: {
     if (!tracked && !localFile) {
       // New remote file -> pull
       try {
-        await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
+        await fsStoreDownloadToLocal(repo, r.filename, r.downloadUrl);
         persisted.files[r.filename] = {
           remote_version: r.updatedAt,
           pulled_at_mtime_ms: Date.now(),
@@ -412,7 +407,7 @@ async function pullOnce(args: {
       }
       if (remoteChanged && !localChanged) {
         try {
-          await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
+          await fsStoreDownloadToLocal(repo, r.filename, r.downloadUrl);
           persisted.files[r.filename] = {
             remote_version: r.updatedAt,
             pulled_at_mtime_ms: Date.now(),
@@ -478,7 +473,7 @@ export async function pushAllToFilestore(args: {
   for (const f of toPush) {
     try {
       onLine?.(`uploading ${f.filename}`);
-      await kbUploadFile({
+      await fsStoreUploadFile({
         repo,
         filename: f.filename,
         collectionId: collection.id,

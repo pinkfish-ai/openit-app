@@ -166,9 +166,9 @@ export async function resolveProjectDatastores(
           throw new Error(`HTTP ${createResponse.status}: ${createResponse.statusText}`);
         }
 
-        let createResult: any;
+        let createResult: CreateCollectionResponse | null;
         try {
-          createResult = await createResponse.json();
+          createResult = (await createResponse.json()) as CreateCollectionResponse | null;
         } catch (e) {
           console.error("[datastoreSync] failed to parse create response JSON:", e);
           throw new Error(`Failed to parse collection creation response: ${e}`);
@@ -205,10 +205,10 @@ export async function resolveProjectDatastores(
         const refetchUrl = new URL("/datacollection/", urls.skillsBaseUrl);
         refetchUrl.searchParams.set("type", "datastore");
         const refetchResponse = await fetchFn(refetchUrl.toString());
-        
-        let refetchResult: any;
+
+        let refetchResult: ListCollectionsResponse;
         try {
-          refetchResult = await refetchResponse.json();
+          refetchResult = (await refetchResponse.json()) as ListCollectionsResponse;
         } catch (e) {
           console.error("[datastoreSync] failed to parse refetch response JSON:", e);
           throw new Error(`Failed to parse refetch response: ${e}`);
