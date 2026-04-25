@@ -1218,3 +1218,11 @@ No `incoherent` findings. No `systematic` findings — the chosen patterns match
 | 5 | Datastore manifest not added to gitignore defaults | Medium | Fixed | `5e80b6a` |
 
 All findings real, all fixed in iteration 1. Replies posted on each thread; threads resolved.
+
+### Iteration 2 (2026-04-25, PR #9)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Pull never seeds manifest for bootstrapped datastore rows | High | Fixed | `214ba33` |
+
+Caught a real gap from iteration 1's design: the `!tracked && localFile` case (modal-bootstrap-seeded rows) was unhandled, so manifest entries never got written for bootstrapped rows. Subsequent polls treated them as permanently undiffable. Fix seeds the manifest on first encounter without rewriting the file.
