@@ -23,52 +23,6 @@ const DEFAULT_DATASTORES = [
   },
 ];
 
-async function createSampleItems(
-  creds: PinkfishCreds,
-  collectionId: string,
-  templateId: string,
-  mcpBaseUrl: string,
-  accessToken: string,
-): Promise<void> {
-  // Create sample items based on template type
-  const samples: Array<{ key: string; content: Record<string, string> }> = [];
-
-  if (templateId === "case-management") {
-    samples.push(
-      { key: "TICKET-001", content: { Title: "Sample IT Ticket", Status: "Open", Priority: "High" } },
-      { key: "TICKET-002", content: { Title: "Another Issue", Status: "In Progress", Priority: "Medium" } },
-    );
-  } else if (templateId === "contacts") {
-    samples.push(
-      { key: "contact-001", content: { Name: "Sample Contact", Email: "contact@example.com", Phone: "555-0001" } },
-      { key: "contact-002", content: { Name: "Another Person", Email: "person@example.com", Phone: "555-0002" } },
-    );
-  }
-
-  // Create items via MCP
-  if (samples.length > 0) {
-    try {
-      console.log(`[datastoreSync] creating ${samples.length} sample items for ${templateId}`);
-      await pinkfishMcpCall({
-        accessToken,
-        orgId: creds.orgId,
-        server: "datastore-structured",
-        tool: "datastore-structured_batch_create_items",
-        arguments: {
-          collectionId,
-          items: samples.map((s) => ({ key: s.key, content: s.content })),
-        },
-        baseUrl: mcpBaseUrl,
-      });
-      console.log(`[datastoreSync] created ${samples.length} sample items for ${templateId}`);
-    } catch (e) {
-      console.warn(`[datastoreSync] failed to create sample items for ${templateId}:`, e);
-    }
-  } else {
-    console.log(`[datastoreSync] no sample items template for ${templateId}`);
-  }
-}
-
 /**
  * List all Datastore-type datacollections matching the openit-* prefix.
  * If none are found, auto-creates the two defaults (tickets + people).
@@ -127,8 +81,6 @@ export async function resolveProjectDatastores(
               description: def.description,
             } as DataCollection);
             console.log(`[datastoreSync] created ${def.name}`);
-            // Create sample items for template-based collections
-            await createSampleItems(creds, String(result.id), def.templateId, urls.mcpBaseUrl, token.accessToken);
           }
         } catch (e) {
           console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
