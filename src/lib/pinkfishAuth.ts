@@ -33,13 +33,13 @@ export function derivedUrls(tokenUrl: string): PinkfishUrls {
   const mcpHost = host.replace(/^app-api\./, "mcp.");
   const isDev = host.endsWith(".pinkfish.dev") || /\.dev\d/i.test(host);
   const proxyHost = isDev ? "proxy-stage.pinkfish.ai" : "proxy.pinkfish.ai";
-  const skillsHost = isDev ? "skills-stage.pinkfish.ai" : "skills.pinkfish.ai";
+  const skillsHost = isDev ? host.replace(/^app-api\./, "") : "skills.pinkfish.ai";
   return {
     tokenUrl,
     accountUrl: `${protocol}//${mcpHost}/pf-account`,
     mcpBaseUrl: `${protocol}//${mcpHost}`,
     connectionsUrl: `https://${proxyHost}/manage/user-connections?format=light`,
-    skillsBaseUrl: `https://${skillsHost}`,
+    skillsBaseUrl: `${protocol}//${skillsHost}`,
   };
 }
 
