@@ -393,7 +393,34 @@ export function stopFilestoreSync() {
   resolvedRepos.clear();
 }
 
+// Per-repo+collection in-flight pull lock. Mirrors the kbSync withSyncLock
+// and datastoreSync inflightPull patterns. Without this, a manual pull and
+// the 5-minute background poll can race for the same collection — both
+// load the manifest, both write changes, and the second save clobbers the
+// first.
+const inflightFilestorePull = new Map<
+  string,
+  Promise<{ downloaded: number; total: number }>
+>();
+
 export async function pullOnce(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  collection: FilestoreCollection;
+}): Promise<{ downloaded: number; total: number }> {
+  const lockKey = `${args.repo}:${args.collection.id}`;
+  const existing = inflightFilestorePull.get(lockKey);
+  if (existing) return existing;
+  const promise = pullOnceImpl(args);
+  inflightFilestorePull.set(lockKey, promise);
+  try {
+    return await promise;
+  } finally {
+    inflightFilestorePull.delete(lockKey);
+  }
+}
+
+async function pullOnceImpl(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: FilestoreCollection;
