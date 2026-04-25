@@ -4,7 +4,13 @@ import { Shell } from "./shell/Shell";
 import { DeployButton } from "./shell/DeployButton";
 import { projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
+import { startKbSync, stopKbSync } from "./lib/kbSync";
 import "./App.css";
+
+function basename(p: string): string {
+  const parts = p.split("/").filter((s) => s.length > 0);
+  return parts[parts.length - 1] ?? p;
+}
 
 function App() {
   const [repo, setRepo] = useState<string | null>(null);
@@ -21,9 +27,21 @@ function App() {
         setRepo(s.last_repo);
         setSavedCreds(creds);
         // If we relaunched into a fully-connected state with a project folder,
-        // skip the onboarding screen entirely.
+        // skip the onboarding screen entirely AND restart KB sync against the
+        // existing folder so polling resumes without onboarding.
         if (creds && s.last_repo) {
           setBypassOnboarding(true);
+          // We don't have orgName cached on relaunch — re-fetch it lazily.
+          // For now, the KB collection is already named openit-<slug> where
+          // slug == basename(repo). Use that as both slug and a placeholder
+          // name; resolveProjectKb will find the existing collection by name.
+          const slug = basename(s.last_repo);
+          startKbSync({
+            creds,
+            repo: s.last_repo,
+            orgSlug: slug,
+            orgName: slug,
+          }).catch((e) => console.error("kb sync init failed:", e));
         }
         setLoaded(true);
       })
@@ -31,6 +49,7 @@ function App() {
     const unsub = subscribeToken((t) => setConnected(t !== null));
     return () => {
       unsub();
+      stopKbSync();
     };
   }, []);
 
@@ -55,6 +74,15 @@ function App() {
         pinned_bubbles: current?.pinned_bubbles ?? null,
         onboarding_complete: current?.onboarding_complete ?? false,
       });
+      const fullCreds = await loadCreds();
+      if (fullCreds) {
+        startKbSync({
+          creds: fullCreds,
+          repo: result.path,
+          orgSlug: basename(result.path),
+          orgName: incoming,
+        }).catch((e) => console.error("kb sync init failed:", e));
+      }
     } catch (e) {
       console.error("project bootstrap failed:", e);
     }

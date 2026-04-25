@@ -1,6 +1,7 @@
 mod cli;
 mod fs_tree;
 mod git_history;
+mod kb;
 mod keychain;
 mod pinkfish;
 mod project;
@@ -32,7 +33,15 @@ pub fn run() {
             pinkfish::pinkfish_oauth_exchange,
             pinkfish::pinkfish_list_orgs,
             pinkfish::pinkfish_list_connections,
+            pinkfish::pinkfish_mcp_call,
             project::project_bootstrap,
+            kb::kb_init,
+            kb::kb_list_local,
+            kb::kb_read_file,
+            kb::kb_write_file,
+            kb::kb_state_load,
+            kb::kb_state_save,
+            kb::kb_download_to_local,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

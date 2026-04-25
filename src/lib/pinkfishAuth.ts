@@ -11,6 +11,7 @@ const REFRESH_BUFFER_SECONDS = 60;
 export type PinkfishUrls = {
   tokenUrl: string;
   accountUrl: string; // mcp.<env>.pinkfish.<tld>/pf-account
+  mcpBaseUrl: string; // https://mcp.<env>.pinkfish.<tld>
   connectionsUrl: string; // proxy(-stage).pinkfish.ai/manage/user-connections?format=light
 };
 
@@ -34,6 +35,7 @@ export function derivedUrls(tokenUrl: string): PinkfishUrls {
   return {
     tokenUrl,
     accountUrl: `${protocol}//${mcpHost}/pf-account`,
+    mcpBaseUrl: `${protocol}//${mcpHost}`,
     connectionsUrl: `https://${proxyHost}/manage/user-connections?format=light`,
   };
 }

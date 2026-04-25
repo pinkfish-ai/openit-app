@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { fsList, type FileNode } from "../lib/api";
+import { subscribeSync, type SyncStatus } from "../lib/kbSync";
 
 export function FileExplorer({
   repo,
@@ -11,6 +12,9 @@ export function FileExplorer({
   const [nodes, setNodes] = useState<FileNode[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [sync, setSync] = useState<SyncStatus | null>(null);
+
+  useEffect(() => subscribeSync(setSync), []);
 
   useEffect(() => {
     if (!repo) {
@@ -103,6 +107,18 @@ export function FileExplorer({
           );
         })}
       </ul>
+      {sync && sync.conflicts.length > 0 && (
+        <div className="kb-conflicts">
+          <div className="kb-conflicts-header">⚠ KB conflicts</div>
+          <ul>
+            {sync.conflicts.map((c) => (
+              <li key={c.filename}>
+                <code>{c.filename}</code> edited locally and remotely. Rename your local copy to keep it.
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

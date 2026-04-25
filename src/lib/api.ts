@@ -140,3 +140,70 @@ export async function pinkfishListConnections(args: {
     connectionsUrl: args.connectionsUrl ?? null,
   });
 }
+
+export type KbLocalFile = { filename: string; mtime_ms: number | null; size: number };
+export type KbFileState = { remote_version: string; pulled_at_mtime_ms: number };
+export type KbStatePersisted = {
+  collection_id: string | null;
+  collection_name: string | null;
+  files: Record<string, KbFileState>;
+};
+
+export async function kbInit(repo: string): Promise<string> {
+  return invoke("kb_init", { repo });
+}
+
+export async function kbListLocal(repo: string): Promise<KbLocalFile[]> {
+  return invoke("kb_list_local", { repo });
+}
+
+export async function kbReadFile(repo: string, filename: string): Promise<string> {
+  return invoke("kb_read_file", { repo, filename });
+}
+
+export async function kbWriteFile(
+  repo: string,
+  filename: string,
+  content: string,
+): Promise<void> {
+  return invoke("kb_write_file", { repo, filename, content });
+}
+
+export async function kbStateLoad(repo: string): Promise<KbStatePersisted> {
+  return invoke("kb_state_load", { repo });
+}
+
+export async function kbStateSave(
+  repo: string,
+  state: KbStatePersisted,
+): Promise<void> {
+  return invoke("kb_state_save", { repo, state });
+}
+
+export async function kbDownloadToLocal(
+  repo: string,
+  filename: string,
+  url: string,
+): Promise<void> {
+  return invoke("kb_download_to_local", { repo, filename, url });
+}
+
+/// Generic JSON-RPC tools/call against any Pinkfish MCP server. Returns the
+/// raw JSON-RPC envelope; callers pluck `.result.structuredContent` etc.
+export async function pinkfishMcpCall(args: {
+  accessToken: string;
+  orgId: string;
+  server: string;
+  tool: string;
+  arguments: unknown;
+  baseUrl?: string | null;
+}): Promise<{ result?: { structuredContent?: unknown; content?: unknown }; error?: unknown }> {
+  return invoke("pinkfish_mcp_call", {
+    accessToken: args.accessToken,
+    orgId: args.orgId,
+    server: args.server,
+    tool: args.tool,
+    arguments: args.arguments,
+    baseUrl: args.baseUrl ?? null,
+  });
+}
