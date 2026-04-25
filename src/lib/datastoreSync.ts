@@ -78,10 +78,24 @@ export async function resolveProjectDatastores(
               type: "datastore",
               description: def.description,
             } as DataCollection);
+            console.log(`[datastoreSync] created ${def.name}`);
           }
         } catch (e) {
           console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
         }
+      }
+      // After attempting creation, re-list to get any collections that may have already existed
+      if (matching.length === 0) {
+        const recheck = (await pinkfishMcpCall({
+          accessToken: token.accessToken,
+          orgId: creds.orgId,
+          server: "datastore-structured",
+          tool: "datastore-structured_list_collections",
+          arguments: {},
+          baseUrl: urls.mcpBaseUrl,
+        })) as { collections?: DataCollection[] } | null;
+        const recheckAll = recheck?.collections ?? [];
+        matching = recheckAll.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
       }
     }
 

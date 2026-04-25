@@ -97,7 +97,6 @@ export async function resolveProjectFilestores(
 
   if (matching.length === 0) {
     console.log("[filestore] no openit-* filestores found — creating defaults");
-    const urls = derivedUrls(creds.tokenUrl);
     for (const def of defaults) {
       try {
         const result = (await pinkfishMcpCall({
@@ -115,10 +114,19 @@ export async function resolveProjectFilestores(
         })) as { id?: string | number } | null;
         if (result?.id) {
           matching.push({ id: String(result.id), name: def.name, description: def.description });
+          console.log(`[filestore] created ${def.name}`);
         }
       } catch (e) {
         console.warn(`[filestore] failed to create ${def.name}:`, e);
+        // If creation fails, don't try again in future calls — collection may already exist
       }
+    }
+    // After attempting creation, re-list to get any collections that may have already existed
+    if (matching.length === 0) {
+      const recheck = await listFilestoreCollections(creds);
+      matching = recheck
+        .filter((c) => defaults.some((d) => d.name === c.name))
+        .map((c) => ({ id: c.id, name: c.name, description: c.description }));
     }
   }
 
