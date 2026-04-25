@@ -646,14 +646,23 @@ export async function pullDatastoresOnce(args: {
 
         if (remoteChanged && localChanged) {
           // Both moved — drop a shadow with the remote content for merge.
-          try {
-            const content = typeof r.content === "object"
-              ? JSON.stringify(r.content, null, 2)
-              : (r.content as unknown as string);
-            await entityWriteFile(repo, subdir, shadowName(key), content);
-            touched.push(`${subdir}/${shadowName(key)}`);
-          } catch (e) {
-            console.error(`[datastoreSync] shadow ${mKey} failed:`, e);
+          // Only WRITE the shadow on the first detection: if a shadow file
+          // is already present, the conflict is unresolved from a prior
+          // pass and re-writing it would re-touch + re-commit on every
+          // poll. We still report the conflict every cycle for the banner.
+          // (Matches the KB pattern in kbSync's pullOnce.)
+          const shadowFilename = shadowName(key);
+          const hasShadow = localByName.has(shadowFilename);
+          if (!hasShadow) {
+            try {
+              const content = typeof r.content === "object"
+                ? JSON.stringify(r.content, null, 2)
+                : (r.content as unknown as string);
+              await entityWriteFile(repo, subdir, shadowFilename, content);
+              touched.push(`${subdir}/${shadowFilename}`);
+            } catch (e) {
+              console.error(`[datastoreSync] shadow ${mKey} failed:`, e);
+            }
           }
           conflicts.push({
             collectionName: col.name,
