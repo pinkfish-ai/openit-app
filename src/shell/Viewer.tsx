@@ -100,26 +100,29 @@ export function Viewer({ source }: { source: ViewerSource }) {
     if (source.kind === "datastore-table") {
       setMode("table");
       setContent("");
-      // Seed with any items passed in, then fetch fresh data
       setTableItems(source.items ?? []);
       setTableHasMore(source.hasMore ?? false);
-      setTableLoading(true);
-      let cancelled = false;
-      loadCreds().then(async (creds) => {
-        if (!creds || cancelled) { setTableLoading(false); return; }
-        try {
-          const resp = await fetchDatastoreItems(creds, source.collection.id, 100, 0);
-          if (!cancelled) {
-            setTableItems(resp.items);
-            setTableHasMore(resp.pagination.hasNextPage);
+      // Only fetch from API if we have a real collection ID
+      if (source.collection.id) {
+        setTableLoading(true);
+        let cancelled = false;
+        loadCreds().then(async (creds) => {
+          if (!creds || cancelled) { setTableLoading(false); return; }
+          try {
+            const resp = await fetchDatastoreItems(creds, source.collection.id, 100, 0);
+            if (!cancelled) {
+              setTableItems(resp.items);
+              setTableHasMore(resp.pagination.hasNextPage);
+            }
+          } catch (e) {
+            console.warn("[Viewer] failed to load table items:", e);
+          } finally {
+            if (!cancelled) setTableLoading(false);
           }
-        } catch (e) {
-          console.warn("[Viewer] failed to load table items:", e);
-        } finally {
-          if (!cancelled) setTableLoading(false);
-        }
-      });
-      return () => { cancelled = true; };
+        });
+        return () => { cancelled = true; };
+      }
+      return;
     }
     if (source.kind === "datastore-row") {
       setMode("raw");
