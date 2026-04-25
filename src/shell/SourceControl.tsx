@@ -249,18 +249,33 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
     onChangeCount?.(files.length);
   }, [files.length, onChangeCount]);
 
-  // When the user focuses the Sync tab and there are changes but no typed
-  // message, pre-fill with the auto-derived subject so they can just click
-  // Commit. Re-pre-fill if the change set evolves while they're on the tab.
+  // Auto-fill the commit input once per "Sync tab focus session" — only when
+  // the user has nothing typed and there are pending changes. After that we
+  // leave it alone: clearing the input must stick, and we must not re-fill
+  // with a stale message after a successful commit (when commitMsg is set
+  // back to "" before the async refresh updates `files`).
+  //
+  // `commitMsg` is intentionally NOT in the dep array — that's how clearing
+  // the input doesn't immediately re-trigger this effect. We read the latest
+  // commitMsg from the closure (React re-renders capture it).
+  const autoFilledRef = useRef(false);
   useEffect(() => {
-    if (!active) return;
-    if (files.length === 0) return;
+    if (!active) {
+      // Reset on tab leave so re-focusing gets a fresh auto-fill.
+      autoFilledRef.current = false;
+      return;
+    }
+    if (files.length === 0) {
+      // Post-commit clean state. Reset the flag so the next change auto-fills.
+      autoFilledRef.current = false;
+      return;
+    }
+    if (autoFilledRef.current) return;
     if (commitMsg.trim().length > 0) return;
     setCommitMsg(defaultCommitMessage(files));
-    // We intentionally re-evaluate whenever `files` changes — if the user
-    // adds another change while the tab is focused, the message updates.
-    // Only "trim() > 0" stops re-fill, so once they type, we leave them be.
-  }, [active, files, commitMsg]);
+    autoFilledRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- commitMsg deliberately excluded; see comment above
+  }, [active, files]);
 
   const handleDiscard = async (paths: string[]) => {
     if (!repo) return;
