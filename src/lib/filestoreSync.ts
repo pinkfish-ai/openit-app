@@ -6,8 +6,8 @@ import {
 } from "./api";
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
-import { pinkfishMcpCall } from "./api";
 import { makeSkillsFetch } from "../api/fetchAdapter";
+import { fsStoreStateLoad, fsStoreStateSave } from "./api";
 
 // These will be added to api.ts — importing ahead of time.
 // They invoke fs_store_init, fs_store_list_local, fs_store_state_load,
@@ -16,8 +16,6 @@ import { makeSkillsFetch } from "../api/fetchAdapter";
 import {
   fsStoreInit,
   fsStoreListLocal,
-  fsStoreStateLoad,
-  fsStoreStateSave,
 } from "./api";
 
 export type FilestoreCollection = { id: string; name: string; description?: string };
@@ -55,6 +53,7 @@ let status: FilestoreSyncStatus = {
 };
 
 const listeners = new Set<(s: FilestoreSyncStatus) => void>();
+let resolvedRepos = new Set<string>(); // Track which repos have had collections resolved
 
 export function subscribeFilestoreSync(
   fn: (s: FilestoreSyncStatus) => void,
@@ -74,7 +73,7 @@ function update(patch: Partial<FilestoreSyncStatus>) {
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-const POLL_INTERVAL_MS = 60_000;
+const POLL_INTERVAL_MS = 300_000; // 5 minutes — reduce duplicate creation attempts
 
 // ---------------------------------------------------------------------------
 // Resolve helpers — REST API via skillsApi
@@ -84,7 +83,14 @@ let createdCollections = new Map<string, FilestoreCollection>();
 
 /**
  * Find or create openit-* Filestorage collections. Creates defaults if none
- * exist. Uses the skills REST API (GET /datacollection/?type=filestorage).
+ * exist. Uses the skills REST API (GET /datacollection/all).
+ */
+let lastCreationAttemptTime = 0;
+const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventual consistency
+
+/**
+ * Find or create openit-* Filestorage collections. Creates defaults if none
+ * exist. Uses the skills REST API (GET /datacollection/?type=all).
  */
 export async function resolveProjectFilestores(
   creds: PinkfishCreds,
@@ -106,22 +112,50 @@ export async function resolveProjectFilestores(
   }
 
   if (matching.length === 0) {
+    const now = Date.now();
+    // Skip creation if we tried recently (eventual consistency delay)
+    if (now - lastCreationAttemptTime < CREATION_COOLDOWN_MS) {
+      console.log("[filestore] skipping creation (cooldown active), using cached collections");
+      return Array.from(createdCollections.values());
+    }
+    
     console.log("[filestore] no openit-* filestores found — creating defaults");
+    lastCreationAttemptTime = now;
     for (const def of defaults) {
+      // Check if we recently created this collection to avoid duplicates
+      if (createdCollections.has(def.name)) {
+        const col = createdCollections.get(def.name)!;
+        matching.push(col);
+        continue;
+      }
+
       try {
-        const result = (await pinkfishMcpCall({
-          accessToken: token.accessToken,
-          orgId: creds.orgId,
-          server: "filestorage",
-          tool: "filestorage_create_collection",
-          arguments: {
+        const fetchFn = makeSkillsFetch(token.accessToken);
+        const url = new URL("/datacollection/", urls.skillsBaseUrl);
+        const response = await fetchFn(url.toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
             name: def.name,
+            type: "filestorage",
             description: def.description,
             createdBy: creds.orgId,
             createdByName: "OpenIT",
-          },
-          baseUrl: urls.mcpBaseUrl,
-        })) as { id?: string | number } | null;
+          }),
+        });
+        
+        if (!response.ok) {
+          const errText = await response.text();
+          console.error("[filestore] response error:", errText);
+          // 409 means collection already exists, skip it
+          if (response.status === 409) {
+            console.log(`[filestore] collection ${def.name} already exists`);
+            continue;
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = (await response.json()) as { id?: string | number } | null;
         if (result?.id) {
           const col = { id: String(result.id), name: def.name, description: def.description };
           matching.push(col);
@@ -130,6 +164,23 @@ export async function resolveProjectFilestores(
         }
       } catch (e) {
         console.warn(`[filestore] failed to create ${def.name}:`, e);
+      }
+    }
+    
+    // After creation, re-fetch to ensure we have the authoritative list
+    if (matching.length > 0) {
+      try {
+        // Wait for API eventual consistency (collections take ~5 seconds to appear)
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        const updated = await listFilestoreCollections(creds);
+        const updatedMatching = updated.filter((c) => defaults.some((d) => d.name === c.name));
+        if (updatedMatching.length > matching.length) {
+          console.log("[filestore] re-fetched collections after creation");
+          return updatedMatching.map((c) => ({ id: c.id, name: c.name, description: c.description }));
+        }
+      } catch (e) {
+        console.warn("[filestore] failed to re-fetch after creation:", e);
       }
     }
   }
@@ -209,6 +260,9 @@ export async function startFilestoreSync(args: {
   }
   update({ collections });
 
+  // Mark this repo as resolved to prevent duplicate creation attempts
+  resolvedRepos.add(repo);
+
   // Persist collection info in local state.
   const persisted = await fsStoreStateLoad(repo);
   if (collections.length > 0 && persisted.collection_id !== collections[0].id) {
@@ -243,6 +297,7 @@ export function stopFilestoreSync() {
     conflicts: [],
     lastError: null,
   });
+  resolvedRepos.clear();
 }
 
 async function pullOnce(args: {

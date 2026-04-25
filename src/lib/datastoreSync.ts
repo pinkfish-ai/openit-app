@@ -5,7 +5,7 @@ import {
   type MemoryBqueryResponse,
   type MemoryItem,
 } from "./skillsApi";
-import { entityWriteFile, pinkfishMcpCall } from "./api";
+import { entityWriteFile } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
 
@@ -27,13 +27,15 @@ const DEFAULT_DATASTORES = [
 let createdCollections = new Map<string, DataCollection>();
 
 /**
- * List all Datastore-type datacollections matching the openit-* prefix.
- * If none are found, auto-creates the two defaults (tickets + people).
- * Returns the full list of matching collections (with schema).
+ * Find or create openit-* Datastore collections. Creates defaults if none
+ * exist. Uses the skills REST API (GET /datacollection/all).
  */
+let lastCreationAttemptTime = 0;
+const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventual consistency
 export async function resolveProjectDatastores(
   creds: PinkfishCreds,
 ): Promise<DataCollection[]> {
+  console.log("[datastoreSync] resolveProjectDatastores called");
   const token = getToken();
   if (!token) throw new Error("not authenticated");
   const urls = derivedUrls(creds.tokenUrl);
@@ -68,24 +70,53 @@ export async function resolveProjectDatastores(
     }
 
     if (matching.length === 0) {
+      const now = Date.now();
+      // Skip creation if we tried recently (eventual consistency delay)
+      if (now - lastCreationAttemptTime < CREATION_COOLDOWN_MS) {
+        console.log("[datastoreSync] skipping creation (cooldown active), using cached collections");
+        return Array.from(createdCollections.values());
+      }
+      
       console.log("[datastoreSync] no openit-* datastores found — creating defaults");
+      lastCreationAttemptTime = now;
       for (const def of defaults) {
+        // Check if we recently created this collection to avoid duplicates
+        if (createdCollections.has(def.name)) {
+          const col = createdCollections.get(def.name)!;
+          matching.push(col);
+          continue;
+        }
+
         try {
-          const result = (await pinkfishMcpCall({
-            accessToken: token.accessToken,
-            orgId: creds.orgId,
-            server: "datastore-structured",
-            tool: "datastore-structured_create_collection",
-            arguments: {
+          const fetchFn = makeSkillsFetch(token.accessToken);
+          const url = new URL("/datacollection/", urls.skillsBaseUrl);
+          const response = await fetchFn(url.toString(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
               name: def.name,
               type: "datastore",
               templateId: def.templateId,
               description: def.description,
               createdBy: creds.orgId,
               createdByName: "OpenIT",
-            },
-            baseUrl: urls.mcpBaseUrl,
-          })) as { id?: string | number } | null;
+              triggerUrls: [],
+              isStructured: true,
+            }),
+          });
+          
+          if (!response.ok) {
+            const errText = await response.text();
+            console.error("[datastoreSync] response error:", errText);
+            // 409 means collection already exists, skip it
+            if (response.status === 409) {
+              console.log(`[datastoreSync] collection ${def.name} already exists`);
+              continue;
+            }
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+
+          const result = (await response.json()) as { id?: string | number } | null;
           if (result?.id) {
             const col = {
               id: String(result.id),
@@ -100,6 +131,28 @@ export async function resolveProjectDatastores(
         } catch (e) {
           console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
         }
+      }
+    }
+
+    // After creation, re-fetch to ensure we have the authoritative list
+    if (matching.length > 0) {
+      try {
+        // Wait for API eventual consistency (collections take ~5 seconds to appear)
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        const fetchFn = makeSkillsFetch(token.accessToken);
+        const url = new URL("/datacollection/all", urls.skillsBaseUrl);
+        const refetchResponse = await fetchFn(url.toString());
+        const refetched = (await refetchResponse.json()) as { collections?: DataCollection[] } | null;
+        const allCollections = refetched?.collections ?? [];
+        const updated = allCollections.filter((c: DataCollection) => c.type === "datastore");
+        const updatedMatching = updated.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
+        if (updatedMatching.length > matching.length) {
+          console.log("[datastoreSync] re-fetched collections after creation");
+          return updatedMatching;
+        }
+      } catch (e) {
+        console.warn("[datastoreSync] failed to re-fetch after creation:", e);
       }
     }
 
@@ -124,6 +177,18 @@ export async function fetchDatastoreItems(
   const urls = derivedUrls(creds.tokenUrl);
 
   return listItems(urls.skillsBaseUrl, token.accessToken, collectionId, limit, offset);
+}
+
+export async function fetchDatastoreSchema(
+  creds: PinkfishCreds,
+  collectionId: string,
+): Promise<any> {
+  const token = getToken();
+  if (!token) throw new Error("not authenticated");
+  const urls = derivedUrls(creds.tokenUrl);
+
+  const collection = await getCollection(urls.skillsBaseUrl, token.accessToken, collectionId);
+  return collection.schema;
 }
 
 export async function syncDatastoresToDisk(

@@ -11,7 +11,7 @@ import {
 import { refreshFromServer, subscribeSync, type SyncStatus } from "../lib/kbSync";
 import { subscribeFilestoreSync, type FilestoreSyncStatus } from "../lib/filestoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
-import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk } from "../lib/datastoreSync";
+import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk, fetchDatastoreSchema } from "../lib/datastoreSync";
 import { resolveProjectAgents, syncAgentsToDisk, type Agent } from "../lib/agentSync";
 import { resolveProjectWorkflows, syncWorkflowsToDisk, type Workflow } from "../lib/workflowSync";
 import { syncSkillsToDisk } from "../lib/skillsSync";
@@ -73,6 +73,34 @@ function isKbSupported(filename: string): boolean {
   return KB_SUPPORTED_EXTENSIONS.has(ext);
 }
 
+/**
+ * COLLECTION LOADING & SYNC PROCESS
+ * 
+ * 1. ON FIRST CONNECT (user enters Pinkfish credentials):
+ *    - loadOnce() fires in background (does NOT block UI)
+ *    - Resolves collections: fetches /datacollection/all, creates defaults if missing
+ *    - Collections with eventual consistency: 2-sec delay before re-fetching to confirm
+ *    - Fetches items and full schema for each collection in parallel
+ *    - Enriches collections with schema for disk persistence
+ *    - Writes to disk: databases/{name}/_schema.json + *.json for each item
+ *    - UI updates progressively as data arrives (not blocked)
+ * 
+ * 2. EVERY 60 SECONDS (background polling):
+ *    - pollSilently() runs in background
+ *    - Re-resolves collections (creates if still missing due to API lag)
+ *    - 10-second cooldown prevents duplicate creation attempts
+ *    - Updates UI state if collections changed (no disk writes on poll)
+ * 
+ * 3. DUPLICATE PREVENTION:
+ *    - In-memory cache tracks recently created collections
+ *    - If collections not in API yet (eventual consistency), returns cached copy
+ *    - 10-second cooldown before re-attempting creation
+ *    - Avoids creating duplicates when API has lag
+ * 
+ * KEY: Collections are created via REST API POST /datacollection/
+ * (NOT MCP tools). Schema comes from GET /datacollection/{id}.
+ * Items fetched from /memory/bquery with includeSchema=true.
+ */
 export function FileExplorer({
   repo,
   onSelect,
@@ -97,7 +125,7 @@ export function FileExplorer({
   // Virtual resource state
   const [datastores, setDatastores] = useState<DataCollection[]>([]);
   const [datastoreItems, setDatastoreItems] = useState<
-    Record<string, { items: MemoryItem[]; hasMore: boolean }>
+    Record<string, { items: MemoryItem[]; hasMore: boolean; schema?: any }>
   >({});
   const [agents, setAgents] = useState<Agent[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
@@ -188,13 +216,24 @@ export function FileExplorer({
         setAgents(ag);
         setWorkflows(wf);
 
-        const itemsMap: Record<string, { items: MemoryItem[]; hasMore: boolean }> = {};
+        const itemsMap: Record<string, { items: MemoryItem[]; hasMore: boolean; schema?: any }> = {};
         await Promise.all(
           ds.map(async (col) => {
             try {
               console.log(`[FileExplorer] fetching items for datastore: ${col.name}`);
-              const resp = await fetchDatastoreItems(creds, col.id, 100, 0);
-              itemsMap[col.id] = { items: resp.items, hasMore: resp.pagination.hasNextPage };
+              const [resp, schema] = await Promise.all([
+                fetchDatastoreItems(creds, col.id, 100, 0),
+                fetchDatastoreSchema(creds, col.id).catch(() => undefined),
+              ]);
+              itemsMap[col.id] = { 
+                items: resp.items, 
+                hasMore: resp.pagination.hasNextPage, 
+                schema: schema || resp.schema 
+              };
+              // Add schema to collection for writing to disk
+              if (schema || resp.schema) {
+                col.schema = schema || resp.schema;
+              }
               console.log(`[FileExplorer] fetched ${resp.items.length} items for ${col.name}`);
             } catch (e) {
               console.warn(`[FileExplorer] failed to fetch items for ${col.name}:`, e);
