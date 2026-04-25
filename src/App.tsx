@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
-import { DeployButton } from "./shell/DeployButton";
-import { keychainProbe, projectBootstrap, stateLoad, stateSave } from "./lib/api";
+import { projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import "./App.css";
@@ -36,9 +35,6 @@ function App() {
   }, []);
 
   useEffect(() => {
-    keychainProbe()
-      .then((ok) => console.log("[keychain] probe round-trip ok?", ok))
-      .catch((e) => console.error("[keychain] probe failed:", e));
     Promise.all([stateLoad(), startAuth(), loadCreds()])
       .then(([s, _token, creds]) => {
         setRepo(s.last_repo);
@@ -144,15 +140,16 @@ function App() {
             ? `Pinkfish: ${orgName ?? "connected"}`
             : "Connect Pinkfish"}
         </button>
-        <DeployButton
-          repo={repo}
-          env="dev"
-          onLine={onDeployLine}
-          onExit={(code) => onDeployLine(`▸ exit ${code ?? "?"}`)}
-        />
       </header>
       <section className="app-pane">
-        <Shell key={repo ?? "none"} repo={repo} deployLines={deployLines} />
+        <Shell
+          key={repo ?? "none"}
+          repo={repo}
+          env="dev"
+          deployLines={deployLines}
+          onDeployLine={onDeployLine}
+          onDeployExit={(code) => onDeployLine(`▸ exit ${code ?? "?"}`)}
+        />
       </section>
     </main>
   );
