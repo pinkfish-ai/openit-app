@@ -674,6 +674,59 @@ body,
   border: 1px solid var(--border);
 }
 
+.chat-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.chat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 2px 4px 2px 4px;
+  font-size: 12px;
+}
+
+.chat-pill img {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+}
+
+.chat-pill.faint {
+  opacity: 0.7;
+  background: transparent;
+}
+
+.chat-pill-btn {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.chat-pill-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.chat-hint {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
 .onboard-bootstrap.error {
   margin-top: 20px;
   padding: 12px 14px;

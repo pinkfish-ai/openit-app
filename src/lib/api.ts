@@ -123,3 +123,20 @@ export async function pinkfishListOrgs(args: {
     accountUrl: args.accountUrl ?? null,
   });
 }
+
+export type UserConnection = {
+  id: string;
+  name: string;
+  service_key: string;
+  status: string;
+};
+
+export async function pinkfishListConnections(args: {
+  accessToken: string;
+  connectionsUrl?: string | null;
+}): Promise<UserConnection[]> {
+  return invoke("pinkfish_list_connections", {
+    accessToken: args.accessToken,
+    connectionsUrl: args.connectionsUrl ?? null,
+  });
+}

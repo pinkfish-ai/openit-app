@@ -31,6 +31,7 @@ pub fn run() {
             keychain::keychain_delete,
             pinkfish::pinkfish_oauth_exchange,
             pinkfish::pinkfish_list_orgs,
+            pinkfish::pinkfish_list_connections,
             project::project_bootstrap,
         ])
         .run(tauri::generate_context!())
