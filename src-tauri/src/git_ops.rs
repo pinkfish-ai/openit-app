@@ -45,12 +45,53 @@ fn write_gitignore(repo: &str) -> Result<(), String> {
     fs::write(&path, out).map_err(|e| e.to_string())
 }
 
+/// Untrack files that match newly-broadened gitignore rules and commit
+/// the removal. Without this, files committed before the gitignore was
+/// widened (e.g. `.openit/kb-state.json`, `.openit/fs-state.json`) would
+/// keep showing up in `git status` as Modified every time the sync
+/// engine rewrites them, even though gitignore now lists `.openit/`.
+/// `git rm --cached -r --ignore-unmatch` removes them from the index
+/// without deleting on disk; we then commit the resulting staged deletion
+/// so it doesn't hang around. Idempotent — does nothing for clean repos.
+fn untrack_gitignored_paths(repo: &str) -> Result<(), String> {
+    // Paths we know used to be tracked before .gitignore was broadened.
+    // ignore-unmatch makes this a no-op for paths that don't exist in the
+    // index.
+    const PATHS: &[&str] = &[
+        ".openit",
+        ".openit/kb-state.json",
+        ".openit/fs-state.json",
+        ".openit/datastore-state.json",
+    ];
+    let mut args: Vec<&str> = vec!["rm", "--cached", "-r", "--ignore-unmatch", "--quiet"];
+    args.extend_from_slice(PATHS);
+    let _ = run_git(repo, &args)?;
+
+    // If anything was actually unstaged (i.e. the file was tracked), there's
+    // now a staged deletion in the index. Commit it as a housekeeping
+    // commit so it doesn't hang around as a phantom "staged change."
+    let cached = run_git(repo, &["diff", "--cached", "--quiet"])?;
+    if !cached.status.success() {
+        // diff --cached --quiet exits 1 when there are staged changes.
+        let _ = run_git(
+            repo,
+            &[
+                "commit",
+                "-m",
+                "init: untrack .openit/ manifest dir (now in gitignore)",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 /// Initialize a git repo at `repo` if missing. Writes `.gitignore`, sets local
 /// identity, and creates an initial commit when possible.
 #[tauri::command]
 pub fn git_ensure_repo(repo: String) -> Result<(), String> {
     if git_dir(&repo).exists() {
         write_gitignore(&repo)?;
+        let _ = untrack_gitignored_paths(&repo);
         return Ok(());
     }
 
