@@ -113,8 +113,9 @@ export function FileExplorer({
       .then((n) => {
         setNodes(n);
         setError(null);
-        // Collapse all dirs on first load
-        if (collapsed.size === 0 && n.length > 0) {
+        // Collapse all dirs on first load only
+        if (!hasCollapsedOnceRef.current && n.length > 0) {
+          hasCollapsedOnceRef.current = true;
           setCollapsed(new Set(n.filter((nd) => nd.is_dir).map((nd) => nd.path)));
         }
       })
@@ -162,6 +163,7 @@ export function FileExplorer({
   }, [repo]);
 
   const initialLoadDoneRef = useRef(false);
+  const hasCollapsedOnceRef = useRef(false);
 
   // Load resources once on mount, write to disk, then set up silent background polling
   useEffect(() => {
