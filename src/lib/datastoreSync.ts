@@ -23,6 +23,8 @@ const DEFAULT_DATASTORES = [
   },
 ];
 
+let createdCollections = new Map<string, DataCollection>();
+
 /**
  * List all Datastore-type datacollections matching the openit-* prefix.
  * If none are found, auto-creates the two defaults (tickets + people).
@@ -54,6 +56,12 @@ export async function resolveProjectDatastores(
     }));
     let matching = all.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
 
+    // If list returned nothing, check our in-memory cache of recently created collections
+    if (matching.length === 0 && createdCollections.size > 0) {
+      console.log(`[datastoreSync] using ${createdCollections.size} recently created collections`);
+      matching = Array.from(createdCollections.values());
+    }
+
     if (matching.length === 0) {
       console.log("[datastoreSync] no openit-* datastores found — creating defaults");
       for (const def of defaults) {
@@ -74,30 +82,19 @@ export async function resolveProjectDatastores(
             baseUrl: urls.mcpBaseUrl,
           })) as { id?: string | number } | null;
           if (result?.id) {
-            matching.push({
+            const col = {
               id: String(result.id),
               name: def.name,
               type: "datastore",
               description: def.description,
-            } as DataCollection);
+            } as DataCollection;
+            matching.push(col);
+            createdCollections.set(def.name, col);
             console.log(`[datastoreSync] created ${def.name}`);
           }
         } catch (e) {
           console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
         }
-      }
-      // After attempting creation, re-list to get any collections that may have already existed
-      if (matching.length === 0) {
-        const recheck = (await pinkfishMcpCall({
-          accessToken: token.accessToken,
-          orgId: creds.orgId,
-          server: "datastore-structured",
-          tool: "datastore-structured_list_collections",
-          arguments: {},
-          baseUrl: urls.mcpBaseUrl,
-        })) as { collections?: DataCollection[] } | null;
-        const recheckAll = recheck?.collections ?? [];
-        matching = recheckAll.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
       }
     }
 

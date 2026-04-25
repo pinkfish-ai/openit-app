@@ -79,6 +79,8 @@ const POLL_INTERVAL_MS = 60_000;
 // Resolve helpers — REST API via skillsApi
 // ---------------------------------------------------------------------------
 
+let createdCollections = new Map<string, FilestoreCollection>();
+
 /**
  * Find or create openit-* Filestorage collections. Creates defaults if none
  * exist. Uses the skills REST API (GET /datacollection/?type=filestorage).
@@ -95,6 +97,12 @@ export async function resolveProjectFilestores(
   let matching = all
     .filter((c) => defaults.some((d) => d.name === c.name))
     .map((c) => ({ id: c.id, name: c.name, description: c.description }));
+
+  // If list returned nothing, check our in-memory cache of recently created collections
+  if (matching.length === 0 && createdCollections.size > 0) {
+    console.log(`[filestore] using ${createdCollections.size} recently created collections`);
+    matching = Array.from(createdCollections.values());
+  }
 
   if (matching.length === 0) {
     console.log("[filestore] no openit-* filestores found — creating defaults");
@@ -114,19 +122,14 @@ export async function resolveProjectFilestores(
           baseUrl: urls.mcpBaseUrl,
         })) as { id?: string | number } | null;
         if (result?.id) {
-          matching.push({ id: String(result.id), name: def.name, description: def.description });
+          const col = { id: String(result.id), name: def.name, description: def.description };
+          matching.push(col);
+          createdCollections.set(def.name, col);
           console.log(`[filestore] created ${def.name}`);
         }
       } catch (e) {
         console.warn(`[filestore] failed to create ${def.name}:`, e);
       }
-    }
-    // After attempting creation, re-list to get any collections that may have already existed
-    if (matching.length === 0) {
-      const recheck = await listFilestoreCollections(creds);
-      matching = recheck
-        .filter((c) => defaults.some((d) => d.name === c.name))
-        .map((c) => ({ id: c.id, name: c.name, description: c.description }));
     }
   }
 
