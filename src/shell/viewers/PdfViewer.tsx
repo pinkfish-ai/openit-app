@@ -1,48 +1,41 @@
-import { useState } from "react";
-import { Document, Page, pdfjs } from "react-pdf";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
-
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+import { useEffect, useMemo, useState } from "react";
 
 type Props = {
   data: Uint8Array;
 };
 
 export function PdfViewer({ data }: Props) {
-  const [numPages, setNumPages] = useState<number>(0);
-  const [pageNumber, setPageNumber] = useState<number>(1);
+  const [error, setError] = useState<string | null>(null);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
 
-  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
-    setNumPages(numPages);
-    setPageNumber(1);
+  const blob = useMemo(() => new Blob([data], { type: "application/pdf" }), [data]);
+
+  useEffect(() => {
+    const url = URL.createObjectURL(blob);
+    setObjectUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [blob]);
+
+  if (error) {
+    return (
+      <div className="pdf-viewer">
+        <div className="office-viewer-fallback">
+          PDF preview error: {error}
+        </div>
+      </div>
+    );
   }
+
+  if (!objectUrl) return null;
 
   return (
     <div className="pdf-viewer">
-      <div className="pdf-viewer-controls">
-        <button
-          disabled={pageNumber <= 1}
-          onClick={() => setPageNumber((p) => p - 1)}
-        >
-          Prev
-        </button>
-        <span>
-          Page {pageNumber} of {numPages}
-        </span>
-        <button
-          disabled={pageNumber >= numPages}
-          onClick={() => setPageNumber((p) => p + 1)}
-        >
-          Next
-        </button>
-      </div>
-      <Document
-        file={{ data: data.buffer }}
-        onLoadSuccess={onDocumentLoadSuccess}
-      >
-        <Page pageNumber={pageNumber} />
-      </Document>
+      <iframe
+        src={objectUrl}
+        style={{ flex: 1, border: "none", width: "100%", height: "100%" }}
+        title="PDF viewer"
+        onError={() => setError("Failed to load PDF")}
+      />
     </div>
   );
 }
