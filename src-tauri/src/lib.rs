@@ -8,6 +8,7 @@ mod keychain;
 mod pinkfish;
 mod project;
 mod pty;
+mod skills;
 mod state;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -85,6 +86,8 @@ pub fn run() {
             kb::fs_store_state_save,
             kb::entity_write_file,
             kb::entity_clear_dir,
+            skills::skills_fetch_manifest,
+            skills::skills_fetch_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

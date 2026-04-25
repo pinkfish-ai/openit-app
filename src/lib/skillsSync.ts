@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { derivedUrls, type PinkfishCreds } from "./pinkfishAuth";
+import { type PinkfishCreds } from "./pinkfishAuth";
 
 export type Skill = {
   name: string;
@@ -7,24 +7,12 @@ export type Skill = {
   path: string;
 };
 
-async function getEnvironmentRootUrl(creds: PinkfishCreds): Promise<string> {
-  try {
-    const { skillsBaseUrl } = derivedUrls(creds.tokenUrl);
-    // skillsBaseUrl is the environment root (e.g., https://dev20.pinkfish.dev or https://app.pinkfish.ai)
-    return skillsBaseUrl.replace(/\/$/, '');
-  } catch (error) {
-    console.error("[skillsSync] Failed to derive environment root URL:", error);
-    throw error;
-  }
-}
-
 export async function fetchSkillsManifest(creds: PinkfishCreds): Promise<{ files: Array<{ path: string }> }> {
   try {
-    const rootUrl = await getEnvironmentRootUrl(creds);
-    const manifestUrl = `${rootUrl}/openit-plugin/manifest.json`;
-    const response = await fetch(manifestUrl);
-    if (!response.ok) throw new Error(`Failed to fetch manifest: ${response.status}`);
-    return response.json();
+    const manifestJson = await invoke<string>("skills_fetch_manifest", {
+      appApiUrl: creds.tokenUrl,
+    });
+    return JSON.parse(manifestJson);
   } catch (error) {
     console.error("[skillsSync] Failed to fetch manifest:", error);
     throw error;
@@ -33,10 +21,10 @@ export async function fetchSkillsManifest(creds: PinkfishCreds): Promise<{ files
 
 export async function fetchSkillFile(skillPath: string, creds: PinkfishCreds): Promise<string> {
   try {
-    const rootUrl = await getEnvironmentRootUrl(creds);
-    const response = await fetch(`${rootUrl}/openit-plugin/${skillPath}`);
-    if (!response.ok) throw new Error(`Failed to fetch skill: ${response.status}`);
-    return response.text();
+    return await invoke<string>("skills_fetch_file", {
+      appApiUrl: creds.tokenUrl,
+      skillPath,
+    });
   } catch (error) {
     console.error(`[skillsSync] Failed to fetch ${skillPath}:`, error);
     throw error;
