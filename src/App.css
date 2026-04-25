@@ -169,6 +169,23 @@ body,
   cursor: pointer;
 }
 
+.unsynced-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 8px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.explorer.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -8px;
+  background: var(--accent-soft);
+}
+
 .tree-item.dir:hover {
   background: var(--surface);
 }

@@ -11,6 +11,11 @@ export async function fsRead(path: string): Promise<string> {
   return invoke("fs_read", { path });
 }
 
+export async function fsReadBytes(path: string): Promise<Uint8Array> {
+  const arr = (await invoke<number[]>("fs_read_bytes", { path }));
+  return new Uint8Array(arr);
+}
+
 export type GitCommit = {
   sha: string;
   short_sha: string;
@@ -67,6 +72,10 @@ export async function keychainGet(slot: string): Promise<string | null> {
 
 export async function keychainDelete(slot: string): Promise<void> {
   return invoke("keychain_delete", { slot });
+}
+
+export async function keychainProbe(): Promise<boolean> {
+  return invoke("keychain_probe");
 }
 
 export type OauthResult = {
@@ -169,6 +178,15 @@ export async function kbWriteFile(
   return invoke("kb_write_file", { repo, filename, content });
 }
 
+export async function kbWriteFileBytes(
+  repo: string,
+  filename: string,
+  bytes: ArrayBuffer | Uint8Array,
+): Promise<void> {
+  const arr = bytes instanceof Uint8Array ? Array.from(bytes) : Array.from(new Uint8Array(bytes));
+  return invoke("kb_write_file_bytes", { repo, filename, bytes: arr });
+}
+
 export async function kbStateLoad(repo: string): Promise<KbStatePersisted> {
   return invoke("kb_state_load", { repo });
 }
@@ -186,6 +204,51 @@ export async function kbDownloadToLocal(
   url: string,
 ): Promise<void> {
   return invoke("kb_download_to_local", { repo, filename, url });
+}
+
+export type KbUploadResult = {
+  id: string;
+  filename: string;
+  file_url: string | null;
+  file_size: number | null;
+  mime_type: string | null;
+};
+
+export type KbRemoteFile = {
+  id: string;
+  filename: string;
+  signed_url: string | null;
+  file_size: number | null;
+  mime_type: string | null;
+  updated_at: string;
+};
+
+export async function kbListRemote(args: {
+  collectionId: string;
+  skillsBaseUrl: string;
+  accessToken: string;
+}): Promise<KbRemoteFile[]> {
+  return invoke("kb_list_remote", {
+    collectionId: args.collectionId,
+    skillsBaseUrl: args.skillsBaseUrl,
+    accessToken: args.accessToken,
+  });
+}
+
+export async function kbUploadFile(args: {
+  repo: string;
+  filename: string;
+  collectionId: string;
+  skillsBaseUrl: string;
+  accessToken: string;
+}): Promise<KbUploadResult> {
+  return invoke("kb_upload_file", {
+    repo: args.repo,
+    filename: args.filename,
+    collectionId: args.collectionId,
+    skillsBaseUrl: args.skillsBaseUrl,
+    accessToken: args.accessToken,
+  });
 }
 
 /// Generic JSON-RPC tools/call against any Pinkfish MCP server. Returns the

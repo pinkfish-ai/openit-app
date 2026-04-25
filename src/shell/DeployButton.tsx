@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { onDeployExit, onDeployLine, pinkitDeploy } from "../lib/api";
-import { pushAllToKb, subscribeSync } from "../lib/kbSync";
+import { getSyncStatus, pullNow, pushAllToKb, startKbSync } from "../lib/kbSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 
 export function DeployButton({
@@ -23,14 +23,38 @@ export function DeployButton({
 
     // Step 1: push the local knowledge-base/ folder to Pinkfish before
     // running the deploy script. Skip silently if no creds / collection.
-    let collection = null as Awaited<ReturnType<typeof getCollection>> | null;
-    try {
-      collection = await getCollection();
-    } catch (e) {
-      console.error("read kb sync state failed:", e);
-    }
+    let collection = getSyncStatus().collection;
     const creds = await loadCreds().catch(() => null);
+    // If kb sync hasn't resolved a collection yet (e.g. user clicked Deploy
+    // before the initial pull finished), kick it off inline before push.
+    if (!collection && creds && repo) {
+      onLine("▸ resolving knowledge base…");
+      try {
+        const slug = (repo.split("/").pop() ?? "").trim();
+        await startKbSync({ creds, repo, orgSlug: slug, orgName: slug });
+        collection = getSyncStatus().collection;
+      } catch (e) {
+        onLine(`✗ kb resolve failed: ${String(e)}`);
+      }
+    }
     if (collection && creds) {
+      // Pull first so deploys don't blow away teammate edits with stale local state.
+      onLine("▸ pulling knowledge base");
+      try {
+        await pullNow({ creds, repo, collection });
+        const conflicts = getSyncStatus().conflicts;
+        if (conflicts.length > 0) {
+          onLine(`✗ kb pull found ${conflicts.length} conflict(s) — resolve before deploying:`);
+          for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
+          setRunning(false);
+          return;
+        }
+      } catch (e) {
+        onLine(`✗ kb pull failed: ${String(e)}`);
+        setRunning(false);
+        return;
+      }
+
       onLine("▸ pushing knowledge base");
       try {
         const { pushed, failed } = await pushAllToKb({
@@ -43,6 +67,8 @@ export function DeployButton({
       } catch (e) {
         onLine(`✗ kb push failed: ${String(e)}`);
       }
+    } else {
+      onLine(`▸ kb push skipped (collection=${!!collection}, creds=${!!creds})`);
     }
 
     onLine(`▸ pinkit deploy --env ${env}`);
@@ -65,16 +91,6 @@ export function DeployButton({
     }
   };
 
-  // Tiny helper: read the latest sync status to fish out the resolved
-  // collection. subscribeSync replays current state synchronously.
-  const getCollection = async () => {
-    return await new Promise<{ id: string; name: string } | null>((resolve) => {
-      const unsub = subscribeSync((s) => {
-        unsub();
-        resolve(s.collection);
-      });
-    });
-  };
 
   const handleClick = () => {
     if (running) return;

@@ -106,6 +106,17 @@ pub fn kb_write_file(repo: String, filename: String, content: String) -> Result<
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+/// Write raw bytes to `<repo>/knowledge-base/<filename>`. Used by the
+/// drag-from-desktop handler so binary files (PDFs, images) round-trip
+/// correctly.
+#[tauri::command]
+pub fn kb_write_file_bytes(repo: String, filename: String, bytes: Vec<u8>) -> Result<(), String> {
+    let dir = kb_dir(&repo);
+    ensure_dir(&dir)?;
+    let path = dir.join(&filename);
+    fs::write(&path, &bytes).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn kb_state_load(repo: String) -> Result<KbState, String> {
     let path = state_path(&repo);
@@ -124,6 +135,217 @@ pub fn kb_state_save(repo: String, state: KbState) -> Result<(), String> {
     }
     let json = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
     fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+pub struct KbRemoteFile {
+    pub id: String,
+    pub filename: String,
+    pub signed_url: Option<String>,
+    pub file_size: Option<u64>,
+    pub mime_type: Option<String>,
+    pub updated_at: String,
+}
+
+/// List files in a Pinkfish KB collection via the skills REST endpoint.
+/// `format=full` returns signedUrl per file — required for our pull path.
+#[tauri::command]
+pub async fn kb_list_remote(
+    collection_id: String,
+    skills_base_url: String,
+    access_token: String,
+) -> Result<Vec<KbRemoteFile>, String> {
+    let url = format!(
+        "{}/filestorage/items?collectionId={}&format=full",
+        skills_base_url.trim_end_matches('/'),
+        urlencode(&collection_id),
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get(&url)
+        .header("Auth-Token", format!("Bearer {}", access_token))
+        .header("Accept", "*/*")
+        .send()
+        .await
+        .map_err(|e| format!("network error: {}", e))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status, text));
+    }
+
+    let parsed: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("could not parse list response: {} — body: {}", e, text))?;
+    // The endpoint may return either a bare array or { items: [...] }.
+    let items = parsed
+        .as_array()
+        .cloned()
+        .or_else(|| parsed.get("items").and_then(|v| v.as_array()).cloned())
+        .unwrap_or_default();
+
+    Ok(items
+        .into_iter()
+        .map(|it| KbRemoteFile {
+            id: it
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            filename: it
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    it.get("metadata")
+                        .and_then(|m| m.get("filename"))
+                        .and_then(|v| v.as_str())
+                })
+                .unwrap_or("")
+                .to_string(),
+            signed_url: it
+                .get("signedUrl")
+                .or_else(|| it.get("file_url"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            file_size: it.get("file_size").and_then(|v| v.as_u64()),
+            mime_type: it
+                .get("mime_type")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            updated_at: it
+                .get("updatedAt")
+                .or_else(|| it.get("createdAt"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })
+        .collect())
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct KbUploadResult {
+    pub id: String,
+    pub filename: String,
+    pub file_url: Option<String>,
+    pub file_size: Option<u64>,
+    pub mime_type: Option<String>,
+}
+
+/// Multipart upload of a file from `<repo>/knowledge-base/<filename>` to
+/// the Pinkfish skills file storage endpoint. Returns the parsed response
+/// (id, filename, etc.) on success. Works for any file type, including
+/// binary — we stream the file bytes directly rather than going through
+/// the MCP `upload_file` tool's string `fileContent` param.
+#[tauri::command]
+pub async fn kb_upload_file(
+    repo: String,
+    filename: String,
+    collection_id: String,
+    skills_base_url: String,
+    access_token: String,
+) -> Result<KbUploadResult, String> {
+    let path = kb_dir(&repo).join(&filename);
+    if !path.exists() {
+        return Err(format!("file not found: {}", path.display()));
+    }
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+
+    let url = format!(
+        "{}/filestorage/items/upload?collectionId={}",
+        skills_base_url.trim_end_matches('/'),
+        urlencode(&collection_id)
+    );
+
+    let mime = mime_for(&filename);
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(filename.clone())
+        .mime_str(&mime)
+        .map_err(|e| e.to_string())?;
+    let form = reqwest::multipart::Form::new()
+        .part("file", part)
+        .text("metadata", "{}");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .post(&url)
+        .header("Auth-Token", format!("Bearer {}", access_token))
+        .header("Accept", "*/*")
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("network error: {}", e))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status, text));
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("could not parse upload response: {} — body: {}", e, text))?;
+
+    Ok(KbUploadResult {
+        id: parsed
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        filename: parsed
+            .get("metadata")
+            .and_then(|m| m.get("filename"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(filename.as_str())
+            .to_string(),
+        file_url: parsed
+            .get("file_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        file_size: parsed.get("file_size").and_then(|v| v.as_u64()),
+        mime_type: parsed
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    })
+}
+
+fn urlencode(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+            _ => format!("%{:02X}", c as u32),
+        })
+        .collect()
+}
+
+/// Best-effort MIME from extension. Server detects, so this is just a hint.
+fn mime_for(filename: &str) -> String {
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "md" | "markdown" => "text/markdown",
+        "txt" => "text/plain",
+        "json" => "application/json",
+        "yaml" | "yml" => "text/yaml",
+        "html" | "htm" => "text/html",
+        "csv" => "text/csv",
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        _ => "application/octet-stream",
+    }
+    .to_string()
 }
 
 /// Fetch a download URL and save the body into `<repo>/knowledge-base/<filename>`.

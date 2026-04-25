@@ -38,7 +38,15 @@ async function call(
   });
   const r = resp as { result?: { structuredContent?: unknown }; error?: unknown };
   if (r.error) throw new Error(`${tool}: ${JSON.stringify(r.error)}`);
-  return r.result?.structuredContent ?? null;
+  const sc = r.result?.structuredContent ?? null;
+  console.log(`[kb] ${tool} →`, sc);
+  // Pinkfish MCPs surface application-level failures as { error: "..." }
+  // inside structuredContent — the JSON-RPC envelope still says success.
+  if (sc && typeof sc === "object" && "error" in (sc as Record<string, unknown>)) {
+    const errMsg = (sc as { error: unknown }).error;
+    throw new Error(`${tool}: ${typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg)}`);
+  }
+  return sc;
 }
 
 export async function listCollections(creds: PinkfishCreds): Promise<KbCollection[]> {
@@ -53,9 +61,14 @@ export async function createCollection(
   name: string,
   description: string,
 ): Promise<KbCollection> {
+  // The MCP tool requires createdBy + createdByName. We don't have a Pinkfish
+  // user id from client_credentials so we tag with the org and a stable
+  // OpenIT label.
   const out = (await call(creds, "knowledge-base", "knowledge-base_create_collection", {
     name,
     description,
+    createdBy: creds.orgId,
+    createdByName: "OpenIT",
   })) as { id?: string; name?: string };
   if (!out?.id) throw new Error("create_collection returned no id");
   return { id: out.id, name: out.name ?? name };
@@ -83,17 +96,19 @@ export async function listFiles(
   creds: PinkfishCreds,
   collectionId: string,
 ): Promise<KbFile[]> {
+  // `full` format returns signedUrl per file — required for our pull path.
+  // `light` omits URLs entirely, so the puller had nothing to fetch.
   const out = (await call(creds, "filestorage", "filestorage_list_items", {
     fileLinksExpireInDays: 1,
-    format: "light",
+    format: "full",
     collectionId,
   })) as { items?: Array<Record<string, unknown>> } | null;
   return (out?.items ?? []).map((it) => ({
     id: String(it.id ?? ""),
     filename: String(it.filename ?? it.name ?? ""),
     updatedAt: String(it.updatedAt ?? it.updated_at ?? it.modifiedAt ?? ""),
-    downloadUrl: typeof it.downloadUrl === "string" ? it.downloadUrl : undefined,
-    size: typeof it.size === "number" ? it.size : undefined,
+    downloadUrl: typeof it.signedUrl === "string" ? it.signedUrl : undefined,
+    size: typeof it.file_size === "number" ? it.file_size : undefined,
   }));
 }
 
