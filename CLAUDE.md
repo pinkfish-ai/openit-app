@@ -1,51 +1,72 @@
-# OpenIT — CLAUDE.md
+---
+name: OpenIT
+description: IT operations and service management plugin for Claude Code. Manage tickets, provision employees, query systems, and automate workflows.
+---
 
-Tauri desktop wrapper for Claude Code targeting IT admins. Embeds xterm.js + portable-pty for the Claude chat pane, file explorer, file viewer, Versions drawer, and Deploy button.
+# OpenIT Plugin for Claude Code
 
-## Stack
+OpenIT is an AI-powered IT service management platform. This plugin enables Claude to help with IT operations tasks within your OpenIT workspace.
 
-- **Tauri 2.x** (Rust shell) + **React** (frontend) + **Vite**
-- **xterm.js** + **portable-pty** (embedded terminal)
-- **keyring** (OS keychain) | **notify** (file watcher) | **git2** (versions)
+## What You Can Do
 
-## Quick Start
+- **Create and manage tickets** - File, query, and resolve IT service tickets
+- **Onboard/offboard employees** - Automate provisioning and revocation across connected systems
+- **Query databases** - Search employee records, asset inventory, and ticket history
+- **Run workflows** - Execute automated processes triggered by events
+- **Create agents** - Build AI agents that handle specific IT workflows
+- **Manage knowledge** - Upload and search documentation, runbooks, and procedures
 
-```bash
-npm install
-npm run tauri dev
+## Project Structure
+
+```
+your-project/
+├── agents/                    # AI agents for specific IT workflows
+├── workflows/                 # Automated processes and integrations
+├── databases/                 # Structured data (tickets, employees, assets, etc.)
+├── knowledge-base/            # Documentation and runbooks
+├── filestore/                 # File storage for the workspace
+├── .claude/
+│   └── skills/                # Claude Code skills for IT operations
+├── _welcome.md                # Project overview
+└── .gitignore
 ```
 
-## Structure
+## Available Skills
 
-```
-src/                    # React (Vite)
-src-tauri/src/         # Tauri/Rust backend
-auto-dev/plans/        # Design docs
-```
+The OpenIT plugin includes the following Claude Code skills to help with common IT tasks:
 
-## Key Files
+### Core Skills
+- **get-started** - Welcome and onboarding to your OpenIT workspace
+- **query-database** - Search and retrieve data from your databases
+- **create-agent** - Create new AI agents for your workflows
+- **run-workflow** - Execute your existing workflows
+- **knowledge-base** - Search and upload documentation
+- **deploy** - Deploy and manage your workspace
 
-- `src-tauri/src/main.rs` — Tauri app entry
-- `src/App.tsx` — React root
-- `src-tauri/src/pty.rs` — PTY + xterm bridge
-- `src-tauri/src/commands.rs` — Tauri command handlers
+### Advanced Skills
+- **onboard-employee** - Day-1 provisioning across all connected systems
+- **offboard-employee** - Revocation cascade with audit trail
+- **create-skill** - Create new Claude Code skills for your team
 
-## Design Plans
+## Getting Started
 
-Read these in order:
-1. `auto-dev/plans/2026-04-24-pin-5707-openit-onboarding-and-shell-plan.md` — Full architecture
-2. `auto-dev/plans/2026-04-25-v1-five-core-it-tasks.md` — V1 ITSM features
+1. **Open your project in Claude Code** - Clone or open your OpenIT workspace folder
+2. **Use the skill bubbles** - Quick buttons at the bottom for common tasks
+3. **Ask Claude directly** - Describe what you need (e.g., "Create a ticket for a new laptop request")
+4. **Explore the databases** - Click on database records to work with real data
 
+## Key Integrations
 
-## Dev Tips
+OpenIT connects to:
+- **Okta / Azure AD** - User provisioning and authentication
+- **Google Workspace / Microsoft 365** - Email and collaboration
+- **Slack / Microsoft Teams** - Notifications and integration
+- **Jira / ServiceNow** - Ticketing systems
+- **Custom APIs** - Any system with an OAuth connection
 
-- React hot-reloads automatically (edit `src/`)
-- Rust recompiles on changes (edit `src-tauri/src/`)
-- Debug in browser DevTools (`F12` in dev window)
-- Check `which claude` before testing — app spawns Claude from PATH
+## Tips
 
-## Conventions
-
-- Follow `../web` patterns for React
-- Run `cargo fmt` before committing Rust
-- Conventional Commits: `feat(PIN-5707): description`
+- Drag records from the File Explorer into chat to reference them
+- Use the `/create-agent` skill to build custom workflows
+- Check the _welcome.md file for a detailed project overview
+- All your work is automatically version-controlled with Git
