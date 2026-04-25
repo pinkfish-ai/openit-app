@@ -1,7 +1,56 @@
 # Bidirectional sync for all OpenIT entities
 
 **Date:** 2026-04-25
-**Status:** Plan, not yet implemented
+**Status:** Phase 2 (datastore pull) shipped via PR #9. `syncEngine.ts` refactor (R1–R5 below) is the next-up work.
+
+---
+
+## Resuming this work in a fresh session
+
+**You are here:**
+- Branch `feat/datastore-pull-poll` (PR #9, `https://github.com/pinkfish-ai/openit-app/pull/9`) — datastore push + pull + 60s poll, plus connect-sync waste-reduction, plus manual ↻ button. 5 BugBot iterations, 16 findings (4 High, 8 Medium, 4 Low), all fixed. Last commit is the refactor plan + iter-5 log (`e2a11bf` or descendants).
+- Branch `main` may be ahead of `origin/main` by 1 commit (`ad0eb59` = BugBot fix #2 from PR #8). If so, it needs a push.
+- Pre-existing CI red on main (cargo fmt diffs in `claude.rs` + `filestore.rs`, TS6133 in firebase-helpers + a few app files). NOT regressions from this work — these were red before PR #8 even landed.
+
+**Immediate next action options (pick one):**
+1. **Trigger BugBot iter 6** to confirm clean run on the iter-5 fix → if clean, declare PR #9 ready to merge. Command: `gh pr comment 9 --repo pinkfish-ai/openit-app --body "@cursor review"` then poll `gh api repos/pinkfish-ai/openit-app/commits/$(git rev-parse HEAD)/check-runs` until done.
+2. **Merge PR #9 as-is** (5 iters of validation is sufficient).
+3. **Start the `syncEngine.ts` refactor** (see "Architectural retrospective" section below). Recommended path per the user's request to step back. New branch off `main` after PR #9 merges.
+
+**Where the existing entity-sync code lives:**
+- `src/lib/kbSync.ts` (456 lines) — the cleanest reference; uses `withSyncLock`
+- `src/lib/filestoreSync.ts` (625 lines)
+- `src/lib/datastoreSync.ts` (940 lines) — biggest, most recently churned
+- `src/lib/agentSync.ts` (122 lines), `src/lib/workflowSync.ts` (134 lines) — read-only today
+- `src-tauri/src/kb.rs` — all entity Rust commands live here (split is sloppy; the file is misnamed for filestore + datastore content)
+- `src-tauri/src/git_ops.rs` — git_ensure_repo, git_commit_paths, untrack_gitignored_paths
+- `src/PinkfishOauthModal.tsx` — connect-time bootstrap orchestration
+- `src/App.tsx` — start/stop wiring on relaunch + first-run paths
+- `src/shell/Shell.tsx` — manual ↻ pull button + sync output viewer auto-open
+- `src/shell/SourceControl.tsx` — Deploy tab UI + commit→push flow
+
+**Local dev essentials:**
+- Dev creds: `.env.development` (gitignored). Has `VITE_DEV_CLIENT_ID/SECRET/ORG_ID/TOKEN_URL` for stage.
+- Run: `npm run tauri dev` (Vite + Cargo). User's session typically already running on port 1420; don't kill it without checking.
+- Project root: `~/OpenIT/<orgId>/` (was `~/Documents/OpenIT/<orgId>/` before; macOS TCC blocked Documents access).
+- Skills API: `https://skills-stage.pinkfish.ai/` for dev. Auth: `Auth-Token: Bearer <runtime-token>` for memory/resources/datacollection; `Authorization: Bearer …` for `/user-agents` and `/automations`.
+
+**Process pointers:**
+- BugBot loop: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/07-bugbot-review.md`
+- Plan review: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/02-implementation-plan-review.md`
+- Implementation: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/03-implementation.md`
+- Project brief: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/00-projectbrief.md`
+- Wider product context: `/Users/benrigby/Documents/GitHub/autonomous-dev/research/itsm/pinkfish-itsm-concept.md`
+
+**Critical invariants discovered through iter 1–5 (must hold in any future entity work):**
+1. Manifest save MUST happen inside the per-repo lock alongside any git commit — releasing the lock before the commit causes index-lock races.
+2. Conflict shadow files (`*.server.*`) MUST NOT be added to the auto-commit `touched` array — they're gitignored, and `git add` on a gitignored path makes git_commit_paths fail and silently drop the legitimate items in the same batch.
+3. Pull list MUST be fully paginated before the server-side-deletion check runs — otherwise items beyond the first page get wrongly classified as deleted.
+4. Manifest reconcile after push MUST also paginate — same reason.
+5. Pull, push, and bootstrap-write MUST all serialize on the same per-repo lock — separate locks per operation lets manifest mutations race.
+6. The bootstrap path (modal connect) and steady-state poll path MUST converge on the same manifest invariants — easy to drift since they're in different files.
+
+These are exactly the things `syncEngine.ts` enforces by construction.
 
 ---
 
