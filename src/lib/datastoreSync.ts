@@ -5,7 +5,16 @@ import {
   type MemoryBqueryResponse,
   type MemoryItem,
 } from "./skillsApi";
-import { entityWriteFile, fsList, fsRead } from "./api";
+import {
+  datastoreListLocal,
+  datastoreStateLoad,
+  datastoreStateSave,
+  entityWriteFile,
+  fsList,
+  fsRead,
+  gitCommitPaths,
+  type KbStatePersisted,
+} from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
 
@@ -490,4 +499,253 @@ export async function pushAllToDatastores(args: {
   }
 
   return { pushed: totalPushed, failed: totalFailed };
+}
+
+// ---------------------------------------------------------------------------
+// Pull — 60s background poll for remote datastore changes.
+// Mirrors startKbSync/startFilestoreSync. Per-row diff via manifest:
+// remote.updatedAt vs manifest.remote_version + local mtime vs
+// manifest.pulled_at_mtime_ms. Conflict drops a `<key>.server.json` shadow
+// next to the local file so Claude or the user can merge.
+// ---------------------------------------------------------------------------
+
+export type DatastoreConflict = {
+  collectionName: string;
+  key: string;
+  reason: "local-and-remote-changed";
+};
+
+export type DatastoreSyncStatus = {
+  phase: "idle" | "resolving" | "pulling" | "ready" | "error";
+  collections: DataCollection[];
+  conflicts: DatastoreConflict[];
+  lastError: string | null;
+  lastPullAt: number | null;
+};
+
+let datastoreStatus: DatastoreSyncStatus = {
+  phase: "idle",
+  collections: [],
+  conflicts: [],
+  lastError: null,
+  lastPullAt: null,
+};
+const datastoreListeners = new Set<(s: DatastoreSyncStatus) => void>();
+
+export function subscribeDatastoreSync(
+  fn: (s: DatastoreSyncStatus) => void,
+): () => void {
+  datastoreListeners.add(fn);
+  fn(datastoreStatus);
+  return () => datastoreListeners.delete(fn);
+}
+
+function updateDatastoreStatus(patch: Partial<DatastoreSyncStatus>): void {
+  datastoreStatus = { ...datastoreStatus, ...patch };
+  for (const l of datastoreListeners) l(datastoreStatus);
+}
+
+function shadowName(key: string): string {
+  return `${key}.server.json`;
+}
+
+function manifestKey(collectionName: string, key: string): string {
+  return `${collectionName}/${key}`;
+}
+
+let datastorePollTimer: ReturnType<typeof setInterval> | null = null;
+const DATASTORE_POLL_INTERVAL_MS = 60_000;
+
+/**
+ * Run one pull pass across every openit-* datastore collection. Diffs each
+ * remote row against the local manifest + working tree; writes new/changed
+ * rows; drops conflict shadows for both-changed rows. Auto-commits the
+ * touched paths so `git status` stays clean and the Sync tab reflects the
+ * pull as a single `sync: pull @ <ts>` commit (matching KB/filestore).
+ */
+export async function pullDatastoresOnce(args: {
+  creds: PinkfishCreds;
+  repo: string;
+}): Promise<{ pulled: number; conflicts: DatastoreConflict[] }> {
+  const { creds, repo } = args;
+  updateDatastoreStatus({ phase: "pulling" });
+
+  let collections: DataCollection[];
+  try {
+    collections = await resolveProjectDatastores(creds);
+  } catch (e) {
+    updateDatastoreStatus({ phase: "error", lastError: String(e) });
+    return { pulled: 0, conflicts: [] };
+  }
+  updateDatastoreStatus({ collections });
+
+  const persisted: KbStatePersisted = await datastoreStateLoad(repo);
+  const conflicts: DatastoreConflict[] = [];
+  const touched: string[] = [];
+  let pulled = 0;
+
+  for (const col of collections) {
+    let remote: MemoryItem[];
+    try {
+      const resp = await fetchDatastoreItems(creds, col.id, 1000, 0);
+      remote = resp.items;
+    } catch (e) {
+      console.error(`[datastoreSync] list ${col.name} failed:`, e);
+      continue;
+    }
+
+    let local: { filename: string; mtime_ms: number | null }[];
+    try {
+      local = await datastoreListLocal(repo, col.name);
+    } catch {
+      local = [];
+    }
+    const localByName = new Map(local.map((f) => [f.filename, f]));
+
+    for (const r of remote) {
+      const key = (r.key ?? r.id ?? "").toString();
+      if (!key) continue;
+      const filename = `${key}.json`;
+      const mKey = manifestKey(col.name, key);
+      const tracked = persisted.files[mKey];
+      const localFile = localByName.get(filename);
+      const remoteVer = r.updatedAt ?? "";
+      const subdir = `databases/${col.name}`;
+
+      const writeRow = async () => {
+        const content = typeof r.content === "object"
+          ? JSON.stringify(r.content, null, 2)
+          : (r.content as unknown as string);
+        await entityWriteFile(repo, subdir, filename, content);
+        persisted.files[mKey] = {
+          remote_version: remoteVer,
+          pulled_at_mtime_ms: Date.now(),
+        };
+        touched.push(`${subdir}/${filename}`);
+        pulled += 1;
+      };
+
+      if (!tracked && !localFile) {
+        // New remote row — pull.
+        try {
+          await writeRow();
+        } catch (e) {
+          console.error(`[datastoreSync] write ${mKey} failed:`, e);
+        }
+        continue;
+      }
+
+      if (tracked && localFile) {
+        const remoteChanged = remoteVer !== "" && remoteVer !== tracked.remote_version;
+        const localChanged =
+          localFile.mtime_ms != null && localFile.mtime_ms > tracked.pulled_at_mtime_ms;
+
+        if (remoteChanged && localChanged) {
+          // Both moved — drop a shadow with the remote content for merge.
+          try {
+            const content = typeof r.content === "object"
+              ? JSON.stringify(r.content, null, 2)
+              : (r.content as unknown as string);
+            await entityWriteFile(repo, subdir, shadowName(key), content);
+            touched.push(`${subdir}/${shadowName(key)}`);
+          } catch (e) {
+            console.error(`[datastoreSync] shadow ${mKey} failed:`, e);
+          }
+          conflicts.push({
+            collectionName: col.name,
+            key,
+            reason: "local-and-remote-changed",
+          });
+          continue;
+        }
+        if (remoteChanged && !localChanged) {
+          try {
+            await writeRow();
+          } catch (e) {
+            console.error(`[datastoreSync] write ${mKey} failed:`, e);
+          }
+        }
+        // else: nothing to do.
+        continue;
+      }
+
+      // tracked but file missing locally → user/Claude deleted; leave alone.
+      // (push handles the delete on the next commit.)
+    }
+
+    // Detect server-side deletions: anything tracked for this collection
+    // that's NOT in the remote response — server deleted. We do NOT delete
+    // the local file (user might still want it); we just drop the manifest
+    // entry so a subsequent push doesn't try to re-create from stale state.
+    const remoteKeys = new Set(remote.map((r) => (r.key ?? r.id ?? "").toString()));
+    for (const mKey of Object.keys(persisted.files)) {
+      if (!mKey.startsWith(`${col.name}/`)) continue;
+      const key = mKey.slice(col.name.length + 1);
+      if (remoteKeys.has(key)) continue;
+      // Don't delete the local file (push semantics handle that). Just drop
+      // the manifest entry so the row is no longer "tracked".
+      delete persisted.files[mKey];
+    }
+  }
+
+  await datastoreStateSave(repo, persisted);
+
+  if (touched.length > 0) {
+    try {
+      const ts = new Date().toISOString();
+      await gitCommitPaths(repo, touched, `sync: pull @ ${ts}`);
+    } catch (e) {
+      console.warn("[datastoreSync] git commit after pull failed:", e);
+    }
+  }
+
+  updateDatastoreStatus({
+    phase: "ready",
+    conflicts,
+    lastPullAt: Date.now(),
+    lastError: null,
+  });
+
+  return { pulled, conflicts };
+}
+
+/**
+ * Begin background datastore sync — initial pull + 60s poll. Idempotent;
+ * subsequent calls clear and restart the timer.
+ */
+export async function startDatastoreSync(args: {
+  creds: PinkfishCreds;
+  repo: string;
+}): Promise<void> {
+  const { creds, repo } = args;
+  if (datastorePollTimer) {
+    clearInterval(datastorePollTimer);
+    datastorePollTimer = null;
+  }
+
+  updateDatastoreStatus({ phase: "resolving", lastError: null });
+
+  await pullDatastoresOnce({ creds, repo }).catch((e) => {
+    console.error("[datastoreSync] initial pull failed:", e);
+    updateDatastoreStatus({ phase: "error", lastError: String(e) });
+  });
+
+  datastorePollTimer = setInterval(() => {
+    pullDatastoresOnce({ creds, repo }).catch((e) =>
+      console.error("[datastoreSync] poll failed:", e),
+    );
+  }, DATASTORE_POLL_INTERVAL_MS);
+}
+
+export function stopDatastoreSync(): void {
+  if (datastorePollTimer) {
+    clearInterval(datastorePollTimer);
+    datastorePollTimer = null;
+  }
+  updateDatastoreStatus({
+    phase: "idle",
+    collections: [],
+    conflicts: [],
+    lastError: null,
+  });
 }

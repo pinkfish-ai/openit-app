@@ -346,6 +346,24 @@ export async function fsStoreStateSave(
   return invoke("fs_store_state_save", { repo, state });
 }
 
+export async function datastoreStateLoad(repo: string): Promise<KbStatePersisted> {
+  return invoke("datastore_state_load", { repo });
+}
+
+export async function datastoreStateSave(
+  repo: string,
+  state: KbStatePersisted,
+): Promise<void> {
+  return invoke("datastore_state_save", { repo, state });
+}
+
+export async function datastoreListLocal(
+  repo: string,
+  collectionName: string,
+): Promise<KbLocalFile[]> {
+  return invoke("datastore_list_local", { repo, collectionName });
+}
+
 export async function fsStoreDownloadToLocal(
   repo: string,
   filename: string,
