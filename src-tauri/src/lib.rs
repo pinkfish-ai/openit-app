@@ -1,5 +1,6 @@
 mod claude;
 mod cli;
+mod filestore;
 mod fs_tree;
 mod git_history;
 mod git_ops;
@@ -88,6 +89,8 @@ pub fn run() {
             kb::entity_clear_dir,
             skills::skills_fetch_manifest,
             skills::skills_fetch_file,
+            filestore::filestore_list_collections,
+            filestore::datastore_list_collections,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

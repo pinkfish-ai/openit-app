@@ -1,5 +1,4 @@
 import {
-  listCollections,
   createCollection,
   getCollection,
   listItems,
@@ -7,7 +6,7 @@ import {
   type MemoryBqueryResponse,
   type MemoryItem,
 } from "./skillsApi";
-import { entityWriteFile } from "./api";
+import { entityWriteFile, pinkfishMcpCall } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 
 const PREFIX = "openit-";
@@ -37,54 +36,49 @@ export async function resolveProjectDatastores(
   if (!token) throw new Error("not authenticated");
   const urls = derivedUrls(creds.tokenUrl);
 
-  const all = await listCollections(
-    urls.skillsBaseUrl,
-    token.accessToken,
-    "datastore",
-  );
-  let matching = all.filter((c) => c.name.startsWith(PREFIX));
+  try {
+    const result = (await pinkfishMcpCall({
+      accessToken: token.accessToken,
+      orgId: creds.orgId,
+      server: "knowledge-base",
+      tool: "knowledge-base_list_collections",
+      arguments: {},
+      baseUrl: urls.mcpBaseUrl,
+    })) as { collections?: DataCollection[] } | null;
 
-  if (matching.length === 0) {
-    console.log("[datastoreSync] no openit-* datastores found — creating defaults");
-    for (const def of DEFAULT_DATASTORES) {
-      const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
-        name: def.name,
-        type: "datastore",
-        isStructured: true,
-        templateId: def.templateId,
-        description: def.description,
-        createdBy: creds.orgId,
-        createdByName: "OpenIT",
-      });
-      matching.push(created);
-    }
-  }
+    const all = result?.collections ?? [];
+    let matching = all.filter((c: DataCollection) => c.name.startsWith(PREFIX));
 
-  // Ensure each collection has its schema populated. If a collection was
-  // returned from the list endpoint without schema details, fetch it individually.
-  const resolved: DataCollection[] = [];
-  for (const col of matching) {
-    if (!col.schema) {
-      try {
-        const full = await getCollection(
-          urls.skillsBaseUrl,
-          token.accessToken,
-          col.id,
-        );
-        resolved.push(full);
-      } catch (e) {
-        console.warn(
-          `[datastoreSync] failed to fetch schema for ${col.name}:`,
-          e,
-        );
-        resolved.push(col);
+    if (matching.length === 0) {
+      console.log("[datastoreSync] no openit-* datastores found — attempting to create defaults");
+      for (const def of DEFAULT_DATASTORES) {
+        try {
+          const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
+            name: def.name,
+            type: "datastore",
+            isStructured: true,
+            templateId: def.templateId,
+            description: def.description,
+            createdBy: creds.orgId,
+            createdByName: "OpenIT",
+          });
+          matching.push(created);
+        } catch (e) {
+          console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
+        }
       }
-    } else {
-      resolved.push(col);
+      // If creation failed, try to find existing collections by name
+      if (matching.length === 0) {
+        const all = result?.collections ?? [];
+        matching = all.filter((c: DataCollection) => DEFAULT_DATASTORES.some((d) => d.name === c.name));
+      }
     }
-  }
 
-  return resolved;
+    return matching;
+  } catch (error) {
+    console.error("[datastoreSync] resolveProjectDatastores failed:", error);
+    throw error;
+  }
 }
 
 /**

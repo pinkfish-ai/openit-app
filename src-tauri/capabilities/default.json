@@ -18,6 +18,10 @@
         { "url": "https://proxy-stage.pinkfish.ai/**" },
         { "url": "https://app-api.app.pinkfish.ai/**" },
         { "url": "https://app-api.app.pinkfish.dev/**" },
+        { "url": "https://app-api.dev*.pinkfish.dev/**" },
+        { "url": "https://dev*.pinkfish.dev/**" },
+        { "url": "https://staging.pinkfish.dev/**" },
+        { "url": "https://app.pinkfish.ai/**" },
         { "url": "https://*.firebasestorage.googleapis.com/**" },
         { "url": "https://view.officeapps.live.com/**" }
       ]

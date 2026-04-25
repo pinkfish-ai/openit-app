@@ -15,6 +15,8 @@ pub async fn filestore_list_collections(
         url.push_str(&format!("?type={}", ty));
     }
 
+    println!("[filestore] Fetching from: {}", url);
+
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
@@ -27,11 +29,48 @@ pub async fn filestore_list_collections(
         .await
         .map_err(|e| format!("Failed to fetch collections: {}", e))?;
 
-    if !resp.status().is_success() {
-        return Err(format!(
-            "Collection fetch failed with status: {}",
-            resp.status()
-        ));
+    let status = resp.status();
+    println!("[filestore] Response status: {}", status);
+
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        println!("[filestore] Error response body: {}", text);
+        return Err(format!("Collection fetch failed with status: {}", status));
+    }
+
+    resp.text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))
+}
+
+/// Fetch data collections (datastore) from the app-api URL.
+#[tauri::command]
+pub async fn datastore_list_collections(
+    app_api_url: String,
+    access_token: String,
+) -> Result<String, String> {
+    let env_root = extract_env_root(&app_api_url)?;
+    let url = format!(
+        "{}/datacollection/?type=datastore",
+        env_root.trim_end_matches('/')
+    );
+
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get(&url)
+        .bearer_auth(&access_token)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch collections: {}", e))?;
+
+    let status = resp.status();
+
+    if !status.is_success() {
+        return Err(format!("Collection fetch failed with status: {}", status));
     }
 
     resp.text()

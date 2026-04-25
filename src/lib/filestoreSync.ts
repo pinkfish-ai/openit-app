@@ -4,8 +4,9 @@ import {
   kbUploadFile,
   type KbStatePersisted,
 } from "./api";
-import { listCollections, createCollection } from "./skillsApi";
+import { createCollection, type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
+import { pinkfishMcpCall } from "./api";
 
 // These will be added to api.ts — importing ahead of time.
 // They invoke fs_store_init, fs_store_list_local, fs_store_state_load,
@@ -85,28 +86,64 @@ export async function resolveProjectFilestores(
 ): Promise<FilestoreCollection[]> {
   const token = getToken();
   if (!token) throw new Error("not authenticated");
-  const urls = derivedUrls(creds.tokenUrl);
 
-  const all = await listCollections(urls.skillsBaseUrl, token.accessToken, "filestorage");
+  const all = await listFilestoreCollections(creds);
   let matching = all
     .filter((c) => c.name.startsWith(PREFIX))
     .map((c) => ({ id: c.id, name: c.name, description: c.description }));
 
   if (matching.length === 0) {
-    console.log("[filestore] no openit-* filestores found — creating defaults");
+    console.log("[filestore] no openit-* filestores found — attempting to create defaults");
+    const urls = derivedUrls(creds.tokenUrl);
     for (const def of DEFAULT_FILESTORES) {
-      const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
-        name: def.name,
-        type: "filestorage",
-        description: def.description,
-        createdBy: creds.orgId,
-        createdByName: "OpenIT",
-      });
-      matching.push({ id: created.id, name: created.name, description: created.description });
+      try {
+        const created = await createCollection(urls.skillsBaseUrl, token.accessToken, {
+          name: def.name,
+          type: "filestorage",
+          description: def.description,
+          createdBy: creds.orgId,
+          createdByName: "OpenIT",
+        });
+        matching.push({ id: created.id, name: created.name, description: created.description });
+      } catch (e) {
+        console.warn(`[filestore] failed to create ${def.name}:`, e);
+      }
+    }
+    // If creation failed, try to find existing collections by name
+    if (matching.length === 0) {
+      const all = await listFilestoreCollections(creds);
+      matching = all
+        .filter((c) => DEFAULT_FILESTORES.some((d) => d.name === c.name))
+        .map((c) => ({ id: c.id, name: c.name, description: c.description }));
     }
   }
 
   return matching;
+}
+
+/**
+ * List filestore collections via MCP (same pattern as KB).
+ */
+async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataCollection[]> {
+  const token = getToken();
+  if (!token) throw new Error("not authenticated");
+  const urls = derivedUrls(creds.tokenUrl);
+
+  try {
+    const result = (await pinkfishMcpCall({
+      accessToken: token.accessToken,
+      orgId: creds.orgId,
+      server: "knowledge-base",
+      tool: "knowledge-base_list_collections",
+      arguments: {},
+      baseUrl: urls.mcpBaseUrl,
+    })) as { collections?: DataCollection[] } | null;
+
+    return result?.collections ?? [];
+  } catch (error) {
+    console.error("[filestore] Failed to list collections:", error);
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
