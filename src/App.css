@@ -43,9 +43,23 @@ body,
   color: var(--text-muted);
 }
 
+.app-header button {
+  margin-left: auto;
+}
+
 .app-title {
   font-weight: 600;
   color: var(--text);
+}
+
+.app-title::after {
+  content: " — ";
+  color: var(--text-faint);
+}
+
+.app-tagline {
+  color: var(--text-faint);
+  font-size: 13px;
 }
 
 .app-repo {

@@ -161,7 +161,7 @@ function App() {
     <main className="app">
       <header className="app-header">
         <span className="app-title">OpenIT</span>
-        <span className="app-repo">{repo ?? "no project folder"}</span>
+        <span className="app-tagline">get IT done</span>
         <button
           className={`icon-btn ${connected ? "key-set" : ""}`}
           onClick={() => setBypassOnboarding(false)}
