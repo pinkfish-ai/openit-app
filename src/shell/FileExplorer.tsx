@@ -29,6 +29,22 @@ function gitStatusForPath(rel: string, rows: GitFileStatus[]): GitFileStatus | u
   return rows.find((r) => rel.startsWith(`${r.path}/`));
 }
 
+/**
+ * Display-only name transform. The actual on-disk folder name is the
+ * collection's full Pinkfish name (e.g. `openit-people-653713545258`),
+ * but in the tree we strip the `openit-` prefix and the trailing
+ * `-<orgId>` so users see just `people` / `tickets`. Only applies to
+ * top-level `databases/openit-*` directories — leaves filenames inside
+ * them untouched.
+ */
+function prettyName(name: string, rel: string): string {
+  if (rel.match(/^databases\/openit-[^/]+$/)) {
+    const stripped = name.replace(/^openit-/, "").replace(/-\d+$/, "");
+    if (stripped) return stripped;
+  }
+  return name;
+}
+
 function fileColorClass(n: FileNode, repo: string, gitRows: GitFileStatus[]): string {
   if (n.is_dir) return "";
   const rel = relPath(repo, n.path);
@@ -464,7 +480,7 @@ export function FileExplorer({
               }}
             >
               {n.is_dir ? (isCollapsedRow ? "▸ " : "▾ ") : ""}
-              <span className="tree-item-name">{n.name}</span>
+              <span className="tree-item-name">{prettyName(n.name, rel)}</span>
               {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
               {isDeletable(n) && (
                 <button
