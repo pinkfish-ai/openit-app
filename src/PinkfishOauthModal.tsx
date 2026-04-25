@@ -116,16 +116,12 @@ export function PinkfishOauthModal({
             const datastores = await resolveProjectDatastores(creds, addLog);
             const itemsByCollection: Record<string, { items: any[]; hasMore: boolean }> = {};
             let totalItems = 0;
-            let schemaFiles = 0;
             for (const ds of datastores) {
               const data = await fetchDatastoreItems(creds, ds.id);
               itemsByCollection[ds.id] = data;
               totalItems += data.items.length;
-              if (ds.schema) schemaFiles += 1;
             }
             const { written, unchanged } = await syncDatastoresToDisk(repo, datastores, itemsByCollection);
-            const totalFiles = totalItems + schemaFiles;
-            void totalFiles;
             addLog(`    ${datastores.length} collection(s), ${totalItems} item(s) — ${written} file(s) written, ${unchanged} unchanged`);
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
