@@ -41,7 +41,7 @@ describe("ChatPane", () => {
   });
 
   it("spawns a pty session on mount", async () => {
-    render(<ChatPane />);
+    render(<ChatPane cwd="/tmp/test-repo" />);
     await new Promise((r) => setTimeout(r, 0));
     expect(ptyMock.ptySpawn).toHaveBeenCalledTimes(1);
     const args = ptyMock.ptySpawn.mock.calls[0][0];
@@ -51,14 +51,14 @@ describe("ChatPane", () => {
   });
 
   it("subscribes to pty data + exit events", async () => {
-    render(<ChatPane />);
+    render(<ChatPane cwd="/tmp/test-repo" />);
     await new Promise((r) => setTimeout(r, 0));
     expect(ptyMock.onPtyData).toHaveBeenCalledWith(sessionIdMatcher, expect.any(Function));
     expect(ptyMock.onPtyExit).toHaveBeenCalledWith(sessionIdMatcher, expect.any(Function));
   });
 
   it("forwards window resize to ptyResize", async () => {
-    render(<ChatPane />);
+    render(<ChatPane cwd="/tmp/test-repo" />);
     await new Promise((r) => setTimeout(r, 0));
     ptyMock.ptyResize.mockClear();
     window.dispatchEvent(new Event("resize"));
@@ -71,7 +71,7 @@ describe("ChatPane", () => {
   });
 
   it("kills the pty session on unmount", async () => {
-    const { unmount } = render(<ChatPane />);
+    const { unmount } = render(<ChatPane cwd="/tmp/test-repo" />);
     await new Promise((r) => setTimeout(r, 0));
     unmount();
     expect(ptyMock.ptyKill).toHaveBeenCalledWith(sessionIdMatcher);

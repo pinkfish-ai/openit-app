@@ -11,11 +11,12 @@ function shellEscape(p: string): string {
   return `'${p.replace(/'/g, "'\\''")}'`;
 }
 
-export function ChatPane() {
+export function ChatPane({ cwd }: { cwd: string | null }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
+    if (!cwd) return; // Don't spawn until we have a project folder
     const SESSION_ID = `main-${crypto.randomUUID()}`;
 
     const term = new Terminal({
@@ -78,7 +79,7 @@ export function ChatPane() {
     (async () => {
       const { cols, rows } = term;
       try {
-        await ptySpawn({ sessionId: SESSION_ID, cols, rows });
+        await ptySpawn({ sessionId: SESSION_ID, cols, rows, cwd });
       } catch (e) {
         term.writeln(`\x1b[31mfailed to spawn pty: ${String(e)}\x1b[0m`);
         return;
@@ -155,7 +156,15 @@ export function ChatPane() {
       ptyKill(SESSION_ID).catch((e) => console.error("pty bridge error:", e));
       term.dispose();
     };
-  }, []);
+  }, [cwd]);
+
+  if (!cwd) {
+    return (
+      <div className="chat-empty">
+        Open a project folder to start a Claude Code session.
+      </div>
+    );
+  }
 
   return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
 }

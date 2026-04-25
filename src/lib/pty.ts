@@ -8,7 +8,7 @@ export async function ptySpawn(args: {
   sessionId: string;
   command?: string | null;
   args?: string[];
-  cwd?: string | null;
+  cwd: string | null;
   cols: number;
   rows: number;
 }): Promise<void> {
