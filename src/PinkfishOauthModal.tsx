@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { pinkfishListOrgs } from "./lib/api";
+import { pinkfishListOrgs, projectBootstrap } from "./lib/api";
 import {
   DEFAULT_TOKEN_URL,
   derivedUrls,
@@ -9,10 +9,10 @@ import {
   saveCreds,
   type PinkfishCreds,
 } from "./lib/pinkfishAuth";
-import { resolveProjectDatastores } from "./lib/datastoreSync";
+import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk } from "./lib/datastoreSync";
 import { resolveProjectAgents } from "./lib/agentSync";
 import { resolveProjectWorkflows } from "./lib/workflowSync";
-import { resolveProjectFilestores } from "./lib/filestoreSync";
+import { resolveProjectFilestores, startFilestoreSync } from "./lib/filestoreSync";
 
 const SIGNUP_URL = "https://app.pinkfish.ai/coworker/public";
 
@@ -64,49 +64,79 @@ export function PinkfishOauthModal({
       await saveCreds(creds);
       setSuccess(`Connected${orgName ? ` to ${orgName}` : ""}.`);
       
-      // Start syncing collections
+      // Start syncing all assets
       setSyncing(true);
       setSyncLogs([]);
       addLog("----BEGIN SYNC----");
-      addLog("Syncing datastores, agents, and workflows...");
-      
+      addLog("Syncing all assets...");
+
       let syncErrors = false;
-      
-      // Set a 30-second timeout for the entire sync process
-      const syncTimeoutMs = 30_000;
+      let repo = "";
+
+      // Set a 60-second timeout for the entire sync process
+      const syncTimeoutMs = 60_000;
       const timeoutHandle = setTimeout(() => {
-        addLog("[sync] ✗ Sync timed out after 30 seconds");
+        addLog("[sync] ✗ Sync timed out after 60 seconds");
         setSyncing(false);
         setError("Sync timed out. Check your connection and try again.");
         setBusy(false);
       }, syncTimeoutMs);
-      
+
       try {
-        addLog("[sync] Resolving datastores...");
+        // Bootstrap project to create repo directory
+        addLog("[sync] Creating project directory...");
         try {
-          await resolveProjectDatastores(creds);
-          addLog("[sync] ✓ Datastores synced");
+          const bootstrap = await projectBootstrap({
+            orgName: orgName || creds.orgId,
+            orgId: creds.orgId,
+          });
+          repo = bootstrap.path;
+          addLog(`[sync] ✓ Project directory created at ${repo}`);
         } catch (e) {
-          addLog(`[sync] ✗ Datastore sync failed: ${e}`);
+          addLog(`[sync] ✗ Project bootstrap failed: ${e}`);
           syncErrors = true;
         }
-        
+
+        if (!syncErrors) {
+          addLog("[sync] Resolving and syncing datastores...");
+          try {
+            const datastores = await resolveProjectDatastores(creds);
+            addLog(`[sync] Found ${datastores.length} datastores`);
+
+            // Fetch and sync data for each datastore
+            const itemsByCollection: Record<string, { items: any[]; hasMore: boolean }> = {};
+            for (const ds of datastores) {
+              addLog(`[sync] Fetching items for ${ds.name}...`);
+              const data = await fetchDatastoreItems(creds, ds.id);
+              itemsByCollection[ds.id] = data;
+              addLog(`[sync] Fetched ${data.items.length} items from ${ds.name}`);
+            }
+
+            // Write to disk
+            await syncDatastoresToDisk(repo, datastores, itemsByCollection);
+            addLog("[sync] ✓ Datastores synced to disk");
+          } catch (e) {
+            addLog(`[sync] ✗ Datastore sync failed: ${e}`);
+            syncErrors = true;
+          }
+        }
+
         if (!syncErrors) {
           addLog("[sync] Resolving agents...");
           try {
             await resolveProjectAgents(creds);
-            addLog("[sync] ✓ Agents synced");
+            addLog("[sync] ✓ Agents resolved");
           } catch (e) {
             addLog(`[sync] ✗ Agent sync failed: ${e}`);
             syncErrors = true;
           }
         }
-        
+
         if (!syncErrors) {
           addLog("[sync] Resolving workflows...");
           try {
             await resolveProjectWorkflows(creds);
-            addLog("[sync] ✓ Workflows synced");
+            addLog("[sync] ✓ Workflows resolved");
           } catch (e) {
             addLog(`[sync] ✗ Workflow sync failed: ${e}`);
             syncErrors = true;
@@ -114,10 +144,10 @@ export function PinkfishOauthModal({
         }
 
         if (!syncErrors) {
-          addLog("[sync] Resolving filestore...");
+          addLog("[sync] Syncing filestore files...");
           try {
-            await resolveProjectFilestores(creds);
-            addLog("[sync] ✓ Filestore synced");
+            await startFilestoreSync({ creds, repo });
+            addLog("[sync] ✓ Filestore files synced to disk");
           } catch (e) {
             addLog(`[sync] ✗ Filestore sync failed: ${e}`);
             syncErrors = true;
