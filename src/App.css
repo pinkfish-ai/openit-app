@@ -169,8 +169,56 @@ body,
   cursor: pointer;
 }
 
+.unsynced-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 8px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.explorer.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -8px;
+  background: var(--accent-soft);
+}
+
 .tree-item.dir:hover {
   background: var(--surface);
+}
+
+/* KB conflict banner */
+.kb-conflicts {
+  border-top: 1px solid #e6c0c0;
+  background: #fbeaea;
+  color: #8a2c2c;
+  padding: 10px 12px;
+  font-size: 11px;
+}
+
+.kb-conflicts-header {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.kb-conflicts ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.kb-conflicts li {
+  margin: 4px 0;
+}
+
+.kb-conflicts code {
+  font-family: Menlo, monospace;
+  background: rgba(138, 44, 44, 0.1);
+  padding: 1px 4px;
+  border-radius: 3px;
 }
 
 /* Viewer */

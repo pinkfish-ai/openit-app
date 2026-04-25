@@ -74,6 +74,22 @@ pub fn fs_read(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+/// Read a file as raw bytes. Used by the viewer to preview images and
+/// other non-UTF8 content via data URLs.
+#[tauri::command]
+pub fn fs_read_bytes(path: String) -> Result<Vec<u8>, String> {
+    const MAX_BYTES: u64 = 5_000_000;
+    let metadata = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if metadata.len() > MAX_BYTES {
+        return Err(format!(
+            "file is too large to preview ({} bytes; max {})",
+            metadata.len(),
+            MAX_BYTES
+        ));
+    }
+    std::fs::read(&path).map_err(|e| e.to_string())
+}
+
 fn is_skipped(p: &Path, root: &Path) -> bool {
     let rel = match p.strip_prefix(root) {
         Ok(r) => r,

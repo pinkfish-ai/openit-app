@@ -9,7 +9,23 @@ fn entry(slot: &str) -> Result<Entry, String> {
 #[tauri::command]
 pub fn keychain_set(slot: String, value: String) -> Result<(), String> {
     let e = entry(&slot)?;
-    e.set_password(&value).map_err(|e| e.to_string())
+    e.set_password(&value).map_err(|e| e.to_string())?;
+    eprintln!("[keychain] set ok: slot={} len={}", slot, value.len());
+    Ok(())
+}
+
+/// Self-test: write then read back a value under a probe slot. Returns
+/// whether the round-trip succeeded.
+#[tauri::command]
+pub fn keychain_probe() -> Result<bool, String> {
+    let slot = "openit.probe";
+    let probe_value = "probe-12345";
+    let e = entry(slot)?;
+    e.set_password(probe_value)
+        .map_err(|e| format!("set: {}", e))?;
+    let got = e.get_password().map_err(|e| format!("get: {}", e))?;
+    let _ = e.delete_credential();
+    Ok(got == probe_value)
 }
 
 #[tauri::command]

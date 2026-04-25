@@ -11,7 +11,9 @@ const REFRESH_BUFFER_SECONDS = 60;
 export type PinkfishUrls = {
   tokenUrl: string;
   accountUrl: string; // mcp.<env>.pinkfish.<tld>/pf-account
+  mcpBaseUrl: string; // https://mcp.<env>.pinkfish.<tld>
   connectionsUrl: string; // proxy(-stage).pinkfish.ai/manage/user-connections?format=light
+  skillsBaseUrl: string; // skills(-stage).pinkfish.ai — direct REST API for file storage
 };
 
 /// Derive related Pinkfish URLs from the user-configured token URL. All
@@ -31,10 +33,13 @@ export function derivedUrls(tokenUrl: string): PinkfishUrls {
   const mcpHost = host.replace(/^app-api\./, "mcp.");
   const isDev = host.endsWith(".pinkfish.dev") || /\.dev\d/i.test(host);
   const proxyHost = isDev ? "proxy-stage.pinkfish.ai" : "proxy.pinkfish.ai";
+  const skillsHost = isDev ? "skills-stage.pinkfish.ai" : "skills.pinkfish.ai";
   return {
     tokenUrl,
     accountUrl: `${protocol}//${mcpHost}/pf-account`,
+    mcpBaseUrl: `${protocol}//${mcpHost}`,
     connectionsUrl: `https://${proxyHost}/manage/user-connections?format=light`,
+    skillsBaseUrl: `https://${skillsHost}`,
   };
 }
 
@@ -80,17 +85,35 @@ export async function loadCreds(): Promise<PinkfishCreds | null> {
     keychainGet(SLOT_ORG_ID),
     keychainGet(SLOT_TOKEN_URL),
   ]);
+  console.log("[auth] loadCreds slots:", {
+    client_id: !!clientId,
+    client_secret: !!clientSecret,
+    org_id: !!orgId,
+    token_url: !!tokenUrl,
+  });
   if (!clientId || !clientSecret || !orgId) return null;
   return { clientId, clientSecret, orgId, tokenUrl: tokenUrl ?? DEFAULT_TOKEN_URL };
 }
 
 export async function saveCreds(creds: PinkfishCreds): Promise<void> {
-  await Promise.all([
-    keychainSet(SLOT_CLIENT_ID, creds.clientId),
-    keychainSet(SLOT_CLIENT_SECRET, creds.clientSecret),
-    keychainSet(SLOT_ORG_ID, creds.orgId),
-    keychainSet(SLOT_TOKEN_URL, creds.tokenUrl || DEFAULT_TOKEN_URL),
-  ]);
+  console.log("[auth] saveCreds called with", {
+    client_id_len: creds.clientId.length,
+    client_secret_len: creds.clientSecret.length,
+    org_id_len: creds.orgId.length,
+    token_url_len: creds.tokenUrl.length,
+  });
+  try {
+    await Promise.all([
+      keychainSet(SLOT_CLIENT_ID, creds.clientId),
+      keychainSet(SLOT_CLIENT_SECRET, creds.clientSecret),
+      keychainSet(SLOT_ORG_ID, creds.orgId),
+      keychainSet(SLOT_TOKEN_URL, creds.tokenUrl || DEFAULT_TOKEN_URL),
+    ]);
+    console.log("[auth] saveCreds wrote all 4 slots");
+  } catch (e) {
+    console.error("[auth] saveCreds threw:", e);
+    throw e;
+  }
 }
 
 export async function clearCreds(): Promise<void> {

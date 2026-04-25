@@ -4,6 +4,66 @@ pub const DEFAULT_TOKEN_URL: &str = "https://app-api.app.pinkfish.ai/oauth/token
 pub const DEFAULT_ACCOUNT_URL: &str = "https://mcp.app.pinkfish.ai/pf-account";
 pub const DEFAULT_CONNECTIONS_URL: &str =
     "https://proxy.pinkfish.ai/manage/user-connections?format=light";
+pub const DEFAULT_MCP_BASE_URL: &str = "https://mcp.app.pinkfish.ai";
+
+/// Make a JSON-RPC `tools/call` against any Pinkfish MCP endpoint. The
+/// server is the leaf path (e.g. "knowledge-base", "pf-account"); the
+/// helper appends it to `base_url` and wraps the JSON-RPC envelope. Adds
+/// the bearer token + X-Selected-Org header. Returns the parsed response
+/// (the entire JSON-RPC reply, so callers can pluck `.result.structuredContent`
+/// etc. as needed).
+#[tauri::command]
+pub async fn pinkfish_mcp_call(
+    access_token: String,
+    org_id: String,
+    server: String,
+    tool: String,
+    arguments: serde_json::Value,
+    base_url: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base = match base_url {
+        Some(u) if !u.trim().is_empty() => u,
+        _ => DEFAULT_MCP_BASE_URL.to_string(),
+    };
+    let url = format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        server.trim_start_matches('/')
+    );
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": tool,
+            "arguments": arguments,
+        }
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .post(&url)
+        .bearer_auth(&access_token)
+        .header("X-Selected-Org", &org_id)
+        .header("Accept", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("network error: {}", e))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status, text));
+    }
+    serde_json::from_str::<serde_json::Value>(&text)
+        .map_err(|e| format!("could not parse response: {} — body: {}", e, text))
+}
 
 #[derive(Deserialize)]
 struct TokenResponse {
