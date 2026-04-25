@@ -479,6 +479,23 @@ fn fs_state_path(repo: &str) -> PathBuf {
     Path::new(repo).join(FS_STATE_FILE)
 }
 
+fn safe_fs_path(repo: &str, filename: &str) -> Result<PathBuf, String> {
+    if filename.is_empty() {
+        return Err("filename is empty".into());
+    }
+    if filename.contains('/') || filename.contains('\\') {
+        return Err(format!("filename must not contain path separators: {}", filename));
+    }
+    let as_path = Path::new(filename);
+    if as_path.is_absolute() || as_path.components().count() != 1 {
+        return Err(format!("invalid filename: {}", filename));
+    }
+    if filename == "." || filename == ".." {
+        return Err(format!("invalid filename: {}", filename));
+    }
+    Ok(fs_dir(repo).join(filename))
+}
+
 #[tauri::command]
 pub fn fs_store_init(repo: String) -> Result<String, String> {
     let dir = fs_dir(&repo);
@@ -565,6 +582,113 @@ pub fn fs_store_state_save(repo: String, state: KbState) -> Result<(), String> {
     }
     let json = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
     fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn fs_store_download_to_local(
+    repo: String,
+    filename: String,
+    url: String,
+) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("network error: {}", e))?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(format!(
+            "HTTP {}: {}",
+            status,
+            resp.text().await.unwrap_or_default()
+        ));
+    }
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+
+    let path = safe_fs_path(&repo, &filename)?;
+    ensure_dir(&fs_dir(&repo))?;
+    fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn fs_store_upload_file(
+    repo: String,
+    filename: String,
+    collection_id: String,
+    skills_base_url: String,
+    access_token: String,
+) -> Result<KbUploadResult, String> {
+    let path = safe_fs_path(&repo, &filename)?;
+    if !path.exists() {
+        return Err(format!("file not found: {}", path.display()));
+    }
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+
+    let url = format!(
+        "{}/filestorage/items/upload?collectionId={}",
+        skills_base_url.trim_end_matches('/'),
+        urlencode(&collection_id)
+    );
+
+    let mime = mime_for(&filename);
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name(filename.clone())
+        .mime_str(&mime)
+        .map_err(|e| e.to_string())?;
+    let form = reqwest::multipart::Form::new()
+        .part("file", part)
+        .text("metadata", "{}");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .post(&url)
+        .header("Auth-Token", format!("Bearer {}", access_token))
+        .header("Accept", "*/*")
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("network error: {}", e))?;
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status, text));
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("could not parse upload response: {} — body: {}", e, text))?;
+
+    Ok(KbUploadResult {
+        id: parsed
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        filename: parsed
+            .get("metadata")
+            .and_then(|m| m.get("filename"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(filename.as_str())
+            .to_string(),
+        file_url: parsed
+            .get("file_url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        file_size: parsed.get("file_size").and_then(|v| v.as_u64()),
+        mime_type: parsed
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    })
 }
 
 // ---------------------------------------------------------------------------

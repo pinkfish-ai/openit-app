@@ -85,6 +85,8 @@ pub fn run() {
             kb::fs_store_write_file_bytes,
             kb::fs_store_state_load,
             kb::fs_store_state_save,
+            kb::fs_store_download_to_local,
+            kb::fs_store_upload_file,
             kb::entity_write_file,
             kb::entity_clear_dir,
             skills::skills_fetch_manifest,
