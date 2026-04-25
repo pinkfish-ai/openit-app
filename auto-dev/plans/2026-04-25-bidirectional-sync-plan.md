@@ -1202,3 +1202,19 @@ Phases 1-4 are fully unblocked. Phase 5 is unblocked via REST per the 2026-04-25
 | Initial plan had multiple architectural directions (manifest-vs-git, bash-vs-Node, in-app-vs-script). Resolved through prior discussion to one path; review confirms no remaining ambiguity. | (resolved before review) |
 
 No `incoherent` findings. No `systematic` findings — the chosen patterns match existing project conventions (scripts in plugin, REST-via-fetch, Tauri Rust commands, git for state).
+
+---
+
+## BugBot Review Log
+
+### Iteration 1 (2026-04-25, PR #9 — `feat/datastore-pull-poll`)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Shadow files pushed to remote as regular items | High | Fixed | `57a90f3` |
+| 2 | No concurrency guard allows overlapping pull passes | Medium | Fixed | `d252255` |
+| 3 | Server-deletion logic uses incomplete paginated response as authoritative | High | Fixed | `a7e148e` |
+| 4 | Conflict shadow rewritten unconditionally every poll cycle | Medium | Fixed | `3185e51` |
+| 5 | Datastore manifest not added to gitignore defaults | Medium | Fixed | `5e80b6a` |
+
+All findings real, all fixed in iteration 1. Replies posted on each thread; threads resolved.
