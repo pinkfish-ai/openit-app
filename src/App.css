@@ -234,6 +234,58 @@ body,
   border-color: var(--accent);
 }
 
+.explorer-skills-section {
+  border-bottom: 1px solid var(--border);
+  padding: 4px 0;
+}
+
+.explorer-skills-header {
+  padding: 4px 8px;
+}
+
+.explorer-skills-toggle {
+  background: transparent;
+  border: none;
+  color: var(--link);
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 2px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.explorer-skills-toggle:hover {
+  background: var(--accent-soft);
+  border-radius: 4px;
+}
+
+.explorer-skills-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.explorer-skill-item {
+  padding: 0;
+  margin: 0;
+}
+
+.explorer-skill-button {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px 20px;
+  text-align: left;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.explorer-skill-button:hover {
+  background: var(--accent-soft);
+}
+
 .tree {
   list-style: none;
   margin: 0;

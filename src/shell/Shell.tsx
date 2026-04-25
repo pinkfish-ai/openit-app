@@ -47,7 +47,7 @@ export function Shell({
     if (repo && !source) {
       const welcomePath = `${repo}/_welcome.md`;
       console.log("[shell] opening welcome on first load:", welcomePath);
-      resolvePathToSource(welcomePath)
+      resolvePathToSource(welcomePath, repo)
         .then((s) => {
           console.log("[shell] welcome resolved:", s);
           setSource(s);
