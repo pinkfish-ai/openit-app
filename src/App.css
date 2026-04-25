@@ -158,6 +158,36 @@ body,
   vertical-align: 1px;
 }
 
+.left-tab-pull-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.1s, transform 0.1s;
+}
+
+.left-tab-pull-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.left-tab-pull-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.left-tab-pull-btn.is-pulling {
+  animation: tab-pull-spin 0.9s linear infinite;
+}
+
+@keyframes tab-pull-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .left-tab-panel {
   flex: 1;
   min-height: 0;

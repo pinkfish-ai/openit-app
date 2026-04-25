@@ -5,8 +5,15 @@ import {
   buildKbConflictPrompt,
   getSyncStatus,
   kbHasServerShadowFiles,
+  pullNow,
   subscribeSync,
 } from "../lib/kbSync";
+import {
+  getFilestoreSyncStatus,
+  pullOnce as filestorePullOnce,
+} from "../lib/filestoreSync";
+import { pullDatastoresOnce } from "../lib/datastoreSync";
+import { loadCreds } from "../lib/pinkfishAuth";
 import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
 import { ChatPane } from "./ChatPane";
 import { FileExplorer } from "./FileExplorer";
@@ -36,7 +43,45 @@ export function Shell({
   const [leftTab, setLeftTab] = useState<LeftTab>("files");
   const [fsTick, setFsTick] = useState(0);
   const [changeCount, setChangeCount] = useState(0);
+  const [pulling, setPulling] = useState(false);
   const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
+
+  const handleManualPull = useCallback(async () => {
+    if (!repo || pulling) return;
+    setPulling(true);
+    try {
+      const creds = await loadCreds().catch(() => null);
+      if (!creds) return;
+      // Run all three pulls in parallel; each catches its own errors so a
+      // single-entity failure doesn't block the others.
+      const kbStatus = getSyncStatus();
+      const tasks: Promise<unknown>[] = [];
+      if (kbStatus.collection) {
+        tasks.push(
+          pullNow({ creds, repo, collection: kbStatus.collection }).catch((e) =>
+            console.error("[manual pull] kb failed:", e),
+          ),
+        );
+      }
+      const fsCollections = getFilestoreSyncStatus().collections;
+      for (const c of fsCollections) {
+        tasks.push(
+          filestorePullOnce({ creds, repo, collection: c }).catch((e) =>
+            console.error(`[manual pull] filestore (${c.name}) failed:`, e),
+          ),
+        );
+      }
+      tasks.push(
+        pullDatastoresOnce({ creds, repo }).catch((e) =>
+          console.error("[manual pull] datastore failed:", e),
+        ),
+      );
+      await Promise.all(tasks);
+      bumpFs();
+    } finally {
+      setPulling(false);
+    }
+  }, [repo, pulling, bumpFs]);
 
   useEffect(() => {
     stateLoad().then(setState).catch(console.error);
@@ -155,6 +200,16 @@ export function Shell({
                     {changeCount}
                   </span>
                 )}
+              </button>
+              <button
+                type="button"
+                className={`left-tab-pull-btn${pulling ? " is-pulling" : ""}`}
+                onClick={handleManualPull}
+                disabled={!repo || pulling}
+                aria-label="Pull from Pinkfish now"
+                title={pulling ? "Pulling…" : "Pull from Pinkfish"}
+              >
+                {pulling ? "⟳" : "↓"}
               </button>
             </div>
             {/* Keep both panels mounted so typed-but-uncommitted state
