@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { claudeDetect, pinkfishListConnections, type UserConnection } from "./lib/api";
 import { PinkfishOauthModal } from "./PinkfishOauthModal";
+import { stopFilestoreSync } from "./lib/filestoreSync";
+import { stopKbSync } from "./lib/kbSync";
 import {
   DEFAULT_TOKEN_URL,
   derivedUrls,
@@ -136,6 +138,14 @@ export function Onboarding({
       unsub();
     };
   }, [refreshChat]);
+
+  // Stop background syncs while the auth modal is open
+  useEffect(() => {
+    if (authOpen) {
+      stopKbSync();
+      stopFilestoreSync();
+    }
+  }, [authOpen]);
 
   const claudeReady = typeof claudePath === "string" && claudePath !== null;
   const canContinue = pinkfishConnected;
