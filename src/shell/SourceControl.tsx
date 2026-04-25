@@ -9,7 +9,6 @@ import {
   gitLog,
   gitStage,
   gitStatusShort,
-  gitUnstage,
   type GitCommit,
   type GitFileStatus,
 } from "../lib/api";
@@ -166,6 +165,32 @@ async function pushOnCommit(
   onLine("▸ sync: done");
 }
 
+/**
+ * Auto-derived commit subject so the user can just click Commit without
+ * typing. One-liner that names what changed; the user can override by
+ * typing in the input.
+ */
+function defaultCommitMessage(files: GitFileStatus[]): string {
+  if (files.length === 0) return "";
+  const verbFor = (status: string) => {
+    if (status === "?" || status === "A") return "add";
+    if (status === "D") return "delete";
+    return "update";
+  };
+  if (files.length === 1) {
+    const f = files[0];
+    return `${verbFor(f.status)} ${f.path}`;
+  }
+  // Mixed: pick the dominant verb based on majority status.
+  const counts = files.reduce<Record<string, number>>((acc, f) => {
+    const v = verbFor(f.status);
+    acc[v] = (acc[v] ?? 0) + 1;
+    return acc;
+  }, {});
+  const verb = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+  return `${verb} ${files.length} files`;
+}
+
 function relativeTime(dateStr: string): string {
   const now = Date.now();
   const then = new Date(dateStr).getTime();
@@ -213,21 +238,6 @@ export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Prop
   const staged = files.filter((f) => f.staged);
   const unstaged = files.filter((f) => !f.staged);
 
-  const handleStage = async (paths: string[]) => {
-    if (!repo) return;
-    await gitStage(repo, paths);
-    refresh();
-  };
-
-  const handleUnstage = async (paths: string[]) => {
-    if (!repo) return;
-    await gitUnstage(repo, paths);
-    refresh();
-  };
-
-  const handleStageAll = () => handleStage(unstaged.map((f) => f.path));
-  const handleUnstageAll = () => handleUnstage(staged.map((f) => f.path));
-
   const handleDiscard = async (paths: string[]) => {
     if (!repo) return;
     try {
@@ -239,14 +249,20 @@ export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Prop
     onFsChange?.();
   };
 
-  const handleDiscardAll = () => handleDiscard(unstaged.map((f) => f.path));
-
   const handleCommit = async () => {
-    if (!repo || !commitMsg.trim() || staged.length === 0) return;
+    if (!repo) return;
+    if (staged.length === 0 && unstaged.length === 0) return;
     setCommitting(true);
     setError(null);
     try {
-      const created = await gitCommitStaged(repo, commitMsg.trim());
+      // Auto-stage everything — no separate stage step in the UI.
+      if (unstaged.length > 0) {
+        await gitStage(repo, unstaged.map((f) => f.path));
+      }
+      // Empty input → fall back to an auto-derived subject so the user
+      // can just click Commit without typing.
+      const msg = commitMsg.trim() || defaultCommitMessage(files);
+      const created = await gitCommitStaged(repo, msg);
       if (!created) {
         setError("Nothing to commit");
         return;
@@ -265,10 +281,14 @@ export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Prop
   };
 
   const handleGenerate = async () => {
-    if (!repo || generating || staged.length === 0) return;
+    if (!repo || generating || files.length === 0) return;
     setGenerating(true);
     setError(null);
     try {
+      // Sparkle reads the diff; auto-stage so it sees the user's actual changes.
+      if (unstaged.length > 0) {
+        await gitStage(repo, unstaged.map((f) => f.path));
+      }
       const subject = await claudeGenerateCommitMessage(repo);
       setCommitMsg(subject);
     } catch (e) {
@@ -298,7 +318,13 @@ export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Prop
       <div className="sc-commit-box">
         <input
           className="sc-commit-input"
-          placeholder={generating ? "Generating commit message…" : "Commit message"}
+          placeholder={
+            generating
+              ? "Generating commit message…"
+              : files.length > 0
+              ? defaultCommitMessage(files)
+              : "Commit message"
+          }
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
           onKeyDown={(e) => {
@@ -314,12 +340,12 @@ export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Prop
             type="button"
             className={`sc-sparkle-btn${generating ? " is-generating" : ""}`}
             onClick={handleGenerate}
-            disabled={generating || committing || staged.length === 0}
+            disabled={generating || committing || files.length === 0}
             aria-busy={generating}
             aria-label="Generate commit message with Claude"
             title={
-              staged.length === 0
-                ? "Stage files first"
+              files.length === 0
+                ? "No changes"
                 : generating
                 ? "Asking Claude…"
                 : "Generate commit message with Claude"
@@ -332,51 +358,33 @@ export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Prop
           type="button"
           className="sc-commit-btn"
           onClick={handleCommit}
-          disabled={committing || generating || !commitMsg.trim() || staged.length === 0}
-          title={staged.length === 0 ? "Stage files first" : "Commit staged changes"}
+          disabled={committing || generating || files.length === 0}
+          title={files.length === 0 ? "No changes" : "Commit and push to Pinkfish"}
         >
           {committing ? "…" : "Commit"}
         </button>
       </div>
       {error && <div className="sc-error">{error}</div>}
 
-      {/* Staged + Changes — tight VS Code-style layout, no dividers */}
+      {/* Single Changes list — Commit auto-stages everything. */}
       <div className="sc-changes">
-        {staged.length > 0 && (
-          <>
-            <div className="sc-group-header">
-              <span className="sc-group-label">Staged Changes</span>
-              <span className="sc-count">{staged.length}</span>
-              <button type="button" className="sc-hdr-action" onClick={handleUnstageAll} title="Unstage all">−</button>
-            </div>
-            <ul className="sc-file-list">
-              {staged.map((f) => (
-                <li key={`s-${f.path}`} className="sc-file-row">
-                  <button type="button" className="sc-file-name" onClick={() => handleFileDiff(f.path)} title={f.path}>
-                    {f.path.split("/").pop()}
-                  </button>
-                  <span className="sc-file-dir">{f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ""}</span>
-                  <span className={`sc-badge ${statusColorClass(f.status)}`} title={statusTitle(f.status)}>
-                    {statusLabel(f.status)}
-                  </span>
-                  <button type="button" className="sc-row-action" onClick={() => handleUnstage([f.path])} title="Unstage">−</button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-
-        {unstaged.length > 0 && (
+        {files.length > 0 ? (
           <>
             <div className="sc-group-header">
               <span className="sc-group-label">Changes</span>
-              <span className="sc-count">{unstaged.length}</span>
-              <button type="button" className="sc-hdr-action sc-hdr-discard" onClick={handleDiscardAll} title="Discard all changes">↺</button>
-              <button type="button" className="sc-hdr-action" onClick={handleStageAll} title="Stage all">+</button>
+              <span className="sc-count">{files.length}</span>
+              <button
+                type="button"
+                className="sc-hdr-action sc-hdr-discard"
+                onClick={() => handleDiscard(files.map((f) => f.path))}
+                title="Discard all changes"
+              >
+                ↺
+              </button>
             </div>
             <ul className="sc-file-list">
-              {unstaged.map((f) => (
-                <li key={`u-${f.path}`} className="sc-file-row">
+              {files.map((f) => (
+                <li key={f.path} className="sc-file-row">
                   <button type="button" className="sc-file-name" onClick={() => handleFileDiff(f.path)} title={f.path}>
                     {f.path.split("/").pop()}
                   </button>
@@ -384,15 +392,19 @@ export function SourceControl({ repo, onShowDiff, onSyncLine, onFsChange }: Prop
                   <span className={`sc-badge ${statusColorClass(f.status)}`} title={statusTitle(f.status)}>
                     {statusLabel(f.status)}
                   </span>
-                  <button type="button" className="sc-row-action sc-row-discard" onClick={() => handleDiscard([f.path])} title="Discard changes">↺</button>
-                  <button type="button" className="sc-row-action" onClick={() => handleStage([f.path])} title="Stage">+</button>
+                  <button
+                    type="button"
+                    className="sc-row-action sc-row-discard"
+                    onClick={() => handleDiscard([f.path])}
+                    title="Discard changes"
+                  >
+                    ↺
+                  </button>
                 </li>
               ))}
             </ul>
           </>
-        )}
-
-        {staged.length === 0 && unstaged.length === 0 && (
+        ) : (
           <div className="sc-empty-hint">No changes</div>
         )}
       </div>
