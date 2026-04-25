@@ -11,23 +11,6 @@ pub struct BootstrapResult {
     pub created: bool,
 }
 
-/// Slugify an org name for use as a folder name. Lowercase, ASCII alnum +
-/// dash, runs collapsed, trimmed.
-fn slugify(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut last_dash = false;
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
-            last_dash = false;
-        } else if !last_dash && !out.is_empty() {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    out.trim_matches('-').to_string()
-}
-
 /// Make sure `~/Documents/OpenIT/<org_id>/` exists. Returns the absolute path
 /// and whether it was newly created. Uses org_id for the folder name (stable, unique).
 #[tauri::command]
