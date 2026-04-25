@@ -198,7 +198,8 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
 
   try {
     const fetchFn = makeSkillsFetch(token.accessToken);
-    const url = new URL("/datacollection/all", urls.skillsBaseUrl);
+    const url = new URL("/datacollection/", urls.skillsBaseUrl);
+    url.searchParams.set("type", "filestorage");
     console.log("[filestore] Fetching from:", url.toString(), "base:", urls.skillsBaseUrl);
     const response = await fetchFn(url.toString());
     
@@ -206,10 +207,8 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const result = (await response.json()) as { collections?: DataCollection[] } | null;
-    const allCollections = result?.collections ?? [];
-    // Filter to only filestorage type
-    const collections = allCollections.filter((c) => c.type === "filestorage");
+    const result = (await response.json()) as DataCollection[] | null;
+    const collections = Array.isArray(result) ? result : [];
     console.log(`[filestore] list_collections returned ${collections.length} filestorage collections`);
     collections.forEach((c) => console.log(`  - ${c.name} (id: ${c.id})`));
     return collections;

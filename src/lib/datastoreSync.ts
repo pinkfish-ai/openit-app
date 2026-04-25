@@ -43,7 +43,8 @@ export async function resolveProjectDatastores(
   try {
     // Use REST API for listing (GET works, MCP tool returns 0)
     const fetchFn = makeSkillsFetch(token.accessToken);
-    const url = new URL("/datacollection/all", urls.skillsBaseUrl);
+    const url = new URL("/datacollection/", urls.skillsBaseUrl);
+    url.searchParams.set("type", "datastore");
     console.log("[datastoreSync] Fetching from:", url.toString(), "base:", urls.skillsBaseUrl);
     const response = await fetchFn(url.toString());
     
@@ -51,17 +52,15 @@ export async function resolveProjectDatastores(
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const result = (await response.json()) as { collections?: DataCollection[] } | null;
-    const allCollections = result?.collections ?? [];
-    // Filter to only datastore type
-    const all = allCollections.filter((c: DataCollection) => c.type === "datastore");
-    console.log(`[datastoreSync] list_collections returned ${all.length} datastore collections`);
-    all.forEach((c: DataCollection) => console.log(`  - ${c.name} (id: ${c.id})`));
+    const result = (await response.json()) as DataCollection[] | null;
+    const allCollections = Array.isArray(result) ? result : [];
+    console.log(`[datastoreSync] list_collections returned ${allCollections.length} datastore collections`);
+    allCollections.forEach((c: DataCollection) => console.log(`  - ${c.name} (id: ${c.id})`));
     const defaults = DEFAULT_DATASTORES.map((d) => ({
       ...d,
       name: `${d.name}-${creds.orgId}`,
     }));
-    let matching = all.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
+    let matching = allCollections.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
 
     // If list returned nothing, check our in-memory cache of recently created collections
     if (matching.length === 0 && createdCollections.size > 0) {
@@ -105,6 +104,8 @@ export async function resolveProjectDatastores(
             }),
           });
           
+          console.log(`[datastoreSync] POST /datacollection/ response status: ${response.status} ${response.statusText}`);
+          
           if (!response.ok) {
             const errText = await response.text();
             console.error("[datastoreSync] response error:", errText);
@@ -116,17 +117,23 @@ export async function resolveProjectDatastores(
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
           }
 
-          const result = (await response.json()) as { id?: string | number } | null;
-          if (result?.id) {
+          const result = (await response.json()) as any;
+          console.log(`[datastoreSync] create response for ${def.name}:`, JSON.stringify(result));
+          
+          // Check for id in different possible formats
+          const id = result?.id || result?.data?.id || result?.collection?.id;
+          if (id) {
             const col = {
-              id: String(result.id),
+              id: String(id),
               name: def.name,
               type: "datastore",
               description: def.description,
             } as DataCollection;
             matching.push(col);
             createdCollections.set(def.name, col);
-            console.log(`[datastoreSync] created ${def.name}`);
+            console.log(`[datastoreSync] cached ${def.name} with id: ${id}`);
+          } else {
+            console.warn(`[datastoreSync] no id found in response for ${def.name}. Response keys:`, Object.keys(result || {}));
           }
         } catch (e) {
           console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
@@ -141,12 +148,12 @@ export async function resolveProjectDatastores(
         await new Promise(resolve => setTimeout(resolve, 2000));
         
         const fetchFn = makeSkillsFetch(token.accessToken);
-        const url = new URL("/datacollection/all", urls.skillsBaseUrl);
+        const url = new URL("/datacollection/", urls.skillsBaseUrl);
+        url.searchParams.set("type", "datastore");
         const refetchResponse = await fetchFn(url.toString());
-        const refetched = (await refetchResponse.json()) as { collections?: DataCollection[] } | null;
-        const allCollections = refetched?.collections ?? [];
-        const updated = allCollections.filter((c: DataCollection) => c.type === "datastore");
-        const updatedMatching = updated.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
+        const refetched = (await refetchResponse.json()) as DataCollection[] | null;
+        const allCollections = Array.isArray(refetched) ? refetched : [];
+        const updatedMatching = allCollections.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
         if (updatedMatching.length > matching.length) {
           console.log("[datastoreSync] re-fetched collections after creation");
           return updatedMatching;
