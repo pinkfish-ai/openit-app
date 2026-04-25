@@ -7,7 +7,7 @@ import {
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { pinkfishMcpCall } from "./api";
-import { makeSkillsFetch } from "./api/fetchAdapter";
+import { makeSkillsFetch } from "../api/fetchAdapter";
 
 // These will be added to api.ts — importing ahead of time.
 // They invoke fs_store_init, fs_store_list_local, fs_store_state_load,
@@ -147,7 +147,8 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
 
   try {
     const fetchFn = makeSkillsFetch(token.accessToken);
-    const url = new URL("/datacollection/?type=all", urls.skillsBaseUrl);
+    const url = new URL("/datacollection/all", urls.skillsBaseUrl);
+    console.log("[filestore] Fetching from:", url.toString(), "base:", urls.skillsBaseUrl);
     const response = await fetchFn(url.toString());
     
     if (!response.ok) {

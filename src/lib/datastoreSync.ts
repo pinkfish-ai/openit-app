@@ -7,7 +7,7 @@ import {
 } from "./skillsApi";
 import { entityWriteFile, pinkfishMcpCall } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
-import { makeSkillsFetch } from "./api/fetchAdapter";
+import { makeSkillsFetch } from "../api/fetchAdapter";
 
 const PREFIX = "openit-";
 
@@ -41,7 +41,8 @@ export async function resolveProjectDatastores(
   try {
     // Use REST API for listing (GET works, MCP tool returns 0)
     const fetchFn = makeSkillsFetch(token.accessToken);
-    const url = new URL("/datacollection/?type=all", urls.skillsBaseUrl);
+    const url = new URL("/datacollection/all", urls.skillsBaseUrl);
+    console.log("[datastoreSync] Fetching from:", url.toString(), "base:", urls.skillsBaseUrl);
     const response = await fetchFn(url.toString());
     
     if (!response.ok) {
