@@ -1,9 +1,31 @@
 # Bidirectional sync for all OpenIT entities
 
 **Date:** 2026-04-25
-**Status:** Phase 2 (datastore pull) shipped via PR #9. `syncEngine.ts` refactor (R1–R5 below) is the next-up work.
+**Status:** ✅ R1–R5 series complete (PRs #10, #11, #12, #13, #14 — all merged to main 2026-04-26). Engine, generic Rust commands, bootstrap-poll cleanup, agents+workflows REST migration, and conflict banner all shipped. Next decision: Phase 5b (agent push) / Phase 5c (workflow push) / Phase 0 (`.claude/scripts` substrate) — see "What's next after R5" below.
 
 ---
+
+## What's next after R5
+
+R1–R5 was the TS-internal bridge. The original Phase 0–6 thesis (Claude orchestrates sync via plugin scripts) is still ahead. Three forward-paths, in order of size:
+
+1. **Phase 5b — agent push** (~1 day). Adapters gain `apiUpsert` + `apiDelete` calling `POST/PUT/DELETE /user-agents/*`. Engine already provides the lock + auto-commit; only the per-entity REST surface is new. Lowest risk in Phase 5.
+2. **Phase 5c — workflow push** (~2 days, gated by smoke test). Same shape, but workflow drafts are also UI-edited; needs a manual cross-edit smoke test before enabling. Sync targets the draft only — releases stay an explicit user action via `POST /automations/{id}/release`.
+3. **Phase 0 — plugin script substrate** (~1 week, multi-PR, touches `/web`). Move the engine into `.claude/scripts/sync-{pull,push,status}.mjs`. Tauri shrinks to a thin spawn-and-stream invoker. Migration tooling (`.openit/sync-timestamps.json` from per-entity manifests). Cross-platform CI matrix. This is the bigger thesis bet — Claude (or a vanilla terminal user) can drive sync without OpenIT.
+
+The engine, adapter contract, and invariants from R1–R5 transfer directly to Phase 0 — that was the explicit value of R1's "bridge" framing.
+
+## R1–R5 outcome summary
+
+| Phase | PR | Findings | Iters | Net Δ |
+|---|---|---|---|---|
+| R1 — engine extraction | [#10](https://github.com/pinkfish-ai/openit-app/pull/10) | 19 (3 H, 12 M, 4 L) | 15 | engine 470 LOC + 3 adapters −520 wrapper lines |
+| R2 — Rust state consolidation | [#11](https://github.com/pinkfish-ai/openit-app/pull/11) | 0 | 1 (clean) | −112 |
+| R3 — bootstrap-poll cleanup | [#12](https://github.com/pinkfish-ai/openit-app/pull/12) | 4 (3 M, 1 L) | 3 | −20 |
+| R4 — agents+workflows on engine | [#13](https://github.com/pinkfish-ai/openit-app/pull/13) | 8 (5 M, 3 L) | 4 | +321 (REST migration + 2 adapters) |
+| R5 — conflict banner | [#14](https://github.com/pinkfish-ai/openit-app/pull/14) | 3 (1 M, 2 L) | 2 | +178 |
+
+34 BugBot findings total across 25 iterations, all addressed (real fixes or won't-fix-with-rationale). Six engine-level invariants from PR #9's iter-5 retrospective are now structural rather than per-implementation; R2's clean first-pass and R5's "found-no-issues" final iteration both validate the structural payoff.
 
 ## Resuming this work in a fresh session
 
