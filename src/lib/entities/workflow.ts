@@ -96,8 +96,13 @@ async function listLocalWorkflows(repo: string): Promise<{ filename: string; mti
   );
 }
 
-export function workflowAdapter(args: { creds: PinkfishCreds }): EntityAdapter {
+export function workflowAdapter(args: {
+  creds: PinkfishCreds;
+  /// Pre-resolved workflow list — see agentAdapter for rationale.
+  initialWorkflows?: WorkflowRow[];
+}): EntityAdapter {
   const { creds } = args;
+  let cachedFirst: WorkflowRow[] | undefined = args.initialWorkflows;
   return {
     prefix: "workflow",
 
@@ -107,7 +112,8 @@ export function workflowAdapter(args: { creds: PinkfishCreds }): EntityAdapter {
       invoke<void>("entity_state_save", { repo, name: "workflow", state: m }),
 
     async listRemote(_repo) {
-      const workflows = await resolveProjectWorkflows(creds);
+      const workflows = cachedFirst ?? (await resolveProjectWorkflows(creds));
+      cachedFirst = undefined;
       const items: RemoteItem[] = [];
       for (const w of workflows) {
         if (!w.name) continue;

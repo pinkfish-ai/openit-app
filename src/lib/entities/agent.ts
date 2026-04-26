@@ -101,8 +101,17 @@ async function listLocalAgents(repo: string): Promise<{ filename: string; mtime_
   );
 }
 
-export function agentAdapter(args: { creds: PinkfishCreds }): EntityAdapter {
+export function agentAdapter(args: {
+  creds: PinkfishCreds;
+  /// Pre-resolved agent list. When provided, listRemote uses this on its
+  /// FIRST call instead of issuing a REST request — avoids the double
+  /// REST hit on the first sync tick (the wrapper already fetches for
+  /// logging). Subsequent listRemote calls (poll ticks) re-fetch via
+  /// REST so steady-state stays current.
+  initialAgents?: AgentRow[];
+}): EntityAdapter {
   const { creds } = args;
+  let cachedFirst: AgentRow[] | undefined = args.initialAgents;
   return {
     prefix: "agent",
 
@@ -112,7 +121,8 @@ export function agentAdapter(args: { creds: PinkfishCreds }): EntityAdapter {
       invoke<void>("entity_state_save", { repo, name: "agent", state: m }),
 
     async listRemote(_repo) {
-      const agents = await resolveProjectAgents(creds);
+      const agents = cachedFirst ?? (await resolveProjectAgents(creds));
+      cachedFirst = undefined;
       const items: RemoteItem[] = [];
       for (const a of agents) {
         if (!a.name) continue;

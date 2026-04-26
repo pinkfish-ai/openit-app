@@ -449,3 +449,63 @@ export function startPolling(
   }, interval);
   return () => clearInterval(timer);
 }
+
+// ---------------------------------------------------------------------------
+// startReadOnlyEntitySync — the connect-time + poll bootstrap for entities
+// where the adapter is built from cached resolve data and the wrapper just
+// needs to log + run pull + start poll. agents and workflows use this; KB,
+// filestore, and datastore have entity-specific bootstrap (collection
+// resolve + initial item write) that doesn't fit this template.
+// ---------------------------------------------------------------------------
+
+export type ReadOnlySyncHandle = { stop: () => void };
+
+export async function startReadOnlyEntitySync(args: {
+  /// Build the adapter from a freshly-resolved item list. Called on every
+  /// poll tick — the adapter is rebuilt each time so server-side
+  /// add/delete is reflected. The factory is responsible for running the
+  /// REST resolve and using the returned items as the adapter's source.
+  buildAdapter: () => Promise<EntityAdapter>;
+  repo: string;
+  pollMs?: number;
+  /// Receives one log line per item (`✓ <name>`) plus a final summary
+  /// (`<n> X(s) — <p> pulled`) on the FIRST attempt only — silent on
+  /// subsequent poll ticks to avoid spamming the modal log.
+  onLog?: (msg: string) => void;
+  onLogItems?: (items: { name: string; id?: string }[]) => void;
+  /// Format function for the per-item log lines. Default emits the name.
+  itemLabel?: (count: number, pulled: number) => string;
+}): Promise<ReadOnlySyncHandle> {
+  const { buildAdapter, repo, onLog, itemLabel } = args;
+  let adapter: EntityAdapter | null = null;
+  let firstAttempt = true;
+
+  const tryResolveAndPull = async () => {
+    const isFirst = firstAttempt;
+    firstAttempt = false;
+    if (!adapter) {
+      try {
+        adapter = await buildAdapter();
+      } catch (e) {
+        if (isFirst) throw e;
+        return;
+      }
+    }
+    try {
+      const r = await pullEntity(adapter, repo);
+      if (isFirst && onLog && itemLabel) {
+        onLog(itemLabel(r.remoteCount, r.pulled));
+      }
+    } catch (e) {
+      if (isFirst) throw e;
+    }
+  };
+
+  const interval = args.pollMs ?? DEFAULT_POLL_INTERVAL_MS;
+  // Install the timer BEFORE awaiting the first attempt so a transient
+  // first-attempt failure can't strand the user without auto-recovery.
+  const timer = setInterval(tryResolveAndPull, interval);
+  const handle: ReadOnlySyncHandle = { stop: () => clearInterval(timer) };
+  await tryResolveAndPull();
+  return handle;
+}
