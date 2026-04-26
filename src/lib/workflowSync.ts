@@ -33,24 +33,27 @@ export async function startWorkflowSync(args: {
     handle = null;
   }
 
-  let firstResolve: WorkflowRow[] | undefined;
-  handle = await startReadOnlyEntitySync({
+  let isFirstBuild = true;
+  handle = startReadOnlyEntitySync({
     repo,
     buildAdapter: async () => {
-      const workflows =
-        firstResolve ?? (await resolveProjectWorkflows(creds));
-      if (firstResolve === undefined && onLog) {
+      const workflows = await resolveProjectWorkflows(creds);
+      if (isFirstBuild && onLog) {
         for (const w of workflows) {
           onLog(`  ✓ ${w.name || "(unnamed)"}  (id: ${w.id || "?"})`);
         }
       }
-      const built = workflowAdapter({ creds, initialWorkflows: workflows });
-      firstResolve = [];
+      const built = workflowAdapter({
+        creds,
+        initialWorkflows: isFirstBuild ? workflows : undefined,
+      });
+      isFirstBuild = false;
       return built;
     },
     onLog,
     itemLabel: (count, pulled) => `    ${count} workflow(s) — ${pulled} pulled`,
   });
+  await handle.firstAttempt;
 }
 
 export function stopWorkflowSync(): void {

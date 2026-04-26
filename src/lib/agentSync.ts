@@ -32,25 +32,29 @@ export async function startAgentSync(args: {
 
   // Pre-fetch once so the adapter can reuse this list on its first
   // listRemote call instead of issuing a duplicate REST request.
-  let firstResolve: AgentRow[] | undefined;
-  handle = await startReadOnlyEntitySync({
+  let isFirstBuild = true;
+  handle = startReadOnlyEntitySync({
     repo,
     buildAdapter: async () => {
-      const agents =
-        firstResolve ?? (await resolveProjectAgents(creds));
-      // Log per-item lines on the first build only.
-      if (firstResolve === undefined && onLog) {
+      const agents = await resolveProjectAgents(creds);
+      if (isFirstBuild && onLog) {
         for (const a of agents) {
           onLog(`  ✓ ${a.name || "(unnamed)"}  (id: ${a.id || "?"})`);
         }
       }
-      const built = agentAdapter({ creds, initialAgents: agents });
-      firstResolve = []; // mark "done" so subsequent builds re-fetch
+      const built = agentAdapter({
+        creds,
+        initialAgents: isFirstBuild ? agents : undefined,
+      });
+      isFirstBuild = false;
       return built;
     },
     onLog,
     itemLabel: (count, pulled) => `    ${count} agent(s) — ${pulled} pulled`,
   });
+  // Surface first-attempt failures to the caller (modal's syncErrors
+  // flag trips). Timer is already installed; auto-recovery runs.
+  await handle.firstAttempt;
 }
 
 export function stopAgentSync(): void {
