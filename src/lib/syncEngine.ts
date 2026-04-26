@@ -602,8 +602,22 @@ async function pullEntityImpl(
             workingTreePath: r.workingTreePath,
             reason: "local-and-remote-changed",
           });
-          // Do NOT seed the manifest — leave the entry empty so the
-          // next poll continues to detect this state until pushed.
+          // Seed the manifest entry with `conflict_remote_version` set
+          // to the current remote.updatedAt. The resolve script reads
+          // this back to encode "user has reconciled against this
+          // remote version, push local now". Without this, deleting
+          // the manifest on resolve would re-fire bootstrap-adopt's
+          // content-equality check on the next pull and re-create the
+          // shadow when the user picked LOCAL (their merged content
+          // diverges from the still-stale remote). remote_version=""
+          // and pulled_at_mtime_ms=0 keep the entry visibly "unpulled"
+          // so engine logic on next pull won't accidentally treat it
+          // as a sync'd row.
+          manifest.files[r.manifestKey] = {
+            remote_version: "",
+            pulled_at_mtime_ms: 0,
+            conflict_remote_version: r.updatedAt,
+          };
           continue;
         }
       }
@@ -642,7 +656,29 @@ async function pullEntityImpl(
           workingTreePath: r.workingTreePath,
           reason: "local-and-remote-changed",
         });
+        // Record the current remote_version on the manifest entry so
+        // the resolve script can encode "I've reconciled against this
+        // remote version" on the user's behalf. remote_version /
+        // pulled_at_mtime_ms stay at their pre-conflict values so the
+        // pre-push pull on a subsequent (still-unresolved) cycle still
+        // sees both sides changed. See the bootstrap-adopt branch
+        // above for the parallel case.
+        manifest.files[r.manifestKey] = {
+          ...tracked,
+          conflict_remote_version: r.updatedAt,
+        };
         continue;
+      }
+
+      // Falling out of the conflict branch — clear any stale
+      // conflict_remote_version on this entry. Without this, a row
+      // that was conflicted, then pushed (by another path), then
+      // pulled again would carry a stale conflict marker.
+      if (tracked.conflict_remote_version != null) {
+        manifest.files[r.manifestKey] = {
+          remote_version: tracked.remote_version,
+          pulled_at_mtime_ms: tracked.pulled_at_mtime_ms,
+        };
       }
 
       if (remoteChanged && !localChanged) {

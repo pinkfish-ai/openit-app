@@ -188,6 +188,13 @@ describe("syncEngine.pullEntity", () => {
     expect(h.savedManifest?.files.personXYZ.remote_version).toBe(
       TRACKED_VERSION,
     );
+    // Engine recorded the conflict-time remote version on the entry
+    // so the resolve script can replay it back as the new
+    // remote_version when the user picks LOCAL. Without this, the
+    // push after resolve would re-detect divergence and refuse.
+    expect(h.savedManifest?.files.personXYZ.conflict_remote_version).toBe(
+      REMOTE_VERSION_AFTER_B_EDIT,
+    );
 
     // Conflict aggregate observed the same conflict via subscribeConflicts.
     expect(aggregateSnapshot).toHaveLength(1);
@@ -394,9 +401,17 @@ describe("syncEngine.pullEntity", () => {
     expect(h.shadowedKeys).toEqual(["alpha"]);
     expect(h.fetchedKeys).toEqual([]);
 
-    // Manifest did NOT advance — alpha stays unseeded so subsequent
-    // polls keep flagging until the user pushes.
-    expect(h.savedManifest?.files.alpha).toBeUndefined();
+    // Manifest entry created with conflict_remote_version recorded —
+    // the resolve script reads this back to encode "I've reconciled
+    // against this remote version, push my local content". Without
+    // it, deleting the manifest on resolve would re-fire bootstrap-
+    // adopt's content-equality check on the next poll and re-create
+    // the conflict when the user picked LOCAL.
+    expect(h.savedManifest?.files.alpha).toEqual({
+      remote_version: "",
+      pulled_at_mtime_ms: 0,
+      conflict_remote_version: REMOTE_VERSION,
+    });
 
     // Aggregate observed it.
     expect(aggregateSnapshot).toHaveLength(1);
@@ -447,7 +462,14 @@ describe("syncEngine.pullEntity", () => {
     expect(result.conflicts).toHaveLength(1);
     // Shadow already exists → engine must NOT re-write it.
     expect(h.shadowedKeys).toEqual([]);
-    expect(h.savedManifest?.files.alpha).toBeUndefined();
+    // The conflict marker on the manifest entry is still written —
+    // the resolve script needs `conflict_remote_version` regardless
+    // of whether the shadow itself was already on disk.
+    expect(h.savedManifest?.files.alpha).toEqual({
+      remote_version: "",
+      pulled_at_mtime_ms: 0,
+      conflict_remote_version: REMOTE_VERSION,
+    });
   });
 
   it("server-delete: tracked but not in remote → drops manifest entry (default behavior, no adapter override)", async () => {

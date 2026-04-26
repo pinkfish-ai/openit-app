@@ -7,10 +7,27 @@
 //        --key <manifestKey>
 //
 // What it does:
-//   Deletes the manifest entry for <key> from .openit/<name>-state.json.
-//   The OpenIT sync engine then treats the key as fresh on its next poll
-//   (60s) and bootstrap-adopts it — seeding the manifest with the current
-//   remote version + the on-disk mtime. The conflict banner clears.
+//   Rewrites the manifest entry for <key> in .openit/<name>-state.json
+//   so the engine treats the row as "reconciled against the
+//   conflict-time remote version, local has changes that need to push":
+//
+//     {
+//       remote_version: <conflict_remote_version observed at conflict time>,
+//       pulled_at_mtime_ms: 1   // sentinel: forces localChanged=true
+//     }
+//
+//   The conflict_remote_version field was written by the engine when
+//   it created the .server. shadow. With remote_version now matching
+//   what the server has, the next pre-push pull won't re-detect the
+//   row as remotely-changed; with pulled_at_mtime_ms=1, push sees
+//   localChanged=true and uploads. After push, the engine updates the
+//   manifest with the new server-issued remote_version.
+//
+//   If the manifest entry has no conflict_remote_version (legacy
+//   state from a pre-fix conflict), we fall back to deleting the
+//   entry — the old behavior. The next pull's bootstrap-adoption
+//   handles it (with content-equality, this is correct only when
+//   local matches remote, i.e. the user picked "remote" in the merge).
 //
 // When to call this:
 //   After merging the canonical (`<key>.json`) and deleting the shadow
@@ -18,7 +35,7 @@
 //   conflict banner ends with this command for each conflicting key.
 //
 // What this does NOT do:
-//   - Push to Pinkfish (the user reviews + commits in the Sync tab).
+//   - Push to Pinkfish — that's sync-push.mjs.
 //   - Touch any file outside .openit/.
 //   - Make any HTTP requests.
 //
@@ -88,9 +105,29 @@ async function main() {
     fail("invalid_manifest", `Manifest at ${file} has no .files object`);
   }
 
-  const removed = Object.prototype.hasOwnProperty.call(manifest.files, args.key);
-  if (removed) {
-    delete manifest.files[args.key];
+  const entry = manifest.files[args.key];
+  let action = "noop";
+  if (entry) {
+    if (entry.conflict_remote_version) {
+      // Force-push case — preserves "the user merged, push their
+      // local content to remote" for both pick-local AND pick-remote
+      // outcomes. Pick-remote ends up uploading content the server
+      // already has (~no-op), which is the small cost of not
+      // distinguishing the two cases here.
+      manifest.files[args.key] = {
+        remote_version: entry.conflict_remote_version,
+        pulled_at_mtime_ms: 1,
+      };
+      action = "force-push";
+    } else {
+      // Legacy / bootstrap-adoption-without-engine-marker case —
+      // delete the entry and let the next pull's bootstrap-adopt
+      // handle it. Works for pick-remote (content-equality match
+      // adopts cleanly); pick-local would re-conflict, which the new
+      // engine path avoids by always writing conflict_remote_version.
+      delete manifest.files[args.key];
+      action = "deleted";
+    }
     try {
       await writeFile(fullPath, JSON.stringify(manifest, null, 2));
     } catch (e) {
@@ -99,7 +136,7 @@ async function main() {
   }
 
   process.stdout.write(
-    JSON.stringify({ ok: true, prefix: args.prefix, key: args.key, removed }) + "\n",
+    JSON.stringify({ ok: true, prefix: args.prefix, key: args.key, action }) + "\n",
   );
 }
 
