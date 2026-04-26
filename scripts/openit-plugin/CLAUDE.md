@@ -65,6 +65,7 @@ For the sync conflict and push flows, prefer the **skills** that wrap these scri
 |---|---|
 | `resolve-sync-conflict` | The user (or the conflict banner) hands you sync conflicts. Skill body details the per-conflict merge + resolve-script call + optional push at the end. |
 | `answer-ticket` | The user (or the escalated-ticket banner) hands you tickets the triage agent couldn't answer. Skill walks the response loop and captures the answer as a KB article — "answer once". |
+| `capture-workflow` | The user just handled an action-shaped ticket (something to *do*, not just answer) and wants to turn it into a Pinkfish workflow that runs on autopilot for the next identical request. Invoked from `answer-ticket` or directly. |
 | `deploy` | The user wants to push current local state to Pinkfish without resolving anything. |
 
 ### How to talk to me about changes

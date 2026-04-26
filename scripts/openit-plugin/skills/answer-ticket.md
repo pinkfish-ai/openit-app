@@ -35,9 +35,17 @@ If the ticket is action-shaped (the admin had to *do* something rather than just
 
 Tell the admin to push: "Sync these changes to Pinkfish to land the KB article(s) and ticket updates? (yes/no)" — on yes, run `node .claude/scripts/sync-push.mjs`.
 
+## Action-shaped tickets
+
+Some tickets aren't questions — they're requests for the admin to *do* something (reset a password, grant access, provision a resource). For those:
+
+- Skip the KB-article capture step. A doc article doesn't help next time; the admin still has to do the work.
+- Instead ask the admin: *"This was an action, not just an answer. Want to turn it into a workflow so the next identical request runs automatically?"*
+- On yes, invoke the **capture-workflow** skill on this ticket. That skill walks the workflow-authoring flow.
+- On no, skip; the admin can come back to it later.
+
 ## What you don't do
 
 - **Don't invent answers.** If you can't read the question or the KB / docs / connected systems don't have what's needed, ask the admin. They're the human in the loop precisely because the agent couldn't answer.
 - **Don't close tickets the admin hasn't approved.** Always confirm the reply before updating the row.
-- **Don't skip the KB capture step** without checking. The whole point is "answer once" — silently dropping the capture costs the org the same answer being escalated again next week.
-- **Don't worry about action-shaped tickets** (the user wanted you to *do* something, not just *tell* them something). Note it for the admin and skip the KB capture for that ticket. Workflow capture is Phase C.
+- **Don't skip the KB capture step** for answer-shaped tickets without checking. The whole point is "answer once" — silently dropping the capture costs the org the same answer being escalated again next week.
