@@ -33,6 +33,18 @@ function isShadow(filename: string): boolean {
   return filename.includes(".server.");
 }
 
+/// `runbook.server.pdf` → `runbook.pdf`. Inverse of fsServerShadowFilename.
+/// Used by listLocal so shadows share their canonical sibling's manifestKey
+/// — otherwise the engine's "does a shadow already exist?" check (keyed
+/// off the canonical name) never matches, and the shadow gets re-written
+/// every poll cycle.
+function canonicalFromShadow(filename: string): string {
+  const marker = ".server.";
+  const i = filename.indexOf(marker);
+  if (i < 0) return filename;
+  return `${filename.slice(0, i)}.${filename.slice(i + marker.length)}`;
+}
+
 export function filestoreAdapter(args: {
   creds: PinkfishCreds;
   collection: FilestoreCollection;
@@ -77,12 +89,15 @@ export function filestoreAdapter(args: {
 
     async listLocal(repo) {
       const files = await fsStoreListLocal(repo);
-      const out: LocalItem[] = files.map((f) => ({
-        manifestKey: f.filename,
-        workingTreePath: `${DIR}/${f.filename}`,
-        mtime_ms: f.mtime_ms,
-        isShadow: isShadow(f.filename),
-      }));
+      const out: LocalItem[] = files.map((f) => {
+        const shadow = isShadow(f.filename);
+        return {
+          manifestKey: shadow ? canonicalFromShadow(f.filename) : f.filename,
+          workingTreePath: `${DIR}/${f.filename}`,
+          mtime_ms: f.mtime_ms,
+          isShadow: shadow,
+        };
+      });
       return out;
     },
 
