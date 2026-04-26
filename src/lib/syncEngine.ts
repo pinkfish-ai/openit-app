@@ -497,6 +497,10 @@ export function startReadOnlyEntitySync(args: {
         adapter = await buildAdapter();
       } catch (e) {
         if (isFirst) throw e;
+        // Non-first poll-tick failures still log to console — silent
+        // swallow would hide REST/auth/manifest errors from production
+        // debugging (R4 iter 3 finding).
+        console.error("[syncEngine] read-only build failed:", e);
         return;
       }
     }
@@ -507,6 +511,7 @@ export function startReadOnlyEntitySync(args: {
       }
     } catch (e) {
       if (isFirst) throw e;
+      console.error("[syncEngine] read-only pull failed:", e);
     }
   };
 
