@@ -18,7 +18,7 @@ export type Manifest = KbStatePersisted;
 // Shared shadow-filename helpers. Single source of truth for the
 // `<base>.server.<ext>` convention used by every text/binary entity.
 // Datastore uses a fixed `.json` extension so it doesn't call these
-// directly — but it tests with the same `isShadowFilename` check.
+// directly — but it uses the same classifyAsShadow check.
 //
 // Centralised here because the entire premise of this refactor is
 // eliminating duplicated logic that drifts independently. Three byte-
@@ -67,10 +67,6 @@ export function classifyAsShadow(
   return siblingNames.has(canonicalFromShadow(filename));
 }
 
-/// Backward-compat alias — equivalent to `looksLikeShadow`. Several call
-/// sites still use this name; new code should use `looksLikeShadow` (for
-/// raw checks) or `classifyAsShadow` (for the authoritative check).
-export const isShadowFilename = looksLikeShadow;
 
 export type RemoteItem = {
   /// Key under `manifest.files` (often equals workingTreePath, but datastore

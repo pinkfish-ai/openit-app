@@ -99,8 +99,8 @@ export function kbAdapter(args: {
     async onServerDelete({ repo, manifestKey, manifest, touched, local }) {
       // No shadow guard here: the manifest only ever contains canonical
       // keys (engine writes them via `manifest.files[r.manifestKey] = …`
-      // where r.manifestKey is the canonical name). An old guard checking
-      // `isShadowFilename(manifestKey)` only fired on false positives —
+      // where r.manifestKey is the canonical name). An old guard against
+      // shadow-shaped manifest keys only fired on false positives —
       // canonical names that happen to contain `.server.` — and prevented
       // the server-delete cleanup from running on them.
       // `local` is the LocalItem[] threaded through from listLocal — the

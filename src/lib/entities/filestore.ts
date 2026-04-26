@@ -100,8 +100,8 @@ export function filestoreAdapter(args: {
     /// still here") and mirrors KB's long-standing behavior. The deletion
     /// is added to `touched` so the auto-commit captures it.
     async onServerDelete({ repo, manifestKey, manifest, touched, local }) {
-      // No shadow guard: manifests only contain canonical keys, so an
-      // isShadowFilename check here would only fire on false positives
+      // No shadow guard: manifests only contain canonical keys, so a
+      // shadow-shaped check here would only fire on false positives
       // (canonical names containing `.server.`) and prevent legitimate
       // cleanup. See matching note in KB adapter.
       // `local` is the LocalItem[] threaded from listLocal — match on
