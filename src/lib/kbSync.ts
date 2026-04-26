@@ -211,7 +211,11 @@ export async function startKbSync(args: {
       });
     },
     onError: (e) => {
+      // onPhase("pulling") fired before the failure, so without an error
+      // status update here the UI stays stuck at phase: "pulling" until
+      // a subsequent poll succeeds. Recover by surfacing the error.
       console.error("kb pull failed:", e);
+      update({ phase: "error", lastError: String(e) });
     },
   });
   return result;

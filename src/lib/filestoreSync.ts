@@ -392,7 +392,12 @@ export async function startFilestoreSync(args: {
           lastError: null,
         });
       },
-      onError: (e) => console.error("filestore pull failed:", e),
+      onError: (e) => {
+        // Same reason as KB: onPhase("pulling") fired before the failure,
+        // so we have to surface the error here or the UI stays stuck.
+        console.error("filestore pull failed:", e);
+        update({ phase: "error", lastError: String(e) });
+      },
     });
   } else {
     update({ phase: "ready" });
