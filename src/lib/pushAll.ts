@@ -14,6 +14,11 @@ import {
 } from "./filestoreSync";
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
 import { loadCreds } from "./pinkfishAuth";
+import {
+  datastoreHasPendingChanges,
+  filestoreHasPendingChanges,
+  kbHasPendingChanges,
+} from "./pendingChanges";
 
 export async function pushAllEntities(
   repo: string,
@@ -43,13 +48,20 @@ export async function pushAllEntities(
 
   // KB: pre-pull to detect remote/local conflicts before we clobber anything.
   if (kbCollection) {
-    const shadowBefore = await kbHasServerShadowFiles(repo);
-    if (shadowBefore) {
-      onLine(
-        "✗ sync: kb has unresolved merge shadow (.server.) files — resolve and commit again",
-      );
+    // Local-only short-circuit. If nothing on disk diverges from the
+    // manifest, there's nothing to push and nothing to clobber on
+    // remote — the pre-pull is wasted ~3s of REST.
+    const kbPending = await kbHasPendingChanges(repo).catch(() => true);
+    if (!kbPending) {
+      onLine("▸ sync: kb skipped (no local changes)");
     } else {
-      onLine("▸ sync: kb pre-push pull");
+      const shadowBefore = await kbHasServerShadowFiles(repo);
+      if (shadowBefore) {
+        onLine(
+          "✗ sync: kb has unresolved merge shadow (.server.) files — resolve and commit again",
+        );
+      } else {
+        onLine("▸ sync: kb pre-push pull");
       try {
         await pullNow({ creds, repo, collection: kbCollection });
         const conflicts = getSyncStatus().conflicts;
@@ -79,6 +91,7 @@ export async function pushAllEntities(
       } catch (e) {
         onLine(`✗ sync: kb pull failed: ${String(e)}`);
       }
+      }
     }
   } else {
     onLine("▸ sync: kb skipped (no collection)");
@@ -88,7 +101,14 @@ export async function pushAllEntities(
   // clobber them. Same pattern as KB above.
   const fsCollections = getFilestoreSyncStatus().collections;
   if (fsCollections.length > 0) {
-    for (const collection of fsCollections) {
+    // Repo-wide check (filestore manifest covers all collections in
+    // one file). If nothing on disk has diverged, skip the entire
+    // per-collection pre-pull loop.
+    const fsPending = await filestoreHasPendingChanges(repo).catch(() => true);
+    if (!fsPending) {
+      onLine("▸ sync: filestore skipped (no local changes)");
+    } else {
+      for (const collection of fsCollections) {
       onLine(`▸ sync: filestore (${collection.name}) pre-push pull`);
       let safe = true;
       try {
@@ -136,6 +156,7 @@ export async function pushAllEntities(
         onLine(`✗ sync: filestore push (${collection.name}) failed: ${String(e)}`);
       }
     }
+    }
   } else {
     onLine("▸ sync: filestore skipped (no collections)");
   }
@@ -143,6 +164,17 @@ export async function pushAllEntities(
   // Datastore: pre-push pull. Without this, user A's edit silently
   // overwrites user B's remote edit when both sides changed since the
   // last sync.
+  //
+  // Aggregate-level skip: if no row in any collection has diverged
+  // from the manifest, the pre-pull (which paginates every collection,
+  // 5–10s on the tested 15-collection org) is wasted. Per-collection
+  // skip would be a follow-up if needed.
+  const dsPending = await datastoreHasPendingChanges(repo).catch(() => true);
+  if (!dsPending) {
+    onLine("▸ sync: datastores skipped (no local changes)");
+    onLine("▸ sync: done");
+    return;
+  }
   onLine("▸ sync: datastores pre-push pull");
   let datastorePushSafe = true;
   try {
