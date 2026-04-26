@@ -50,24 +50,49 @@ Use the Gateway for operations that don't map to file edits: running workflows, 
 - **Connections are auto-injected** — never hardcode PCIDs
 - **Read the schema** — always check `_schema.json` before working with database rows
 
-### Formatting — what to show the user
+### Scripts and skills
 
-Database rows under `databases/<collection>/` commonly hold PII: names, emails, phone numbers, employee IDs, addresses, ticket descriptions. **Don't echo raw row field values back into the chat**, even when the user asks ("what's the value", "what changed", etc.). The user has the file open in OpenIT and can see the values themselves; pasting them into the conversation just leaks them into transcripts and screenshots.
+Plugin scripts live at `.claude/scripts/`. Invoke via `node .claude/scripts/<name>.mjs <args>`. Each prints a single JSON line on stdout (`{"ok": true, ...}` or `{"ok": false, "error": ...}`) so you can branch on it.
 
-What this means in practice when you've edited a row:
+| Script | What it does |
+|---|---|
+| `sync-resolve-conflict.mjs --prefix <p> --key <k>` | Marks a single sync conflict as resolved (rewrites the manifest entry, removes the leftover `.server.<ext>` shadow). Doesn't push. `<p>` is `kb` / `filestore` / `datastore` / `agent` / `workflow`; `<k>` is the manifest key. |
+| `sync-push.mjs [--timeout <s>]` | Pushes every bidirectional entity (KB, filestore, datastore) to Pinkfish via the running OpenIT app. Blocks until done. Times out with `app_not_running` if OpenIT isn't open. |
 
-- ✅ Good: *"Updated `f_1` (last name field) on `row-1777161749894.json`. Run `/deploy` to sync."*
-- ✅ Good: *"Wrote 3 changes to `row-XYZ.json`."*
-- ❌ Avoid: showing a diff that includes the values: ~~*"Updated f_1 from 'Bob Edgar' to 'Bob Edgaring'"*~~
-- ❌ Avoid: tables of before/after values
-- ❌ Avoid: quoting values inside narrative ("set the email to alice@example.com")
+For the sync conflict and push flows, prefer the **skills** that wrap these scripts — they walk the merge logic + when-to-ask + cleanup in one place:
 
-When you must reference a field, use the **field name** (`f_1`, `f_2`) or the **schema label** if `_schema.json` provides one (`name`, `email`). Never the value.
+| Skill | Use when |
+|---|---|
+| `resolve-sync-conflict` | The user (or the conflict banner) hands you sync conflicts. Skill body details the per-conflict merge + resolve-script call + optional push at the end. |
+| `deploy` | The user wants to push current local state to Pinkfish without resolving anything. |
 
-This rule applies any time you work with `databases/`. It does **not** apply to:
-- `agents/` and `workflows/` — these are configurations the user authored, not user data; show diffs normally
-- `knowledge-base/` and `filestore/` — same, show contents normally
-- Edit/Write tool diffs — those are surfaced by Claude Code itself, you can't suppress them
+### How to talk to me about changes
+
+**Don't make me do more work than I have to.** That's the principle. Make the call yourself when you can, surface the result so I can scan it, and only stop and ask when there's a genuine decision I need to make.
+
+**Just do it when you're confident.** If I gave a direct instruction or the right answer is obvious from context, write the file and tell me what changed. Don't ask "OK to apply?" for unambiguous edits — that's friction, not safety.
+
+**Show what changed, in plain language.** Use human terms ("email", "name", "phone number"), not field IDs ("f_2") — map to schema labels from `_schema.json` when available. Quote the before/after values so I can sanity-check from the message alone; don't assume I have the file open.
+
+```
+Updated Bob's record in the People database:
+  - email: "alice@a.com" → "bob@example.com"
+```
+
+**Ask only for genuine decisions.** If both sides of a sync conflict changed the same field to different values, or I asked for something where the right call isn't obvious, surface both candidates and let me pick. Never decide silently for a field where you can't infer the intent.
+
+```
+The email field changed on both sides — which should win?
+  - local:    "alice@a.com"
+  - Pinkfish: "bob@example.com"
+```
+
+**The anti-pattern** is a bare summary that hides the values:
+
+- ❌ "Updated 3 fields on row-123" — what fields, what values?
+- ❌ "Resolved the conflict by keeping your local change" — kept what?
+
+Show the change. Auto-apply when confident. Ask only when there's a real choice to make.
 
 ### Permissions
 

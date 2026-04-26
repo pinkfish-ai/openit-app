@@ -67,6 +67,20 @@ export async function syncSkillsToDisk(
           });
           console.log("[skillsSync] Synced CLAUDE.md from template");
           fileCount += 1;
+        } else if (file.path.startsWith("scripts/") && file.path.endsWith(".mjs")) {
+          // Route plugin scripts to `.claude/scripts/<name>.mjs`. The
+          // conflict prompt and other Claude-callable flows reference
+          // them by that path; writing to the literal `scripts/` dir
+          // would put them somewhere Claude isn't told to look.
+          const scriptName = file.path.replace("scripts/", "");
+          await invoke("entity_write_file", {
+            repo,
+            subdir: ".claude/scripts",
+            filename: scriptName,
+            content,
+          });
+          console.log(`[skillsSync] Synced script: ${scriptName}`);
+          fileCount += 1;
         } else if (file.path.startsWith("skills/") && file.path.endsWith(".md")) {
           // Write skills to .claude/skills/<skillName>/SKILL.md
           const skillName = file.path.replace("skills/", "").replace(".md", "");

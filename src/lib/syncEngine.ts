@@ -357,105 +357,22 @@ export function buildConflictPrompt(
 ): string | null {
   if (conflicts.length === 0) return null;
 
+  // Slash-invoke the skill with the conflict list as args. The skill
+  // body (in `scripts/openit-plugin/skills/resolve-sync-conflict.md`)
+  // holds the standing logic: merge rules, when-to-ask, the resolve-
+  // script call, the optional push at the end. Keeping the inserted
+  // text lean matters — every conflict pastes this back into the
+  // user's active session, and verbose copy-paste is friction.
   const lines: string[] = [];
-  lines.push(
-    `There ${conflicts.length === 1 ? "is" : "are"} ${conflicts.length} sync conflict${conflicts.length === 1 ? "" : "s"} between my local edits and the Pinkfish remote. For each, both sides changed since the last sync, so the engine wrote a \`.server.\` shadow file (containing the remote's version) next to my local canonical.`,
-  );
+  lines.push("/resolve-sync-conflict");
   lines.push("");
-  lines.push(
-    "**For each conflict below, perform ALL FOUR actions as one atomic unit.** Skipping the final script call leaves the banner stuck — the engine doesn't know the merge happened until the script runs. Do not stop after deleting the shadow.",
-  );
-  lines.push("");
-  lines.push("### Conflicts to resolve");
-
+  lines.push(`Conflict${conflicts.length === 1 ? "" : "s"}:`);
   for (const c of conflicts) {
     const sh = shadowPath(c.workingTreePath);
-    lines.push("");
-    lines.push(`#### \`${c.workingTreePath}\``);
-    lines.push("");
     lines.push(
-      `1. Read \`${c.workingTreePath}\` (mine) and \`${sh}\` (the remote's) and merge them. Preserve both sides' changes wherever they touch different keys/lines.`,
+      `- \`${c.workingTreePath}\` vs \`${sh}\` (prefix=\`${c.prefix}\`, key=\`${c.manifestKey}\`)`,
     );
-    lines.push(
-      `2. Write the merged result to \`${c.workingTreePath}\`.`,
-    );
-    lines.push(
-      `3. Delete \`${sh}\` (e.g. \`rm "${sh}"\`).`,
-    );
-    lines.push(
-      "4. **Run the resolve-script — REQUIRED, banner won't clear without it:**",
-    );
-    lines.push("");
-    lines.push("   ```bash");
-    lines.push(
-      `   node .claude/scripts/sync-resolve-conflict.mjs --prefix ${c.prefix} --key '${c.manifestKey}'`,
-    );
-    lines.push("   ```");
   }
-
-  lines.push("");
-  lines.push("### Merge guidance");
-  lines.push(
-    "**Default to auto-merging — do not interrogate me field-by-field.** Make the smart call yourself and proceed. The bar for stopping to ask is high (see below).",
-  );
-  lines.push("");
-  lines.push(
-    "- **JSON (datastore rows, agents, workflows):** walk the keys and decide silently.",
-  );
-  lines.push(
-    "  - Key only on one side, or both sides match → trivial, take the value.",
-  );
-  lines.push(
-    "  - Both sides changed the same key to different values → infer intent from context: edits I just made in this session win on those keys; the other side wins on keys it touched. Recency cues and obvious-correction heuristics (typo fix, more-complete data) are fair game.",
-  );
-  lines.push(
-    "  - Only stop and ask if a specific key is genuinely ambiguous (no contextual cue, both values equally plausible). Even then, ask about *that one key*, not the whole row.",
-  );
-  lines.push(
-    "- **Text/markdown (KB):** keep meaningful additions from both sides.",
-  );
-  lines.push(
-    "- **Binary (PDFs/images in filestore):** can't merge bytes — ask me which version to keep before doing anything.",
-  );
-  lines.push(
-    "- **Datastore `_schema.json` is read-only** — never touch it.",
-  );
-  lines.push(
-    "- **Workflows:** only merge draft fields. Never modify `releaseVersion` or anything release-related.",
-  );
-  lines.push("");
-  lines.push("### What to say back to me");
-  lines.push(
-    "**Do not surface raw field values** in your reply — they may be sensitive (PII, emails, phone numbers, secrets). After merging, summarise at the row/file level only:",
-  );
-  lines.push(
-    "- ✅ Good: \"Merged `databases/openit-people-.../row-123.json` — kept your local change to one field, took the remote change to two others.\"",
-  );
-  lines.push(
-    "- ❌ Avoid: tables or sentences that quote the actual before/after values.",
-  );
-  lines.push(
-    "If a field is truly ambiguous and you must ask, refer to the **field name only** (e.g. \"`f_2` differs on both sides — which should win?\") — never paste the values.",
-  );
-  lines.push("");
-  lines.push("### After all conflicts are resolved — confirm and sync");
-  lines.push(
-    "Once the merge + shadow delete + resolve-script have run for every conflict above, ask me one question:",
-  );
-  lines.push("");
-  lines.push("> Sync these changes to Pinkfish now? (yes/no)");
-  lines.push("");
-  lines.push(
-    "If I say yes, run the push script. The banner clears the moment the script writes its request marker, and OpenIT runs the actual push:",
-  );
-  lines.push("");
-  lines.push("```bash");
-  lines.push("node .claude/scripts/sync-push.mjs");
-  lines.push("```");
-  lines.push("");
-  lines.push(
-    "If I say no, leave it for me to push manually via the Sync tab.",
-  );
 
   return lines.join("\n");
 }
