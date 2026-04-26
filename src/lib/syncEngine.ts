@@ -179,9 +179,20 @@ export type PullResult = {
 };
 
 export type EntityAdapter = {
-  /// "kb" | "filestore" | "datastore" | "agent" | "workflow". Used in the
-  /// per-repo lock key and in log messages.
+  /// "kb" | "filestore" | "datastore" | "agent" | "workflow". Used in
+  /// the per-repo lock key, log messages, and (when `aggregateKey` is
+  /// not set) the conflict-aggregate slot. Consumers that act on the
+  /// emitted `AggregatedConflict.prefix` (the resolve-script
+  /// dispatcher, ConflictBanner labels) get this value, NOT
+  /// `aggregateKey` — so it must remain stable across instances.
   prefix: string;
+  /// Optional. Distinct slot key for the conflict aggregate when
+  /// multiple adapter instances share a prefix (e.g. one filestore
+  /// adapter per collection). Without this, the second instance's
+  /// `pullEntity` would clobber the first's slot via
+  /// `conflictsByPrefix.set(prefix, ...)`, hiding live conflicts
+  /// from the banner. Defaults to `prefix` when omitted.
+  aggregateKey?: string;
 
   loadManifest(repo: string): Promise<Manifest>;
   saveManifest(repo: string, manifest: Manifest): Promise<void>;
@@ -301,8 +312,23 @@ export function subscribeConflicts(
 
 /// Drop a single entity's conflict contribution. Wrappers call this from
 /// their stop functions so a stale entry can't outlive its sync.
+///
+/// Also clears any namespaced slot under the given prefix
+/// (`<prefix>:<suffix>`) so multi-instance entities like filestore
+/// (one slot per collection) get fully cleared when the wrapper says
+/// "stop". A caller passing `"filestore"` will remove
+/// `filestore:colA`, `filestore:colB`, etc. plus any plain
+/// `"filestore"` slot.
 export function clearConflictsForPrefix(prefix: string): void {
-  if (conflictsByPrefix.delete(prefix)) emitConflicts();
+  let changed = conflictsByPrefix.delete(prefix);
+  const colonPrefix = `${prefix}:`;
+  for (const key of [...conflictsByPrefix.keys()]) {
+    if (key.startsWith(colonPrefix)) {
+      conflictsByPrefix.delete(key);
+      changed = true;
+    }
+  }
+  if (changed) emitConflicts();
 }
 
 /// Compute the on-disk shadow path for a conflict's canonical
@@ -767,8 +793,15 @@ async function pullEntityImpl(
   // so the snapshot is consistent with the manifest+commit it just
   // wrote — no chance of a stale "conflict" line hanging around for an
   // item that's already been resolved.
+  //
+  // The aggregate slot uses `adapter.aggregateKey ?? adapter.prefix` so
+  // multi-instance entities (filestore-per-collection) don't clobber
+  // each other. The emitted AggregatedConflict.prefix stays at the
+  // logical prefix value, since downstream (resolve script dispatcher,
+  // banner copy) reasons in those terms.
+  const slotKey = adapter.aggregateKey ?? adapter.prefix;
   conflictsByPrefix.set(
-    adapter.prefix,
+    slotKey,
     conflicts.map((c) => ({
       prefix: adapter.prefix,
       manifestKey: c.manifestKey,

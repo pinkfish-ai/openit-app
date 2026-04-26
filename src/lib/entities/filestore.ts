@@ -37,6 +37,12 @@ export function filestoreAdapter(args: {
   const { creds, collection } = args;
   return {
     prefix: "filestore",
+    /// Per-collection slot in the engine's conflict aggregate so two
+    /// filestore collections' active conflicts don't clobber each
+    /// other. The emitted `AggregatedConflict.prefix` stays
+    /// "filestore" — downstream (banner, resolve-script dispatch)
+    /// keys off the logical prefix.
+    aggregateKey: `filestore:${collection.id}`,
 
     loadManifest: (repo) => fsStoreStateLoad(repo),
     saveManifest: (repo, m) => fsStoreStateSave(repo, m),
