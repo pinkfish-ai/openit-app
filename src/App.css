@@ -758,6 +758,40 @@ body,
   white-space: pre;
 }
 
+/* Sync log: line-by-line container so we can color severity. */
+.sync-log {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sync-log-line {
+  padding: 0;
+}
+
+.sync-log-step {
+  color: var(--text);
+}
+
+.sync-log-ok {
+  color: #6cc78c; /* green */
+}
+
+.sync-log-err {
+  color: #e06c75; /* red */
+  font-weight: 600;
+}
+
+.sync-log-warn {
+  color: #e5c07b; /* amber */
+  font-weight: 600;
+}
+
+.sync-log-sep {
+  color: var(--text-muted);
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
 /* Right pane */
 .right-pane {
   position: relative;
@@ -766,6 +800,16 @@ body,
   flex-direction: column;
   background: #faf9f6;
   border-left: 1px solid var(--border);
+}
+
+/* Claude Code's TUI emits its own ANSI colors via xterm.js — they
+   don't follow OpenIT's theme variables. A modest saturation pull-
+   back softens the bright reds / greens / blues so they read as
+   "Claude's pane" rather than competing with the calm KB / explorer
+   / sync-output styling. Drop too much saturation and diff red/green
+   stops being legible, so 0.72 is the sweet spot empirically. */
+.claude-terminal {
+  filter: saturate(0.72);
 }
 
 .icon-btn {
@@ -832,6 +876,11 @@ body,
   padding: 10px 12px;
   border-top: 1px solid var(--border);
   background: var(--surface);
+  /* Bubbles can overflow the right pane (6+ skill labels at narrow
+     widths). Horizontal scroll keeps them all reachable. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 
 .bubble {
@@ -843,6 +892,12 @@ body,
   font-size: 12px;
   cursor: pointer;
   transition: background 0.1s, border-color 0.1s;
+  /* Don't let flex shrink the bubbles below their natural width — at
+     narrow pane widths shrinking truncates the labels and clips the
+     hit target along with them. White-space:nowrap preserves multi-
+     word labels ("Get Started", "Create Workflow") on one line. */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .bubble:hover {

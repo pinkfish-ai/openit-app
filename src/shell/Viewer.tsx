@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { fsRead, fsReadBytes, fsList } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
@@ -26,6 +26,49 @@ function isImage(path: string): boolean {
 
 function isPdf(path: string): boolean {
   return /\.pdf$/i.test(path);
+}
+
+/// Sync-output renderer: styles each log line by its leading glyph and
+/// auto-scrolls to the bottom on every new line so the latest activity
+/// stays in view. Replaces a `<pre>{lines.join("\n")}</pre>` that left
+/// the user manually scrolling down on every push.
+function SyncLog({ lines }: { lines: string[] }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Stick to the bottom only if the user was already near the bottom
+    // — preserves their scroll position if they're inspecting earlier
+    // output. Threshold of 100px catches typical reading drift.
+    const nearBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+
+  return (
+    <div ref={ref} className="viewer-content sync-log">
+      {lines.map((raw, i) => {
+        const t = raw.trimStart();
+        let cls = "sync-log-line";
+        if (t.startsWith("─")) cls += " sync-log-sep";
+        else if (t.startsWith("✗")) cls += " sync-log-err";
+        else if (t.startsWith("⚠")) cls += " sync-log-warn";
+        else if (t.startsWith("✓") || t.startsWith("+") || t.startsWith("−")) {
+          cls += " sync-log-ok";
+        } else if (t.startsWith("▸")) cls += " sync-log-step";
+        // Strip the redundant "▸ sync:" / "▸ pull:" / "▸ kb push:"
+        // prefix — the leading ▸ / colored class already conveys
+        // "this is a step line", and the inner "sync:" / "pull:"
+        // duplicates the section already framed by ─── headers.
+        const cleaned = raw.replace(/^▸\s+(sync|pull|kb push|filestore push|datastore push|kb|filestore|datastore):\s*/, "▸ ");
+        return (
+          <div key={i} className={cls}>
+            {cleaned || "\u00A0"}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function isSpreadsheet(path: string): boolean {
@@ -439,7 +482,14 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
       );
     }
 
-    // Deploy / diff
+    // Sync: custom renderer with auto-scroll + line-level styling so
+    // a long push log stays readable (errors prominent, separators
+    // visible) and the latest output is always at the bottom.
+    if (source && source.kind === "sync") {
+      return <SyncLog lines={source.lines} />;
+    }
+
+    // Diff: plain monospace.
     return <pre className="viewer-content">{content}</pre>;
   };
 

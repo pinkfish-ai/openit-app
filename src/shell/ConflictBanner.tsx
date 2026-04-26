@@ -15,12 +15,22 @@ import {
 } from "../lib/syncEngine";
 import { writeToActiveSession } from "./activeSession";
 
-export function ConflictBanner() {
+export function ConflictBanner({ refreshTick = 0 }: { refreshTick?: number } = {}) {
   const [conflicts, setConflicts] = useState<AggregatedConflict[]>([]);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   const [resolving, setResolving] = useState(false);
 
   useEffect(() => subscribeConflicts(setConflicts), []);
+
+  // A user-initiated refresh (manual pull, etc.) is a deliberate
+  // "show me current state" gesture, so any prior dismiss should
+  // clear. Without this, dismissing once + the engine re-emitting the
+  // same conflict on a fresh pull would leave the banner permanently
+  // hidden until the conflict set actually changed (or the app
+  // restarted). The user reported exactly that.
+  useEffect(() => {
+    if (refreshTick > 0) setDismissedKey(null);
+  }, [refreshTick]);
 
   // Build a stable key from the conflict set so a new conflict (after
   // dismiss) re-shows the banner. Per-session dismiss only — sticks

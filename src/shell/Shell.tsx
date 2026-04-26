@@ -65,7 +65,13 @@ export function Shell({
   const [fsTick, setFsTick] = useState(0);
   const [changeCount, setChangeCount] = useState(0);
   const [pulling, setPulling] = useState(false);
+  /// Bumped on user-initiated refreshes (manual pull, after-Claude-push)
+  /// so the ConflictBanner clears any stale dismiss state. Without this,
+  /// dismissing once + the engine re-emitting the same conflict on a
+  /// subsequent pull would leave the banner permanently hidden.
+  const [refreshTick, setRefreshTick] = useState(0);
   const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
+  const bumpRefresh = useCallback(() => setRefreshTick((t) => t + 1), []);
 
   const handleManualPull = useCallback(async () => {
     if (!repo || pulling) return;
@@ -134,10 +140,11 @@ export function Shell({
 
       onSyncLine("─── pull done ───");
       bumpFs();
+      bumpRefresh();
     } finally {
       setPulling(false);
     }
-  }, [repo, pulling, bumpFs, onSyncLine]);
+  }, [repo, pulling, bumpFs, bumpRefresh, onSyncLine]);
 
   useEffect(() => {
     stateLoad().then(setState).catch(console.error);
@@ -272,6 +279,20 @@ export function Shell({
           onLine(`✗ sync: push trigger failed: ${errorMsg}`);
         }
 
+        // Bump refreshTick so the conflict banner clears any stale
+        // dismiss key — a deliberate sync gesture is a "give me a
+        // fresh look" signal, same shape as manual pull. We do NOT
+        // clear the engine's conflict aggregate here: pushAllEntities
+        // ran a pre-pull for each entity which already updated the
+        // aggregate to truth via `conflictsByPrefix.set(slot, …)`. If
+        // the pre-pull surfaced a conflict, push gracefully skipped
+        // that entity (status stays "ok") and the legitimate
+        // conflict needs to remain visible. Wiping here would silently
+        // hide unresolved divergence — which BugBot caught.
+        if (status === "ok") {
+          bumpRefresh();
+        }
+
         // Always write the result file when we got this far — we
         // claimed ownership of the marker and a script may be polling.
         const payload = JSON.stringify(
@@ -312,7 +333,7 @@ export function Shell({
       unlisten?.();
       fsWatchStop().catch(() => {});
     };
-  }, [repo, bumpFs, onSyncLine]);
+  }, [repo, bumpFs, bumpRefresh, onSyncLine]);
 
   const persist = useCallback(
     (patch: Partial<AppPersistedState>) => {
@@ -336,7 +357,7 @@ export function Shell({
 
   return (
     <div className="shell">
-      <ConflictBanner />
+      <ConflictBanner refreshTick={refreshTick} />
       <PanelGroup
         direction="horizontal"
         autoSaveId="openit-shell"

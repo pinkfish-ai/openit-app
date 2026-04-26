@@ -64,6 +64,10 @@ type Harness = {
 
 function buildHarness(args: {
   prefix: string;
+  /// Optional. Distinct slot key for the conflict aggregate. Lets a
+  /// test simulate two adapters that share a logical prefix (e.g.
+  /// filestore-per-collection) without clobbering each other's slot.
+  aggregateKey?: string;
   initialManifest: Manifest;
   remote: FakeRow[];
   local: LocalItem[];
@@ -79,6 +83,7 @@ function buildHarness(args: {
   let manifest: Manifest = JSON.parse(JSON.stringify(args.initialManifest));
   harness.adapter = {
     prefix: args.prefix,
+    ...(args.aggregateKey !== undefined ? { aggregateKey: args.aggregateKey } : {}),
     loadManifest: async () => manifest,
     saveManifest: async (_repo, m) => {
       manifest = m;
@@ -617,6 +622,88 @@ describe("syncEngine.pullEntity", () => {
     // But the shadow was NOT re-written.
     expect(h.shadowedKeys).toEqual([]);
     expect(h.fetchedKeys).toEqual([]);
+  });
+
+  it("multi-collection: distinct aggregateKey preserves siblings' conflicts in the aggregate", async () => {
+    // Regression test for the filestore-multi-collection case BugBot
+    // flagged: each collection's pull replaced the same `filestore`
+    // slot in the engine's conflict aggregate, so when the second
+    // collection ran with no conflicts, the first's conflicts vanished
+    // from the banner. Fix is `adapter.aggregateKey` distinguishing
+    // slots while keeping `adapter.prefix` (and the emitted
+    // `AggregatedConflict.prefix`) at the logical value.
+
+    // Collection A — a row in conflict.
+    const TRACKED = "v1";
+    const NEW_REMOTE = "v2";
+    const aHarness = buildHarness({
+      prefix: "filestore",
+      aggregateKey: "filestore:colA",
+      initialManifest: {
+        collection_id: null,
+        collection_name: null,
+        files: {
+          "a-file.pdf": { remote_version: TRACKED, pulled_at_mtime_ms: 1000 },
+        },
+      },
+      remote: [
+        {
+          manifestKey: "a-file.pdf",
+          workingTreePath: "filestore/a-file.pdf",
+          updatedAt: NEW_REMOTE,
+        },
+      ],
+      local: [
+        {
+          manifestKey: "a-file.pdf",
+          workingTreePath: "filestore/a-file.pdf",
+          mtime_ms: 2000,
+          isShadow: false,
+        },
+      ],
+    });
+
+    // Collection B — clean.
+    const bHarness = buildHarness({
+      prefix: "filestore",
+      aggregateKey: "filestore:colB",
+      initialManifest: { collection_id: null, collection_name: null, files: {} },
+      remote: [],
+      local: [],
+    });
+
+    let snapshot: AggregatedConflict[] = [];
+    const unsub = subscribeConflicts((c) => {
+      snapshot = c;
+    });
+
+    // Pull A first (records a conflict).
+    await pullEntity(aHarness.adapter, "/repo");
+    expect(snapshot).toHaveLength(1);
+    expect(snapshot[0].manifestKey).toBe("a-file.pdf");
+    expect(snapshot[0].prefix).toBe("filestore");
+
+    // Pull B second (no conflicts). Without the aggregateKey fix,
+    // this would set conflictsByPrefix["filestore"] = [], wiping A's
+    // conflict from the snapshot.
+    await pullEntity(bHarness.adapter, "/repo");
+    unsub();
+
+    expect(snapshot).toHaveLength(1);
+    expect(snapshot[0].manifestKey).toBe("a-file.pdf");
+    // Public-facing prefix is the logical value, not the slot key —
+    // resolve-script dispatch and banner copy depend on it.
+    expect(snapshot[0].prefix).toBe("filestore");
+
+    // clearConflictsForPrefix("filestore") should also reach
+    // namespaced slots so a wrapper's stop function fully cleans up.
+    clearConflictsForPrefix("filestore");
+    let postClear: AggregatedConflict[] = [];
+    const unsub2 = subscribeConflicts((c) => {
+      postClear = c;
+    });
+    unsub2();
+    expect(postClear).toEqual([]);
   });
 
   it("paginationFailed → server-delete pass skipped, manifest entries preserved", async () => {

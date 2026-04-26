@@ -99,6 +99,17 @@ function App() {
             creds,
             repo: lastRepo,
           }).catch((e) => console.error("workflow sync init failed:", e));
+          // Pull the plugin manifest on relaunch too — without this,
+          // the bubble bar stays at the hardcoded DEFAULT_BUBBLES and
+          // the user never sees the manifest's bubbles after the first
+          // session. The first-run + connect-modal paths below already
+          // handle this; relaunch was missed.
+          syncSkillsToDisk(lastRepo, creds)
+            .then((manifest) => {
+              console.log("[app] skill sync complete on relaunch, bubbles:", manifest.bubbles);
+              setBubbles(convertBubblesForPrompt(manifest.bubbles));
+            })
+            .catch((e) => console.error("skill sync failed on relaunch:", e));
         } else if (creds && !lastRepo && !repo && !stale) {
           // First run with dev creds — auto-bootstrap. Skipped when stale so
           // the user lands on the connect screen and re-connects deliberately.

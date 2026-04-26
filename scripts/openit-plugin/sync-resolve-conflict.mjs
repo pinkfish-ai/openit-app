@@ -41,7 +41,7 @@
 //
 // cwd: the OpenIT project root (`~/OpenIT/<orgId>/`).
 
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -60,6 +60,45 @@ const PREFIX_TO_FILE = {
   agent: ".openit/agent-state.json",
   workflow: ".openit/workflow-state.json",
 };
+
+/// Map a (prefix, manifestKey) back to the canonical and shadow paths
+/// on disk. The conflict prompt instructs Claude to delete the shadow
+/// before running this script, but Claude has been observed to skip
+/// step 3 occasionally — we defensively clean up the shadow here so a
+/// leftover .server.* file doesn't keep the FileExplorer's "shadow
+/// next to canonical" detection lit up. Returning null disables the
+/// cleanup for that prefix (e.g. unknown layout).
+function shadowPathFor(prefix, key) {
+  // Datastore: manifestKey is `<colName>/<key>`, shadow is
+  // `databases/<colName>/<key>.server.json`.
+  if (prefix === "datastore") {
+    return `databases/${key}.server.json`;
+  }
+  // KB: filename is the manifestKey verbatim.
+  if (prefix === "kb") {
+    return shadowFilenameFor(`knowledge-base/${key}`);
+  }
+  // Filestore: ditto.
+  if (prefix === "filestore") {
+    return shadowFilenameFor(`filestore/${key}`);
+  }
+  if (prefix === "agent") {
+    return shadowFilenameFor(`agents/${key}`);
+  }
+  if (prefix === "workflow") {
+    return shadowFilenameFor(`workflows/${key}`);
+  }
+  return null;
+}
+
+/// runbook.md → runbook.server.md. Bare filename (no extension) is
+/// also handled.
+function shadowFilenameFor(workingTreePath) {
+  const dot = workingTreePath.lastIndexOf(".");
+  const slash = workingTreePath.lastIndexOf("/");
+  if (dot <= slash) return `${workingTreePath}.server`;
+  return `${workingTreePath.slice(0, dot)}.server.${workingTreePath.slice(dot + 1)}`;
+}
 
 function parseArgs(argv) {
   const out = {};
@@ -115,7 +154,14 @@ async function main() {
   const entry = manifest.files[args.key];
   let action = "noop";
   if (entry) {
-    if (entry.conflict_remote_version) {
+    // Use a typeof check, NOT truthiness — adapters whose remote
+    // payload lacks an `updatedAt` normalize to "" (KB / filestore /
+    // datastore / agent / workflow all do this). The engine writes
+    // that "" into `conflict_remote_version` faithfully, and a
+    // truthiness check would skip past the force-push path into the
+    // legacy delete-entry path, which re-conflicts on the next pull
+    // when the user picked LOCAL.
+    if (typeof entry.conflict_remote_version === "string") {
       // Force-push case — preserves "the user merged, push their
       // local content to remote" for both pick-local AND pick-remote
       // outcomes. Pick-remote ends up uploading content the server
@@ -142,8 +188,35 @@ async function main() {
     }
   }
 
+  // Defensive shadow cleanup. The prompt instructs Claude to `rm` the
+  // shadow before running this script; if Claude skipped that step,
+  // a leftover `.server.*` file would keep the explorer's conflict
+  // marker on the canonical (it's keyed off the engine aggregate, but
+  // also off "is there a sibling shadow on disk?" — depending on the
+  // entity). Best-effort: ignore if the file doesn't exist.
+  let shadowRemoved = false;
+  const shadowRel = shadowPathFor(args.prefix, args.key);
+  if (shadowRel) {
+    const shadowAbs = path.resolve(process.cwd(), shadowRel);
+    if (existsSync(shadowAbs)) {
+      try {
+        await unlink(shadowAbs);
+        shadowRemoved = true;
+      } catch (e) {
+        // Don't fail the whole resolve on a shadow cleanup miss.
+        process.stderr.write(`warn: shadow cleanup failed: ${e.message}\n`);
+      }
+    }
+  }
+
   process.stdout.write(
-    JSON.stringify({ ok: true, prefix: args.prefix, key: args.key, action }) + "\n",
+    JSON.stringify({
+      ok: true,
+      prefix: args.prefix,
+      key: args.key,
+      action,
+      shadowRemoved,
+    }) + "\n",
   );
 }
 
