@@ -645,11 +645,25 @@ async function pullEntityImpl(
         localFile.mtime_ms > tracked.pulled_at_mtime_ms;
 
       if (remoteChanged && localChanged) {
-        // Both moved → drop a shadow (only if no shadow already exists; a
-        // pre-existing shadow means the conflict is unresolved from a prior
-        // pass and re-writing it would re-touch on every poll). Engine never
-        // adds the shadow path to `touched` — shadow files are gitignored.
-        if (!localShadowKeys.has(r.manifestKey)) {
+        // Both moved → drop a shadow with the current remote content.
+        //
+        // Re-write the shadow whenever remote has advanced since the
+        // last shadow we wrote, even if a shadow file already exists.
+        // The recorded `tracked.conflict_remote_version` is what the
+        // existing shadow was sourced from; if r.updatedAt now differs,
+        // the shadow on disk is stale and the user would merge against
+        // out-of-date content. The resolve-script then writes that
+        // current `r.updatedAt` as the new manifest remote_version, the
+        // pre-push pull sees remoteChanged=false, and we silently
+        // overwrite the newer remote changes the user never saw.
+        // (Skipping when shadow exists AND remote hasn't moved since
+        // we wrote it preserves the original mtime-thrash protection.)
+        const shadowIsStale =
+          tracked.conflict_remote_version != null &&
+          tracked.conflict_remote_version !== r.updatedAt;
+        const needShadowWrite =
+          !localShadowKeys.has(r.manifestKey) || shadowIsStale;
+        if (needShadowWrite) {
           try {
             await r.writeShadow(repo);
           } catch (e) {

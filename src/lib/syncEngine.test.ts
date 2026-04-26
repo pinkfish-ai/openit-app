@@ -497,6 +497,76 @@ describe("syncEngine.pullEntity", () => {
     expect(h.savedManifest?.files.ghost).toBeUndefined();
   });
 
+  it("conflict shadow re-written when remote advances during the conflict (stale-shadow protection)", async () => {
+    // Regression test for the stale-shadow hole in the resolve flow:
+    //   - T0: conflict detected, shadow written with V1, manifest gets
+    //     conflict_remote_version=V1.
+    //   - T1: user hasn't resolved yet. Remote advances to V2. Engine
+    //     re-fires the both-changed branch.
+    //   - Without this protection, idempotency skipped writeShadow
+    //     because the file exists, but conflict_remote_version got
+    //     bumped to V2. User then merged against V1 content, the
+    //     resolve script encoded V2 as the new remote_version, push
+    //     uploaded V1+local-merge — silently overwriting V2's changes.
+    //   - With this protection: when the recorded
+    //     conflict_remote_version differs from r.updatedAt, we re-write
+    //     the shadow so it carries V2's content, matching what the
+    //     resolve script will encode.
+    const TRACKED_VERSION = "v0";
+    const TRACKED_MTIME = 1000;
+    const REMOTE_V2 = "v2";
+
+    const h = buildHarness({
+      prefix: "test-prefix",
+      initialManifest: {
+        collection_id: null,
+        collection_name: null,
+        files: {
+          personXYZ: {
+            remote_version: TRACKED_VERSION,
+            pulled_at_mtime_ms: TRACKED_MTIME,
+            // Engine wrote V1 to the shadow on the previous poll;
+            // remote has since advanced to V2 (this poll).
+            conflict_remote_version: "v1",
+          },
+        },
+      },
+      remote: [
+        {
+          manifestKey: "personXYZ",
+          workingTreePath: "databases/openit-people/personXYZ.json",
+          updatedAt: REMOTE_V2,
+        },
+      ],
+      local: [
+        {
+          manifestKey: "personXYZ",
+          workingTreePath: "databases/openit-people/personXYZ.json",
+          mtime_ms: 2000,
+          isShadow: false,
+        },
+        {
+          // Stale shadow on disk from the V1 detection.
+          manifestKey: "personXYZ",
+          workingTreePath: "databases/openit-people/personXYZ.server.json",
+          mtime_ms: 1500,
+          isShadow: true,
+        },
+      ],
+    });
+
+    const result = await pullEntity(h.adapter, "/repo");
+
+    expect(result.conflicts).toHaveLength(1);
+    // Shadow re-written with V2 content (was V1). This is the fix.
+    expect(h.shadowedKeys).toEqual(["personXYZ"]);
+    // Manifest's conflict_remote_version now reflects V2 too.
+    expect(h.savedManifest?.files.personXYZ.conflict_remote_version).toBe(REMOTE_V2);
+    // remote_version / pulled_at_mtime_ms preserved at pre-conflict values.
+    expect(h.savedManifest?.files.personXYZ.remote_version).toBe(TRACKED_VERSION);
+    expect(h.savedManifest?.files.personXYZ.pulled_at_mtime_ms).toBe(TRACKED_MTIME);
+  });
+
   it("conflict idempotency: existing shadow on disk → engine does NOT re-write it on next poll", async () => {
     // Without this guard, every 60s poll while a conflict is unresolved
     // would re-download + re-write the shadow file, mtime-thrashing the

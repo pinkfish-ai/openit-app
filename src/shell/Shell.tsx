@@ -200,28 +200,30 @@ export function Shell({
       // useEffect cleanup race) can't each kick off a separate push.
       if (pushInFlightByRepo.has(repo)) return;
       pushInFlightByRepo.add(repo);
-      const requestPath = `${repo}/.openit/push-request.json`;
-      const lines: string[] = [];
-      const onLine = (line: string) => {
-        lines.push(line);
-        onSyncLine(line);
-      };
-      let status: "ok" | "error" = "ok";
-      let errorMsg: string | undefined;
       try {
-        // Read+delete the marker first so we don't loop on it.
+        const requestPath = `${repo}/.openit/push-request.json`;
+
+        // Confirm the marker actually exists. If not, this fs event
+        // came from something else (the script's own cleanup, a stale
+        // event from a prior run, etc.) — bail without writing a
+        // result file. Writing one regardless would let a *concurrent*
+        // sync-push.mjs poll loop read it and report success even
+        // though no push ran, leaving its real request marker
+        // stranded on disk.
         try {
           await fsRead(requestPath);
         } catch {
-          // Could be gone by the time we got here (script tidied up?).
-          // Either way nothing to do.
           return;
         }
+
+        // We own this push. Delete the marker first so a watcher
+        // event for the deletion itself doesn't loop us.
         try {
           await fsDelete(requestPath);
         } catch (e) {
           console.warn("[shell] failed to delete push-request:", e);
         }
+
         // Clear the conflict aggregate immediately so the banner
         // disappears as soon as the user confirms the sync. The push
         // pre-pulls each entity inside pushAllEntities — if a true
@@ -234,33 +236,44 @@ export function Shell({
         }
         onSyncLine("─── push triggered by Claude ───");
 
-        // Auto-commit any pending working-tree changes BEFORE pushing.
-        // After Claude's merge, disk has the merged content but git
-        // HEAD still has the pre-merge content, so `git status` reports
-        // a pending change. If the user picked remote, local now
-        // matches remote and the push reports `0 ok, 0 failed` — the
-        // user is left staring at "1 change to push" forever. Commit
-        // here so HEAD catches up. Same pattern handleCommit uses.
+        const lines: string[] = [];
+        const onLine = (line: string) => {
+          lines.push(line);
+          onSyncLine(line);
+        };
+        let status: "ok" | "error" = "ok";
+        let errorMsg: string | undefined;
+
         try {
-          const wsStatus = await gitStatusShort(repo);
-          if (wsStatus.length > 0) {
-            const unstaged = wsStatus.filter((f) => !f.staged).map((f) => f.path);
-            if (unstaged.length > 0) await gitStage(repo, unstaged);
-            const ts = new Date().toISOString();
-            await gitCommitStaged(repo, `sync: claude-resolve auto-commit @ ${ts}`);
-            onLine("▸ sync: auto-committed merged files");
+          // Auto-commit any pending working-tree changes BEFORE pushing.
+          // After Claude's merge, disk has the merged content but git
+          // HEAD still has the pre-merge content, so `git status` reports
+          // a pending change. If the user picked remote, local now
+          // matches remote and the push reports `0 ok, 0 failed` — the
+          // user is left staring at "1 change to push" forever. Commit
+          // here so HEAD catches up. Same pattern handleCommit uses.
+          try {
+            const wsStatus = await gitStatusShort(repo);
+            if (wsStatus.length > 0) {
+              const unstaged = wsStatus.filter((f) => !f.staged).map((f) => f.path);
+              if (unstaged.length > 0) await gitStage(repo, unstaged);
+              const ts = new Date().toISOString();
+              await gitCommitStaged(repo, `sync: claude-resolve auto-commit @ ${ts}`);
+              onLine("▸ sync: auto-committed merged files");
+            }
+          } catch (e) {
+            console.warn("[shell] auto-commit before push failed:", e);
           }
+
+          await pushAllEntities(repo, onLine);
         } catch (e) {
-          console.warn("[shell] auto-commit before push failed:", e);
+          status = "error";
+          errorMsg = String(e);
+          onLine(`✗ sync: push trigger failed: ${errorMsg}`);
         }
 
-        await pushAllEntities(repo, onLine);
-      } catch (e) {
-        status = "error";
-        errorMsg = String(e);
-        onLine(`✗ sync: push trigger failed: ${errorMsg}`);
-      } finally {
-        // Write the result so the script's poll loop sees it.
+        // Always write the result file when we got this far — we
+        // claimed ownership of the marker and a script may be polling.
         const payload = JSON.stringify(
           { status, error: errorMsg, lines, finishedAt: new Date().toISOString() },
           null,
@@ -271,6 +284,7 @@ export function Shell({
         } catch (e) {
           console.error("[shell] failed to write push-result:", e);
         }
+      } finally {
         pushInFlightByRepo.delete(repo);
       }
     };
