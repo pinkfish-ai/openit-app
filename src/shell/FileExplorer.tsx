@@ -3,7 +3,6 @@ import {
   fsDelete,
   fsList,
   fsReveal,
-  gitAddAndCommit,
   gitStatusShort,
   kbDeleteFile,
   kbWriteFileBytes,
@@ -308,13 +307,15 @@ export function FileExplorer({
         if (cancelled) return;
         setDatastoreItems(itemsMap);
 
-        // Disk-writing for all five entities now runs through their
-        // engine-driven start*Sync calls (App.tsx + modal). FileExplorer
-        // only keeps in-memory state for rendering the tree.
-        if (repo) {
-          await gitAddAndCommit(repo, "sync: update from Pinkfish").catch(() => {});
-          reload();
-        }
+        // Disk-writing + auto-committing for all five entities runs
+        // through the engine-driven start*Sync calls (App.tsx + modal).
+        // The engine commits ONLY the paths it just pulled, scoped via
+        // gitCommitPaths. FileExplorer used to do a broad
+        // gitAddAndCommit(... "sync: update from Pinkfish") here, which
+        // swept up the user's pending edits (including Claude's merge
+        // result) under a misleading message — leaving "no changes" in
+        // the Sync tab. Removed.
+        if (repo) reload();
         initialLoadDoneRef.current = true;
       } catch (e) {
         console.warn("[FileExplorer] loadOnce failed:", e);
