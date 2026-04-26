@@ -357,28 +357,37 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
 
   const handleCommit = async () => {
     if (!repo) return;
-    if (staged.length === 0 && unstaged.length === 0) return;
     setCommitting(true);
     setError(null);
     try {
-      // Auto-stage everything — no separate stage step in the UI.
-      if (unstaged.length > 0) {
-        await gitStage(repo, unstaged.map((f) => f.path));
+      // Commit-if-pending: when there are pending changes, stage and
+      // commit them locally first. When the working tree is clean (e.g.
+      // after a previous auto-commit swept up Claude's edits), skip the
+      // commit step but STILL run the push — the push internals use
+      // content equality and catch silent drift between local and
+      // remote regardless of git state.
+      const hasPending = staged.length > 0 || unstaged.length > 0;
+      if (hasPending) {
+        if (unstaged.length > 0) {
+          await gitStage(repo, unstaged.map((f) => f.path));
+        }
+        const msg = commitMsg.trim() || defaultCommitMessage(files);
+        await gitCommitStaged(repo, msg);
+        setCommitMsg("");
+        refresh();
+        onFsChange?.();
       }
-      // Empty input → fall back to an auto-derived subject so the user
-      // can just click Commit without typing.
-      const msg = commitMsg.trim() || defaultCommitMessage(files);
-      const created = await gitCommitStaged(repo, msg);
-      if (!created) {
-        setError("Nothing to commit");
-        return;
-      }
-      setCommitMsg("");
-      refresh();
-      onFsChange?.();
 
-      // Auto-push to Pinkfish across all bidirectional entities.
+      // Always push, regardless of whether a git commit just landed —
+      // this is the only path that detects + corrects content drift
+      // between local and remote (e.g. post-conflict-resolve state
+      // where the merged content sits unpushed).
       await pushOnCommit(repo, onSyncLine);
+      if (!hasPending) {
+        // After push the engine's poll will detect the now-matching
+        // content and the conflict aggregate will clear naturally.
+        refresh();
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -464,10 +473,18 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
           type="button"
           className="sc-commit-btn"
           onClick={handleCommit}
-          disabled={committing || generating || files.length === 0}
-          title={files.length === 0 ? "No changes" : "Commit and push to Pinkfish"}
+          disabled={committing || generating}
+          title={
+            files.length === 0
+              ? "Push to Pinkfish (catches silent content drift)"
+              : "Commit and push to Pinkfish"
+          }
         >
-          {committing ? "…" : "Commit"}
+          {committing
+            ? "…"
+            : files.length === 0
+            ? "Sync to Pinkfish"
+            : "Commit"}
         </button>
       </div>
       {error && <div className="sc-error">{error}</div>}
