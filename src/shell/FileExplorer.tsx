@@ -38,10 +38,77 @@ function gitStatusForPath(rel: string, rows: GitFileStatus[]): GitFileStatus | u
  * top-level `databases/openit-*` directories — leaves filenames inside
  * them untouched.
  */
-function prettyName(name: string, rel: string): string {
+/// Pick the field whose value is the human-meaningful label for a row.
+/// Priority: case-number-like → email → name/title/subject → first string
+/// field. Returns the field id (e.g. "f_2") or null if no string fields.
+function pickDisplayFieldId(
+  schema: { fields?: Array<{ id?: string; label?: string; type?: string }> } | undefined,
+): string | null {
+  const fields = schema?.fields;
+  if (!fields || fields.length === 0) return null;
+  const matchers: RegExp[] = [
+    /case\s*number|ticket\s*id|^id$|^number$/i,
+    /email/i,
+    /^name$|title|subject/i,
+  ];
+  for (const re of matchers) {
+    const m = fields.find(
+      (f) =>
+        typeof f.label === "string" &&
+        re.test(f.label) &&
+        (f.type === "string" || f.type === undefined) &&
+        f.id,
+    );
+    if (m?.id) return m.id;
+  }
+  // Fall back to first string field with an id.
+  const first = fields.find((f) => f.id && (f.type === "string" || f.type === undefined));
+  return first?.id ?? null;
+}
+
+const ROW_LABEL_MAX = 40;
+
+function truncate(s: string): string {
+  if (s.length <= ROW_LABEL_MAX) return s;
+  return s.slice(0, ROW_LABEL_MAX - 1) + "…";
+}
+
+/// Display name for a tree node. Defaults to the filename, but rewrites:
+///   - collection dirs `databases/openit-foo-12345/` → `foo`
+///   - row files inside those `<key>.json` → label from a schema-picked
+///     field (email for people, case number for tickets, etc.). Falls
+///     back to the filename when content / schema isn't available.
+function prettyName(
+  name: string,
+  rel: string,
+  datastores: DataCollection[] = [],
+  datastoreItems: Record<string, { items: MemoryItem[]; hasMore: boolean }> = {},
+): string {
   if (rel.match(/^databases\/openit-[^/]+$/)) {
     const stripped = name.replace(/^openit-/, "").replace(/-\d+$/, "");
     if (stripped) return stripped;
+  }
+  // Row file: databases/<col>/<key>.json
+  const rowMatch = rel.match(/^databases\/([^/]+)\/([^/]+)\.json$/);
+  if (rowMatch && rowMatch[2] !== "_schema" && !name.includes(".server.")) {
+    const colName = rowMatch[1];
+    const rowKey = rowMatch[2];
+    const col = datastores.find((d) => d.name === colName);
+    if (col) {
+      const fieldId = pickDisplayFieldId(col.schema);
+      if (fieldId) {
+        const item = datastoreItems[col.id]?.items.find(
+          (i) => (i.key || i.id) === rowKey,
+        );
+        const content = item?.content;
+        if (content && typeof content === "object") {
+          const value = (content as Record<string, unknown>)[fieldId];
+          if (typeof value === "string" && value.trim()) {
+            return truncate(value.trim());
+          }
+        }
+      }
+    }
   }
   return name;
 }
@@ -483,7 +550,7 @@ export function FileExplorer({
               }}
             >
               {n.is_dir ? (isCollapsedRow ? "▸ " : "▾ ") : ""}
-              <span className="tree-item-name">{prettyName(n.name, rel)}</span>
+              <span className="tree-item-name">{prettyName(n.name, rel, datastores, datastoreItems)}</span>
               {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
               {isDeletable(n) && (
                 <button
