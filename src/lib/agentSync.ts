@@ -8,6 +8,7 @@
 import { agentAdapter, resolveProjectAgents, type AgentRow } from "./entities/agent";
 import { type PinkfishCreds } from "./pinkfishAuth";
 import {
+  clearConflictsForPrefix,
   startReadOnlyEntitySync,
   type ReadOnlySyncHandle,
 } from "./syncEngine";
@@ -62,4 +63,5 @@ export function stopAgentSync(): void {
     handle.stop();
     handle = null;
   }
+  clearConflictsForPrefix("agent");
 }

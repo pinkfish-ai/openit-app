@@ -245,8 +245,20 @@ export function subscribeConflicts(
   };
 }
 
-export function getConflictsSnapshot(): AggregatedConflict[] {
-  return snapshotConflicts();
+/// Drop a single entity's conflict contribution. Wrappers call this from
+/// their stop functions so a stale entry can't outlive its sync.
+export function clearConflictsForPrefix(prefix: string): void {
+  if (conflictsByPrefix.delete(prefix)) emitConflicts();
+}
+
+/// Drop ALL conflict entries — used when leaving a project (modal
+/// reconnect with a different repo, sign-out). Without this, a freshly
+/// mounted ConflictBanner would see leftover entries from the prior
+/// project until each entity's first pull rewrote them.
+export function clearAllConflicts(): void {
+  if (conflictsByPrefix.size === 0) return;
+  conflictsByPrefix.clear();
+  emitConflicts();
 }
 
 // ---------------------------------------------------------------------------

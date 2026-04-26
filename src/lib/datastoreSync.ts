@@ -33,6 +33,7 @@ import { datastoreAdapter } from "./entities/datastore";
 import { fetchDatastoreItems } from "./entities/datastoreApi";
 import {
   classifyAsShadow,
+  clearConflictsForPrefix,
   DEFAULT_POLL_INTERVAL_MS,
   pullEntity,
   withRepoLock,
@@ -665,4 +666,5 @@ export function stopDatastoreSync(): void {
     stopPoll();
     stopPoll = null;
   }
+  clearConflictsForPrefix("datastore");
 }

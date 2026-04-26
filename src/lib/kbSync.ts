@@ -28,6 +28,7 @@ import { kbAdapter, kbServerShadowFilename } from "./entities/kb";
 import {
   canonicalFromShadow,
   classifyAsShadow,
+  clearConflictsForPrefix,
   commitTouched,
   pullEntity,
   startPolling,
@@ -250,6 +251,7 @@ export function stopKbSync() {
     stopPoll = null;
   }
   update({ phase: "idle", collection: null, conflicts: [], lastError: null });
+  clearConflictsForPrefix("kb");
 }
 
 /// Run a single pull (e.g. immediately before a push). Public wrapper.
