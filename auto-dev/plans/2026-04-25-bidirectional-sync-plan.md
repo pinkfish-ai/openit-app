@@ -29,50 +29,49 @@ The engine, adapter contract, and invariants from R1–R5 transfer directly to P
 
 ## Resuming this work in a fresh session
 
-**You are here:**
-- Branch `feat/datastore-pull-poll` (PR #9, `https://github.com/pinkfish-ai/openit-app/pull/9`) — datastore push + pull + 60s poll, plus connect-sync waste-reduction, plus manual ↻ button. 5 BugBot iterations, 16 findings (4 High, 8 Medium, 4 Low), all fixed. Last commit is the refactor plan + iter-5 log (`e2a11bf` or descendants).
-- Branch `main` may be ahead of `origin/main` by 1 commit (`ad0eb59` = BugBot fix #2 from PR #8). If so, it needs a push.
-- Pre-existing CI red on main (cargo fmt diffs in `claude.rs` + `filestore.rs`, TS6133 in firebase-helpers + a few app files). NOT regressions from this work — these were red before PR #8 even landed.
+**You are here (post-R5, 2026-04-26):**
+- All R1–R5 PRs merged to `main` (#10, #11, #12, #13, #14, plus docs #15). Engine, generic Rust commands, bootstrap-poll cleanup, agents+workflows on REST, conflict banner — all live.
+- Pre-existing CI red on `main` (cargo fmt diffs in `claude.rs` + `filestore.rs`, TS6133 in `src/api/generated/firebase-helpers/*` + 2 non-generated files). Documented as not-a-regression in earlier PRs; predates PR #8. Worth a one-shot cleanup PR but doesn't block work.
+- Working tree should be clean. No open feature PRs from this series.
 
 **Immediate next action options (pick one):**
-1. **Trigger BugBot iter 6** to confirm clean run on the iter-5 fix → if clean, declare PR #9 ready to merge. Command: `gh pr comment 9 --repo pinkfish-ai/openit-app --body "@cursor review"` then poll `gh api repos/pinkfish-ai/openit-app/commits/$(git rev-parse HEAD)/check-runs` until done.
-2. **Merge PR #9 as-is** (5 iters of validation is sufficient).
-3. **Start the `syncEngine.ts` refactor** (see "Architectural retrospective" section below). Recommended path per the user's request to step back. New branch off `main` after PR #9 merges.
+1. **Phase 5b — agent push** (~1 day, lowest risk). Add `apiUpsert` + `apiDelete` to the agent adapter using `POST/PUT/DELETE /user-agents/*`. Engine already provides the lock + auto-commit; only the per-entity REST surface is new. Mirror the datastore-push reconcile pattern.
+2. **Phase 5c — workflow push** (~2 days, gated by smoke test). Same shape, but `/automations` drafts can also be UI-edited; needs a manual cross-edit smoke test before enabling. Sync targets the draft only — `POST /automations/{id}/release` stays an explicit user action and is NOT called by the engine.
+3. **Phase 0 — plugin script substrate** (~1 week, multi-PR, touches `/web`). Move the engine into `.claude/scripts/sync-{pull,push,status}.mjs`. Tauri shrinks to a thin spawn-and-stream invoker. Migration tooling (`.openit/sync-timestamps.json` from per-entity manifests). Cross-platform CI matrix. The bigger thesis bet — Claude (or a vanilla terminal user) can drive sync without OpenIT.
+4. **Cleanup-only** — delete the legacy `pinkit deploy` shell-out and decide its fate (keep / retire / coexist), per the long-standing Phase-6 blocker.
 
-**Where the existing entity-sync code lives:**
-- `src/lib/kbSync.ts` (456 lines) — the cleanest reference; uses `withSyncLock`
-- `src/lib/filestoreSync.ts` (625 lines)
-- `src/lib/datastoreSync.ts` (940 lines) — biggest, most recently churned
-- `src/lib/agentSync.ts` (122 lines), `src/lib/workflowSync.ts` (134 lines) — read-only today
-- `src-tauri/src/kb.rs` — all entity Rust commands live here (split is sloppy; the file is misnamed for filestore + datastore content)
-- `src-tauri/src/git_ops.rs` — git_ensure_repo, git_commit_paths, untrack_gitignored_paths
-- `src/PinkfishOauthModal.tsx` — connect-time bootstrap orchestration
-- `src/App.tsx` — start/stop wiring on relaunch + first-run paths
-- `src/shell/Shell.tsx` — manual ↻ pull button + sync output viewer auto-open
-- `src/shell/SourceControl.tsx` — Deploy tab UI + commit→push flow
+**Where the engine code lives now:**
+- `src/lib/syncEngine.ts` — pull pipeline, per-repo lock, conflict aggregate, shadow helpers, `startReadOnlyEntitySync` for read-only entities.
+- `src/lib/entities/{kb,filestore,datastore,agent,workflow}.ts` — adapters. KB/filestore/datastore have push paths in their wrappers; agent/workflow are read-only.
+- `src/lib/{kb,filestore,datastore,agent,workflow}Sync.ts` — wrappers exposing `start*Sync` / `stop*Sync` / push helpers.
+- `src/shell/ConflictBanner.tsx` — top-of-shell aggregate banner subscribed to engine.
+- `src-tauri/src/kb.rs` — generic `entity_state_load`, `entity_state_save`, `entity_list_local`, `entity_write_file`, `entity_delete_file`, `entity_clear_dir` (R2 consolidated all per-entity copies into these).
+- `src-tauri/src/git_ops.rs` — `GITIGNORE` covers all five entities' shadow paths now.
+- `src/PinkfishOauthModal.tsx` — connect modal calls each `start*Sync` with an `onLog` callback.
+- `src/App.tsx` — same `start*Sync` calls on relaunch and fresh-creds bootstrap.
 
 **Local dev essentials:**
 - Dev creds: `.env.development` (gitignored). Has `VITE_DEV_CLIENT_ID/SECRET/ORG_ID/TOKEN_URL` for stage.
-- Run: `npm run tauri dev` (Vite + Cargo). User's session typically already running on port 1420; don't kill it without checking.
-- Project root: `~/OpenIT/<orgId>/` (was `~/Documents/OpenIT/<orgId>/` before; macOS TCC blocked Documents access).
-- Skills API: `https://skills-stage.pinkfish.ai/` for dev. Auth: `Auth-Token: Bearer <runtime-token>` for memory/resources/datacollection; `Authorization: Bearer …` for `/user-agents` and `/automations`.
+- Run: `npm run tauri dev` (Vite + Cargo). Port 1420.
+- Project root: `~/OpenIT/<orgId>/` (macOS TCC blocked `~/Documents/`).
+- Skills API: `https://skills-stage.pinkfish.ai/` for dev. Auth headers split: `Auth-Token: Bearer …` for memory/resources/datacollection; `Authorization: Bearer …` for `/user-agents` and `/automations` (now used by R4 adapters via `derivedUrls.appBaseUrl`).
 
 **Process pointers:**
 - BugBot loop: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/07-bugbot-review.md`
-- Plan review: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/02-implementation-plan-review.md`
-- Implementation: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/03-implementation.md`
-- Project brief: `/Users/benrigby/Documents/GitHub/autonomous-dev/development_process/00-projectbrief.md`
+- Plan review: `02-implementation-plan-review.md`
+- Implementation: `03-implementation.md`
+- Project brief: `00-projectbrief.md`
 - Wider product context: `/Users/benrigby/Documents/GitHub/autonomous-dev/research/itsm/pinkfish-itsm-concept.md`
 
-**Critical invariants discovered through iter 1–5 (must hold in any future entity work):**
-1. Manifest save MUST happen inside the per-repo lock alongside any git commit — releasing the lock before the commit causes index-lock races.
-2. Conflict shadow files (`*.server.*`) MUST NOT be added to the auto-commit `touched` array — they're gitignored, and `git add` on a gitignored path makes git_commit_paths fail and silently drop the legitimate items in the same batch.
-3. Pull list MUST be fully paginated before the server-side-deletion check runs — otherwise items beyond the first page get wrongly classified as deleted.
-4. Manifest reconcile after push MUST also paginate — same reason.
-5. Pull, push, and bootstrap-write MUST all serialize on the same per-repo lock — separate locks per operation lets manifest mutations race.
-6. The bootstrap path (modal connect) and steady-state poll path MUST converge on the same manifest invariants — easy to drift since they're in different files.
-
-These are exactly the things `syncEngine.ts` enforces by construction.
+**Engine invariants (now structural — `syncEngine.ts` enforces by construction):**
+1. Manifest save happens inside the per-repo lock alongside any git auto-commit.
+2. Conflict shadow files (`*.server.*`) are never added to the auto-commit `touched` array.
+3. Pull list is fully paginated before the server-side-deletion check runs (or per-scope `unreliableKeyPrefixes` excludes a single failed scope).
+4. Manifest reconcile after push paginates the same way.
+5. Pull, push, bootstrap-write, and status updates all serialize on the same per-(repo, prefix) lock — including `onResult`/`onError` callbacks (R1 iter 8 fix).
+6. Bootstrap (modal connect) and steady-state poll converge on the same manifest semantics by sharing the engine.
+7. Shadow classification is sibling-aware (`classifyAsShadow`) to avoid false positives on filenames that legitimately contain `.server.` (R1 iter 9 + iter 15).
+8. First-attempt failures don't strand auto-recovery — pollers register their timer before awaiting the first call (R1 iter 6, R3 iter 2, R4 iter 2).
 
 ---
 
