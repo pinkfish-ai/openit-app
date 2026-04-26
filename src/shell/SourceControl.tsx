@@ -13,8 +13,12 @@ import {
   type GitFileStatus,
 } from "../lib/api";
 import { getSyncStatus, kbHasServerShadowFiles, pullNow, pushAllToKb, startKbSync } from "../lib/kbSync";
-import { pushAllToFilestore, getFilestoreSyncStatus } from "../lib/filestoreSync";
-import { pushAllToDatastores } from "../lib/datastoreSync";
+import {
+  pushAllToFilestore,
+  getFilestoreSyncStatus,
+  pullOnce as filestorePullOnce,
+} from "../lib/filestoreSync";
+import { pushAllToDatastores, pullDatastoresOnce } from "../lib/datastoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 
 type Props = {
@@ -136,11 +140,32 @@ async function pushOnCommit(
     onLine("▸ sync: kb skipped (no collection)");
   }
 
-  // Filestore push.
+  // Filestore: pre-push pull to detect remote-side edits before we
+  // clobber them. Same pattern as KB above.
   const fsCollections = getFilestoreSyncStatus().collections;
   if (fsCollections.length > 0) {
-    onLine("▸ sync: filestore pushing");
     for (const collection of fsCollections) {
+      onLine(`▸ sync: filestore (${collection.name}) pre-push pull`);
+      let safe = true;
+      try {
+        const { downloaded } = await filestorePullOnce({ creds, repo, collection });
+        const conflicts = getFilestoreSyncStatus().conflicts;
+        if (conflicts.length > 0) {
+          safe = false;
+          onLine(
+            `✗ sync: filestore (${collection.name}) pull surfaced conflicts — resolve in Claude, then commit again:`,
+          );
+          for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
+        } else if (downloaded > 0) {
+          onLine(`  ✓ pulled ${downloaded} file(s) before push`);
+        }
+      } catch (e) {
+        safe = false;
+        onLine(`✗ sync: filestore (${collection.name}) pre-push pull failed: ${String(e)}`);
+      }
+      if (!safe) continue;
+
+      onLine(`▸ sync: filestore (${collection.name}) pushing`);
       try {
         const { pushed, failed } = await pushAllToFilestore({
           creds,
@@ -159,13 +184,37 @@ async function pushOnCommit(
     onLine("▸ sync: filestore skipped (no collections)");
   }
 
-  // Datastore push.
-  onLine("▸ sync: datastores pushing");
+  // Datastore: pre-push pull. Without this, user A's edit silently
+  // overwrites user B's remote edit when both sides changed since the
+  // last sync.
+  onLine("▸ sync: datastores pre-push pull");
+  let datastorePushSafe = true;
   try {
-    const { pushed, failed } = await pushAllToDatastores({ creds, repo, onLine });
-    onLine(`▸ sync: datastore push complete — ${pushed} ok, ${failed} failed`);
+    const { pulled, conflicts } = await pullDatastoresOnce({ creds, repo });
+    if (conflicts.length > 0) {
+      datastorePushSafe = false;
+      onLine(
+        "✗ sync: datastores pull surfaced conflicts — resolve in Claude, then commit again:",
+      );
+      for (const c of conflicts) {
+        onLine(`  • ${c.collectionName}/${c.key}.json: ${c.reason}`);
+      }
+    } else if (pulled > 0) {
+      onLine(`  ✓ pulled ${pulled} row(s) before push`);
+    }
   } catch (e) {
-    onLine(`✗ sync: datastore push failed: ${String(e)}`);
+    datastorePushSafe = false;
+    onLine(`✗ sync: datastores pre-push pull failed: ${String(e)}`);
+  }
+
+  if (datastorePushSafe) {
+    onLine("▸ sync: datastores pushing");
+    try {
+      const { pushed, failed } = await pushAllToDatastores({ creds, repo, onLine });
+      onLine(`▸ sync: datastore push complete — ${pushed} ok, ${failed} failed`);
+    } catch (e) {
+      onLine(`✗ sync: datastore push failed: ${String(e)}`);
+    }
   }
 
   onLine("▸ sync: done");
