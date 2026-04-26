@@ -618,18 +618,24 @@ export async function startDatastoreSync(args: {
     stopPoll = null;
   }
 
-  await pullDatastoresOnce({ creds, repo }).catch((e) => {
-    console.error("[datastoreSync] initial pull failed:", e);
-  });
-
+  // Resolve collections ONCE and share the adapter for both the initial
+  // pull and the 60s poll. Calling resolveProjectDatastores twice in quick
+  // succession (once via pullDatastoresOnce, once for the poller) could
+  // return different snapshots — e.g. the first call creates a missing
+  // default collection, the second sees the new one. The poll adapter
+  // would then run server-delete against a different snapshot than the
+  // initial pull just established.
   let collections: DataCollection[];
   try {
     collections = await resolveProjectDatastores(creds);
   } catch (e) {
-    console.error("[datastoreSync] resolve for poll failed:", e);
+    console.error("[datastoreSync] resolve failed:", e);
     return;
   }
   const adapter = datastoreAdapter({ creds, collections });
+  await pullEntity(adapter, repo).catch((e) => {
+    console.error("[datastoreSync] initial pull failed:", e);
+  });
   stopPoll = startPolling(adapter, repo, {
     onError: (e) => console.error("[datastoreSync] poll failed:", e),
   });

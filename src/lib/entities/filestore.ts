@@ -116,11 +116,13 @@ export function filestoreAdapter(args: {
       }
       try {
         await entityDeleteFile(repo, DIR, manifestKey);
-        delete manifest.files[manifestKey];
         touched.push(`${DIR}/${manifestKey}`);
       } catch (e) {
+        // Local delete failed — drop the manifest entry anyway so the
+        // engine doesn't retry every poll. See KB adapter for rationale.
         console.error(`[filestore] failed to delete local ${manifestKey}:`, e);
       }
+      delete manifest.files[manifestKey];
       return true;
     },
   };

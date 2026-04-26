@@ -111,11 +111,16 @@ export function kbAdapter(args: {
       }
       try {
         await kbDeleteFile(repo, manifestKey);
-        delete manifest.files[manifestKey];
         touched.push(`${DIR}/${manifestKey}`);
       } catch (e) {
+        // Local delete failed (file locked, permission denied, etc.). Drop
+        // the manifest entry anyway — the file becomes "untracked" from
+        // the engine's perspective. Without this, the engine retries every
+        // poll cycle indefinitely, spamming logs. User can clean up
+        // manually if needed; the next pull won't be affected.
         console.error(`[kb] failed to delete local ${manifestKey}:`, e);
       }
+      delete manifest.files[manifestKey];
       return true;
     },
   };

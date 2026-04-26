@@ -146,10 +146,15 @@ export function datastoreAdapter(args: {
     },
 
     /// Server-deleted row → drop the manifest entry AND remove the JSON
-    /// file from disk. Matches the user-expected "if I delete on Pinkfish,
-    /// it should disappear locally" model. The engine only invokes this
-    /// when pagination is fully consumed, so we won't false-positive on a
-    /// truncated remote list.
+    /// file from disk if it's still there. Matches the user-expected
+    /// "if I delete on Pinkfish, it should disappear locally" model. The
+    /// engine only invokes this when pagination is fully consumed, so we
+    /// won't false-positive on a truncated remote list.
+    ///
+    /// Skipping `touched.push` when the file was already gone is critical:
+    /// `git_commit_paths` runs a single `git add -- <paths>` and fails
+    /// the entire batch if any path is unknown to git, which would
+    /// silently drop legitimate pulled-file commits in the same cycle.
     async onServerDelete({ repo, manifestKey, manifest, touched }) {
       const slash = manifestKey.indexOf("/");
       if (slash < 0) {
@@ -160,13 +165,24 @@ export function datastoreAdapter(args: {
       const key = manifestKey.slice(slash + 1);
       const subdir = `databases/${colName}`;
       const filename = `${key}.json`;
+      // Check on-disk presence via the adapter's local listing rather than
+      // a separate stat — keeps the sandbox check Tauri-side.
+      let stillOnDisk = false;
       try {
-        await entityDeleteFile(repo, subdir, filename);
-        delete manifest.files[manifestKey];
-        touched.push(`${subdir}/${filename}`);
-      } catch (e) {
-        console.error(`[datastore] failed to delete local ${manifestKey}:`, e);
+        const local = await datastoreListLocal(repo, colName);
+        stillOnDisk = local.some((f) => f.filename === filename);
+      } catch {
+        // dir missing or unreadable → treat as not-on-disk
       }
+      if (stillOnDisk) {
+        try {
+          await entityDeleteFile(repo, subdir, filename);
+          touched.push(`${subdir}/${filename}`);
+        } catch (e) {
+          console.error(`[datastore] failed to delete local ${manifestKey}:`, e);
+        }
+      }
+      delete manifest.files[manifestKey];
       return true;
     },
   };
