@@ -285,6 +285,10 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
           <DataTable
             collection={source.collection}
             items={[source.item]}
+            onRowClick={(key) => {
+              const filePath = `${repo}/databases/${source.collection.name}/${key}.json`;
+              writeToActiveSession(filePath + " ");
+            }}
           />
         );
       }
