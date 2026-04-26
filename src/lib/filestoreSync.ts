@@ -374,7 +374,14 @@ export async function startFilestoreSync(args: {
 
   if (collections.length > 0) {
     const collection = collections[0];
-    await runPull({ creds, repo, collection });
+    // Catch initial-pull failures so we still start the poller. runPull
+    // already updates status on failure; without this catch a transient
+    // network blip on connect would leave the user without auto-recovery.
+    try {
+      await runPull({ creds, repo, collection });
+    } catch (e) {
+      console.error("[filestoreSync] initial pull failed (poll will still start):", e);
+    }
     const adapter = filestoreAdapter({ creds, collection });
     stopPoll = startPolling(adapter, repo, {
       onPhase: (phase) => {

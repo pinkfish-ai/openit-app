@@ -192,7 +192,16 @@ export async function startKbSync(args: {
     });
   }
 
-  const result = await runPull({ creds, repo, collection });
+  // Catch initial-pull failures (e.g. transient network blip) so we still
+  // start the poller — otherwise the user sits in `phase: "error"` with
+  // no automatic recovery path. runPull already updates status on failure.
+  // Also preserves the public `Promise<… | null>` contract.
+  let result: { pulled: number; total: number } | null = null;
+  try {
+    result = await runPull({ creds, repo, collection });
+  } catch (e) {
+    console.error("kb sync: initial pull failed (poll will still start):", e);
+  }
   const adapter = kbAdapter({ creds, collection });
   stopPoll = startPolling(adapter, repo, {
     onPhase: (phase) => {
