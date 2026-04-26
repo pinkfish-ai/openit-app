@@ -7,7 +7,7 @@ use std::process::Command;
 
 use serde::Serialize;
 
-const GITIGNORE: &str = ".DS_Store\n.openit/\nknowledge-base/*.server.*\nfilestore/*.server.*\nagents/*.server.*\nworkflows/*.server.*\ndatabases/**/*.server.json\n";
+const GITIGNORE: &str = ".DS_Store\n.openit/\n.claude/\nCLAUDE.md\nknowledge-base/*.server.*\nfilestore/*.server.*\nagents/*.server.*\nworkflows/*.server.*\ndatabases/**/*.server.json\n";
 
 fn git_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(".git")
@@ -62,33 +62,32 @@ fn untrack_gitignored_paths(repo: &str) -> Result<(), String> {
         ".openit/kb-state.json",
         ".openit/fs-state.json",
         ".openit/datastore-state.json",
+        ".claude",
+        "CLAUDE.md",
     ];
     let mut args: Vec<&str> = vec!["rm", "--cached", "-r", "--ignore-unmatch", "--quiet"];
     args.extend_from_slice(PATHS);
     let _ = run_git(repo, &args)?;
 
-    // Only act if the rm actually staged something under .openit/.
-    // SCOPE: pathspec on both the diff check AND the commit, so we don't
-    // sweep up unrelated staged changes the user may have left behind in
-    // the SourceControl tab. `git commit -- <pathspec>` commits only
-    // staged changes that match the pathspec.
-    let cached = run_git(
-        repo,
-        &["diff", "--cached", "--quiet", "--", ".openit/"],
-    )?;
+    // Only act if the rm actually staged something under one of the
+    // newly-ignored pathspecs. SCOPE: pathspecs on both the diff check
+    // AND the commit, so we don't sweep up unrelated staged changes
+    // the user may have left behind in the SourceControl tab.
+    const PATHSPECS: &[&str] = &[".openit/", ".claude/", "CLAUDE.md"];
+    let mut diff_args: Vec<&str> = vec!["diff", "--cached", "--quiet", "--"];
+    diff_args.extend_from_slice(PATHSPECS);
+    let cached = run_git(repo, &diff_args)?;
     if !cached.status.success() {
         // diff --cached --quiet exits 1 when there are staged changes
         // matching the pathspec.
-        let _ = run_git(
-            repo,
-            &[
-                "commit",
-                "-m",
-                "init: untrack .openit/ manifest dir (now in gitignore)",
-                "--",
-                ".openit/",
-            ],
-        )?;
+        let mut commit_args: Vec<&str> = vec![
+            "commit",
+            "-m",
+            "init: untrack plugin / manifest dirs (now in gitignore)",
+            "--",
+        ];
+        commit_args.extend_from_slice(PATHSPECS);
+        let _ = run_git(repo, &commit_args)?;
     }
     Ok(())
 }
