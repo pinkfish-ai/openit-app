@@ -22,6 +22,7 @@ import { fsStoreInit, fsStoreListLocal } from "./api";
 import { filestoreAdapter, type FilestoreCollection } from "./entities/filestore";
 import {
   classifyAsShadow,
+  clearConflictsForPrefix,
   pullEntity,
   startPolling,
   withRepoLock,
@@ -429,6 +430,7 @@ export function stopFilestoreSync() {
     lastError: null,
   });
   resolvedRepos.clear();
+  clearConflictsForPrefix("filestore");
 }
 
 /// Manual single-shot pull. Used by Shell.tsx's ↻ button and the modal

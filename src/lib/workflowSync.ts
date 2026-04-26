@@ -12,6 +12,7 @@ import {
 } from "./entities/workflow";
 import { type PinkfishCreds } from "./pinkfishAuth";
 import {
+  clearConflictsForPrefix,
   startReadOnlyEntitySync,
   type ReadOnlySyncHandle,
 } from "./syncEngine";
@@ -61,4 +62,5 @@ export function stopWorkflowSync(): void {
     handle.stop();
     handle = null;
   }
+  clearConflictsForPrefix("workflow");
 }

@@ -105,6 +105,9 @@ export type LocalItem = {
 
 export type Conflict = {
   manifestKey: string;
+  /// Repo-relative path the user can open. Filled in by the engine
+  /// from the matching RemoteItem.workingTreePath.
+  workingTreePath: string;
   reason: "local-and-remote-changed";
 };
 
@@ -194,6 +197,58 @@ export function withRepoLock<T>(
   const next = previous.catch(() => undefined).then(fn);
   repoLocks.set(key, next.catch(() => undefined));
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// Conflict aggregate. Every successful pullEntity call replaces this
+// adapter's contribution to the aggregate; subscribers see the union
+// across all five entities. R5 — drives the unified ConflictBanner that
+// replaces per-entity ad-hoc surfacing.
+// ---------------------------------------------------------------------------
+
+export type AggregatedConflict = {
+  prefix: string; // "kb" | "filestore" | "datastore" | "agent" | "workflow"
+  manifestKey: string;
+  workingTreePath: string;
+  reason: "local-and-remote-changed";
+};
+
+const conflictsByPrefix = new Map<string, AggregatedConflict[]>();
+const conflictSubscribers = new Set<(c: AggregatedConflict[]) => void>();
+
+function snapshotConflicts(): AggregatedConflict[] {
+  const out: AggregatedConflict[] = [];
+  for (const list of conflictsByPrefix.values()) out.push(...list);
+  return out;
+}
+
+function emitConflicts() {
+  const snapshot = snapshotConflicts();
+  for (const fn of conflictSubscribers) {
+    try {
+      fn(snapshot);
+    } catch (e) {
+      console.error("[syncEngine] conflict subscriber threw:", e);
+    }
+  }
+}
+
+export function subscribeConflicts(
+  fn: (c: AggregatedConflict[]) => void,
+): () => void {
+  conflictSubscribers.add(fn);
+  // Emit current state immediately so the UI doesn't have to wait for
+  // the next pull tick to render the existing banner.
+  fn(snapshotConflicts());
+  return () => {
+    conflictSubscribers.delete(fn);
+  };
+}
+
+/// Drop a single entity's conflict contribution. Wrappers call this from
+/// their stop functions so a stale entry can't outlive its sync.
+export function clearConflictsForPrefix(prefix: string): void {
+  if (conflictsByPrefix.delete(prefix)) emitConflicts();
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +407,7 @@ async function pullEntityImpl(
         }
         conflicts.push({
           manifestKey: r.manifestKey,
+          workingTreePath: r.workingTreePath,
           reason: "local-and-remote-changed",
         });
         continue;
@@ -415,6 +471,22 @@ async function pullEntityImpl(
     const ts = new Date().toISOString();
     await commitTouched(repo, touched, `sync: pull @ ${ts}`);
   }
+
+  // Replace this entity's contribution to the global conflict aggregate
+  // and notify subscribers (banner UI). Done inside the per-repo lock
+  // so the snapshot is consistent with the manifest+commit it just
+  // wrote — no chance of a stale "conflict" line hanging around for an
+  // item that's already been resolved.
+  conflictsByPrefix.set(
+    adapter.prefix,
+    conflicts.map((c) => ({
+      prefix: adapter.prefix,
+      manifestKey: c.manifestKey,
+      workingTreePath: c.workingTreePath,
+      reason: c.reason,
+    })),
+  );
+  emitConflicts();
 
   return { pulled, remoteCount: remote.length, conflicts, paginationFailed };
 }

@@ -16,6 +16,7 @@ import { pullDatastoresOnce } from "../lib/datastoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
 import { ChatPane } from "./ChatPane";
+import { ConflictBanner } from "./ConflictBanner";
 import { FileExplorer } from "./FileExplorer";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
@@ -209,6 +210,7 @@ export function Shell({
 
   return (
     <div className="shell">
+      <ConflictBanner />
       <PanelGroup
         direction="horizontal"
         autoSaveId="openit-shell"
