@@ -288,50 +288,60 @@ export function buildConflictPrompt(
 
   const lines: string[] = [];
   lines.push(
-    `There are ${conflicts.length} sync conflict${conflicts.length === 1 ? "" : "s"} between local edits and the Pinkfish remote. For each one, both sides changed since the last sync, so the engine wrote a \`.server.\` shadow file containing the remote version next to your local copy. Merge them.`,
+    `There ${conflicts.length === 1 ? "is" : "are"} ${conflicts.length} sync conflict${conflicts.length === 1 ? "" : "s"} between my local edits and the Pinkfish remote. For each, both sides changed since the last sync, so the engine wrote a \`.server.\` shadow file (containing the remote's version) next to my local canonical.`,
   );
   lines.push("");
+  lines.push(
+    "**For each conflict below, perform ALL FOUR actions as one atomic unit.** Skipping the final script call leaves the banner stuck — the engine doesn't know the merge happened until the script runs. Do not stop after deleting the shadow.",
+  );
+  lines.push("");
+  lines.push("### Conflicts to resolve");
 
-  const ENTITY_LABELS: Record<string, string> = {
-    kb: "Knowledge base",
-    filestore: "Filestore",
-    datastore: "Datastore rows",
-    agent: "Agents",
-    workflow: "Workflows",
-  };
-
-  for (const [prefix, list] of byPrefix) {
-    lines.push(`### ${ENTITY_LABELS[prefix] ?? prefix}`);
-    for (const c of list) {
-      lines.push(
-        `- \`${c.workingTreePath}\` (yours) ↔ \`${shadowPath(c.workingTreePath)}\` (server)`,
-      );
-    }
+  for (const c of conflicts) {
+    const sh = shadowPath(c.workingTreePath);
     lines.push("");
+    lines.push(`#### \`${c.workingTreePath}\``);
+    lines.push("");
+    lines.push(
+      `1. Read \`${c.workingTreePath}\` (mine) and \`${sh}\` (the remote's) and merge them. Preserve both sides' changes wherever they touch different keys/lines.`,
+    );
+    lines.push(
+      `2. Write the merged result to \`${c.workingTreePath}\`.`,
+    );
+    lines.push(
+      `3. Delete \`${sh}\` (e.g. \`rm "${sh}"\`).`,
+    );
+    lines.push(
+      "4. **Run the resolve-script — REQUIRED, banner won't clear without it:**",
+    );
+    lines.push("");
+    lines.push("   ```bash");
+    lines.push(
+      `   node .claude/scripts/sync-resolve-conflict.mjs --prefix ${c.prefix} --key '${c.manifestKey}'`,
+    );
+    lines.push("   ```");
   }
 
-  lines.push("For each pair:");
+  lines.push("");
+  lines.push("### Merge guidance");
   lines.push(
-    "1. Read both files. Read the canonical (the one without `.server.`) and the `.server.` shadow.",
+    "- **Text/markdown (KB):** keep meaningful additions from both sides.",
   );
   lines.push(
-    "2. Merge intelligently — the canonical has my edits, the shadow has the remote's. Preserve both sets of changes when they don't collide.",
+    "- **JSON (datastore rows, agents, workflows):** field-level merge. Keep both edits whenever they touch different keys; ask me which to keep when they collide.",
   );
   lines.push(
-    "3. For text/markdown (KB), merge prose; for JSON (datastores, agents, workflows), do a field-level merge — keep both edits whenever they touch different keys.",
+    "- **Binary (PDFs/images in filestore):** can't merge bytes — ask me which version to keep before doing anything.",
   );
   lines.push(
-    "4. For binary files (PDFs, images in filestore), I have to choose. Ask me which to keep.",
+    "- **Datastore `_schema.json` is read-only** — never touch it.",
   );
   lines.push(
-    "5. Write the merged result to the canonical path, then delete the `.server.` shadow file.",
-  );
-  lines.push(
-    "6. Don't push yet — let me review the diff first. After I confirm, I'll commit in the Sync tab to push.",
+    "- **Workflows:** only merge draft fields. Never modify `releaseVersion` or anything release-related.",
   );
   lines.push("");
   lines.push(
-    "Per-entity notes: for datastore rows, never modify the `_schema.json` (it's read-only). For workflows, only merge the draft fields — don't touch `releaseVersion` or anything release-related.",
+    "Don't push when you're done — let me review the diff first. I'll commit in the Sync tab to push.",
   );
 
   return lines.join("\n");
