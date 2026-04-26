@@ -193,22 +193,37 @@ export async function commitTouched(
 /// on a thrown pipeline error. Wrappers can react to each separately.
 export type EnginePhase = "pulling" | "ready" | "error";
 
+export type PullCallbacks = {
+  onPhase?: (phase: EnginePhase) => void;
+  /// Fires on successful pipeline completion. Invoked **inside** the
+  /// per-repo lock so any wrapper-side status update from this callback
+  /// serializes against the next operation queued on the lock.
+  onResult?: (result: PullResult) => void;
+  /// Fires on pipeline failure. Same lock-held semantics as onResult.
+  onError?: (error: unknown) => void;
+};
+
 export function pullEntity(
   adapter: EntityAdapter,
   repo: string,
-  opts: { onPhase?: (phase: EnginePhase) => void } = {},
+  opts: PullCallbacks = {},
 ): Promise<PullResult> {
   return withRepoLock(repo, adapter.prefix, async () => {
     opts.onPhase?.("pulling");
     try {
       const r = await pullEntityImpl(adapter, repo);
       opts.onPhase?.("ready");
+      // Fire onResult **before** releasing the lock, so wrapper status
+      // updates ("phase: ready", conflicts, lastPullAt, …) commit before
+      // any push waiting on the lock can flip status to "pushing".
+      // Without this, push status updates can land between the lock
+      // release and the .then() callback. (BugBot iter 8.)
+      opts.onResult?.(r);
       return r;
     } catch (e) {
-      // Distinct phase on failure so callers can respond differently to
-      // success vs error (e.g. update UI status). Earlier the catch
-      // branch also emitted "ready", lying about completion state.
       opts.onPhase?.("error");
+      // Same lock-held rationale as onResult above.
+      opts.onError?.(e);
       throw e;
     }
   });
@@ -371,21 +386,23 @@ export const DEFAULT_POLL_INTERVAL_MS = 60_000;
 export function startPolling(
   adapter: EntityAdapter,
   repo: string,
-  opts: {
-    pollMs?: number;
-    onError?: (e: unknown) => void;
-    onResult?: (r: PullResult) => void;
-    onPhase?: (phase: EnginePhase) => void;
-  } = {},
+  opts: PullCallbacks & { pollMs?: number } = {},
 ): () => void {
   const interval = opts.pollMs ?? DEFAULT_POLL_INTERVAL_MS;
   const timer = setInterval(() => {
-    pullEntity(adapter, repo, { onPhase: opts.onPhase })
-      .then((r) => opts.onResult?.(r))
-      .catch((e) => {
-        if (opts.onError) opts.onError(e);
-        else console.error(`[syncEngine:${adapter.prefix}] poll failed:`, e);
-      });
+    // Forward all callbacks to pullEntity so they fire inside the lock.
+    // Default error logger applies only when caller didn't supply onError.
+    pullEntity(adapter, repo, {
+      onPhase: opts.onPhase,
+      onResult: opts.onResult,
+      onError:
+        opts.onError ??
+        ((e) =>
+          console.error(`[syncEngine:${adapter.prefix}] poll failed:`, e)),
+    }).catch(() => {
+      // pullEntity rejects after onError fires; swallow to avoid an
+      // unhandled-rejection log on top of whatever onError already did.
+    });
   }, interval);
   return () => clearInterval(timer);
 }

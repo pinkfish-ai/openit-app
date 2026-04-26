@@ -112,32 +112,32 @@ async function runPull(args: {
   repo: string;
   collection: KbCollection;
 }): Promise<{ pulled: number; total: number }> {
-  // Status flips ("pulling" → "ready") fire via onPhase, which the engine
-  // emits *inside* the per-repo lock. Without that, a manual pull queued
-  // behind a running push would prematurely set phase: "pulling" while
-  // the push was still executing — corrupting the user-visible state.
-  try {
-    const adapter = kbAdapter({ creds: args.creds, collection: args.collection });
-    const result = await pullEntity(adapter, args.repo, {
-      onPhase: (phase) => {
-        if (phase === "pulling") update({ phase: "pulling" });
-      },
-    });
-    const conflicts: ConflictFile[] = result.conflicts.map((c) => ({
-      filename: c.manifestKey,
-      reason: "local-and-remote-changed",
-    }));
-    update({
-      phase: "ready",
-      conflicts,
-      lastPullAt: Date.now(),
-      lastError: null,
-    });
-    return { pulled: result.pulled, total: result.remoteCount };
-  } catch (e) {
-    update({ phase: "error", lastError: String(e) });
-    throw e;
-  }
+  // ALL status updates fire inside the engine's per-repo lock via the
+  // onPhase / onResult / onError callbacks. Doing them post-await would
+  // race against a queued push grabbing the lock and updating status
+  // first. Lock-held callbacks make the order deterministic.
+  const adapter = kbAdapter({ creds: args.creds, collection: args.collection });
+  const result = await pullEntity(adapter, args.repo, {
+    onPhase: (phase) => {
+      if (phase === "pulling") update({ phase: "pulling" });
+    },
+    onResult: (r) => {
+      const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
+        filename: c.manifestKey,
+        reason: "local-and-remote-changed",
+      }));
+      update({
+        phase: "ready",
+        conflicts,
+        lastPullAt: Date.now(),
+        lastError: null,
+      });
+    },
+    onError: (e) => {
+      update({ phase: "error", lastError: String(e) });
+    },
+  });
+  return { pulled: result.pulled, total: result.remoteCount };
 }
 
 /// Resolve (find or create) the OpenIT-managed KB for this org and run the
