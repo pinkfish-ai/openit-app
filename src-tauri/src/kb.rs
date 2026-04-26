@@ -6,7 +6,6 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 const KB_DIR: &str = "knowledge-base";
-const STATE_FILE: &str = ".openit/kb-state.json";
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct KbState {
@@ -36,10 +35,6 @@ pub struct KbLocalFile {
 
 fn kb_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(KB_DIR)
-}
-
-fn state_path(repo: &str) -> PathBuf {
-    Path::new(repo).join(STATE_FILE)
 }
 
 fn ensure_dir(p: &Path) -> Result<(), String> {
@@ -72,45 +67,6 @@ pub fn kb_init(repo: String) -> Result<String, String> {
     let dir = kb_dir(&repo);
     ensure_dir(&dir)?;
     Ok(dir.to_string_lossy().into_owned())
-}
-
-#[tauri::command]
-pub fn kb_list_local(repo: String) -> Result<Vec<KbLocalFile>, String> {
-    let dir = kb_dir(&repo);
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if name.starts_with('.') {
-            continue;
-        }
-        let metadata = match fs::metadata(&path) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let mtime_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis());
-        out.push(KbLocalFile {
-            filename: name,
-            mtime_ms,
-            size: metadata.len(),
-        });
-    }
-    out.sort_by(|a, b| a.filename.cmp(&b.filename));
-    Ok(out)
 }
 
 #[tauri::command]
@@ -163,26 +119,6 @@ pub fn kb_delete_file(repo: String, filename: String) -> Result<(), String> {
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-#[tauri::command]
-pub fn kb_state_load(repo: String) -> Result<KbState, String> {
-    let path = state_path(&repo);
-    if !path.exists() {
-        return Ok(KbState::default());
-    }
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn kb_state_save(repo: String, state: KbState) -> Result<(), String> {
-    let path = state_path(&repo);
-    if let Some(parent) = path.parent() {
-        ensure_dir(parent)?;
-    }
-    let json = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -469,14 +405,9 @@ pub fn kb_supported_extensions() -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 const FS_DIR: &str = "filestore";
-const FS_STATE_FILE: &str = ".openit/fs-state.json";
 
 fn fs_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(FS_DIR)
-}
-
-fn fs_state_path(repo: &str) -> PathBuf {
-    Path::new(repo).join(FS_STATE_FILE)
 }
 
 fn safe_fs_path(repo: &str, filename: &str) -> Result<PathBuf, String> {
@@ -504,45 +435,6 @@ pub fn fs_store_init(repo: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn fs_store_list_local(repo: String) -> Result<Vec<KbLocalFile>, String> {
-    let dir = fs_dir(&repo);
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if name.starts_with('.') {
-            continue;
-        }
-        let metadata = match fs::metadata(&path) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let mtime_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis());
-        out.push(KbLocalFile {
-            filename: name,
-            mtime_ms,
-            size: metadata.len(),
-        });
-    }
-    out.sort_by(|a, b| a.filename.cmp(&b.filename));
-    Ok(out)
-}
-
-#[tauri::command]
 pub fn fs_store_read_file(repo: String, filename: String) -> Result<String, String> {
     let path = fs_dir(&repo).join(&filename);
     fs::read_to_string(&path).map_err(|e| e.to_string())
@@ -564,111 +456,10 @@ pub fn fs_store_write_file_bytes(repo: String, filename: String, bytes: Vec<u8>)
     fs::write(&path, &bytes).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub fn fs_store_state_load(repo: String) -> Result<KbState, String> {
-    let path = fs_state_path(&repo);
-    if !path.exists() {
-        return Ok(KbState::default());
-    }
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn fs_store_state_save(repo: String, state: KbState) -> Result<(), String> {
-    let path = fs_state_path(&repo);
-    if let Some(parent) = path.parent() {
-        ensure_dir(parent)?;
-    }
-    let json = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())
-}
-
-// ---------------------------------------------------------------------------
-// Datastore commands — manifest at `.openit/datastore-state.json`.
-// Tracks per-row remote_version + pulled_at_mtime_ms keyed by
-// `<collection-name>/<key>` (rows live nested under databases/<col>/).
-// Mirrors fs_store_state_* but with a different file path.
-// ---------------------------------------------------------------------------
-
-const DATASTORE_STATE_FILE: &str = ".openit/datastore-state.json";
-
-fn datastore_state_path(repo: &str) -> PathBuf {
-    Path::new(repo).join(DATASTORE_STATE_FILE)
-}
-
-/// List local row files for a single datastore collection. Walks
-/// `databases/<collection>/` (flat — rows live as `<key>.json` directly
-/// under the collection dir) and returns `{ filename, mtime_ms, size }`.
-/// Skips `_schema.json` and dotfiles. Returns [] if the dir doesn't
-/// exist yet.
-#[tauri::command]
-pub fn datastore_list_local(
-    repo: String,
-    collection_name: String,
-) -> Result<Vec<KbLocalFile>, String> {
-    let dir = Path::new(&repo).join("databases").join(&collection_name);
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if name.starts_with('.') {
-            continue;
-        }
-        if name == "_schema.json" {
-            continue;
-        }
-        if !name.ends_with(".json") {
-            continue;
-        }
-        let metadata = match fs::metadata(&path) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let mtime_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| d.as_millis());
-        out.push(KbLocalFile {
-            filename: name,
-            mtime_ms,
-            size: metadata.len(),
-        });
-    }
-    out.sort_by(|a, b| a.filename.cmp(&b.filename));
-    Ok(out)
-}
-
-#[tauri::command]
-pub fn datastore_state_load(repo: String) -> Result<KbState, String> {
-    let path = datastore_state_path(&repo);
-    if !path.exists() {
-        return Ok(KbState::default());
-    }
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn datastore_state_save(repo: String, state: KbState) -> Result<(), String> {
-    let path = datastore_state_path(&repo);
-    if let Some(parent) = path.parent() {
-        ensure_dir(parent)?;
-    }
-    let json = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())
-}
+// Datastore manifest now goes through entity_state_load / entity_state_save
+// with name="datastore". datastore-specific row listing is handled by the
+// generic entity_list_local with subdir="databases/<collection>", filtered
+// in the TS adapter.
 
 #[tauri::command]
 pub async fn fs_store_download_to_local(
@@ -781,6 +572,100 @@ pub async fn fs_store_upload_file(
 // Generic entity file writer — writes JSON files to arbitrary subdirectories
 // within the repo (e.g. databases/openit-tickets/CS0001237.json).
 // ---------------------------------------------------------------------------
+
+/// Validate that `name` is safe to use as a filename component (used by
+/// entity_state_load/save to compute `.openit/<name>-state.json`). Rejects
+/// path separators, leading dots, and anything outside a small whitelist.
+fn validate_state_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("state name is empty".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.starts_with('.') {
+        return Err(format!("invalid state name: {}", name));
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(format!("invalid state name: {}", name));
+    }
+    Ok(())
+}
+
+/// Load `.openit/<name>-state.json` (the per-entity manifest). Returns
+/// `KbState::default()` when the file is missing. Replaces the three
+/// identical `kb_state_load` / `fs_store_state_load` / `datastore_state_load`
+/// commands. The TS wrappers in api.ts pass "kb", "fs", or "datastore".
+#[tauri::command]
+pub fn entity_state_load(repo: String, name: String) -> Result<KbState, String> {
+    validate_state_name(&name)?;
+    let path = Path::new(&repo)
+        .join(".openit")
+        .join(format!("{}-state.json", name));
+    if !path.exists() {
+        return Ok(KbState::default());
+    }
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+/// Save `.openit/<name>-state.json`. Creates the parent dir as needed.
+#[tauri::command]
+pub fn entity_state_save(repo: String, name: String, state: KbState) -> Result<(), String> {
+    validate_state_name(&name)?;
+    let path = Path::new(&repo)
+        .join(".openit")
+        .join(format!("{}-state.json", name));
+    if let Some(parent) = path.parent() {
+        ensure_dir(parent)?;
+    }
+    let json = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// List flat regular-file entries under `<repo>/<subdir>` as `KbLocalFile`
+/// records (filename + mtime_ms + size). Skips dotfiles. Replaces the
+/// three near-identical `kb_list_local` / `fs_store_list_local` /
+/// `datastore_list_local` commands.
+///
+/// Caller-side filtering (e.g. datastore's `_schema.json` skip, requiring
+/// `.json`) is done in the TS adapter, not here — keeps this command a
+/// dumb file-system primitive.
+#[tauri::command]
+pub fn entity_list_local(repo: String, subdir: String) -> Result<Vec<KbLocalFile>, String> {
+    let dir = Path::new(&repo).join(&subdir);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let metadata = match fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let mtime_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis());
+        out.push(KbLocalFile {
+            filename: name,
+            mtime_ms,
+            size: metadata.len(),
+        });
+    }
+    out.sort_by(|a, b| a.filename.cmp(&b.filename));
+    Ok(out)
+}
 
 /// Write a string (typically JSON) to `<repo>/<subdir>/<filename>`.
 /// Creates the subdirectory if it doesn't exist.

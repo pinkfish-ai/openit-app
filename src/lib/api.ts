@@ -210,7 +210,7 @@ export async function kbInit(repo: string): Promise<string> {
 }
 
 export async function kbListLocal(repo: string): Promise<KbLocalFile[]> {
-  return invoke("kb_list_local", { repo });
+  return invoke("entity_list_local", { repo, subdir: "knowledge-base" });
 }
 
 export async function kbDeleteFile(repo: string, filename: string): Promise<void> {
@@ -239,14 +239,14 @@ export async function kbWriteFileBytes(
 }
 
 export async function kbStateLoad(repo: string): Promise<KbStatePersisted> {
-  return invoke("kb_state_load", { repo });
+  return invoke("entity_state_load", { repo, name: "kb" });
 }
 
 export async function kbStateSave(
   repo: string,
   state: KbStatePersisted,
 ): Promise<void> {
-  return invoke("kb_state_save", { repo, state });
+  return invoke("entity_state_save", { repo, name: "kb", state });
 }
 
 export async function kbDownloadToLocal(
@@ -311,7 +311,7 @@ export async function fsStoreInit(repo: string): Promise<string> {
 }
 
 export async function fsStoreListLocal(repo: string): Promise<KbLocalFile[]> {
-  return invoke("fs_store_list_local", { repo });
+  return invoke("entity_list_local", { repo, subdir: "filestore" });
 }
 
 export async function fsStoreReadFile(repo: string, filename: string): Promise<string> {
@@ -336,32 +336,41 @@ export async function fsStoreWriteFileBytes(
 }
 
 export async function fsStoreStateLoad(repo: string): Promise<KbStatePersisted> {
-  return invoke("fs_store_state_load", { repo });
+  return invoke("entity_state_load", { repo, name: "fs" });
 }
 
 export async function fsStoreStateSave(
   repo: string,
   state: KbStatePersisted,
 ): Promise<void> {
-  return invoke("fs_store_state_save", { repo, state });
+  return invoke("entity_state_save", { repo, name: "fs", state });
 }
 
 export async function datastoreStateLoad(repo: string): Promise<KbStatePersisted> {
-  return invoke("datastore_state_load", { repo });
+  return invoke("entity_state_load", { repo, name: "datastore" });
 }
 
 export async function datastoreStateSave(
   repo: string,
   state: KbStatePersisted,
 ): Promise<void> {
-  return invoke("datastore_state_save", { repo, state });
+  return invoke("entity_state_save", { repo, name: "datastore", state });
 }
 
+/// List local row files for one datastore collection. Filters out
+/// `_schema.json` and non-`.json` entries TS-side now that the underlying
+/// command is generic. Same shape as `kbListLocal` / `fsStoreListLocal`.
 export async function datastoreListLocal(
   repo: string,
   collectionName: string,
 ): Promise<KbLocalFile[]> {
-  return invoke("datastore_list_local", { repo, collectionName });
+  const all = await invoke<KbLocalFile[]>("entity_list_local", {
+    repo,
+    subdir: `databases/${collectionName}`,
+  });
+  return all.filter(
+    (f) => f.filename !== "_schema.json" && f.filename.endsWith(".json"),
+  );
 }
 
 export async function fsStoreDownloadToLocal(
