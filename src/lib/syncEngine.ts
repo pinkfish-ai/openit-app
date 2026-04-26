@@ -91,6 +91,16 @@ export type RemoteItem = {
   /// paths to `touched` — they're gitignored, and adding them would fail
   /// `git add` and silently drop legitimate items in the same batch.
   writeShadow(repo: string): Promise<void>;
+  /// Optional cheap content access — returns the remote payload as it
+  /// would be written to disk, without an extra HTTP round-trip. Used by
+  /// the engine's content-equality check in the bootstrap-adoption
+  /// branch: if local content differs from remote content, treat as a
+  /// conflict instead of silently adopting (which would leave local edits
+  /// unpushed indefinitely). Adapters whose remote payloads are inline
+  /// in the list response (datastore via /memory/bquery) populate this.
+  /// KB/filestore where content is a signed-URL download leave it
+  /// undefined — the engine skips the check for them.
+  inlineContent?(): Promise<string>;
 };
 
 export type LocalItem = {
@@ -471,6 +481,64 @@ async function pullEntityImpl(
     // Without this, every poll lands on this state and the row is
     // permanently undiffable — high-severity gap caught by BugBot iter 2.
     if (!tracked && localFile) {
+      // Content-equality check (when the adapter exposes it cheaply).
+      // Without this, the bootstrap-adoption branch would silently
+      // accept any on-disk content as the new baseline — including
+      // post-merge content from a resolve flow where local has the
+      // user's merged changes and remote still has the pre-merge
+      // version. Treating that as "synced" hides the divergence.
+      // Instead: if content differs, write the shadow + record a
+      // conflict, just like the both-changed case below. Manifest
+      // does NOT advance — engine will keep flagging until the user
+      // pushes (which makes remote=local, content matches, conflict
+      // clears).
+      if (r.inlineContent) {
+        let remoteContent: string | null = null;
+        let localContent: string | null = null;
+        try {
+          remoteContent = await r.inlineContent();
+        } catch (e) {
+          console.warn(
+            `[syncEngine:${adapter.prefix}] inlineContent fetch failed:`,
+            e,
+          );
+        }
+        if (remoteContent != null) {
+          try {
+            const { fsRead } = await import("./api");
+            localContent = await fsRead(`${repo}/${localFile.workingTreePath}`);
+          } catch (e) {
+            console.warn(
+              `[syncEngine:${adapter.prefix}] local read failed:`,
+              e,
+            );
+          }
+        }
+        if (
+          remoteContent != null &&
+          localContent != null &&
+          remoteContent !== localContent
+        ) {
+          if (!localShadowKeys.has(r.manifestKey)) {
+            try {
+              await r.writeShadow(repo);
+            } catch (e) {
+              console.error(
+                `[syncEngine:${adapter.prefix}] shadow ${r.manifestKey} failed:`,
+                e,
+              );
+            }
+          }
+          conflicts.push({
+            manifestKey: r.manifestKey,
+            workingTreePath: r.workingTreePath,
+            reason: "local-and-remote-changed",
+          });
+          // Do NOT seed the manifest — leave the entry empty so the
+          // next poll continues to detect this state until pushed.
+          continue;
+        }
+      }
       manifest.files[r.manifestKey] = {
         remote_version: r.updatedAt,
         pulled_at_mtime_ms: localFile.mtime_ms ?? Date.now(),

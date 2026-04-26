@@ -16,9 +16,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 vi.mock("./api", () => ({
   gitCommitPaths: vi.fn().mockResolvedValue(true),
+  // Content-equality check in bootstrap-adoption reads the local file
+  // via fsRead. Tests that exercise that branch override this mock per
+  // case to return whatever local content they want.
+  fsRead: vi.fn().mockRejectedValue(new Error("fsRead not stubbed")),
 }));
 
-import { gitCommitPaths } from "./api";
+import { gitCommitPaths, fsRead } from "./api";
 import {
   classifyAsShadow,
   pullEntity,
@@ -40,6 +44,10 @@ type FakeRow = {
   manifestKey: string;
   workingTreePath: string;
   updatedAt: string;
+  /// Optional adapter-side inline content (e.g. datastore rows). When
+  /// provided, the engine's bootstrap-adoption branch will read local
+  /// content and compare against this — mismatch surfaces as a conflict.
+  inlineContent?: string;
 };
 
 type Harness = {
@@ -86,6 +94,9 @@ function buildHarness(args: {
         writeShadow: async () => {
           harness.shadowedKeys.push(r.manifestKey);
         },
+        ...(r.inlineContent !== undefined
+          ? { inlineContent: async () => r.inlineContent! }
+          : {}),
       })),
       paginationFailed: args.paginationFailed ?? false,
     }),
@@ -98,6 +109,7 @@ function buildHarness(args: {
 // engine state can't leak between cases.
 beforeEach(() => {
   vi.mocked(gitCommitPaths).mockClear();
+  vi.mocked(fsRead).mockReset();
   clearConflictsForPrefix("test-prefix");
 });
 
@@ -279,6 +291,162 @@ describe("syncEngine.pullEntity", () => {
     });
     // No commit — nothing was written.
     expect(gitCommitPaths).not.toHaveBeenCalled();
+  });
+
+  it("bootstrap-adoption with inlineContent + matching local → adopts cleanly (no conflict, manifest seeded)", async () => {
+    // When the adapter exposes inlineContent (datastore rows), the engine
+    // compares local file bytes to remote bytes before adopting. Match →
+    // safe to seed the manifest as the new baseline.
+    const REMOTE_VERSION = "2026-04-26T10:00:00Z";
+    const ON_DISK_MTIME = 5000;
+    const SAME_CONTENT = '{"name":"alpha","email":"a@x.com"}';
+
+    vi.mocked(fsRead).mockResolvedValueOnce(SAME_CONTENT);
+
+    const h = buildHarness({
+      prefix: "test-prefix",
+      initialManifest: { collection_id: null, collection_name: null, files: {} },
+      remote: [
+        {
+          manifestKey: "alpha",
+          workingTreePath: "databases/openit-people/alpha.json",
+          updatedAt: REMOTE_VERSION,
+          inlineContent: SAME_CONTENT,
+        },
+      ],
+      local: [
+        {
+          manifestKey: "alpha",
+          workingTreePath: "databases/openit-people/alpha.json",
+          mtime_ms: ON_DISK_MTIME,
+          isShadow: false,
+        },
+      ],
+    });
+
+    const result = await pullEntity(h.adapter, "/repo");
+
+    expect(result.conflicts).toHaveLength(0);
+    expect(h.shadowedKeys).toEqual([]);
+    expect(h.fetchedKeys).toEqual([]);
+    expect(h.savedManifest?.files.alpha).toEqual({
+      remote_version: REMOTE_VERSION,
+      pulled_at_mtime_ms: ON_DISK_MTIME,
+    });
+    expect(fsRead).toHaveBeenCalledTimes(1);
+  });
+
+  it("bootstrap-adoption with inlineContent + diverging local → conflict, shadow written, manifest NOT seeded", async () => {
+    // Regression test for the post-resolve drift scenario the user
+    // explicitly called out: "if local doesn't match remote there should
+    // be a conflict. period."
+    //
+    // Flow: a previous conflict was resolved by Claude (manifest entry
+    // deleted), Claude wrote merged content to disk. On the next poll,
+    // remote still has the pre-merge content. The bootstrap-adoption
+    // branch fires (no manifest entry, file on disk). With the
+    // content-equality check, mismatch → write shadow + record conflict
+    // and leave manifest unseeded so the conflict persists until the
+    // user pushes.
+    const REMOTE_VERSION = "2026-04-26T10:00:00Z";
+    const ON_DISK_MTIME = 5000;
+    const REMOTE_CONTENT = '{"name":"alpha","email":"old@x.com"}';
+    const LOCAL_CONTENT = '{"name":"alpha","email":"merged@x.com"}';
+
+    vi.mocked(fsRead).mockResolvedValueOnce(LOCAL_CONTENT);
+
+    const h = buildHarness({
+      prefix: "test-prefix",
+      initialManifest: { collection_id: null, collection_name: null, files: {} },
+      remote: [
+        {
+          manifestKey: "alpha",
+          workingTreePath: "databases/openit-people/alpha.json",
+          updatedAt: REMOTE_VERSION,
+          inlineContent: REMOTE_CONTENT,
+        },
+      ],
+      local: [
+        {
+          manifestKey: "alpha",
+          workingTreePath: "databases/openit-people/alpha.json",
+          mtime_ms: ON_DISK_MTIME,
+          isShadow: false,
+        },
+      ],
+    });
+
+    let aggregateSnapshot: AggregatedConflict[] = [];
+    const unsub = subscribeConflicts((c) => {
+      aggregateSnapshot = c;
+    });
+
+    const result = await pullEntity(h.adapter, "/repo");
+    unsub();
+
+    // Mismatch surfaced as a conflict.
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0].manifestKey).toBe("alpha");
+    expect(result.conflicts[0].reason).toBe("local-and-remote-changed");
+
+    // Shadow written, canonical untouched.
+    expect(h.shadowedKeys).toEqual(["alpha"]);
+    expect(h.fetchedKeys).toEqual([]);
+
+    // Manifest did NOT advance — alpha stays unseeded so subsequent
+    // polls keep flagging until the user pushes.
+    expect(h.savedManifest?.files.alpha).toBeUndefined();
+
+    // Aggregate observed it.
+    expect(aggregateSnapshot).toHaveLength(1);
+    expect(aggregateSnapshot[0].workingTreePath).toBe(
+      "databases/openit-people/alpha.json",
+    );
+  });
+
+  it("bootstrap-adoption with inlineContent + pre-existing shadow → conflict recorded, shadow NOT re-written", async () => {
+    // Idempotency for the bootstrap-adoption conflict path: if the
+    // shadow is already on disk from a prior poll, the engine must
+    // record the conflict but skip writeShadow to avoid mtime-thrashing.
+    const REMOTE_VERSION = "2026-04-26T10:00:00Z";
+    const REMOTE_CONTENT = '{"v":"remote"}';
+    const LOCAL_CONTENT = '{"v":"local"}';
+
+    vi.mocked(fsRead).mockResolvedValueOnce(LOCAL_CONTENT);
+
+    const h = buildHarness({
+      prefix: "test-prefix",
+      initialManifest: { collection_id: null, collection_name: null, files: {} },
+      remote: [
+        {
+          manifestKey: "alpha",
+          workingTreePath: "databases/openit-people/alpha.json",
+          updatedAt: REMOTE_VERSION,
+          inlineContent: REMOTE_CONTENT,
+        },
+      ],
+      local: [
+        {
+          manifestKey: "alpha",
+          workingTreePath: "databases/openit-people/alpha.json",
+          mtime_ms: 5000,
+          isShadow: false,
+        },
+        {
+          manifestKey: "alpha",
+          workingTreePath: "databases/openit-people/alpha.server.json",
+          mtime_ms: 4000,
+          isShadow: true,
+        },
+      ],
+    });
+
+    const result = await pullEntity(h.adapter, "/repo");
+
+    expect(result.conflicts).toHaveLength(1);
+    // Shadow already exists → engine must NOT re-write it.
+    expect(h.shadowedKeys).toEqual([]);
+    expect(h.savedManifest?.files.alpha).toBeUndefined();
   });
 
   it("server-delete: tracked but not in remote → drops manifest entry (default behavior, no adapter override)", async () => {
