@@ -33,10 +33,11 @@ import { datastoreAdapter } from "./entities/datastore";
 import { fetchDatastoreItems } from "./entities/datastoreApi";
 import {
   classifyAsShadow,
+  DEFAULT_POLL_INTERVAL_MS,
   looksLikeShadow,
   pullEntity,
-  startPolling,
   withRepoLock,
+  type EntityAdapter,
 } from "./syncEngine";
 
 export { fetchDatastoreItems };
@@ -635,27 +636,36 @@ export async function startDatastoreSync(args: {
     stopPoll = null;
   }
 
-  // Resolve collections ONCE and share the adapter for both the initial
-  // pull and the 60s poll. Calling resolveProjectDatastores twice in quick
-  // succession (once via pullDatastoresOnce, once for the poller) could
-  // return different snapshots — e.g. the first call creates a missing
-  // default collection, the second sees the new one. The poll adapter
-  // would then run server-delete against a different snapshot than the
-  // initial pull just established.
-  let collections: DataCollection[];
-  try {
-    collections = await resolveProjectDatastores(creds);
-  } catch (e) {
-    console.error("[datastoreSync] resolve failed:", e);
-    return;
-  }
-  const adapter = datastoreAdapter({ creds, collections });
-  await pullEntity(adapter, repo).catch((e) => {
-    console.error("[datastoreSync] initial pull failed:", e);
-  });
-  stopPoll = startPolling(adapter, repo, {
-    onError: (e) => console.error("[datastoreSync] poll failed:", e),
-  });
+  // Resolve-once-and-share strategy: the adapter is built lazily on the
+  // first successful resolve and reused for every subsequent poll. This
+  // gives both:
+  //   (a) consistent snapshot — pull + poll see the same collection set
+  //       (avoids the iter 2 drift), and
+  //   (b) auto-recovery — if the initial resolve fails (transient
+  //       network / auth blip), the poll keeps trying every 60s until
+  //       resolve succeeds (avoids the iter 12 stuck state).
+  let adapter: EntityAdapter | null = null;
+
+  const tryResolveAndPull = async () => {
+    if (!adapter) {
+      try {
+        const collections = await resolveProjectDatastores(creds);
+        adapter = datastoreAdapter({ creds, collections });
+      } catch (e) {
+        console.error("[datastoreSync] resolve failed:", e);
+        return;
+      }
+    }
+    try {
+      await pullEntity(adapter, repo);
+    } catch (e) {
+      console.error("[datastoreSync] pull failed:", e);
+    }
+  };
+
+  await tryResolveAndPull();
+  const timer = setInterval(tryResolveAndPull, DEFAULT_POLL_INTERVAL_MS);
+  stopPoll = () => clearInterval(timer);
 }
 
 export function stopDatastoreSync(): void {
