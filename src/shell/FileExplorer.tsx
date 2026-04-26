@@ -147,12 +147,6 @@ const KB_SUPPORTED_EXTENSIONS = new Set([
   "jpg", "jpeg", "png", "gif", "webp",
 ]);
 
-function setEntityDrag(e: React.DragEvent, ref: string) {
-  e.dataTransfer.setData("application/x-openit-ref", ref);
-  e.dataTransfer.setData("text/plain", ref);
-  e.dataTransfer.effectAllowed = "copy";
-}
-
 function isKbSupported(filename: string): boolean {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   return KB_SUPPORTED_EXTENSIONS.has(ext);
@@ -514,36 +508,11 @@ export function FileExplorer({
               }}
               draggable={!n.is_dir || rel.match(/^databases\/[^/]+$/) !== null}
               onDragStart={(e) => {
-                // Database collection directory drag
-                if (n.is_dir) {
-                  const dbMatch = rel.match(/^databases\/([^/]+)$/);
-                  if (dbMatch) {
-                    const col = datastores.find((d) => d.name === dbMatch[1]);
-                    if (col) {
-                      setEntityDrag(e, `[Pinkfish Datastore: ${col.name} (id: ${col.id}, type: structured datastore, fields: ${col.schema?.fields.map((f) => f.label).join(", ") ?? "unknown"})]`);
-                    }
-                  }
-                  return;
-                }
-                // Entity-aware drag references
-                if (rel.startsWith("agents/") && rel.endsWith(".json")) {
-                  const agent = agents.find((a) => rel === `agents/${a.name.replace(/[/\\:*?"<>|]/g, "_")}.json`);
-                  if (agent) { setEntityDrag(e, `[Pinkfish Agent: ${agent.name} (id: ${agent.id}${agent.description ? `, description: ${agent.description}` : ""})]`); return; }
-                }
-                if (rel.startsWith("workflows/") && rel.endsWith(".json")) {
-                  const wf = workflows.find((w) => rel === `workflows/${w.name.replace(/[/\\:*?"<>|]/g, "_")}.json`);
-                  if (wf) { setEntityDrag(e, `[Pinkfish Workflow: ${wf.name} (id: ${wf.id}${wf.description ? `, description: ${wf.description}` : ""})]`); return; }
-                }
-                if (rel.match(/^databases\/[^/]+\/[^/]+\.json$/)) {
-                  const parts = rel.split("/");
-                  const col = datastores.find((d) => d.name === parts[1]);
-                  if (col) {
-                    const rowKey = parts[2].replace(/\.json$/, "");
-                    const item = datastoreItems[col.id]?.items.find((i) => (i.key || i.id) === rowKey);
-                    if (item) { setEntityDrag(e, `[Pinkfish Datastore Row: ${col.name}/${rowKey} (datastore: ${col.name}, id: ${item.id}, content: ${JSON.stringify(typeof item.content === "object" ? item.content : item.content)})]`); return; }
-                  }
-                }
-                // Default: file path
+                // Drop the file (or collection-directory) path as the
+                // reference. Previously we built rich `[Pinkfish ...]`
+                // blobs with id + content inline, but those clutter the
+                // chat and Claude can read the path itself when it
+                // needs the content.
                 e.dataTransfer.setData("application/x-openit-path", n.path);
                 e.dataTransfer.setData("text/plain", n.path);
                 e.dataTransfer.effectAllowed = "copy";
