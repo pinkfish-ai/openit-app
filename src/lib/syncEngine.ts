@@ -368,8 +368,17 @@ export function buildConflictPrompt(
     "If a field is truly ambiguous and you must ask, refer to the **field name only** (e.g. \"`f_2` differs on both sides — which should win?\") — never paste the values.",
   );
   lines.push("");
+  lines.push("### After you finish");
   lines.push(
-    "Don't push when you're done — let me review the diff first. I'll commit in the Sync tab to push.",
+    "When all conflicts are merged, shadows deleted, and the resolve-script has been run for each one, end with a single line telling me to push:",
+  );
+  lines.push("");
+  lines.push(
+    "> Done — click **Sync to Pinkfish** in the Sync tab to push the merge.",
+  );
+  lines.push("");
+  lines.push(
+    "(Direct push from Claude is on the roadmap — for now the Sync tab is the only path that runs the pre-push pull guard, so always send me there.)",
   );
 
   return lines.join("\n");
