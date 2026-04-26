@@ -139,6 +139,12 @@ export function FileExplorer({
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
   const [gitRows, setGitRows] = useState<GitFileStatus[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
+  // Two-click delete confirm — `window.confirm` is blocked by Tauri
+  // permissions; this is the inline alternative. Click "Delete" once →
+  // button changes to "Click again to confirm" → second click inside the
+  // open menu actually deletes. Closing the menu (overlay click,
+  // selecting another item) resets it.
+  const [deleteArmed, setDeleteArmed] = useState(false);
 
   // Virtual resource state
   const [datastores, setDatastores] = useState<DataCollection[]>([]);
@@ -550,7 +556,10 @@ export function FileExplorer({
         <>
           <div
             className="context-menu-overlay"
-            onClick={() => setContextMenu(null)}
+            onClick={() => {
+              setContextMenu(null);
+              setDeleteArmed(false);
+            }}
           />
           <div
             className="context-menu"
@@ -561,6 +570,7 @@ export function FileExplorer({
               onClick={() => {
                 fsReveal(contextMenu.path).catch(console.error);
                 setContextMenu(null);
+                setDeleteArmed(false);
               }}
             >
               Reveal in Finder
@@ -569,21 +579,21 @@ export function FileExplorer({
               <button
                 className="context-menu-item context-menu-item-danger"
                 onClick={() => {
-                  const filename = contextMenu.path.split("/").pop() ?? contextMenu.path;
-                  const ok = window.confirm(
-                    `Delete ${filename}?\n\nThis removes the file from disk. If it was tracked, the deletion will appear in the Sync tab as a pending change.`,
-                  );
+                  if (!deleteArmed) {
+                    setDeleteArmed(true);
+                    return;
+                  }
+                  const path = contextMenu.path;
                   setContextMenu(null);
-                  if (!ok) return;
-                  fsDelete(contextMenu.path)
+                  setDeleteArmed(false);
+                  fsDelete(path)
                     .then(() => reload())
                     .catch((e) => {
                       console.error("delete failed:", e);
-                      window.alert(`Delete failed: ${String(e)}`);
                     });
                 }}
               >
-                Delete
+                {deleteArmed ? "Click again to confirm" : "Delete"}
               </button>
             )}
           </div>

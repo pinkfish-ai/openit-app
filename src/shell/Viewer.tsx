@@ -126,7 +126,10 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
       return;
     }
     if (source.kind === "datastore-row") {
-      setMode("raw");
+      // Default to the table-style key/value view — easier to read at a
+      // glance than raw JSON. Users who want raw JSON can click the
+      // Raw tab.
+      setMode("table");
       const raw = source.item.content;
       if (raw == null) {
         setContent("{}");
