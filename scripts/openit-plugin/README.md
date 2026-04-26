@@ -1,18 +1,23 @@
-# OpenIT plugin scripts (dev source)
+# OpenIT plugin (dev source)
 
-These are the Node scripts that ship with the OpenIT Claude plugin. Production users get them at `~/OpenIT/<orgId>/.claude/scripts/` via the plugin manifest published from `/web/packages/app/public/openit-plugin/scripts/`.
+This directory holds the **dev source of truth** for the Claude plugin OpenIT ships:
 
-This directory is **the dev source of truth in the openit-app repo** — the plugin scripts ultimately live cross-repo in `/web`, but we develop and test against them here so they version with the engine they integrate with.
+- **`CLAUDE.md`** — project-level rules Claude Code reads when running inside an OpenIT project. Lands at `~/OpenIT/<orgId>/CLAUDE.md` (project root).
+- **`*.mjs` scripts** — Node scripts Claude can call. Land at `~/OpenIT/<orgId>/.claude/scripts/<script>.mjs`.
+
+Production users get this content via the plugin manifest published from `/web/packages/app/public/openit-plugin/`. We develop and test against these files here so they version with the engine they integrate with; the cross-repo cp happens at PR-merge time.
 
 ## Dev loop
 
-1. Edit `scripts/openit-plugin/<script>.mjs` here.
-2. Copy to your project's `~/OpenIT/<orgId>/.claude/scripts/<script>.mjs`.
-3. Test from inside the project root: `node .claude/scripts/<script>.mjs <args>`.
+1. Edit `scripts/openit-plugin/<file>` here.
+2. Copy to your test org so you can actually run/read it:
+   - Scripts: `cp scripts/openit-plugin/<script>.mjs ~/OpenIT/<orgId>/.claude/scripts/<script>.mjs`
+   - CLAUDE.md: `cp scripts/openit-plugin/CLAUDE.md ~/OpenIT/<orgId>/CLAUDE.md`
+3. Test from inside the project root.
 4. Iterate.
-5. When stable, copy the file to `/web/packages/app/public/openit-plugin/scripts/`, bump `manifest.json` version in `/web`, push.
+5. When stable, copy to `/web/packages/app/public/openit-plugin/` (mirrors path: scripts go in `scripts/`, CLAUDE.md at the root). Bump `manifest.json` version. Push `/web`.
 
-A reconnect from OpenIT then pulls the new version down to every user's `~/OpenIT/<orgId>/.claude/scripts/`.
+A reconnect from OpenIT then pulls the new versions down to every user's project.
 
 ## Constraints (apply to every script)
 
