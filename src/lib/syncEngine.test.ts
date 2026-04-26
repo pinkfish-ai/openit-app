@@ -20,6 +20,7 @@ vi.mock("./api", () => ({
 
 import { gitCommitPaths } from "./api";
 import {
+  classifyAsShadow,
   pullEntity,
   subscribeConflicts,
   clearConflictsForPrefix,
@@ -57,6 +58,7 @@ function buildHarness(args: {
   initialManifest: Manifest;
   remote: FakeRow[];
   local: LocalItem[];
+  paginationFailed?: boolean;
 }): Harness {
   const harness: Harness = {
     fetchedKeys: [],
@@ -85,7 +87,7 @@ function buildHarness(args: {
           harness.shadowedKeys.push(r.manifestKey);
         },
       })),
-      paginationFailed: false,
+      paginationFailed: args.paginationFailed ?? false,
     }),
     listLocal: async () => args.local,
   };
@@ -302,5 +304,122 @@ describe("syncEngine.pullEntity", () => {
     expect(result.pulled).toBe(0);
     // Manifest no longer tracks the ghost.
     expect(h.savedManifest?.files.ghost).toBeUndefined();
+  });
+
+  it("conflict idempotency: existing shadow on disk → engine does NOT re-write it on next poll", async () => {
+    // Without this guard, every 60s poll while a conflict is unresolved
+    // would re-download + re-write the shadow file, mtime-thrashing the
+    // working tree and burning bandwidth. Caught by BugBot iter 4 of
+    // PR #9 ("Conflict shadow rewritten unconditionally every poll").
+    const h = buildHarness({
+      prefix: "test-prefix",
+      initialManifest: {
+        collection_id: null,
+        collection_name: null,
+        files: {
+          personXYZ: {
+            remote_version: "v-old",
+            pulled_at_mtime_ms: 1000,
+          },
+        },
+      },
+      remote: [
+        {
+          manifestKey: "personXYZ",
+          workingTreePath: "databases/people/personXYZ.json",
+          updatedAt: "v-new", // remote moved
+        },
+      ],
+      local: [
+        {
+          // Canonical with bumped mtime — local also moved.
+          manifestKey: "personXYZ",
+          workingTreePath: "databases/people/personXYZ.json",
+          mtime_ms: 2000,
+          isShadow: false,
+        },
+        {
+          // Shadow already on disk from a prior pull — engine should
+          // see it via the localShadowKeys set and skip writeShadow.
+          manifestKey: "personXYZ",
+          workingTreePath: "databases/people/personXYZ.server.json",
+          mtime_ms: 1500,
+          isShadow: true,
+        },
+      ],
+    });
+
+    const result = await pullEntity(h.adapter, "/repo");
+
+    // Conflict is still recorded each poll (so the banner stays up).
+    expect(result.conflicts).toHaveLength(1);
+    // But the shadow was NOT re-written.
+    expect(h.shadowedKeys).toEqual([]);
+    expect(h.fetchedKeys).toEqual([]);
+  });
+
+  it("paginationFailed → server-delete pass skipped, manifest entries preserved", async () => {
+    // If listRemote bails before consuming the full remote list (e.g.
+    // a 100k safety cap, network failure mid-paginate), engine MUST
+    // NOT delete tracked items it didn't see. Otherwise items past the
+    // cutoff get wrongly classified as server-deleted. PR #9 iter 1.
+    const h = buildHarness({
+      prefix: "test-prefix",
+      initialManifest: {
+        collection_id: null,
+        collection_name: null,
+        files: {
+          item_seen: { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+          item_past_cutoff: { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+        },
+      },
+      // Remote response is incomplete — only item_seen made it back.
+      remote: [
+        {
+          manifestKey: "item_seen",
+          workingTreePath: "files/item_seen.json",
+          updatedAt: "v1",
+        },
+      ],
+      local: [],
+      paginationFailed: true,
+    });
+
+    const result = await pullEntity(h.adapter, "/repo");
+
+    expect(result.paginationFailed).toBe(true);
+    // Both manifest entries SURVIVE — the truncated remote can't be
+    // trusted as authoritative for "what's been deleted server-side".
+    expect(h.savedManifest?.files.item_seen).toBeDefined();
+    expect(h.savedManifest?.files.item_past_cutoff).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pure-function tests for the shadow classifier. Misclassification of
+// legitimate filenames containing `.server.` (e.g. `nginx.server.conf`)
+// caused real regressions in R1 iters 9 + 15. The fix was sibling-aware
+// classification — locking it down here.
+// ---------------------------------------------------------------------------
+
+describe("syncEngine.classifyAsShadow", () => {
+  it("classifies as shadow only when the canonical sibling exists in the set", () => {
+    // Real shadow: runbook.md is on disk too → runbook.server.md is a shadow.
+    const withSibling = new Set(["runbook.md", "runbook.server.md"]);
+    expect(classifyAsShadow("runbook.server.md", withSibling)).toBe(true);
+
+    // No sibling: nginx.server.conf is its own canonical file, not a shadow.
+    const noSibling = new Set(["nginx.server.conf"]);
+    expect(classifyAsShadow("nginx.server.conf", noSibling)).toBe(false);
+
+    // Non-shadow filename always returns false.
+    expect(classifyAsShadow("plain.md", new Set(["plain.md"]))).toBe(false);
+
+    // Double-shadow case: both `a.server.conf` and `a.server.server.conf`
+    // on disk → the latter's canonical (`a.server.conf`) is in the set,
+    // so it's a shadow. R1 iter 15 fixed this.
+    const doubleShadow = new Set(["a.server.conf", "a.server.server.conf"]);
+    expect(classifyAsShadow("a.server.server.conf", doubleShadow)).toBe(true);
+    expect(classifyAsShadow("a.server.conf", doubleShadow)).toBe(false); // canonical
   });
 });
