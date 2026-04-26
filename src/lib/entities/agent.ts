@@ -61,8 +61,10 @@ async function listUserAgents(creds: PinkfishCreds): Promise<AgentRow[]> {
   const token = getToken();
   if (!token) throw new Error("not authenticated");
   const urls = derivedUrls(creds.tokenUrl);
-  // Platform endpoints use Authorization: Bearer (vs Auth-Token for skills).
-  const fetchFn = makeSkillsFetch(token.accessToken, "bearer");
+  // Platform endpoints use Authorization: Bearer (vs Auth-Token for
+  // skills) AND X-Selected-Org. The latter is non-obvious — without it,
+  // /user-agents responds 401 even with a valid token.
+  const fetchFn = makeSkillsFetch(token.accessToken, "bearer", creds.orgId);
   const url = new URL("/user-agents", urls.appBaseUrl);
   const resp = await fetchFn(url.toString());
   if (!resp.ok) {
