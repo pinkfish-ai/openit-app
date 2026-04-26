@@ -1,122 +1,65 @@
-import { pinkfishMcpCall, entityWriteFile, fsRead } from "./api";
-import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
+// Agent sync wrapper. Engine-driven via agentAdapter (entities/agent.ts).
+// Replaces the legacy MCP `agent_list` + content-equality syncAgentsToDisk
+// with REST `/user-agents` + the engine's manifest-based diff.
+//
+// Read-only today (no push). Built on the generic startReadOnlyEntitySync
+// helper from syncEngine.ts — same shape as workflowSync.
 
-export type Agent = {
-  id: string;
-  name: string;
-  description?: string;
-  instructions?: string;
-  selectedModel?: string;
-  isShared?: boolean;
-};
+import { agentAdapter, resolveProjectAgents, type AgentRow } from "./entities/agent";
+import { type PinkfishCreds } from "./pinkfishAuth";
+import {
+  startReadOnlyEntitySync,
+  type ReadOnlySyncHandle,
+} from "./syncEngine";
 
-const PREFIX = "openit-";
+// Backward-compat alias for FileExplorer's in-memory tree state.
+export type Agent = AgentRow;
 
-/**
- * Call a Pinkfish MCP tool and extract structuredContent, following the same
- * error-handling pattern as kb.ts.
- */
-async function call(
-  creds: PinkfishCreds,
-  server: string,
-  tool: string,
-  args: unknown,
-): Promise<unknown> {
-  const token = getToken();
-  if (!token) throw new Error("not authenticated");
-  const urls = derivedUrls(creds.tokenUrl);
-  const resp = await pinkfishMcpCall({
-    accessToken: token.accessToken,
-    orgId: creds.orgId,
-    server,
-    tool,
-    arguments: args,
-    baseUrl: urls.mcpBaseUrl,
-  });
-  const r = resp as {
-    result?: {
-      structuredContent?: unknown;
-      content?: Array<{ type: string; text?: string }>;
-    };
-    error?: unknown;
-  };
-  if (r.error) throw new Error(`${tool}: ${JSON.stringify(r.error)}`);
+export { resolveProjectAgents };
 
-  // Try structuredContent first, fall back to parsing content[0].text
-  let sc = r.result?.structuredContent ?? null;
-  if (!sc && r.result?.content) {
-    const textEntry = r.result.content.find((c) => c.type === "text" && c.text);
-    if (textEntry?.text) {
-      try {
-        sc = JSON.parse(textEntry.text);
-      } catch {
-        // not valid JSON
+let handle: ReadOnlySyncHandle | null = null;
+
+export async function startAgentSync(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLog?: (msg: string) => void;
+}): Promise<void> {
+  const { creds, repo, onLog } = args;
+  if (handle) {
+    handle.stop();
+    handle = null;
+  }
+
+  // Pre-fetch once so the adapter can reuse this list on its first
+  // listRemote call instead of issuing a duplicate REST request.
+  let isFirstBuild = true;
+  handle = startReadOnlyEntitySync({
+    repo,
+    buildAdapter: async () => {
+      const agents = await resolveProjectAgents(creds);
+      if (isFirstBuild && onLog) {
+        for (const a of agents) {
+          onLog(`  ✓ ${a.name || "(unnamed)"}  (id: ${a.id || "?"})`);
+        }
       }
-    }
-  }
-  console.log(`[agentSync] ${tool} ->`, sc);
-  if (
-    sc &&
-    typeof sc === "object" &&
-    "error" in (sc as Record<string, unknown>)
-  ) {
-    const errMsg = (sc as { error: unknown }).error;
-    throw new Error(
-      `${tool}: ${typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg)}`,
-    );
-  }
-  return sc;
+      const built = agentAdapter({
+        creds,
+        initialAgents: isFirstBuild ? agents : undefined,
+      });
+      isFirstBuild = false;
+      return built;
+    },
+    onLog,
+    itemLabel: (count, pulled) => `    ${count} agent(s) — ${pulled} pulled`,
+  });
+  // Surface first-attempt failures to the caller (modal's syncErrors
+  // flag trips). Timer is already installed; auto-recovery runs.
+  await handle.firstAttempt;
 }
 
-/**
- * List agents via the platform MCP user-agents endpoint, filtered by
- * the openit-* naming prefix.
- */
-export async function resolveProjectAgents(
-  creds: PinkfishCreds,
-): Promise<Agent[]> {
-  console.log("[agent] resolveProjectAgents called");
-  const raw = (await call(creds, "agent-management", "agent_list", {})) as {
-    agents?: Array<Record<string, unknown>>;
-  } | null;
-
-  const agents: Agent[] = (raw?.agents ?? []).map((a) => ({
-    id: String(a.id ?? ""),
-    name: String(a.name ?? ""),
-    description:
-      typeof a.description === "string" ? a.description : undefined,
-    instructions:
-      typeof a.instructions === "string" ? a.instructions : undefined,
-    selectedModel:
-      typeof a.selectedModel === "string" ? a.selectedModel : undefined,
-    isShared: typeof a.isShared === "boolean" ? a.isShared : undefined,
-  }));
-
-  const filtered = agents.filter((a) => a.name.startsWith(PREFIX));
-  console.log(`[agent] ✓ Found ${filtered.length} agents`);
-  return filtered;
-}
-
-export async function syncAgentsToDisk(
-  repo: string,
-  agents: Agent[],
-): Promise<{ written: number; unchanged: number }> {
-  // Content-equality: skip writes when the on-disk file already matches.
-  // Avoids spurious mtime bumps that would otherwise look like local edits.
-  let written = 0;
-  let unchanged = 0;
-  for (const agent of agents) {
-    const filename = agent.name.replace(/[/\\:*?"<>|]/g, "_") + ".json";
-    const content = JSON.stringify(agent, null, 2);
-    const absPath = `${repo}/agents/${filename}`;
-    let existing: string | null = null;
-    try { existing = await fsRead(absPath); } catch { /* missing */ }
-    if (existing === content) {
-      unchanged += 1;
-      continue;
-    }
-    await entityWriteFile(repo, "agents", filename, content);
-    written += 1;
+export function stopAgentSync(): void {
+  if (handle) {
+    handle.stop();
+    handle = null;
   }
-  return { written, unchanged };
 }

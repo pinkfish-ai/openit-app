@@ -449,3 +449,82 @@ export function startPolling(
   }, interval);
   return () => clearInterval(timer);
 }
+
+// ---------------------------------------------------------------------------
+// startReadOnlyEntitySync — the connect-time + poll bootstrap for entities
+// where the adapter is built from cached resolve data and the wrapper just
+// needs to log + run pull + start poll. agents and workflows use this; KB,
+// filestore, and datastore have entity-specific bootstrap (collection
+// resolve + initial item write) that doesn't fit this template.
+// ---------------------------------------------------------------------------
+
+export type ReadOnlySyncHandle = {
+  stop: () => void;
+  /// Resolves once the FIRST resolve+pull attempt completes. Rejects
+  /// with the first-attempt error so callers can mark it as a sync
+  /// failure (modal's syncErrors flag, etc.). The poller runs
+  /// regardless — the handle is always returned synchronously, so
+  /// even if `firstAttempt` rejects, the caller still has `stop()` to
+  /// clean up the timer.
+  firstAttempt: Promise<void>;
+};
+
+export function startReadOnlyEntitySync(args: {
+  /// Build the adapter from a freshly-resolved item list. Called on every
+  /// poll tick — the adapter is rebuilt each time so server-side
+  /// add/delete is reflected. The factory is responsible for running the
+  /// REST resolve and using the returned items as the adapter's source.
+  buildAdapter: () => Promise<EntityAdapter>;
+  repo: string;
+  pollMs?: number;
+  /// Receives a single summary line on the FIRST attempt only — silent
+  /// on subsequent poll ticks to avoid spamming the modal log. Per-
+  /// item log lines (the `✓ <name>` rows) are the wrapper's job inside
+  /// buildAdapter.
+  onLog?: (msg: string) => void;
+  /// Format function for the summary log line.
+  itemLabel?: (count: number, pulled: number) => string;
+}): ReadOnlySyncHandle {
+  const { buildAdapter, repo, onLog, itemLabel } = args;
+  let adapter: EntityAdapter | null = null;
+  let firstAttemptDone = false;
+
+  const tryResolveAndPull = async () => {
+    const isFirst = !firstAttemptDone;
+    firstAttemptDone = true;
+    if (!adapter) {
+      try {
+        adapter = await buildAdapter();
+      } catch (e) {
+        if (isFirst) throw e;
+        // Non-first poll-tick failures still log to console — silent
+        // swallow would hide REST/auth/manifest errors from production
+        // debugging (R4 iter 3 finding).
+        console.error("[syncEngine] read-only build failed:", e);
+        return;
+      }
+    }
+    try {
+      const r = await pullEntity(adapter, repo);
+      if (isFirst && onLog && itemLabel) {
+        onLog(itemLabel(r.remoteCount, r.pulled));
+      }
+    } catch (e) {
+      if (isFirst) throw e;
+      console.error("[syncEngine] read-only pull failed:", e);
+    }
+  };
+
+  const interval = args.pollMs ?? DEFAULT_POLL_INTERVAL_MS;
+  // Install the timer first so the handle is always returnable even
+  // if the first attempt rejects (iter 2 of R4 BugBot — without this
+  // the timer leaked and couldn't be stopped). Function is no longer
+  // async so handle returns synchronously; the first-attempt result is
+  // exposed via the `firstAttempt` promise.
+  const timer = setInterval(tryResolveAndPull, interval);
+  const firstAttempt = tryResolveAndPull();
+  return {
+    stop: () => clearInterval(timer),
+    firstAttempt,
+  };
+}

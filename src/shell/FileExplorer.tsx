@@ -13,8 +13,8 @@ import { subscribeSync, type SyncStatus } from "../lib/kbSync";
 import { subscribeFilestoreSync, type FilestoreSyncStatus } from "../lib/filestoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, fetchDatastoreSchema } from "../lib/datastoreSync";
-import { resolveProjectAgents, syncAgentsToDisk, type Agent } from "../lib/agentSync";
-import { resolveProjectWorkflows, syncWorkflowsToDisk, type Workflow } from "../lib/workflowSync";
+import { resolveProjectAgents, type Agent } from "../lib/agentSync";
+import { resolveProjectWorkflows, type Workflow } from "../lib/workflowSync";
 import { syncSkillsToDisk } from "../lib/skillsSync";
 import type { DataCollection, MemoryItem } from "../lib/skillsApi";
 
@@ -245,16 +245,10 @@ export function FileExplorer({
         if (cancelled) return;
         setDatastoreItems(itemsMap);
 
-        // Write to disk on initial load. Datastore disk-write now runs
-        // through App.tsx's startDatastoreSync (which the engine drives);
-        // FileExplorer just keeps the in-memory state for the UI.
-        // Agents/workflows still use their legacy sync*ToDisk helpers
-        // until R4 migrates them onto the engine.
+        // Disk-writing for all five entities now runs through their
+        // engine-driven start*Sync calls (App.tsx + modal). FileExplorer
+        // only keeps in-memory state for rendering the tree.
         if (repo) {
-          await Promise.all([
-            syncAgentsToDisk(repo, ag).catch(() => {}),
-            syncWorkflowsToDisk(repo, wf).catch(() => {}),
-          ]);
           await gitAddAndCommit(repo, "sync: update from Pinkfish").catch(() => {});
           reload();
         }

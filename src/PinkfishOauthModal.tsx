@@ -10,8 +10,8 @@ import {
   type PinkfishCreds,
 } from "./lib/pinkfishAuth";
 import { startDatastoreSync } from "./lib/datastoreSync";
-import { resolveProjectAgents, syncAgentsToDisk } from "./lib/agentSync";
-import { resolveProjectWorkflows, syncWorkflowsToDisk } from "./lib/workflowSync";
+import { startAgentSync } from "./lib/agentSync";
+import { startWorkflowSync } from "./lib/workflowSync";
 import { resolveProjectFilestores, pullOnce } from "./lib/filestoreSync";
 import { startKbSync } from "./lib/kbSync";
 import { syncSkillsToDisk } from "./lib/skillsSync";
@@ -128,12 +128,7 @@ export function PinkfishOauthModal({
           addLog("");
           addLog("▸ agents");
           try {
-            const agents = await resolveProjectAgents(creds);
-            for (const a of agents) {
-              addLog(`  ✓ ${a.name ?? "(unnamed)"}  (id: ${(a as any).id ?? "?"})`);
-            }
-            const a = await syncAgentsToDisk(repo, agents);
-            addLog(`    ${agents.length} agent(s) — ${a.written} file(s) written, ${a.unchanged} unchanged`);
+            await startAgentSync({ creds, repo, onLog: addLog });
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
@@ -144,12 +139,7 @@ export function PinkfishOauthModal({
           addLog("");
           addLog("▸ workflows");
           try {
-            const workflows = await resolveProjectWorkflows(creds);
-            for (const w of workflows) {
-              addLog(`  ✓ ${w.name}  (id: ${w.id})`);
-            }
-            const w = await syncWorkflowsToDisk(repo, workflows);
-            addLog(`    ${workflows.length} workflow(s) — ${w.written} file(s) written, ${w.unchanged} unchanged`);
+            await startWorkflowSync({ creds, repo, onLog: addLog });
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
