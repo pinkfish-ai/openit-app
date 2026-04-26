@@ -505,6 +505,10 @@ export function FileExplorer({
               style={{ paddingLeft: 8 + depth * 12 }}
               onContextMenu={(e) => {
                 e.preventDefault();
+                // Reset delete-arm whenever the menu retargets — without this,
+                // arming Delete on file A and right-clicking file B preselects
+                // "Click again to confirm" on B, and the next click wipes B.
+                setDeleteArmed(false);
                 setContextMenu({ x: e.clientX, y: e.clientY, path: n.path, isDir: n.is_dir });
               }}
               onDragOver={(e) => {

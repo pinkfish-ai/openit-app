@@ -287,15 +287,6 @@ export function buildConflictPrompt(
 ): string | null {
   if (conflicts.length === 0) return null;
 
-  // Group by entity prefix so the prompt has per-entity sections —
-  // makes it easy for Claude to apply the right merge strategy.
-  const byPrefix = new Map<string, AggregatedConflict[]>();
-  for (const c of conflicts) {
-    const list = byPrefix.get(c.prefix) ?? [];
-    list.push(c);
-    byPrefix.set(c.prefix, list);
-  }
-
   const lines: string[] = [];
   lines.push(
     `There ${conflicts.length === 1 ? "is" : "are"} ${conflicts.length} sync conflict${conflicts.length === 1 ? "" : "s"} between my local edits and the Pinkfish remote. For each, both sides changed since the last sync, so the engine wrote a \`.server.\` shadow file (containing the remote's version) next to my local canonical.`,
