@@ -1,19 +1,33 @@
-import {
-  kbListRemote,
-  type KbStatePersisted,
-  fsStoreDownloadToLocal,
-  fsStoreUploadFile,
-} from "./api";
+// Filestore sync wrapper. Pull pipeline + auto-commit + conflict shadow live
+// in `syncEngine.ts` driven by `filestoreAdapter`. This file owns:
+//   - The status object the FileExplorer subscribes to.
+//   - Filestore-specific resolve (find or create the openit-* collection,
+//     with 409-conflict + eventual-consistency handling — REST surface
+//     hasn't moved).
+//   - The push path (filestore upload semantics differ from the engine's
+//     diff model; engine still gives us the lock + auto-commit helper).
+//
+// Behavior changes vs the pre-engine version (R1 refactor):
+//   - Poll interval drops from 5 min to 60 s, matching every other entity.
+//   - Conflict shadows now drop on both-changed, mirroring KB.
+//   - Server-side deletion now drops the manifest entry (didn't before).
+// All three are improvements per the plan; flagged here for review.
+
+import { kbListRemote, type KbStatePersisted, fsStoreUploadFile } from "./api";
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
-import { fsStoreStateLoad, fsStoreStateSave, gitCommitPaths } from "./api";
+import { fsStoreStateLoad, fsStoreStateSave } from "./api";
+import { fsStoreInit, fsStoreListLocal } from "./api";
+import { filestoreAdapter, type FilestoreCollection } from "./entities/filestore";
 import {
-  fsStoreInit,
-  fsStoreListLocal,
-} from "./api";
+  classifyAsShadow,
+  pullEntity,
+  startPolling,
+  withRepoLock,
+} from "./syncEngine";
 
-export type FilestoreCollection = { id: string; name: string; description?: string };
+export type { FilestoreCollection };
 
 export type ConflictFile = {
   filename: string;
@@ -46,19 +60,16 @@ let status: FilestoreSyncStatus = {
 };
 
 const listeners = new Set<(s: FilestoreSyncStatus) => void>();
-let resolvedRepos = new Set<string>(); // Track which repos have had collections resolved
+let resolvedRepos = new Set<string>();
 
-// Org-scoped cache to prevent collections from one org leaking into another
+// Org-scoped cache to prevent collections from one org leaking into another.
 let createdCollections = new Map<string, Map<string, FilestoreCollection>>();
 let lastCreationAttemptTime = new Map<string, number>();
 
-// Per-org in-flight resolve promise — concurrent callers share the same operation
-// so we never race two list-then-create sequences against each other.
+// Per-org in-flight resolve promise — concurrent callers share the same
+// operation so we never race two list-then-create sequences.
 const inflightResolve = new Map<string, Promise<FilestoreCollection[]>>();
 
-/**
- * Get or create org-specific cache for created collections.
- */
 function getOrgCache(orgId: string): Map<string, FilestoreCollection> {
   if (!createdCollections.has(orgId)) {
     createdCollections.set(orgId, new Map());
@@ -66,16 +77,10 @@ function getOrgCache(orgId: string): Map<string, FilestoreCollection> {
   return createdCollections.get(orgId)!;
 }
 
-/**
- * Get the last creation attempt time for an org (default 0 if never attempted).
- */
 function getLastCreationTime(orgId: string): number {
   return lastCreationAttemptTime.get(orgId) ?? 0;
 }
 
-/**
- * Update the last creation attempt time for an org.
- */
 function setLastCreationTime(orgId: string, time: number): void {
   lastCreationAttemptTime.set(orgId, time);
 }
@@ -97,23 +102,15 @@ function update(patch: Partial<FilestoreSyncStatus>) {
   for (const l of listeners) l(status);
 }
 
-let pollTimer: ReturnType<typeof setInterval> | null = null;
-const POLL_INTERVAL_MS = 300_000; // 5 minutes — reduce duplicate creation attempts
+let stopPoll: (() => void) | null = null;
 
 // ---------------------------------------------------------------------------
-// Resolve helpers — REST API via skillsApi
+// Resolve helpers — REST API via skillsApi. Unchanged from pre-engine; the
+// resolve flow is filestore-specific and doesn't fit the engine.
 // ---------------------------------------------------------------------------
 
-/**
- * Find or create openit-* Filestorage collections. Creates defaults if none
- * exist. Uses the skills REST API (GET /datacollection/all).
- */
-const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventual consistency
+const CREATION_COOLDOWN_MS = 10_000;
 
-/**
- * Find or create openit-* Filestorage collections. Creates defaults if none
- * exist. Uses the skills REST API (GET /datacollection/?type=filestorage).
- */
 export async function resolveProjectFilestores(
   creds: PinkfishCreds,
   onLog?: (msg: string) => void,
@@ -132,11 +129,10 @@ export async function resolveProjectFilestores(
   }
 }
 
-/**
- * Pick one collection per default name. If the API returned multiple
- * collections with the same name (legacy duplicates), keep the lexicographically
- * smallest id so every caller in the same session converges on the same one.
- */
+/// Pick one collection per default name. If the API returned multiple
+/// collections with the same name (legacy duplicates), keep the
+/// lexicographically smallest id so every caller in the same session
+/// converges on the same one.
 function dedupeByName(
   all: DataCollection[],
   defaults: ReturnType<typeof getDefaultFilestores>,
@@ -178,7 +174,6 @@ async function resolveProjectFilestoresImpl(
 
   const orgCache = getOrgCache(creds.orgId);
 
-  // If list returned matching collections, we're done — never create.
   if (matching.length > 0) {
     for (const m of matching) {
       orgCache.set(m.name, m);
@@ -187,8 +182,6 @@ async function resolveProjectFilestoresImpl(
     return matching;
   }
 
-  // List is empty - check if we recently created collections
-  // Only return cache if we attempted creation recently (within cooldown)
   const now = Date.now();
   const lastCreationTime = getLastCreationTime(creds.orgId);
   if (orgCache.size > 0 && now - lastCreationTime < CREATION_COOLDOWN_MS) {
@@ -201,9 +194,8 @@ async function resolveProjectFilestoresImpl(
   }
 
   console.log("[filestore] no openit-* filestores found — creating defaults");
-  // API says nothing matches and we're past the eventual-consistency window —
-  // any cached entries are stale (e.g. user deleted the collection on the
-  // remote between sessions). Wipe before creating so we actually POST.
+  // Past the eventual-consistency window — any cached entries are stale.
+  // Wipe before creating so we actually POST.
   orgCache.clear();
   setLastCreationTime(creds.orgId, now);
   const created: FilestoreCollection[] = [];
@@ -227,8 +219,6 @@ async function resolveProjectFilestoresImpl(
       if (!response.ok) {
         const errText = await response.text();
         console.error("[filestore] response error:", errText);
-        // 409 means the list was stale and the collection actually exists.
-        // Mark conflict so we force a refetch to grab the authoritative id.
         if (response.status === 409) {
           console.log(`[filestore] collection ${def.name} already exists (409) — will refetch`);
           conflictHit = true;
@@ -252,9 +242,6 @@ async function resolveProjectFilestoresImpl(
     }
   }
 
-  // Refetch authoritatively whenever we touched the create path — handles
-  // eventual consistency, 409 conflicts (list was stale), and concurrent
-  // creators converging on a single deduped set.
   if (created.length > 0 || conflictHit) {
     try {
       await new Promise((r) => setTimeout(r, 3000));
@@ -275,9 +262,6 @@ async function resolveProjectFilestoresImpl(
   return created;
 }
 
-/**
- * List filestore collections via REST API (GET works, POST doesn't).
- */
 async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataCollection[]> {
   const token = getToken();
   if (!token) throw new Error("not authenticated");
@@ -289,7 +273,7 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
     url.searchParams.set("type", "filestorage");
     console.log("[filestore] Fetching from:", url.toString());
     const response = await fetchFn(url.toString());
-    
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
@@ -301,7 +285,7 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
       console.error("[filestore] failed to parse list response JSON:", e);
       throw new Error(`Failed to parse collection list: ${e}`);
     }
-    
+
     const collections = Array.isArray(result) ? result : [];
     console.log(`[filestore] list_collections returned ${collections.length} filestorage collections`);
     collections.forEach((c) => console.log(`  • ${c.name} (id: ${c.id})`));
@@ -313,13 +297,40 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
 }
 
 // ---------------------------------------------------------------------------
-// Sync loop — mirrors kbSync.ts
+// Sync loop — engine-driven.
 // ---------------------------------------------------------------------------
 
-/**
- * Resolve filestore collections for this org and begin polling for changes.
- * Idempotent — safe to call again on org change.
- */
+async function runPull(args: {
+  repo: string;
+  adapter: ReturnType<typeof filestoreAdapter>;
+}): Promise<{ downloaded: number; total: number }> {
+  // All status updates fire inside the engine's per-repo lock — see the
+  // matching comment in kbSync.runPull for rationale.
+  const result = await pullEntity(args.adapter, args.repo, {
+    onPhase: (phase) => {
+      if (phase === "pulling") update({ phase: "pulling" });
+    },
+    onResult: (r) => {
+      const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
+        filename: c.manifestKey,
+        reason: "local-and-remote-changed",
+      }));
+      update({
+        phase: "ready",
+        conflicts,
+        lastPullAt: Date.now(),
+        lastError: null,
+      });
+    },
+    onError: (e) => {
+      update({ phase: "error", lastError: String(e) });
+    },
+  });
+  return { downloaded: result.pulled, total: result.remoteCount };
+}
+
+/// Resolve filestore collections for this org and begin polling for changes.
+/// Idempotent — safe to call again on org change.
 export async function startFilestoreSync(args: {
   creds: PinkfishCreds;
   repo: string;
@@ -327,9 +338,9 @@ export async function startFilestoreSync(args: {
   const { creds, repo } = args;
   console.log("[filestoreSync] start", { repo });
 
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (stopPoll) {
+    stopPoll();
+    stopPoll = null;
   }
 
   update({ phase: "resolving", lastError: null });
@@ -353,10 +364,8 @@ export async function startFilestoreSync(args: {
   }
   update({ collections });
 
-  // Mark this repo as resolved to prevent duplicate creation attempts
   resolvedRepos.add(repo);
 
-  // Persist collection info in local state.
   const persisted = await fsStoreStateLoad(repo);
   if (collections.length > 0 && persisted.collection_id !== collections[0].id) {
     await fsStoreStateSave(repo, {
@@ -366,23 +375,52 @@ export async function startFilestoreSync(args: {
     });
   }
 
-  // Initial pull for the first (primary) collection.
   if (collections.length > 0) {
-    await pullOnce({ creds, repo, collection: collections[0] });
-    pollTimer = setInterval(() => {
-      pullOnce({ creds, repo, collection: collections[0] }).catch((e) =>
-        console.error("filestore pull failed:", e),
-      );
-    }, POLL_INTERVAL_MS);
+    const collection = collections[0];
+    // Build the adapter once and share for initial pull + 60s poll —
+    // saves the redundant construction and makes it obvious both paths
+    // run on the same configuration.
+    const adapter = filestoreAdapter({ creds, collection });
+    // Catch initial-pull failures so we still start the poller. runPull
+    // already updates status on failure; without this catch a transient
+    // network blip on connect would leave the user without auto-recovery.
+    try {
+      await runPull({ repo, adapter });
+    } catch (e) {
+      console.error("[filestoreSync] initial pull failed (poll will still start):", e);
+    }
+    stopPoll = startPolling(adapter, repo, {
+      onPhase: (phase) => {
+        if (phase === "pulling") update({ phase: "pulling" });
+      },
+      onResult: (r) => {
+        const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
+          filename: c.manifestKey,
+          reason: "local-and-remote-changed",
+        }));
+        update({
+          phase: "ready",
+          conflicts,
+          lastPullAt: Date.now(),
+          lastError: null,
+        });
+      },
+      onError: (e) => {
+        // Same reason as KB: onPhase("pulling") fired before the failure,
+        // so we have to surface the error here or the UI stays stuck.
+        console.error("filestore pull failed:", e);
+        update({ phase: "error", lastError: String(e) });
+      },
+    });
   } else {
     update({ phase: "ready" });
   }
 }
 
 export function stopFilestoreSync() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (stopPoll) {
+    stopPoll();
+    stopPoll = null;
   }
   update({
     phase: "idle",
@@ -393,155 +431,40 @@ export function stopFilestoreSync() {
   resolvedRepos.clear();
 }
 
-// Per-repo+collection in-flight pull lock. Mirrors the kbSync withSyncLock
-// and datastoreSync inflightPull patterns. Without this, a manual pull and
-// the 5-minute background poll can race for the same collection — both
-// load the manifest, both write changes, and the second save clobbers the
-// first.
-const inflightFilestorePull = new Map<
-  string,
-  Promise<{ downloaded: number; total: number }>
->();
-
+/// Manual single-shot pull. Used by Shell.tsx's ↻ button and the modal
+/// connect flow. Goes through the engine's per-repo lock.
+///
+/// Always resolves — never rejects — to match the pre-engine contract.
+/// Failures are conveyed via getFilestoreSyncStatus() (phase becomes
+/// "error"); callers gating on outcome should read that, not catch.
 export async function pullOnce(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: FilestoreCollection;
 }): Promise<{ downloaded: number; total: number }> {
-  const lockKey = `${args.repo}:${args.collection.id}`;
-  const existing = inflightFilestorePull.get(lockKey);
-  if (existing) return existing;
-  const promise = pullOnceImpl(args);
-  inflightFilestorePull.set(lockKey, promise);
+  const adapter = filestoreAdapter({ creds: args.creds, collection: args.collection });
   try {
-    return await promise;
-  } finally {
-    inflightFilestorePull.delete(lockKey);
+    return await runPull({ repo: args.repo, adapter });
+  } catch (e) {
+    console.error("[filestoreSync] pullOnce failed:", e);
+    return { downloaded: 0, total: 0 };
   }
 }
 
-async function pullOnceImpl(args: {
+/// Push all local filestore files to the remote collection. Called by the
+/// Sync tab's commit handler. Serializes against pull on the engine lock.
+export async function pushAllToFilestore(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: FilestoreCollection;
-}): Promise<{ downloaded: number; total: number }> {
-  const { creds, repo, collection } = args;
-  update({ phase: "pulling" });
-
-  const token = getToken();
-  if (!token) {
-    update({ phase: "error", lastError: "not authenticated" });
-    return { downloaded: 0, total: 0 };
-  }
-  const urls = derivedUrls(creds.tokenUrl);
-
-  let remote: Array<{
-    filename: string;
-    updatedAt: string;
-    downloadUrl?: string;
-  }>;
-  try {
-    const rows = await kbListRemote({
-      collectionId: collection.id,
-      skillsBaseUrl: urls.skillsBaseUrl,
-      accessToken: token.accessToken,
-    });
-    remote = rows.map((r) => ({
-      filename: r.filename,
-      updatedAt: r.updated_at,
-      downloadUrl: r.signed_url ?? undefined,
-    }));
-  } catch (e) {
-    update({ phase: "error", lastError: String(e) });
-    return { downloaded: 0, total: 0 };
-  }
-
-  const local = await fsStoreListLocal(repo);
-  const localMap = new Map(local.map((f) => [f.filename, f]));
-  const persisted: KbStatePersisted = await fsStoreStateLoad(repo);
-  const conflicts: ConflictFile[] = [];
-  const touched: string[] = [];
-  let downloaded = 0;
-
-  for (const r of remote) {
-    if (!r.filename || !r.downloadUrl) continue;
-    const localFile = localMap.get(r.filename);
-    const tracked = persisted.files[r.filename];
-
-    if (!tracked && !localFile) {
-      // New remote file -> pull
-      try {
-        await fsStoreDownloadToLocal(repo, r.filename, r.downloadUrl);
-        persisted.files[r.filename] = {
-          remote_version: r.updatedAt,
-          pulled_at_mtime_ms: Date.now(),
-        };
-        touched.push(`filestore/${r.filename}`);
-        downloaded += 1;
-      } catch (e) {
-        console.error(`filestore pull ${r.filename} failed:`, e);
-      }
-      continue;
-    }
-
-    if (tracked && localFile) {
-      const remoteChanged =
-        r.updatedAt && r.updatedAt !== tracked.remote_version;
-      const localChanged =
-        localFile.mtime_ms != null &&
-        localFile.mtime_ms > tracked.pulled_at_mtime_ms;
-
-      if (remoteChanged && localChanged) {
-        conflicts.push({
-          filename: r.filename,
-          reason: "local-and-remote-changed",
-        });
-        continue;
-      }
-      if (remoteChanged && !localChanged) {
-        try {
-          await fsStoreDownloadToLocal(repo, r.filename, r.downloadUrl);
-          persisted.files[r.filename] = {
-            remote_version: r.updatedAt,
-            pulled_at_mtime_ms: Date.now(),
-          };
-          touched.push(`filestore/${r.filename}`);
-          downloaded += 1;
-        } catch (e) {
-          console.error(`filestore pull ${r.filename} failed:`, e);
-        }
-      }
-      continue;
-    }
-    // tracked but missing locally -> user deleted, leave alone
-  }
-
-  await fsStoreStateSave(repo, persisted);
-
-  // Auto-commit downloaded files so they don't show up as untracked in the
-  // Deploy tab. Matches the KB and datastore pull patterns.
-  if (touched.length > 0) {
-    try {
-      const ts = new Date().toISOString();
-      await gitCommitPaths(repo, touched, `sync: pull @ ${ts}`);
-    } catch (e) {
-      console.warn("filestore git commit after pull:", e);
-    }
-  }
-
-  update({
-    phase: "ready",
-    conflicts,
-    lastPullAt: Date.now(),
-    lastError: null,
-  });
-  return { downloaded, total: remote.length };
+  onLine?: (msg: string) => void;
+}): Promise<{ pushed: number; failed: number }> {
+  return withRepoLock(args.repo, "filestore", () =>
+    pushAllToFilestoreInner(args),
+  );
 }
 
-/**
- * Push all local filestore files to the remote collection. Called by Deploy.
- */
-export async function pushAllToFilestore(args: {
+async function pushAllToFilestoreInner(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: FilestoreCollection;
@@ -559,9 +482,13 @@ export async function pushAllToFilestore(args: {
   const urls = derivedUrls(creds.tokenUrl);
 
   const local = await fsStoreListLocal(repo);
-  const persisted = await fsStoreStateLoad(repo);
+  const persisted: KbStatePersisted = await fsStoreStateLoad(repo);
 
+  // Sibling-aware shadow exclusion. Pass the full filename set; see
+  // classifyAsShadow doc for why pre-filtering is wrong.
+  const siblings = new Set(local.map((f) => f.filename));
   const toPush = local.filter((f) => {
+    if (classifyAsShadow(f.filename, siblings)) return false;
     const tracked = persisted.files[f.filename];
     if (!tracked) return true;
     if (f.mtime_ms == null) return true;
@@ -600,7 +527,7 @@ export async function pushAllToFilestore(args: {
     }
   }
 
-  // Reconcile remote_version after push, same pattern as kbSync.
+  // Reconcile remote_version after push, same pattern as KB.
   if (pushedNames.size > 0) {
     try {
       const remote = await kbListRemote({

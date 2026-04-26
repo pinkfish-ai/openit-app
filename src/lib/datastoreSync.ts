@@ -1,24 +1,46 @@
+// Datastore sync wrapper. Pull pipeline + auto-commit + conflict shadow
+// live in `syncEngine.ts` driven by `datastoreAdapter`. This file owns:
+//   - Resolve (find or create the openit-* datastore collections, with the
+//     same 409-conflict + eventual-consistency handling as filestore).
+//   - Bootstrap-time `syncDatastoresToDisk` (writes _schema.json + seeds
+//     manifest from connect-modal-prefetched items so the modal completes
+//     immediately without waiting for a poll).
+//   - Push (full reconcile per collection — POST new, PUT changed, DELETE
+//     missing — with paginated post-push manifest reconcile).
+//   - Lifecycle: 60s poll wired through the engine.
+//
+// Per-repo serialization is provided by `withRepoLock(repo, "datastore")`
+// from the engine. All three entry points (pull, push, bootstrap) use it,
+// matching the iter-5 BugBot fix that consolidated locks.
+
 import {
   getCollection,
-  listItems,
   type DataCollection,
   type MemoryBqueryResponse,
   type MemoryItem,
 } from "./skillsApi";
 import {
-  datastoreListLocal,
   datastoreStateLoad,
   datastoreStateSave,
   entityWriteFile,
   fsList,
   fsRead,
-  gitCommitPaths,
   type KbStatePersisted,
 } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
+import { datastoreAdapter } from "./entities/datastore";
+import { fetchDatastoreItems } from "./entities/datastoreApi";
+import {
+  classifyAsShadow,
+  DEFAULT_POLL_INTERVAL_MS,
+  pullEntity,
+  withRepoLock,
+  type EntityAdapter,
+} from "./syncEngine";
 
-// Type definitions for API responses
+export { fetchDatastoreItems };
+
 type CreateCollectionResponse = {
   message?: string;
   id?: string | number;
@@ -42,17 +64,14 @@ const DEFAULT_DATASTORES = [
   },
 ];
 
-// Org-scoped cache to prevent collections from one org leaking into another
+// Org-scoped cache to prevent collections from one org leaking into another.
 let createdCollections = new Map<string, Map<string, DataCollection>>();
 let lastCreationAttemptTime = new Map<string, number>();
 
-// Per-org in-flight resolve promise — concurrent callers share the same operation
-// so we never race two list-then-create sequences against each other.
+// Per-org in-flight resolve promise — concurrent callers share the same
+// operation so we never race two list-then-create sequences.
 const inflightResolve = new Map<string, Promise<DataCollection[]>>();
 
-/**
- * Get or create org-specific cache for created collections.
- */
 function getOrgCache(orgId: string): Map<string, DataCollection> {
   if (!createdCollections.has(orgId)) {
     createdCollections.set(orgId, new Map());
@@ -60,25 +79,16 @@ function getOrgCache(orgId: string): Map<string, DataCollection> {
   return createdCollections.get(orgId)!;
 }
 
-/**
- * Get the last creation attempt time for an org (default 0 if never attempted).
- */
 function getLastCreationTime(orgId: string): number {
   return lastCreationAttemptTime.get(orgId) ?? 0;
 }
 
-/**
- * Update the last creation attempt time for an org.
- */
 function setLastCreationTime(orgId: string, time: number): void {
   lastCreationAttemptTime.set(orgId, time);
 }
 
-/**
- * Find or create openit-* Datastore collections. Creates defaults if none
- * exist. Uses the skills REST API (GET /datacollection/?type=datastore).
- */
-const CREATION_COOLDOWN_MS = 10_000; // 10 seconds — allow time for API eventual consistency
+const CREATION_COOLDOWN_MS = 10_000;
+
 export async function resolveProjectDatastores(
   creds: PinkfishCreds,
   onLog?: (msg: string) => void,
@@ -107,13 +117,12 @@ async function resolveProjectDatastoresImpl(
   const urls = derivedUrls(creds.tokenUrl);
 
   try {
-    // Use REST API for listing
     const fetchFn = makeSkillsFetch(token.accessToken);
     const url = new URL("/datacollection/", urls.skillsBaseUrl);
     url.searchParams.set("type", "datastore");
     console.log("[datastoreSync] Fetching from:", url.toString());
     const response = await fetchFn(url.toString());
-    
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
@@ -126,13 +135,13 @@ async function resolveProjectDatastoresImpl(
       ...d,
       name: `${d.name}-${creds.orgId}`,
     }));
-    let matching = allCollections.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
+    let matching = allCollections.filter((c: DataCollection) =>
+      defaults.some((d) => d.name === c.name),
+    );
     console.log(`[datastoreSync] ✓ Matching default collections: ${matching.length}`);
 
-    // Get org-specific cache
     const orgCache = getOrgCache(creds.orgId);
 
-    // If list returned matching collections, we're done
     if (matching.length > 0) {
       for (const m of matching) {
         orgCache.set(m.name, m);
@@ -141,24 +150,19 @@ async function resolveProjectDatastoresImpl(
       return matching;
     }
 
-    // List is empty - check if we recently created collections
-    // Only return cache if we attempted creation recently (within cooldown)
     const now = Date.now();
     const lastCreationTime = getLastCreationTime(creds.orgId);
-    if (orgCache.size > 0 && (now - lastCreationTime < CREATION_COOLDOWN_MS)) {
+    if (orgCache.size > 0 && now - lastCreationTime < CREATION_COOLDOWN_MS) {
       console.log("[datastoreSync] collections not yet visible in API list, returning cached collections");
       return Array.from(orgCache.values());
     }
 
-    // Nothing in API, and either no cache or cache is stale - try creating
     if (now - lastCreationTime < CREATION_COOLDOWN_MS) {
       console.log("[datastoreSync] skipping creation (cooldown active)");
       return Array.from(orgCache.values());
     }
 
     console.log("[datastoreSync] no openit-* datastores found — creating defaults");
-    // API says nothing matches and we're past the eventual-consistency window —
-    // any cached entries are stale. Wipe before creating so we actually POST.
     orgCache.clear();
     setLastCreationTime(creds.orgId, now);
     let conflictHit = false;
@@ -185,8 +189,6 @@ async function resolveProjectDatastoresImpl(
         if (!createResponse.ok) {
           const errText = await createResponse.text();
           console.error("[datastoreSync] response error:", errText);
-          // 409 means the list was stale and the collection actually exists —
-          // force a refetch so we grab the authoritative id.
           if (createResponse.status === 409) {
             console.log(`[datastoreSync] collection ${def.name} already exists (409) — will refetch`);
             conflictHit = true;
@@ -226,12 +228,9 @@ async function resolveProjectDatastoresImpl(
       }
     }
 
-    // Refetch authoritatively whenever we touched the create path — handles
-    // eventual consistency, 409 conflicts (list was stale), and concurrent
-    // creators. Always prefer refetch as the source of truth.
     if (matching.length > 0 || conflictHit) {
       try {
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const refetchUrl = new URL("/datacollection/", urls.skillsBaseUrl);
         refetchUrl.searchParams.set("type", "datastore");
@@ -246,7 +245,9 @@ async function resolveProjectDatastoresImpl(
         }
 
         const refetched = Array.isArray(refetchResult) ? refetchResult : [];
-        const updatedMatching = refetched.filter((c: DataCollection) => defaults.some((d) => d.name === c.name));
+        const updatedMatching = refetched.filter((c: DataCollection) =>
+          defaults.some((d) => d.name === c.name),
+        );
         if (updatedMatching.length >= matching.length && updatedMatching.length > 0) {
           console.log("[datastoreSync] re-fetched collections after creation");
           for (const m of updatedMatching) orgCache.set(m.name, m);
@@ -268,22 +269,6 @@ async function resolveProjectDatastoresImpl(
   }
 }
 
-/**
- * Convenience wrapper for listing items in a datastore collection with pagination.
- */
-export async function fetchDatastoreItems(
-  creds: PinkfishCreds,
-  collectionId: string,
-  limit?: number,
-  offset?: number,
-): Promise<MemoryBqueryResponse> {
-  const token = getToken();
-  if (!token) throw new Error("not authenticated");
-  const urls = derivedUrls(creds.tokenUrl);
-
-  return listItems(urls.skillsBaseUrl, token.accessToken, collectionId, limit, offset);
-}
-
 export async function fetchDatastoreSchema(
   creds: PinkfishCreds,
   collectionId: string,
@@ -296,18 +281,20 @@ export async function fetchDatastoreSchema(
   return collection.schema;
 }
 
-/**
- * Bootstrap-time sync to disk. Manifest-aware: skips items whose remote
- * `updatedAt` already matches the manifest's `remote_version`, so a
- * reconnect doesn't blindly rewrite every row that's already on disk.
- * Mirrors the date-based delta logic in pullDatastoresOnce.
- */
+// ---------------------------------------------------------------------------
+// Bootstrap: connect-time write of _schema.json + seed of any prefetched
+// rows. Runs once during the modal connect flow. Subsequent polls go
+// through the engine. Manifest-aware: skips items whose remote `updatedAt`
+// already matches the manifest's `remote_version`, so a reconnect doesn't
+// blindly rewrite every row that's already on disk.
+// ---------------------------------------------------------------------------
+
 export async function syncDatastoresToDisk(
   repo: string,
   collections: DataCollection[],
   itemsByCollection: Record<string, { items: MemoryItem[]; hasMore: boolean }>,
 ): Promise<{ written: number; unchanged: number }> {
-  return withDatastoreLock(repo, () =>
+  return withRepoLock(repo, "datastore", () =>
     syncDatastoresToDiskImpl(repo, collections, itemsByCollection),
   );
 }
@@ -323,8 +310,7 @@ async function syncDatastoresToDiskImpl(
   for (const col of collections) {
     const subdir = `databases/${col.name}`;
     if (col.schema) {
-      // Schema has no `updatedAt` to diff against. Compare content; only
-      // write if the on-disk schema differs.
+      // Schema has no `updatedAt` to diff against — content equality only.
       const schemaContent = JSON.stringify(col.schema, null, 2);
       const schemaPath = `${repo}/${subdir}/_schema.json`;
       let existing: string | null = null;
@@ -344,7 +330,6 @@ async function syncDatastoresToDiskImpl(
       const mKey = `${col.name}/${key}`;
       const tracked = persisted.files[mKey];
       const remoteVer = item.updatedAt ?? "";
-      // Skip when remote `updatedAt` matches the last-pulled version.
       if (tracked && remoteVer && tracked.remote_version === remoteVer) {
         unchanged += 1;
         continue;
@@ -353,7 +338,7 @@ async function syncDatastoresToDiskImpl(
         ? JSON.stringify(item.content, null, 2)
         : item.content;
       await entityWriteFile(repo, subdir, filename, content);
-      // Seed/advance manifest so the pull engine doesn't redundantly
+      // Seed/advance manifest so the engine's first pull doesn't redundantly
       // re-detect this row as a fresh bootstrap on its first poll.
       persisted.files[mKey] = {
         remote_version: remoteVer,
@@ -367,16 +352,15 @@ async function syncDatastoresToDiskImpl(
 }
 
 // ---------------------------------------------------------------------------
-// Push — upload locally edited datastore rows back to Pinkfish.
-// Called by the Sync tab's commit handler.
+// Push — upload locally edited datastore rows back to Pinkfish. Strategy
+// is full reconcile per collection (POST new, PUT changed, skip
+// unchanged, DELETE missing). Engine doesn't help with this surface
+// because datastore push needs the per-row remote `id` (delete-by-id
+// semantics) which only the live API list returns.
 // ---------------------------------------------------------------------------
 
 type PushResult = { pushed: number; failed: number };
 
-/**
- * Loose deep-equal for JSON-shaped data — used to skip upload when local
- * content already matches remote. Stringify with sorted keys for stability.
- */
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
@@ -390,25 +374,12 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   return stableStringify(a) === stableStringify(b);
 }
 
-/**
- * Push local datastore rows to Pinkfish for every openit-* collection.
- *
- * Strategy: full reconcile per collection.
- *   - For each local file (databases/<col>/<key>.json, excluding _schema.json):
- *     - if remote has matching key + same content → skip
- *     - if remote has matching key + different content → PUT /memory/items/{id}
- *     - if remote has no matching key → POST /memory/items?collectionId=...
- *   - For each remote item without a corresponding local file → DELETE.
- *
- * No manifest yet — content equality + key matching is the v1 approach.
- * The bigger sync-engine plan replaces this with git-ref + content-hash diff.
- */
 export async function pushAllToDatastores(args: {
   creds: PinkfishCreds;
   repo: string;
   onLine?: (line: string) => void;
 }): Promise<PushResult> {
-  return withDatastoreLock(args.repo, () => pushAllToDatastoresImpl(args));
+  return withRepoLock(args.repo, "datastore", () => pushAllToDatastoresImpl(args));
 }
 
 async function pushAllToDatastoresImpl(args: {
@@ -433,19 +404,12 @@ async function pushAllToDatastoresImpl(args: {
 
   let totalPushed = 0;
   let totalFailed = 0;
-  // Manifest is mutated as we push so the next pull doesn't see a false
-  // conflict (remoteChanged because PUT advanced updatedAt + localChanged
-  // because user's edit advanced mtime). Same reconcile pattern as KB and
-  // filestore push.
   const persisted: KbStatePersisted = await datastoreStateLoad(repo);
-  // Track which keys we touched per collection so we can re-fetch their
-  // post-push updatedAt values once at the end of each collection's pass.
   const pushedKeysByCol = new Map<string, Set<string>>();
 
   for (const col of collections) {
     const colDir = `${repo}/databases/${col.name}`;
 
-    // 1. Remote items keyed by their `key`.
     let remote: MemoryItem[];
     try {
       const resp = await fetchDatastoreItems(creds, col.id, 1000, 0);
@@ -461,27 +425,33 @@ async function pushAllToDatastoresImpl(args: {
       if (k) remoteByKey.set(k, r);
     }
 
-    // 2. Local files (flat, .json, exclude _schema.json).
     // Track whether the directory actually exists. If `fsList` throws
-    // because the directory doesn't exist yet (e.g. user committed a KB
-    // file before the initial datastore pull ran), an empty `localFiles`
-    // does NOT mean "user deleted everything" — we have no signal to act
-    // on. Skip the deletion phase entirely in that case so we don't nuke
-    // remote rows.
+    // because the directory doesn't exist yet, an empty `localFiles` does
+    // NOT mean "user deleted everything" — skip the deletion phase
+    // entirely so we don't nuke remote rows.
     let localFiles: { key: string; absPath: string }[] = [];
     let localDirExists = true;
     try {
       const nodes = await fsList(colDir);
+      // Build canonical-sibling set (per-collection) so we exclude shadow
+      // rows but not legitimate filenames containing `.server.`. A row
+      // keyed `nginx.server` produces filename `nginx.server.json`; with
+      // no sibling `nginx.json` it should still push.
+      const candidateNames = nodes
+        .filter(
+          (n) =>
+            !n.is_dir && n.name.endsWith(".json") && n.name !== "_schema.json",
+        )
+        .map((n) => n.name);
+      // Full set of candidate filenames; see classifyAsShadow doc.
+      const siblings = new Set(candidateNames);
       localFiles = nodes
         .filter(
           (n) =>
             !n.is_dir &&
             n.name.endsWith(".json") &&
             n.name !== "_schema.json" &&
-            // Exclude conflict shadow files — they're not real rows; pushing
-            // them would create junk items with keys like `<key>.server` on
-            // the remote.
-            !n.name.includes(".server."),
+            !classifyAsShadow(n.name, siblings),
         )
         .map((n) => ({ key: n.name.replace(/\.json$/, ""), absPath: n.path }));
     } catch {
@@ -489,7 +459,6 @@ async function pushAllToDatastoresImpl(args: {
     }
     const localKeys = new Set(localFiles.map((f) => f.key));
 
-    // 3. Push local → remote (POST new, PUT changed, skip unchanged).
     for (const { key, absPath } of localFiles) {
       let parsed: unknown;
       try {
@@ -530,18 +499,17 @@ async function pushAllToDatastoresImpl(args: {
           if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
           pushedKeysByCol.get(col.id)!.add(key);
         }
-        // else: content matches, skip silently.
       } catch (e) {
         onLine?.(`✗ datastore: ${col.name}/${key}.json — ${String(e)}`);
         totalFailed += 1;
       }
     }
 
-    // 4. Delete remote items that no longer have a local file.
-    // SAFETY: only run this if the local collection dir actually exists.
-    // Otherwise an empty `localKeys` would be interpreted as "user deleted
-    // everything" and we'd nuke every remote row — which would happen on
-    // the very first commit if the datastore pull hadn't completed yet.
+    // SAFETY: only run the deletion phase if the local collection dir
+    // actually exists. Otherwise an empty `localKeys` would be
+    // interpreted as "user deleted everything" and we'd nuke every remote
+    // row — which would happen on the very first commit if the datastore
+    // pull hadn't completed yet.
     if (localDirExists) {
       for (const r of remote) {
         const k = (r.key ?? r.id ?? "").toString();
@@ -567,16 +535,9 @@ async function pushAllToDatastoresImpl(args: {
   }
 
   // Reconcile manifest after pushes — re-fetch each affected collection to
-  // grab the post-push `updatedAt` for items we just touched, then update
-  // the manifest entry so the next pull doesn't see remoteChanged=true and
-  // localChanged=true together (which would falsely flag as conflict and
-  // drop a phantom shadow file). Same pattern as KB and filestore push.
-  //
-  // Paginate: if a collection has > 1000 items, the pushed key may live
-  // past the first page, and a partial fetch would silently leave its
-  // manifest entry stale. Loop until we've seen the key (or the page list
-  // ends or we hit the safety bail-out), so the reconcile is correct
-  // regardless of collection size.
+  // grab the post-push `updatedAt` for items we just touched. Paginate
+  // because a collection > 1000 items might have the pushed key past the
+  // first page; partial fetch would silently leave its manifest entry stale.
   const RECONCILE_PAGE = 1000;
   const RECONCILE_MAX = 100_000;
   for (const [colId, keys] of pushedKeysByCol) {
@@ -588,15 +549,13 @@ async function pushAllToDatastoresImpl(args: {
       let offset = 0;
       let seen = 0;
       while (remaining.size > 0) {
-        const resp = await fetchDatastoreItems(creds, colId, RECONCILE_PAGE, offset);
+        const resp: MemoryBqueryResponse = await fetchDatastoreItems(creds, colId, RECONCILE_PAGE, offset);
         for (const item of resp.items) {
           const k = (item.key ?? item.id ?? "").toString();
           if (!remaining.has(k)) continue;
           const mKey = `${col.name}/${k}`;
           persisted.files[mKey] = {
             remote_version: item.updatedAt ?? "",
-            // Bump pulled_at_mtime_ms past now so any subsequent local edit
-            // (mtime > now) is correctly detected as a real local change.
             pulled_at_mtime_ms: Date.now(),
           };
           remaining.delete(k);
@@ -622,11 +581,8 @@ async function pushAllToDatastoresImpl(args: {
 }
 
 // ---------------------------------------------------------------------------
-// Pull — 60s background poll for remote datastore changes.
-// Mirrors startKbSync/startFilestoreSync. Per-row diff via manifest:
-// remote.updatedAt vs manifest.remote_version + local mtime vs
-// manifest.pulled_at_mtime_ms. Conflict drops a `<key>.server.json` shadow
-// next to the local file so Claude or the user can merge.
+// Pull — engine-driven. The adapter handles per-collection pagination + the
+// `<colName>/<key>` manifest-key mapping.
 // ---------------------------------------------------------------------------
 
 export type DatastoreConflict = {
@@ -635,320 +591,84 @@ export type DatastoreConflict = {
   reason: "local-and-remote-changed";
 };
 
-export type DatastoreSyncStatus = {
-  phase: "idle" | "resolving" | "pulling" | "ready" | "error";
-  collections: DataCollection[];
-  conflicts: DatastoreConflict[];
-  lastError: string | null;
-  lastPullAt: number | null;
-};
-
-let datastoreStatus: DatastoreSyncStatus = {
-  phase: "idle",
-  collections: [],
-  conflicts: [],
-  lastError: null,
-  lastPullAt: null,
-};
-
-// NOTE: a `subscribeDatastoreSync` analog to KB/filestore will land with
-// the conflict-banner UI in a follow-up PR (Phase 4 of the plan). Until
-// there's an actual consumer, we don't export it — keeping the module
-// surface tight.
-function updateDatastoreStatus(patch: Partial<DatastoreSyncStatus>): void {
-  datastoreStatus = { ...datastoreStatus, ...patch };
-}
-
-function shadowName(key: string): string {
-  return `${key}.server.json`;
-}
-
-function manifestKey(collectionName: string, key: string): string {
-  return `${collectionName}/${key}`;
-}
-
-let datastorePollTimer: ReturnType<typeof setInterval> | null = null;
-const DATASTORE_POLL_INTERVAL_MS = 60_000;
-
-// Per-repo serializer for ANY datastore manifest-mutating operation —
-// pull (poll/manual), push (commit), and bootstrap-sync (modal connect).
-// Without this, two operations can both load → mutate → save the manifest
-// concurrently and the second's save clobbers the first's updates. KB
-// uses the same pattern via withSyncLock; we mirror it here so all three
-// entry points serialize on a single lock per repo.
-const datastoreLocks = new Map<string, Promise<unknown>>();
-function withDatastoreLock<T>(repo: string, fn: () => Promise<T>): Promise<T> {
-  const previous = datastoreLocks.get(repo) ?? Promise.resolve();
-  const next = previous.catch(() => undefined).then(fn);
-  datastoreLocks.set(
-    repo,
-    next.catch(() => undefined),
-  );
-  return next;
-}
-
-/**
- * Run one pull pass across every openit-* datastore collection. Diffs each
- * remote row against the local manifest + working tree; writes new/changed
- * rows; drops conflict shadows for both-changed rows. Auto-commits the
- * touched paths so `git status` stays clean and the Sync tab reflects the
- * pull as a single `sync: pull @ <ts>` commit (matching KB/filestore).
- */
 export async function pullDatastoresOnce(args: {
   creds: PinkfishCreds;
   repo: string;
 }): Promise<{ pulled: number; conflicts: DatastoreConflict[] }> {
-  return withDatastoreLock(args.repo, () => pullDatastoresOnceImpl(args));
-}
-
-async function pullDatastoresOnceImpl(args: {
-  creds: PinkfishCreds;
-  repo: string;
-}): Promise<{ pulled: number; conflicts: DatastoreConflict[] }> {
   const { creds, repo } = args;
-  updateDatastoreStatus({ phase: "pulling" });
-
   let collections: DataCollection[];
   try {
     collections = await resolveProjectDatastores(creds);
   } catch (e) {
-    updateDatastoreStatus({ phase: "error", lastError: String(e) });
+    console.error("[datastoreSync] resolve failed:", e);
     return { pulled: 0, conflicts: [] };
   }
-  updateDatastoreStatus({ collections });
-
-  const persisted: KbStatePersisted = await datastoreStateLoad(repo);
-  const conflicts: DatastoreConflict[] = [];
-  const touched: string[] = [];
-  let pulled = 0;
-
-  for (const col of collections) {
-    // Fully paginate the remote list. The server-deletion logic at the
-    // bottom of this loop assumes `remote` is the AUTHORITATIVE complete
-    // set — anything tracked but not in `remote` is treated as deleted
-    // on the server. If we only fetch a partial page, items beyond the
-    // limit would be wrongly classified as deleted, dropping their
-    // manifest entries and breaking conflict detection on the next pull.
-    const PAGE = 1000;
-    let remote: MemoryItem[] = [];
-    let listFailed = false;
-    try {
-      let offset = 0;
-      while (true) {
-        const resp = await fetchDatastoreItems(creds, col.id, PAGE, offset);
-        remote = remote.concat(resp.items);
-        const hasMore = resp.pagination?.hasNextPage === true;
-        if (!hasMore || resp.items.length === 0) break;
-        offset += resp.items.length;
-        // Safety bail-out — defend against a backend that always claims
-        // hasNextPage=true. 100k rows is well past any realistic openit-*
-        // collection size; if we hit it, log and stop.
-        if (remote.length >= 100_000) {
-          console.warn(
-            `[datastoreSync] ${col.name}: stopped paginating at ${remote.length} items; skipping server-delete pass`,
-          );
-          listFailed = true;
-          break;
-        }
-      }
-    } catch (e) {
-      console.error(`[datastoreSync] list ${col.name} failed:`, e);
-      continue;
+  const adapter = datastoreAdapter({ creds, collections });
+  const result = await pullEntity(adapter, repo);
+  // Map engine's manifest-key conflicts back into the DatastoreConflict
+  // shape (collectionName + key) so callers don't see the engine's
+  // `<col>/<key>` joined form.
+  const conflicts: DatastoreConflict[] = result.conflicts.map((c) => {
+    const slash = c.manifestKey.indexOf("/");
+    if (slash < 0) {
+      return { collectionName: "", key: c.manifestKey, reason: c.reason };
     }
-
-    let local: { filename: string; mtime_ms: number | null }[];
-    try {
-      local = await datastoreListLocal(repo, col.name);
-    } catch {
-      local = [];
-    }
-    const localByName = new Map(local.map((f) => [f.filename, f]));
-
-    for (const r of remote) {
-      const key = (r.key ?? r.id ?? "").toString();
-      if (!key) continue;
-      const filename = `${key}.json`;
-      const mKey = manifestKey(col.name, key);
-      const tracked = persisted.files[mKey];
-      const localFile = localByName.get(filename);
-      const remoteVer = r.updatedAt ?? "";
-      const subdir = `databases/${col.name}`;
-
-      const writeRow = async () => {
-        const content = typeof r.content === "object"
-          ? JSON.stringify(r.content, null, 2)
-          : (r.content as unknown as string);
-        await entityWriteFile(repo, subdir, filename, content);
-        persisted.files[mKey] = {
-          remote_version: remoteVer,
-          pulled_at_mtime_ms: Date.now(),
-        };
-        touched.push(`${subdir}/${filename}`);
-        pulled += 1;
-      };
-
-      if (!tracked && !localFile) {
-        // New remote row — pull.
-        try {
-          await writeRow();
-        } catch (e) {
-          console.error(`[datastoreSync] write ${mKey} failed:`, e);
-        }
-        continue;
-      }
-
-      if (!tracked && localFile) {
-        // Bootstrap-adoption: row exists on disk (typically because the
-        // modal connect flow ran `syncDatastoresToDisk` to seed the
-        // working tree) but the manifest has no entry. Seed it now using
-        // the current remote_version + the file's current mtime as the
-        // baseline. Subsequent polls can then diff correctly: any future
-        // user edit will advance the mtime above pulled_at_mtime_ms and
-        // be detected as localChanged. Without this, every poll lands on
-        // this state and the row is permanently undiffable — a high-
-        // severity gap caught by BugBot in iteration 2.
-        //
-        // We don't re-write the file (no churn) and don't add to touched
-        // (no commit). Just seed the manifest.
-        persisted.files[mKey] = {
-          remote_version: remoteVer,
-          pulled_at_mtime_ms: localFile.mtime_ms ?? Date.now(),
-        };
-        continue;
-      }
-
-      if (tracked && localFile) {
-        const remoteChanged = remoteVer !== "" && remoteVer !== tracked.remote_version;
-        const localChanged =
-          localFile.mtime_ms != null && localFile.mtime_ms > tracked.pulled_at_mtime_ms;
-
-        if (remoteChanged && localChanged) {
-          // Both moved — drop a shadow with the remote content for merge.
-          // Only WRITE the shadow on the first detection: if a shadow file
-          // is already present, the conflict is unresolved from a prior
-          // pass and re-writing it would re-touch + re-commit on every
-          // poll. We still report the conflict every cycle for the banner.
-          // (Matches the KB pattern in kbSync's pullOnce.)
-          const shadowFilename = shadowName(key);
-          const hasShadow = localByName.has(shadowFilename);
-          if (!hasShadow) {
-            try {
-              const content = typeof r.content === "object"
-                ? JSON.stringify(r.content, null, 2)
-                : (r.content as unknown as string);
-              await entityWriteFile(repo, subdir, shadowFilename, content);
-              // Do NOT add the shadow path to `touched` — `databases/**/*.server.json`
-              // is gitignored, so passing it to `git add` (via gitCommitPaths)
-              // would fail with non-zero exit and the wrapper would bail out
-              // WITHOUT committing the legitimate row updates already in
-              // `touched`. Shadow files exist on disk for the user/Claude to
-              // resolve; they're never auto-committed by sync.
-            } catch (e) {
-              console.error(`[datastoreSync] shadow ${mKey} failed:`, e);
-            }
-          }
-          conflicts.push({
-            collectionName: col.name,
-            key,
-            reason: "local-and-remote-changed",
-          });
-          continue;
-        }
-        if (remoteChanged && !localChanged) {
-          try {
-            await writeRow();
-          } catch (e) {
-            console.error(`[datastoreSync] write ${mKey} failed:`, e);
-          }
-        }
-        // else: nothing to do.
-        continue;
-      }
-
-      // tracked but file missing locally → user/Claude deleted; leave alone.
-      // (push handles the delete on the next commit.)
-    }
-
-    // Detect server-side deletions: anything tracked for this collection
-    // that's NOT in the remote response — server deleted. We do NOT delete
-    // the local file (user might still want it); we just drop the manifest
-    // entry so a subsequent push doesn't try to re-create from stale state.
-    //
-    // SAFETY: only run this if `remote` is the AUTHORITATIVE complete set.
-    // If pagination bailed out early (huge collection), skip the deletion
-    // pass — items beyond the bail-out point would otherwise be wrongly
-    // classified as deleted, dropping their manifest entries.
-    if (!listFailed) {
-      const remoteKeys = new Set(remote.map((r) => (r.key ?? r.id ?? "").toString()));
-      for (const mKey of Object.keys(persisted.files)) {
-        if (!mKey.startsWith(`${col.name}/`)) continue;
-        const key = mKey.slice(col.name.length + 1);
-        if (remoteKeys.has(key)) continue;
-        // Don't delete the local file (push semantics handle that). Just drop
-        // the manifest entry so the row is no longer "tracked".
-        delete persisted.files[mKey];
-      }
-    }
-  }
-
-  await datastoreStateSave(repo, persisted);
-
-  if (touched.length > 0) {
-    try {
-      const ts = new Date().toISOString();
-      await gitCommitPaths(repo, touched, `sync: pull @ ${ts}`);
-    } catch (e) {
-      console.warn("[datastoreSync] git commit after pull failed:", e);
-    }
-  }
-
-  updateDatastoreStatus({
-    phase: "ready",
-    conflicts,
-    lastPullAt: Date.now(),
-    lastError: null,
+    return {
+      collectionName: c.manifestKey.slice(0, slash),
+      key: c.manifestKey.slice(slash + 1),
+      reason: c.reason,
+    };
   });
-
-  return { pulled, conflicts };
+  return { pulled: result.pulled, conflicts };
 }
 
-/**
- * Begin background datastore sync — initial pull + 60s poll. Idempotent;
- * subsequent calls clear and restart the timer.
- */
+let stopPoll: (() => void) | null = null;
+
 export async function startDatastoreSync(args: {
   creds: PinkfishCreds;
   repo: string;
 }): Promise<void> {
   const { creds, repo } = args;
-  if (datastorePollTimer) {
-    clearInterval(datastorePollTimer);
-    datastorePollTimer = null;
+  if (stopPoll) {
+    stopPoll();
+    stopPoll = null;
   }
 
-  updateDatastoreStatus({ phase: "resolving", lastError: null });
+  // Resolve-once-and-share strategy: the adapter is built lazily on the
+  // first successful resolve and reused for every subsequent poll. This
+  // gives both:
+  //   (a) consistent snapshot — pull + poll see the same collection set
+  //       (avoids the iter 2 drift), and
+  //   (b) auto-recovery — if the initial resolve fails (transient
+  //       network / auth blip), the poll keeps trying every 60s until
+  //       resolve succeeds (avoids the iter 12 stuck state).
+  let adapter: EntityAdapter | null = null;
 
-  await pullDatastoresOnce({ creds, repo }).catch((e) => {
-    console.error("[datastoreSync] initial pull failed:", e);
-    updateDatastoreStatus({ phase: "error", lastError: String(e) });
-  });
+  const tryResolveAndPull = async () => {
+    if (!adapter) {
+      try {
+        const collections = await resolveProjectDatastores(creds);
+        adapter = datastoreAdapter({ creds, collections });
+      } catch (e) {
+        console.error("[datastoreSync] resolve failed:", e);
+        return;
+      }
+    }
+    try {
+      await pullEntity(adapter, repo);
+    } catch (e) {
+      console.error("[datastoreSync] pull failed:", e);
+    }
+  };
 
-  datastorePollTimer = setInterval(() => {
-    pullDatastoresOnce({ creds, repo }).catch((e) =>
-      console.error("[datastoreSync] poll failed:", e),
-    );
-  }, DATASTORE_POLL_INTERVAL_MS);
+  await tryResolveAndPull();
+  const timer = setInterval(tryResolveAndPull, DEFAULT_POLL_INTERVAL_MS);
+  stopPoll = () => clearInterval(timer);
 }
 
 export function stopDatastoreSync(): void {
-  if (datastorePollTimer) {
-    clearInterval(datastorePollTimer);
-    datastorePollTimer = null;
+  if (stopPoll) {
+    stopPoll();
+    stopPoll = null;
   }
-  updateDatastoreStatus({
-    phase: "idle",
-    collections: [],
-    conflicts: [],
-    lastError: null,
-  });
 }

@@ -1,19 +1,43 @@
+// KB sync wrapper. Pull, conflict shadow, manifest, auto-commit all live in
+// `syncEngine.ts` driven by `kbAdapter`. This file owns:
+//   - The KB-specific status object that the UI subscribes to.
+//   - Conflict-prompt assembly (KB-only — drives the "Resolve in Claude"
+//     bubble in Shell.tsx).
+//   - The push path (KB has its own per-file upload semantics that don't
+//     fit the generic engine; engine still owns the lock + auto-commit).
+//   - The lifecycle: resolve KB → seed manifest with collection id → run
+//     the engine pull → start the 60s poll.
+//
+// Public API is unchanged from before the engine refactor; call sites
+// (App, Shell, SourceControl, FileExplorer, Onboarding, PinkfishOauthModal)
+// don't need to know the engine exists.
+
 import {
-  gitCommitPaths,
   gitEnsureRepo,
   gitStatusShort,
-  kbDeleteFile,
-  kbDownloadToLocal,
   kbInit,
   kbListLocal,
   kbListRemote,
   kbStateLoad,
   kbStateSave,
   kbUploadFile,
-  type KbStatePersisted,
 } from "./api";
 import { resolveProjectKb, type KbCollection } from "./kb";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
+import { kbAdapter, kbServerShadowFilename } from "./entities/kb";
+import {
+  canonicalFromShadow,
+  classifyAsShadow,
+  commitTouched,
+  pullEntity,
+  startPolling,
+  withRepoLock,
+} from "./syncEngine";
+
+export { kbServerShadowFilename };
+/// Backward-compat alias for kbBaseFromShadowFilename. Internally now uses
+/// the engine's canonicalFromShadow — single source of truth.
+export const kbBaseFromShadowFilename = canonicalFromShadow;
 
 export type ConflictFile = {
   filename: string;
@@ -53,46 +77,31 @@ function update(patch: Partial<SyncStatus>) {
   for (const l of listeners) l(status);
 }
 
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let stopPoll: (() => void) | null = null;
 
-const POLL_INTERVAL_MS = 60_000;
-
-/// Single in-flight serializer for pull / push so the 60s poller and a
-/// user-triggered Push can't race and corrupt the manifest. All KB-mutating
-/// work runs through this.
-let syncQueue: Promise<unknown> = Promise.resolve();
-function withSyncLock<T>(fn: () => Promise<T>): Promise<T> {
-  const next = syncQueue.catch(() => undefined).then(fn);
-  syncQueue = next.catch(() => undefined);
-  return next;
-}
-
-/// Server-side copy filename for merge conflicts, e.g. `runbook.md` → `runbook.server.md`.
-export function kbServerShadowFilename(filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  if (dot <= 0 || dot === filename.length - 1) return `${filename}.server`;
-  return `${filename.slice(0, dot)}.server.${filename.slice(dot + 1)}`;
+/// Compute the sibling set used by `classifyAsShadow`. Returns ALL
+/// local filenames — including shadow-shaped names — because a legit
+/// `a.server.conf` should still appear so a follow-on double-shadow
+/// `a.server.server.conf` correctly maps back via canonicalFromShadow.
+function canonicalSiblingSet(files: { filename: string }[]): Set<string> {
+  return new Set(files.map((f) => f.filename));
 }
 
 export function kbHasServerShadowFiles(repo: string): Promise<boolean> {
-  return kbListLocal(repo).then((files) =>
-    files.some((f) => f.filename.includes(".server.")),
-  );
-}
-
-/// Reconstruct canonical filename from a shadow like `runbook.server.md` → `runbook.md`.
-export function kbBaseFromShadowFilename(shadow: string): string {
-  const marker = ".server.";
-  const i = shadow.indexOf(marker);
-  if (i < 0) return shadow;
-  return `${shadow.slice(0, i)}.${shadow.slice(i + marker.length)}`;
+  return kbListLocal(repo).then((files) => {
+    const siblings = canonicalSiblingSet(files);
+    return files.some((f) => classifyAsShadow(f.filename, siblings));
+  });
 }
 
 /// Prompt text for Claude Code to resolve KB merge conflicts (pairs yours vs server shadow).
 export async function buildKbConflictPrompt(repo: string): Promise<string> {
   const sync = getSyncStatus();
   const local = await kbListLocal(repo);
-  const shadowNames = local.map((f) => f.filename).filter((n) => n.includes(".server."));
+  const siblings = canonicalSiblingSet(local);
+  const shadowNames = local
+    .map((f) => f.filename)
+    .filter((n) => classifyAsShadow(n, siblings));
   const lines: string[] = [];
   for (const c of sync.conflicts) {
     const sh = kbServerShadowFilename(c.filename);
@@ -111,6 +120,37 @@ ${lines.join("\n")}
 For binary files (e.g. PDF), pick the correct version or replace manually, then delete the shadow file.`;
 }
 
+async function runPull(args: {
+  repo: string;
+  adapter: ReturnType<typeof kbAdapter>;
+}): Promise<{ pulled: number; total: number }> {
+  // ALL status updates fire inside the engine's per-repo lock via the
+  // onPhase / onResult / onError callbacks. Doing them post-await would
+  // race against a queued push grabbing the lock and updating status
+  // first. Lock-held callbacks make the order deterministic.
+  const result = await pullEntity(args.adapter, args.repo, {
+    onPhase: (phase) => {
+      if (phase === "pulling") update({ phase: "pulling" });
+    },
+    onResult: (r) => {
+      const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
+        filename: c.manifestKey,
+        reason: "local-and-remote-changed",
+      }));
+      update({
+        phase: "ready",
+        conflicts,
+        lastPullAt: Date.now(),
+        lastError: null,
+      });
+    },
+    onError: (e) => {
+      update({ phase: "error", lastError: String(e) });
+    },
+  });
+  return { pulled: result.pulled, total: result.remoteCount };
+}
+
 /// Resolve (find or create) the OpenIT-managed KB for this org and run the
 /// initial pull. Idempotent — safe to call again on org change.
 export async function startKbSync(args: {
@@ -121,9 +161,9 @@ export async function startKbSync(args: {
   onLog?: (msg: string) => void;
 }): Promise<{ pulled: number; total: number } | null> {
   const { creds, repo, orgSlug, orgName, onLog } = args;
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (stopPoll) {
+    stopPoll();
+    stopPoll = null;
   }
 
   update({ phase: "resolving", lastError: null });
@@ -151,7 +191,9 @@ export async function startKbSync(args: {
   }
   update({ collection });
 
-  // Persist the collection id alongside the file manifest.
+  // Persist the collection id alongside the file manifest. Done outside the
+  // engine because only the wrapper knows the collection — engine treats
+  // manifests as opaque.
   const persisted = await kbStateLoad(repo);
   if (persisted.collection_id !== collection.id) {
     await kbStateSave(repo, {
@@ -161,185 +203,90 @@ export async function startKbSync(args: {
     });
   }
 
-  const result = await withSyncLock(() => pullOnce({ creds, repo, collection }));
-  pollTimer = setInterval(() => {
-    withSyncLock(() => pullOnce({ creds, repo, collection })).catch((e) =>
-      console.error("kb pull failed:", e),
-    );
-  }, POLL_INTERVAL_MS);
+  // Build the adapter once and share it for the initial pull and the
+  // 60s poll — saves the redundant construction and makes it obvious
+  // both paths run on the same configuration.
+  const adapter = kbAdapter({ creds, collection });
+  // Catch initial-pull failures (e.g. transient network blip) so we still
+  // start the poller — otherwise the user sits in `phase: "error"` with
+  // no automatic recovery path. runPull already updates status on failure.
+  // Also preserves the public `Promise<… | null>` contract.
+  let result: { pulled: number; total: number } | null = null;
+  try {
+    result = await runPull({ repo, adapter });
+  } catch (e) {
+    console.error("kb sync: initial pull failed (poll will still start):", e);
+  }
+  stopPoll = startPolling(adapter, repo, {
+    onPhase: (phase) => {
+      if (phase === "pulling") update({ phase: "pulling" });
+    },
+    onResult: (r) => {
+      const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
+        filename: c.manifestKey,
+        reason: "local-and-remote-changed",
+      }));
+      update({
+        phase: "ready",
+        conflicts,
+        lastPullAt: Date.now(),
+        lastError: null,
+      });
+    },
+    onError: (e) => {
+      // onPhase("pulling") fired before the failure, so without an error
+      // status update here the UI stays stuck at phase: "pulling" until
+      // a subsequent poll succeeds. Recover by surfacing the error.
+      console.error("kb pull failed:", e);
+      update({ phase: "error", lastError: String(e) });
+    },
+  });
   return result;
 }
 
 export function stopKbSync() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (stopPoll) {
+    stopPoll();
+    stopPoll = null;
   }
   update({ phase: "idle", collection: null, conflicts: [], lastError: null });
 }
 
 /// Run a single pull (e.g. immediately before a push). Public wrapper.
-/// Goes through the in-flight lock so it can't race the background poller.
+/// Goes through the engine's per-repo lock so it can't race the poller.
+///
+/// Always resolves — never rejects — to match the pre-engine contract
+/// callers (Shell.tsx ↻ button, SourceControl pre-push pull) depend on.
+/// The pull's success/failure is conveyed through the SyncStatus
+/// (`getSyncStatus().phase` becomes "error" on failure); callers that
+/// need to gate behavior on outcome should read the status rather than
+/// catch a rejection.
 export async function pullNow(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: KbCollection;
 }): Promise<void> {
-  await withSyncLock(() => pullOnce(args));
-}
-
-
-/// Run one pull pass: list remote files, reconcile against local manifest,
-/// pull new/updated files, surface conflicts.
-async function pullOnce(args: {
-  creds: PinkfishCreds;
-  repo: string;
-  collection: KbCollection;
-}): Promise<{ pulled: number; total: number }> {
-  const { creds, repo, collection } = args;
-  update({ phase: "pulling" });
-
-  const token = getToken();
-  if (!token) {
-    update({ phase: "error", lastError: "not authenticated" });
-    return { pulled: 0, total: 0 };
-  }
-  const urls = derivedUrls(creds.tokenUrl);
-
-  let remote: Array<{ filename: string; updatedAt: string; downloadUrl?: string }>;
+  const adapter = kbAdapter({ creds: args.creds, collection: args.collection });
   try {
-    const rows = await kbListRemote({
-      collectionId: collection.id,
-      skillsBaseUrl: urls.skillsBaseUrl,
-      accessToken: token.accessToken,
-    });
-    remote = rows.map((r) => ({
-      filename: r.filename,
-      updatedAt: r.updated_at,
-      downloadUrl: r.signed_url ?? undefined,
-    }));
+    await runPull({ repo: args.repo, adapter });
   } catch (e) {
-    update({ phase: "error", lastError: String(e) });
-    return { pulled: 0, total: 0 };
+    // runPull's onError already set status to phase: "error"; swallowing
+    // the rejection here just preserves the void/no-reject contract.
+    console.error("kb pullNow failed:", e);
   }
-
-  const local = await kbListLocal(repo);
-  const localMap = new Map(local.map((f) => [f.filename, f]));
-  const persisted: KbStatePersisted = await kbStateLoad(repo);
-  const conflicts: ConflictFile[] = [];
-  let pulled = 0;
-
-  // Repo-relative paths the pull touched (downloaded, replaced, deleted).
-  // Used to scope the auto-commit so we never sweep up unrelated user WIP.
-  const touched = new Set<string>();
-  const kbPath = (filename: string) => `knowledge-base/${filename}`;
-
-  for (const r of remote) {
-    if (!r.filename || !r.downloadUrl) continue;
-    const localFile = localMap.get(r.filename);
-    const tracked = persisted.files[r.filename];
-
-    if (!tracked && !localFile) {
-      try {
-        await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
-        persisted.files[r.filename] = mkState(r);
-        touched.add(kbPath(r.filename));
-        pulled += 1;
-      } catch (e) {
-        console.error(`pull ${r.filename} failed:`, e);
-      }
-      continue;
-    }
-
-    if (tracked && localFile) {
-      const remoteChanged = r.updatedAt && r.updatedAt !== tracked.remote_version;
-      const localChanged =
-        localFile.mtime_ms != null && localFile.mtime_ms > tracked.pulled_at_mtime_ms;
-
-      if (remoteChanged && localChanged) {
-        const shadowName = kbServerShadowFilename(r.filename);
-        const hasShadow = local.some((f) => f.filename === shadowName);
-        if (!hasShadow && r.downloadUrl) {
-          try {
-            await kbDownloadToLocal(repo, shadowName, r.downloadUrl);
-            touched.add(kbPath(shadowName));
-          } catch (e) {
-            console.error(`pull conflict shadow ${shadowName} failed:`, e);
-          }
-        }
-        conflicts.push({ filename: r.filename, reason: "local-and-remote-changed" });
-        continue;
-      }
-      if (remoteChanged && !localChanged) {
-        try {
-          await kbDownloadToLocal(repo, r.filename, r.downloadUrl);
-          persisted.files[r.filename] = mkState(r);
-          touched.add(kbPath(r.filename));
-          pulled += 1;
-        } catch (e) {
-          console.error(`pull ${r.filename} failed:`, e);
-        }
-      }
-      // remote unchanged: nothing to do
-      continue;
-    }
-    // tracked but missing locally → user deleted locally, leave alone
-  }
-
-  // Detect server-side deletions: files the manifest says we synced from the
-  // server but that are no longer in the remote list → server deleted them.
-  // We deliberately do NOT delete files that aren't in the manifest — those
-  // are local-only files (e.g. just added, just committed, never pushed).
-  const remoteNames = new Set(remote.map((r) => r.filename));
-  for (const filename of Object.keys(persisted.files)) {
-    if (filename.includes(".server.")) continue;
-    if (remoteNames.has(filename)) continue;
-    const localFile = localMap.get(filename);
-    if (!localFile) {
-      delete persisted.files[filename];
-      continue;
-    }
-    try {
-      await kbDeleteFile(repo, filename);
-      delete persisted.files[filename];
-      touched.add(kbPath(filename));
-    } catch (e) {
-      console.error(`failed to delete local ${filename}:`, e);
-    }
-  }
-
-  await kbStateSave(repo, persisted);
-  update({ phase: "ready", conflicts, lastPullAt: Date.now(), lastError: null });
-
-  if (touched.size > 0) {
-    try {
-      const ts = new Date().toISOString();
-      await gitCommitPaths(repo, Array.from(touched), `sync: pull @ ${ts}`);
-    } catch (e) {
-      console.warn("git commit after pull:", e);
-    }
-  }
-  return { pulled, total: remote.length };
-}
-
-function mkState(r: { updatedAt: string }) {
-  return {
-    remote_version: r.updatedAt,
-    pulled_at_mtime_ms: Date.now(),
-  };
 }
 
 /// Push every local file to the KB. Updates manifest with the post-push
-/// remote_version (which we approximate as "now" since the API doesn't
-/// return one synchronously). Caller is the Deploy button.
-/// Goes through the in-flight lock so it can't race the background poller.
+/// remote_version (which the API doesn't return synchronously, so we
+/// re-list and reconcile). Caller is the Sync tab's commit handler.
+/// Serializes against pull on the engine's per-repo lock.
 export async function pushAllToKb(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: KbCollection;
   onLine?: (msg: string) => void;
 }): Promise<{ pushed: number; failed: number }> {
-  return withSyncLock(() => pushAllToKbInner(args));
+  return withRepoLock(args.repo, "kb", () => pushAllToKbInner(args));
 }
 
 async function pushAllToKbInner(args: {
@@ -372,8 +319,11 @@ async function pushAllToKbInner(args: {
       .map((g) => g.path.replace(/^knowledge-base\//, "")),
   );
 
+  // Sibling-aware shadow exclusion — a legitimate `nginx.server.conf`
+  // (no `nginx.conf` sibling) should still push.
+  const siblings = canonicalSiblingSet(local);
   const toPush = local.filter((f) => {
-    if (f.filename.includes(".server.")) return false;
+    if (classifyAsShadow(f.filename, siblings)) return false;
     const tracked = persisted.files[f.filename];
     if (!tracked) return true;
     if (dirtyPaths.has(f.filename)) return true;
@@ -444,13 +394,9 @@ async function pushAllToKbInner(args: {
   update({ phase: "ready" });
 
   if (pushedNames.size > 0) {
-    try {
-      const ts = new Date().toISOString();
-      const paths = Array.from(pushedNames).map((n) => `knowledge-base/${n}`);
-      await gitCommitPaths(repo, paths, `sync: deployed @ ${ts}`);
-    } catch (e) {
-      console.warn("git commit after push:", e);
-    }
+    const ts = new Date().toISOString();
+    const paths = Array.from(pushedNames).map((n) => `knowledge-base/${n}`);
+    await commitTouched(repo, paths, `sync: deployed @ ${ts}`);
   }
   return { pushed, failed };
 }
