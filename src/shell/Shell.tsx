@@ -242,9 +242,9 @@ export function Shell({
         // user is left staring at "1 change to push" forever. Commit
         // here so HEAD catches up. Same pattern handleCommit uses.
         try {
-          const status = await gitStatusShort(repo);
-          if (status.length > 0) {
-            const unstaged = status.filter((f) => !f.staged).map((f) => f.path);
+          const wsStatus = await gitStatusShort(repo);
+          if (wsStatus.length > 0) {
+            const unstaged = wsStatus.filter((f) => !f.staged).map((f) => f.path);
             if (unstaged.length > 0) await gitStage(repo, unstaged);
             const ts = new Date().toISOString();
             await gitCommitStaged(repo, `sync: claude-resolve auto-commit @ ${ts}`);
