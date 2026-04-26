@@ -611,29 +611,36 @@ export async function startDatastoreSync(args: {
   //       network / auth blip), the poll keeps trying every 60s until
   //       resolve succeeds (avoids the iter 12 stuck state).
   let adapter: EntityAdapter | null = null;
-  let firstResolve = true;
+  let firstAttempt = true;
 
   const tryResolveAndPull = async () => {
+    // First-attempt errors go to onLog so the modal flow surfaces them
+    // visibly. Subsequent poll-attempt errors only go to console to
+    // avoid spamming the modal log every 60s.
+    const isFirst = firstAttempt;
+    firstAttempt = false;
+
     if (!adapter) {
       try {
         const collections = await resolveProjectDatastores(creds, onLog);
         adapter = datastoreAdapter({ creds, collections });
-        // Schemas have no `updatedAt`, so the engine's diff doesn't
-        // apply. Write them once on each successful resolve as a
-        // content-equality side-effect — cheap and idempotent.
-        if (firstResolve) {
-          firstResolve = false;
-          try {
-            const r = await writeDatastoreSchemas(repo, collections);
+        try {
+          const r = await writeDatastoreSchemas(repo, collections);
+          if (isFirst) {
             onLog?.(
               `    ${collections.length} collection(s) — ${r.written} schema(s) written, ${r.unchanged} unchanged`,
             );
-          } catch (e) {
-            console.warn("[datastoreSync] schema write failed:", e);
           }
+        } catch (e) {
+          console.warn("[datastoreSync] schema write failed:", e);
+          if (isFirst) onLog?.(`    ✗ schema write failed: ${e}`);
         }
       } catch (e) {
         console.error("[datastoreSync] resolve failed:", e);
+        if (isFirst) onLog?.(`    ✗ failed: ${e}`);
+        // Re-throw on first attempt so the modal's try/catch + syncErrors
+        // flag sees it. Polling attempts swallow (logged to console).
+        if (isFirst) throw e;
         return;
       }
     }
@@ -641,6 +648,8 @@ export async function startDatastoreSync(args: {
       await pullEntity(adapter, repo);
     } catch (e) {
       console.error("[datastoreSync] pull failed:", e);
+      if (isFirst) onLog?.(`    ✗ pull failed: ${e}`);
+      if (isFirst) throw e;
     }
   };
 
