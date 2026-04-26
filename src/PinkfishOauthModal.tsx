@@ -9,7 +9,7 @@ import {
   saveCreds,
   type PinkfishCreds,
 } from "./lib/pinkfishAuth";
-import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk } from "./lib/datastoreSync";
+import { startDatastoreSync } from "./lib/datastoreSync";
 import { resolveProjectAgents, syncAgentsToDisk } from "./lib/agentSync";
 import { resolveProjectWorkflows, syncWorkflowsToDisk } from "./lib/workflowSync";
 import { resolveProjectFilestores, pullOnce } from "./lib/filestoreSync";
@@ -113,16 +113,11 @@ export function PinkfishOauthModal({
           addLog("");
           addLog("▸ datastores");
           try {
-            const datastores = await resolveProjectDatastores(creds, addLog);
-            const itemsByCollection: Record<string, { items: any[]; hasMore: boolean }> = {};
-            let totalItems = 0;
-            for (const ds of datastores) {
-              const data = await fetchDatastoreItems(creds, ds.id);
-              itemsByCollection[ds.id] = data;
-              totalItems += data.items.length;
-            }
-            const { written, unchanged } = await syncDatastoresToDisk(repo, datastores, itemsByCollection);
-            addLog(`    ${datastores.length} collection(s), ${totalItems} item(s) — ${written} file(s) written, ${unchanged} unchanged`);
+            // startDatastoreSync resolves collections, writes schemas,
+            // runs the engine's first pull (writes rows + seeds manifest),
+            // and starts the 60s poller. App.tsx also calls this on
+            // relaunch — it's idempotent.
+            await startDatastoreSync({ creds, repo, onLog: addLog });
           } catch (e) {
             addLog(`    ✗ failed: ${e}`);
             syncErrors = true;
