@@ -117,13 +117,28 @@ export async function datastoreHasPendingChanges(repo: string): Promise<boolean>
   const manifest = await datastoreStateLoad(repo);
   if (manifestHasActiveConflict(manifest)) return true;
 
-  const colNames = new Set<string>();
-  for (const key of Object.keys(manifest.files ?? {})) {
+  // Pre-group manifest keys by collection ONCE, then walk per
+  // collection. The naïve "scan manifest.files for keys starting with
+  // colName/" inside the per-collection loop was O(collections ×
+  // total manifest size) — on the tested 15-collection org with
+  // thousands of rows that's a ~15× re-scan on every clean-push
+  // probe. Bucketing in advance keeps the deletion check linear in
+  // total manifest size + linear in local files.
+  const manifestByCol = new Map<string, Map<string, { pulled_at_mtime_ms: number }>>();
+  for (const [key, entry] of Object.entries(manifest.files ?? {})) {
     const slash = key.indexOf("/");
-    if (slash > 0) colNames.add(key.slice(0, slash));
+    if (slash <= 0) continue;
+    const colName = key.slice(0, slash);
+    const rowKey = key.slice(slash + 1);
+    let bucket = manifestByCol.get(colName);
+    if (!bucket) {
+      bucket = new Map();
+      manifestByCol.set(colName, bucket);
+    }
+    bucket.set(rowKey, entry);
   }
 
-  for (const colName of colNames) {
+  for (const [colName, manifestRows] of manifestByCol) {
     let files: KbLocalFile[];
     try {
       files = await datastoreListLocal(repo, colName);
@@ -140,8 +155,7 @@ export async function datastoreHasPendingChanges(repo: string): Promise<boolean>
       if (classifyAsShadow(f.filename, siblings)) continue;
       const rowKey = f.filename.replace(/\.json$/, "");
       localKeysInCol.add(rowKey);
-      const key = `${colName}/${rowKey}`;
-      const tracked = manifest.files[key];
+      const tracked = manifestRows.get(rowKey);
       if (!tracked) return true; // new local row
       if (f.mtime_ms != null && f.mtime_ms > tracked.pulled_at_mtime_ms) {
         return true;
@@ -150,11 +164,8 @@ export async function datastoreHasPendingChanges(repo: string): Promise<boolean>
 
     // Deletion check: any manifest entry in this collection whose
     // local file is missing → pending (datastore push will DELETE
-    // server-side). Iterate the manifest to avoid an O(N*M) scan.
-    const colPrefix = `${colName}/`;
-    for (const mKey of Object.keys(manifest.files)) {
-      if (!mKey.startsWith(colPrefix)) continue;
-      const rowKey = mKey.slice(colPrefix.length);
+    // server-side).
+    for (const rowKey of manifestRows.keys()) {
       if (!localKeysInCol.has(rowKey)) return true;
     }
   }

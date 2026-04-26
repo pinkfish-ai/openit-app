@@ -279,18 +279,17 @@ export function Shell({
           onLine(`✗ sync: push trigger failed: ${errorMsg}`);
         }
 
-        // Final aggregate clear after the push completes. The pre-push
-        // pull inside pushAllEntities updated the aggregate based on
-        // pre-push state — but the push itself may have resolved
-        // server-side divergence (e.g., uploaded the user's merged
-        // content), and the next 60s poll will repopulate the
-        // aggregate accurately if anything is genuinely still
-        // conflicted. Clearing here prevents a stale "still conflicted"
-        // banner from showing on a row we just pushed.
+        // Bump refreshTick so the conflict banner clears any stale
+        // dismiss key — a deliberate sync gesture is a "give me a
+        // fresh look" signal, same shape as manual pull. We do NOT
+        // clear the engine's conflict aggregate here: pushAllEntities
+        // ran a pre-pull for each entity which already updated the
+        // aggregate to truth via `conflictsByPrefix.set(slot, …)`. If
+        // the pre-pull surfaced a conflict, push gracefully skipped
+        // that entity (status stays "ok") and the legitimate
+        // conflict needs to remain visible. Wiping here would silently
+        // hide unresolved divergence — which BugBot caught.
         if (status === "ok") {
-          for (const p of ["kb", "filestore", "datastore", "agent", "workflow"]) {
-            clearConflictsForPrefix(p);
-          }
           bumpRefresh();
         }
 

@@ -72,7 +72,29 @@ export async function syncSkillsToDisk(
           // conflict prompt and other Claude-callable flows reference
           // them by that path; writing to the literal `scripts/` dir
           // would put them somewhere Claude isn't told to look.
-          const scriptName = file.path.replace("scripts/", "");
+          //
+          // Manifest paths come from the network, so don't trust them
+          // structurally. A path like `scripts/../../etc/passwd` would
+          // strip just the leading `scripts/` and pass the traversal
+          // segments straight to entity_write_file — its Rust handler
+          // doesn't canonicalize. Restrict to a flat basename of the
+          // expected shape; reject anything else loudly so we notice
+          // when the manifest delivers something unexpected.
+          const scriptName = file.path.slice("scripts/".length);
+          if (
+            scriptName.length === 0 ||
+            !/^[a-zA-Z0-9._-]+\.mjs$/.test(scriptName) ||
+            scriptName.includes("..") ||
+            scriptName.includes("/") ||
+            scriptName.includes("\\") ||
+            scriptName.startsWith(".")
+          ) {
+            console.warn(
+              `[skillsSync] rejected suspicious script path: ${file.path}`,
+            );
+            onLog?.(`  ✗ ${file.path}: invalid script name`);
+            continue;
+          }
           await invoke("entity_write_file", {
             repo,
             subdir: ".claude/scripts",
