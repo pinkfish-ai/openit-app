@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { entityWriteFile, fsDelete, fsRead, stateLoad, stateSave, type AppPersistedState } from "../lib/api";
+import {
+  entityWriteFile,
+  fsDelete,
+  fsRead,
+  gitCommitStaged,
+  gitStage,
+  gitStatusShort,
+  stateLoad,
+  stateSave,
+  type AppPersistedState,
+} from "../lib/api";
 import { pushAllEntities } from "../lib/pushAll";
 import { clearConflictsForPrefix } from "../lib/syncEngine";
 import {
@@ -218,6 +228,27 @@ export function Shell({
           clearConflictsForPrefix(p);
         }
         onSyncLine("─── push triggered by Claude ───");
+
+        // Auto-commit any pending working-tree changes BEFORE pushing.
+        // After Claude's merge, disk has the merged content but git
+        // HEAD still has the pre-merge content, so `git status` reports
+        // a pending change. If the user picked remote, local now
+        // matches remote and the push reports `0 ok, 0 failed` — the
+        // user is left staring at "1 change to push" forever. Commit
+        // here so HEAD catches up. Same pattern handleCommit uses.
+        try {
+          const status = await gitStatusShort(repo);
+          if (status.length > 0) {
+            const unstaged = status.filter((f) => !f.staged).map((f) => f.path);
+            if (unstaged.length > 0) await gitStage(repo, unstaged);
+            const ts = new Date().toISOString();
+            await gitCommitStaged(repo, `sync: claude-resolve auto-commit @ ${ts}`);
+            onLine("▸ sync: auto-committed merged files");
+          }
+        } catch (e) {
+          console.warn("[shell] auto-commit before push failed:", e);
+        }
+
         await pushAllEntities(repo, onLine);
       } catch (e) {
         status = "error";
