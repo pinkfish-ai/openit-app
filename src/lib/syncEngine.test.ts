@@ -25,6 +25,7 @@ vi.mock("./api", () => ({
 import { gitCommitPaths, fsRead } from "./api";
 import {
   classifyAsShadow,
+  contentsEquivalent,
   pullEntity,
   subscribeConflicts,
   clearConflictsForPrefix,
@@ -569,6 +570,52 @@ describe("syncEngine.pullEntity", () => {
 // caused real regressions in R1 iters 9 + 15. The fix was sibling-aware
 // classification — locking it down here.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// contentsEquivalent — what the bootstrap-adoption content check uses
+// instead of `===`. Without these normalizations, harmless drift like a
+// trailing newline or differing key order would manufacture false-positive
+// conflicts that the user can't actually resolve. (BugBot iter on PR #17.)
+// ---------------------------------------------------------------------------
+
+describe("syncEngine.contentsEquivalent", () => {
+  it("byte-identical content is equivalent", () => {
+    expect(contentsEquivalent('{"a":1}', '{"a":1}')).toBe(true);
+  });
+
+  it("treats trailing-newline drift on JSON as equivalent", () => {
+    expect(contentsEquivalent('{"a":1}\n', '{"a":1}')).toBe(true);
+  });
+
+  it("treats CRLF vs LF on JSON as equivalent", () => {
+    const lf = '{\n  "a": 1\n}';
+    const crlf = '{\r\n  "a": 1\r\n}';
+    expect(contentsEquivalent(lf, crlf)).toBe(true);
+  });
+
+  it("treats different key ordering on JSON as equivalent", () => {
+    expect(contentsEquivalent('{"a":1,"b":2}', '{"b":2,"a":1}')).toBe(true);
+  });
+
+  it("treats different whitespace formatting on JSON as equivalent", () => {
+    const compact = '{"a":1,"nested":{"x":2}}';
+    const pretty = '{\n  "a": 1,\n  "nested": {\n    "x": 2\n  }\n}';
+    expect(contentsEquivalent(compact, pretty)).toBe(true);
+  });
+
+  it("falls back to trimmed compare for non-JSON content", () => {
+    expect(contentsEquivalent("hello world\n", "hello world")).toBe(true);
+    expect(contentsEquivalent("hello\r\nworld", "hello\nworld")).toBe(true);
+  });
+
+  it("genuinely-different JSON is not equivalent", () => {
+    expect(contentsEquivalent('{"a":1}', '{"a":2}')).toBe(false);
+  });
+
+  it("genuinely-different non-JSON is not equivalent", () => {
+    expect(contentsEquivalent("hello", "goodbye")).toBe(false);
+  });
+});
 
 describe("syncEngine.classifyAsShadow", () => {
   it("classifies as shadow only when the canonical sibling exists in the set", () => {

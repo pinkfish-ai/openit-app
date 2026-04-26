@@ -10,7 +10,7 @@
 // 16 findings, every one a duplicated-pipeline drift. Centralizing makes the
 // next entity adapter ~50 lines instead of ~700.
 
-import { gitCommitPaths, type KbStatePersisted } from "./api";
+import { fsRead, gitCommitPaths, type KbStatePersisted } from "./api";
 
 export type Manifest = KbStatePersisted;
 
@@ -68,6 +68,42 @@ export function classifyAsShadow(
 ): boolean {
   if (!looksLikeShadow(filename)) return false;
   return siblingNames.has(canonicalFromShadow(filename));
+}
+
+/// Sort-key recursive serializer. Two semantically-equal JSON values
+/// produce the same string regardless of key order in the source.
+/// Falls through arrays/primitives unchanged; only object key ordering
+/// is normalized.
+function canonicalJsonString(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJsonString).join(",")}]`;
+  }
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  const parts = keys.map((k) => {
+    const v = (value as Record<string, unknown>)[k];
+    return `${JSON.stringify(k)}:${canonicalJsonString(v)}`;
+  });
+  return `{${parts.join(",")}}`;
+}
+
+/// Equivalence check for the bootstrap-adoption content compare.
+/// A naive byte compare false-positives on harmless drift: trailing
+/// newline from an editor save, CRLF vs LF on Windows, key order
+/// differences from a different stringify path. We try a JSON-aware
+/// canonical compare first (handles all three for datastore rows,
+/// which are the only adapters using inlineContent today). If either
+/// side isn't valid JSON, we fall back to a whitespace-trimmed string
+/// compare, which still neutralises the trailing-newline + CRLF cases.
+export function contentsEquivalent(a: string, b: string): boolean {
+  if (a === b) return true;
+  try {
+    const aJ = JSON.parse(a);
+    const bJ = JSON.parse(b);
+    return canonicalJsonString(aJ) === canonicalJsonString(bJ);
+  } catch {
+    return a.replace(/\r\n/g, "\n").trimEnd() === b.replace(/\r\n/g, "\n").trimEnd();
+  }
 }
 
 
@@ -538,7 +574,6 @@ async function pullEntityImpl(
         }
         if (remoteContent != null) {
           try {
-            const { fsRead } = await import("./api");
             localContent = await fsRead(`${repo}/${localFile.workingTreePath}`);
           } catch (e) {
             console.warn(
@@ -550,7 +585,7 @@ async function pullEntityImpl(
         if (
           remoteContent != null &&
           localContent != null &&
-          remoteContent !== localContent
+          !contentsEquivalent(localContent, remoteContent)
         ) {
           if (!localShadowKeys.has(r.manifestKey)) {
             try {
