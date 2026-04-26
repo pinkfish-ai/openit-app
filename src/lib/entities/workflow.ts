@@ -51,9 +51,9 @@ async function listAutomations(creds: PinkfishCreds): Promise<WorkflowRow[]> {
   const token = getToken();
   if (!token) throw new Error("not authenticated");
   const urls = derivedUrls(creds.tokenUrl);
-  // Same X-Selected-Org requirement as /user-agents (see agent adapter).
-  const fetchFn = makeSkillsFetch(token.accessToken, "bearer", creds.orgId);
-  const url = new URL("/automations", urls.appBaseUrl);
+  // Runtime token + service route — see agent adapter for full rationale.
+  const fetchFn = makeSkillsFetch(token.accessToken, "bearer");
+  const url = new URL("/service/automations", urls.appBaseUrl);
   const resp = await fetchFn(url.toString());
   if (!resp.ok) {
     throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);

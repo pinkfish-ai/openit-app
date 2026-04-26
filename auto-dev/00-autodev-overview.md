@@ -47,9 +47,8 @@ The four siblings below are **reference-only** for OpenIT work — we read them 
   - When a scripts/REST/MCP wiring question comes up ("what's the actual route for this? what does this MCP tool expect?"), grep `/platform`.
   - Pinkfish-owned MCPs (`pinkfish-sidekick`, `agent-management`, `knowledge-base`, `filestorage`, `datastore-structured`, `http-utils`) and the gateway live here.
 
-- **`/firebase-helpers`** — generated client + handlers for the **resource APIs** (datastores, knowledge-base, filestore, memory, agents, automations) hosted at `https://skills*.pinkfish.ai/`.
+- **`/firebase-helpers`** — generated client + handlers for the **resource APIs** (datastores, knowledge-base, filestore, memory) hosted at `https://skills*.pinkfish.ai/`.
   - This is the canonical reference for every endpoint OpenIT calls when it talks to the resource layer. If the auto-generated client at `openit-app/src/api/generated/firebase-helpers/` looks wrong or out of date, this is where to verify.
-  - Auth split: skills endpoints take `Auth-Token: Bearer …`; the few platform-side endpoints (`/user-agents`, `/automations`) take `Authorization: Bearer …` + `X-Selected-Org` — see `derivedUrls.appBaseUrl` usage in this repo.
 
 - **`/pinkfish-connections`** — connections proxy hosted at `https://proxy*.pinkfish.ai/`. Reference for **connection endpoints** (the layer between Pinkfish and connected SaaS systems — Slack, Zendesk, Salesforce, Jira, Okta, GitHub, GCP, AWS, Azure, …).
   - Look here when a question is about connector-specific behavior, OAuth flows for third-party systems, or what the proxy returns for a given gateway call.
@@ -61,8 +60,24 @@ The four siblings below are **reference-only** for OpenIT work — we read them 
 | How does a similar UI render in the main app? | `/web` |
 | What does the plugin's production version actually contain? | `/web` (`packages/app/public/openit-plugin/`) |
 | Backend MCP / service endpoint shape? | `/platform` |
-| `skills*.pinkfish.ai/...` endpoint contract (datastore/KB/filestore/memory/agents/automations)? | `/firebase-helpers` |
+| `skills*.pinkfish.ai/...` endpoint contract (datastore/KB/filestore/memory)? | `/firebase-helpers` |
 | `proxy*.pinkfish.ai/...` connection endpoint or third-party connector behavior? | `/pinkfish-connections` |
+
+### Auth: one runtime token
+
+OpenIT uses **exactly one credential** — the runtime token from OAuth client-credentials (`POST /oauth/token` against the user's `tokenUrl`). That single token is accepted by all three Pinkfish-side hosts:
+
+| Host | Path prefix | Header | Examples |
+|---|---|---|---|
+| `app-api.<env>.pinkfish.<tld>` | `/service/*` | `Authorization: Bearer <token>` | `/service/useragents`, `/service/automations` |
+| `skills*.pinkfish.ai` | `/datacollection`, `/memory`, `/knowledge-base`, `/filestore` | `Auth-Token: Bearer <token>` | resource APIs |
+| `proxy*.pinkfish.ai` | `/manage/*` | `Auth-Token: Bearer <token>` | connections |
+
+**No `X-Selected-Org` header.** Service routes pull org from the token's claims; skills/proxy don't need it.
+
+**Different from `/web`.** The web frontend uses Cognito session tokens against `/api/*` routes — those routes do gate on `X-Selected-Org` and a different middleware. We don't use them. If you see `/api/agents` or `/api/automations` referenced anywhere in our code, that's wrong — replace with `/service/useragents` / `/service/automations`.
+
+**Helper:** `makeSkillsFetch(accessToken, "bearer" | "auth-token")` in `src/api/fetchAdapter.ts` is the only authenticated-fetch path. Every adapter goes through it.
 
 ### Prerequisites
 - macOS (Windows + Linux supported by Tauri but not yet tested)
