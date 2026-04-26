@@ -636,6 +636,22 @@ body,
   border-color: var(--accent);
 }
 
+.viewer-copy-btn {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 5px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.viewer-copy-btn:hover {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
 .viewer-md {
   flex: 1;
   overflow: auto;

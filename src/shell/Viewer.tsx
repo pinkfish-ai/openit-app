@@ -259,6 +259,28 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
   // --- Tabs ---
   const showFileTabs = source.kind === "file" && isMarkdown(source.path);
   const showRowTabs = source.kind === "datastore-row";
+  // The sync stream and the diff view are the two cases where the
+  // user's natural next step is "paste this into Claude". A copy
+  // button here saves a triple-click + ⌘C and avoids selection
+  // accidentally truncating long output.
+  const showCopy = source.kind === "sync" || source.kind === "diff";
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  const copyableText =
+    source.kind === "sync"
+      ? source.lines.join("\n")
+      : source.kind === "diff"
+      ? source.text
+      : "";
+  const handleCopy = async () => {
+    if (!copyableText) return;
+    try {
+      await navigator.clipboard.writeText(copyableText);
+      setCopyState("copied");
+      setTimeout(() => setCopyState("idle"), 1500);
+    } catch (e) {
+      console.error("[viewer] clipboard write failed:", e);
+    }
+  };
 
   // --- Render body ---
   const renderBody = () => {
@@ -464,6 +486,16 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
               Table
             </button>
           </div>
+        )}
+        {showCopy && (
+          <button
+            type="button"
+            className="viewer-copy-btn"
+            onClick={handleCopy}
+            title="Copy contents to clipboard"
+          >
+            {copyState === "copied" ? "Copied!" : "Copy"}
+          </button>
         )}
       </div>
       {renderBody()}

@@ -39,6 +39,14 @@ const DEFAULT_SIZES = [18, 42, 40];
 
 type LeftTab = "files" | "source-control";
 
+/// Module-level reentrancy guard for Claude-triggered pushes. Hoisted
+/// out of the useEffect closure so a transient cleanup race (effect
+/// re-runs faster than the async fs-watcher subscription tears down)
+/// can't end up with two listeners that each have their own
+/// `pushInFlight` flag — without this, a single push-request marker
+/// fanned out into 3 parallel push runs in the wild.
+const pushInFlightByRepo = new Set<string>();
+
 export function Shell({
   repo,
   syncLines,
@@ -186,15 +194,12 @@ export function Shell({
   useEffect(() => {
     if (!repo) return;
     let unlisten: (() => void) | null = null;
-    // Reentrancy guard: rapid back-to-back writes to the marker (or a
-    // mid-push fs event firing on a path we wrote) must not start a
-    // second push. Push helpers already serialize on per-repo locks,
-    // but this avoids a queue of redundant runs.
-    let pushInFlight = false;
 
     const runPushFromMarker = async () => {
-      if (pushInFlight) return;
-      pushInFlight = true;
+      // Module-level guard so concurrent listeners (transient
+      // useEffect cleanup race) can't each kick off a separate push.
+      if (pushInFlightByRepo.has(repo)) return;
+      pushInFlightByRepo.add(repo);
       const requestPath = `${repo}/.openit/push-request.json`;
       const lines: string[] = [];
       const onLine = (line: string) => {
@@ -266,7 +271,7 @@ export function Shell({
         } catch (e) {
           console.error("[shell] failed to write push-result:", e);
         }
-        pushInFlight = false;
+        pushInFlightByRepo.delete(repo);
       }
     };
 
