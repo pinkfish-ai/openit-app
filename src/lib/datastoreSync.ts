@@ -614,9 +614,11 @@ export async function startDatastoreSync(args: {
   let firstAttempt = true;
 
   const tryResolveAndPull = async () => {
-    // First-attempt errors go to onLog so the modal flow surfaces them
-    // visibly. Subsequent poll-attempt errors only go to console to
-    // avoid spamming the modal log every 60s.
+    // First-attempt failures re-throw so the modal's outer try/catch
+    // + syncErrors flag trips. The modal's catch logs the error, so we
+    // don't also onLog here (would duplicate lines, iter 2 finding).
+    // Subsequent poll-tick failures just log to console — auto-recovery
+    // takes care of itself.
     const isFirst = firstAttempt;
     firstAttempt = false;
 
@@ -633,13 +635,9 @@ export async function startDatastoreSync(args: {
           }
         } catch (e) {
           console.warn("[datastoreSync] schema write failed:", e);
-          if (isFirst) onLog?.(`    ✗ schema write failed: ${e}`);
         }
       } catch (e) {
         console.error("[datastoreSync] resolve failed:", e);
-        if (isFirst) onLog?.(`    ✗ failed: ${e}`);
-        // Re-throw on first attempt so the modal's try/catch + syncErrors
-        // flag sees it. Polling attempts swallow (logged to console).
         if (isFirst) throw e;
         return;
       }
@@ -648,14 +646,18 @@ export async function startDatastoreSync(args: {
       await pullEntity(adapter, repo);
     } catch (e) {
       console.error("[datastoreSync] pull failed:", e);
-      if (isFirst) onLog?.(`    ✗ pull failed: ${e}`);
       if (isFirst) throw e;
     }
   };
 
-  await tryResolveAndPull();
+  // Install the poller BEFORE awaiting the first call. If the first
+  // attempt throws (transient resolve/pull failure on connect), the
+  // throw still reaches the caller — but the 60s timer is already
+  // registered and will keep retrying, preserving the iter-12
+  // auto-recovery guarantee.
   const timer = setInterval(tryResolveAndPull, DEFAULT_POLL_INTERVAL_MS);
   stopPoll = () => clearInterval(timer);
+  await tryResolveAndPull();
 }
 
 export function stopDatastoreSync(): void {
