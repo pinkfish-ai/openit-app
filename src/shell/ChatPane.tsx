@@ -175,5 +175,11 @@ export function ChatPane({ cwd }: { cwd: string | null }) {
     );
   }
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  return (
+    <div
+      ref={containerRef}
+      className="claude-terminal"
+      style={{ width: "100%", height: "100%" }}
+    />
+  );
 }

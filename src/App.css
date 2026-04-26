@@ -802,6 +802,16 @@ body,
   border-left: 1px solid var(--border);
 }
 
+/* Claude Code's TUI emits its own ANSI colors via xterm.js — they
+   don't follow OpenIT's theme variables. A modest saturation pull-
+   back softens the bright reds / greens / blues so they read as
+   "Claude's pane" rather than competing with the calm KB / explorer
+   / sync-output styling. Drop too much saturation and diff red/green
+   stops being legible, so 0.72 is the sweet spot empirically. */
+.claude-terminal {
+  filter: saturate(0.72);
+}
+
 .icon-btn {
   background: var(--surface);
   border: 1px solid var(--border-strong);
