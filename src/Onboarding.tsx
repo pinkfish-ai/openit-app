@@ -4,6 +4,9 @@ import { claudeDetect, pinkfishListConnections, type UserConnection } from "./li
 import { PinkfishOauthModal } from "./PinkfishOauthModal";
 import { stopFilestoreSync } from "./lib/filestoreSync";
 import { stopKbSync } from "./lib/kbSync";
+import { stopDatastoreSync } from "./lib/datastoreSync";
+import { stopAgentSync } from "./lib/agentSync";
+import { stopWorkflowSync } from "./lib/workflowSync";
 import {
   DEFAULT_TOKEN_URL,
   derivedUrls,
@@ -144,6 +147,9 @@ export function Onboarding({
     if (authOpen) {
       stopKbSync();
       stopFilestoreSync();
+      stopDatastoreSync();
+      stopAgentSync();
+      stopWorkflowSync();
     }
   }, [authOpen]);
 

@@ -1,134 +1,81 @@
-import { pinkfishMcpCall, entityWriteFile, fsRead } from "./api";
-import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
+// Workflow sync wrapper. Engine-driven via workflowAdapter
+// (entities/workflow.ts). Replaces the legacy MCP `workflow_list` +
+// content-equality syncWorkflowsToDisk with REST `/automations` + the
+// engine's manifest-based diff.
+//
+// Read-only (no push). Per the plan, sync targets the *draft* —
+// release-vs-draft handling stays an explicit user action and is not
+// in scope for the engine.
 
-export type Workflow = {
-  id: string;
-  name: string;
-  description?: string;
-  triggers?: Array<{ id: string; name: string; url?: string }>;
-  inputs?: Array<{ name: string; type: string; required?: boolean }>;
-};
+import {
+  resolveProjectWorkflows,
+  workflowAdapter,
+  type WorkflowRow,
+} from "./entities/workflow";
+import { type PinkfishCreds } from "./pinkfishAuth";
+import {
+  DEFAULT_POLL_INTERVAL_MS,
+  pullEntity,
+  type EntityAdapter,
+} from "./syncEngine";
 
-const PREFIX = "openit-";
+export type Workflow = WorkflowRow;
 
-/**
- * Call a Pinkfish MCP tool and extract structuredContent, following the same
- * error-handling pattern as kb.ts.
- */
-async function call(
-  creds: PinkfishCreds,
-  server: string,
-  tool: string,
-  args: unknown,
-): Promise<unknown> {
-  const token = getToken();
-  if (!token) throw new Error("not authenticated");
-  const urls = derivedUrls(creds.tokenUrl);
-  const resp = await pinkfishMcpCall({
-    accessToken: token.accessToken,
-    orgId: creds.orgId,
-    server,
-    tool,
-    arguments: args,
-    baseUrl: urls.mcpBaseUrl,
-  });
-  const r = resp as {
-    result?: {
-      structuredContent?: unknown;
-      content?: Array<{ type: string; text?: string }>;
-    };
-    error?: unknown;
-  };
-  if (r.error) throw new Error(`${tool}: ${JSON.stringify(r.error)}`);
+export { resolveProjectWorkflows };
 
-  // Try structuredContent first, fall back to parsing content[0].text
-  let sc = r.result?.structuredContent ?? null;
-  if (!sc && r.result?.content) {
-    const textEntry = r.result.content.find((c) => c.type === "text" && c.text);
-    if (textEntry?.text) {
+let stopPoll: (() => void) | null = null;
+
+export async function startWorkflowSync(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLog?: (msg: string) => void;
+}): Promise<void> {
+  const { creds, repo, onLog } = args;
+  if (stopPoll) {
+    stopPoll();
+    stopPoll = null;
+  }
+
+  let adapter: EntityAdapter | null = null;
+  let firstAttempt = true;
+
+  const tryResolveAndPull = async () => {
+    const isFirst = firstAttempt;
+    firstAttempt = false;
+    if (!adapter) {
       try {
-        sc = JSON.parse(textEntry.text);
-      } catch {
-        // not valid JSON
+        const workflows = await resolveProjectWorkflows(creds);
+        if (isFirst && onLog) {
+          for (const w of workflows) {
+            onLog(`  ✓ ${w.name || "(unnamed)"}  (id: ${w.id || "?"})`);
+          }
+        }
+        adapter = workflowAdapter({ creds });
+      } catch (e) {
+        console.error("[workflowSync] resolve failed:", e);
+        if (isFirst) throw e;
+        return;
       }
     }
-  }
-  console.log(`[workflowSync] ${tool} ->`, sc);
-  if (
-    sc &&
-    typeof sc === "object" &&
-    "error" in (sc as Record<string, unknown>)
-  ) {
-    const errMsg = (sc as { error: unknown }).error;
-    throw new Error(
-      `${tool}: ${typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg)}`,
-    );
-  }
-  return sc;
-}
-
-/**
- * List workflows via the platform MCP automations endpoint, filtered by
- * the openit-* naming prefix.
- */
-export async function resolveProjectWorkflows(
-  creds: PinkfishCreds,
-): Promise<Workflow[]> {
-  console.log("[workflow] resolveProjectWorkflows called");
-  const raw = (await call(
-    creds,
-    "pinkfish-sidekick",
-    "workflow_list",
-    { filter: "all" },
-  )) as {
-    workflows?: Array<Record<string, unknown>>;
-  } | null;
-
-  const workflows: Workflow[] = (raw?.workflows ?? []).map((w) => ({
-    id: String(w.id ?? ""),
-    name: String(w.name ?? ""),
-    description:
-      typeof w.description === "string" ? w.description : undefined,
-    triggers: Array.isArray(w.triggers)
-      ? w.triggers.map((t: Record<string, unknown>) => ({
-          id: String(t.id ?? ""),
-          name: String(t.name ?? ""),
-          url: typeof t.url === "string" ? t.url : undefined,
-        }))
-      : undefined,
-    inputs: Array.isArray(w.inputs)
-      ? w.inputs.map((i: Record<string, unknown>) => ({
-          name: String(i.name ?? ""),
-          type: String(i.type ?? "string"),
-          required: typeof i.required === "boolean" ? i.required : undefined,
-        }))
-      : undefined,
-  }));
-
-  const filtered = workflows.filter((w) => w.name.startsWith(PREFIX));
-  console.log(`[workflow] ✓ Found ${filtered.length} workflows`);
-  return filtered;
-}
-
-export async function syncWorkflowsToDisk(
-  repo: string,
-  workflows: Workflow[],
-): Promise<{ written: number; unchanged: number }> {
-  // Content-equality: skip writes when the on-disk file already matches.
-  let written = 0;
-  let unchanged = 0;
-  for (const wf of workflows) {
-    const filename = wf.name.replace(/[/\\:*?"<>|]/g, "_") + ".json";
-    const content = JSON.stringify(wf, null, 2);
-    const absPath = `${repo}/workflows/${filename}`;
-    let existing: string | null = null;
-    try { existing = await fsRead(absPath); } catch { /* missing */ }
-    if (existing === content) {
-      unchanged += 1;
-      continue;
+    try {
+      const r = await pullEntity(adapter, repo);
+      if (isFirst) {
+        onLog?.(`    ${r.remoteCount} workflow(s) — ${r.pulled} pulled`);
+      }
+    } catch (e) {
+      console.error("[workflowSync] pull failed:", e);
+      if (isFirst) throw e;
     }
-    await entityWriteFile(repo, "workflows", filename, content);
-    written += 1;
+  };
+
+  const timer = setInterval(tryResolveAndPull, DEFAULT_POLL_INTERVAL_MS);
+  stopPoll = () => clearInterval(timer);
+  await tryResolveAndPull();
+}
+
+export function stopWorkflowSync(): void {
+  if (stopPoll) {
+    stopPoll();
+    stopPoll = null;
   }
-  return { written, unchanged };
 }

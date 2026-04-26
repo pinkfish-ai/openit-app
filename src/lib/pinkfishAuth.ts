@@ -14,6 +14,7 @@ export type PinkfishUrls = {
   mcpBaseUrl: string; // https://mcp.<env>.pinkfish.<tld>
   connectionsUrl: string; // proxy(-stage).pinkfish.ai/manage/user-connections?format=light
   skillsBaseUrl: string; // skills(-stage).pinkfish.ai — direct REST API for file storage
+  appBaseUrl: string;     // app-api.<env>.pinkfish.<tld> — platform REST (/user-agents, /automations)
 };
 
 /// Derive related Pinkfish URLs from the user-configured token URL. All
@@ -40,6 +41,7 @@ export function derivedUrls(tokenUrl: string): PinkfishUrls {
     mcpBaseUrl: `${protocol}//${mcpHost}`,
     connectionsUrl: `https://${proxyHost}/manage/user-connections?format=light`,
     skillsBaseUrl: `${protocol}//${skillsHost}`,
+    appBaseUrl: `${protocol}//${host}`,
   };
 }
 
