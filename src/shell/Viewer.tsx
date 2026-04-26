@@ -172,6 +172,11 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
         const items: MemoryItem[] = [];
         for (const node of nodes) {
           if (node.is_dir || node.name === "_schema.json") continue;
+          // Skip conflict shadow files — they're a local-only artifact
+          // (`<key>.server.json` written when both sides edit the same
+          // row) and showing them as separate table rows misleads the
+          // user into thinking the remote has two rows.
+          if (node.name.includes(".server.")) continue;
           try {
             const raw = await fsRead(node.path);
             const content = JSON.parse(raw);
