@@ -42,7 +42,13 @@ export function ConflictBanner() {
     if (!prompt) return;
     setResolving(true);
     try {
-      await writeToActiveSession(prompt);
+      // Wrap in bracketed-paste escapes so the multi-line prompt lands
+      // as a single composed message instead of getting submitted line-
+      // by-line by the TUI's input layer. Modern Ink-based CLIs (Claude
+      // Code included) honor ESC[200~ … ESC[201~. Single-line prompts
+      // would be unaffected, but the pattern is harmless either way.
+      const wrapped = `\x1b[200~${prompt}\x1b[201~`;
+      await writeToActiveSession(wrapped);
     } catch (e) {
       console.error("[conflict-banner] paste-to-Claude failed:", e);
     } finally {

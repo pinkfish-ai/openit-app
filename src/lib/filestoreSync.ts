@@ -437,19 +437,26 @@ export function stopFilestoreSync() {
 /// connect flow. Goes through the engine's per-repo lock.
 ///
 /// Always resolves — never rejects — to match the pre-engine contract.
-/// Failures are conveyed via getFilestoreSyncStatus() (phase becomes
-/// "error"); callers gating on outcome should read that, not catch.
+/// Failures are conveyed via the `ok` field (and getFilestoreSyncStatus()
+/// for phase). Pre-push guard callers should check `ok === true`
+/// before treating a zero-conflict result as "safe to push".
 export async function pullOnce(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: FilestoreCollection;
-}): Promise<{ downloaded: number; total: number }> {
+}): Promise<{
+  ok: boolean;
+  error?: string;
+  downloaded: number;
+  total: number;
+}> {
   const adapter = filestoreAdapter({ creds: args.creds, collection: args.collection });
   try {
-    return await runPull({ repo: args.repo, adapter });
+    const r = await runPull({ repo: args.repo, adapter });
+    return { ok: true, ...r };
   } catch (e) {
     console.error("[filestoreSync] pullOnce failed:", e);
-    return { downloaded: 0, total: 0 };
+    return { ok: false, error: String(e), downloaded: 0, total: 0 };
   }
 }
 

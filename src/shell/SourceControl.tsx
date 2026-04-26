@@ -148,9 +148,21 @@ async function pushOnCommit(
       onLine(`▸ sync: filestore (${collection.name}) pre-push pull`);
       let safe = true;
       try {
-        const { downloaded } = await filestorePullOnce({ creds, repo, collection });
+        const { ok, error, downloaded } = await filestorePullOnce({
+          creds,
+          repo,
+          collection,
+        });
         const conflicts = getFilestoreSyncStatus().conflicts;
-        if (conflicts.length > 0) {
+        if (!ok) {
+          // pullOnce never throws; check ok explicitly. Without this
+          // a network/auth failure would leave conflicts empty AND no
+          // catch fires — push would silently proceed and clobber.
+          safe = false;
+          onLine(
+            `✗ sync: filestore (${collection.name}) pre-push pull failed: ${error ?? "unknown"}`,
+          );
+        } else if (conflicts.length > 0) {
           safe = false;
           onLine(
             `✗ sync: filestore (${collection.name}) pull surfaced conflicts — resolve in Claude, then commit again:`,
@@ -190,8 +202,14 @@ async function pushOnCommit(
   onLine("▸ sync: datastores pre-push pull");
   let datastorePushSafe = true;
   try {
-    const { pulled, conflicts } = await pullDatastoresOnce({ creds, repo });
-    if (conflicts.length > 0) {
+    const { ok, error, pulled, conflicts } = await pullDatastoresOnce({ creds, repo });
+    if (!ok) {
+      // resolve / pull failures don't throw — they return ok: false.
+      // Without checking, a transient network failure would let push
+      // proceed and silently overwrite remote rows we never pulled.
+      datastorePushSafe = false;
+      onLine(`✗ sync: datastores pre-push pull failed: ${error ?? "unknown"}`);
+    } else if (conflicts.length > 0) {
       datastorePushSafe = false;
       onLine(
         "✗ sync: datastores pull surfaced conflicts — resolve in Claude, then commit again:",
