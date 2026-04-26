@@ -26,6 +26,7 @@ import { resolveProjectKb, type KbCollection } from "./kb";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { kbAdapter, kbServerShadowFilename } from "./entities/kb";
 import {
+  canonicalFromShadow,
   commitTouched,
   pullEntity,
   startPolling,
@@ -33,6 +34,9 @@ import {
 } from "./syncEngine";
 
 export { kbServerShadowFilename };
+/// Backward-compat alias for kbBaseFromShadowFilename. Internally now uses
+/// the engine's canonicalFromShadow — single source of truth.
+export const kbBaseFromShadowFilename = canonicalFromShadow;
 
 export type ConflictFile = {
   filename: string;
@@ -80,14 +84,6 @@ export function kbHasServerShadowFiles(repo: string): Promise<boolean> {
   );
 }
 
-/// Reconstruct canonical filename from a shadow like `runbook.server.md` → `runbook.md`.
-export function kbBaseFromShadowFilename(shadow: string): string {
-  const marker = ".server.";
-  const i = shadow.indexOf(marker);
-  if (i < 0) return shadow;
-  return `${shadow.slice(0, i)}.${shadow.slice(i + marker.length)}`;
-}
-
 /// Prompt text for Claude Code to resolve KB merge conflicts (pairs yours vs server shadow).
 export async function buildKbConflictPrompt(repo: string): Promise<string> {
   const sync = getSyncStatus();
@@ -116,10 +112,17 @@ async function runPull(args: {
   repo: string;
   collection: KbCollection;
 }): Promise<{ pulled: number; total: number }> {
-  update({ phase: "pulling" });
+  // Status flips ("pulling" → "ready") fire via onPhase, which the engine
+  // emits *inside* the per-repo lock. Without that, a manual pull queued
+  // behind a running push would prematurely set phase: "pulling" while
+  // the push was still executing — corrupting the user-visible state.
   try {
     const adapter = kbAdapter({ creds: args.creds, collection: args.collection });
-    const result = await pullEntity(adapter, args.repo);
+    const result = await pullEntity(adapter, args.repo, {
+      onPhase: (phase) => {
+        if (phase === "pulling") update({ phase: "pulling" });
+      },
+    });
     const conflicts: ConflictFile[] = result.conflicts.map((c) => ({
       filename: c.manifestKey,
       reason: "local-and-remote-changed",
@@ -192,6 +195,9 @@ export async function startKbSync(args: {
   const result = await runPull({ creds, repo, collection });
   const adapter = kbAdapter({ creds, collection });
   stopPoll = startPolling(adapter, repo, {
+    onPhase: (phase) => {
+      if (phase === "pulling") update({ phase: "pulling" });
+    },
     onResult: (r) => {
       const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
         filename: c.manifestKey,

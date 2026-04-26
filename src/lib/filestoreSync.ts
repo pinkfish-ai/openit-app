@@ -300,10 +300,15 @@ async function runPull(args: {
   repo: string;
   collection: FilestoreCollection;
 }): Promise<{ downloaded: number; total: number }> {
-  update({ phase: "pulling" });
+  // Status flips fire via onPhase from inside the engine's per-repo lock,
+  // so phase: "pulling" can't race ahead of an in-progress push.
   try {
     const adapter = filestoreAdapter({ creds: args.creds, collection: args.collection });
-    const result = await pullEntity(adapter, args.repo);
+    const result = await pullEntity(adapter, args.repo, {
+      onPhase: (phase) => {
+        if (phase === "pulling") update({ phase: "pulling" });
+      },
+    });
     const conflicts: ConflictFile[] = result.conflicts.map((c) => ({
       filename: c.manifestKey,
       reason: "local-and-remote-changed",
@@ -372,6 +377,9 @@ export async function startFilestoreSync(args: {
     await runPull({ creds, repo, collection });
     const adapter = filestoreAdapter({ creds, collection });
     stopPoll = startPolling(adapter, repo, {
+      onPhase: (phase) => {
+        if (phase === "pulling") update({ phase: "pulling" });
+      },
       onResult: (r) => {
         const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
           filename: c.manifestKey,

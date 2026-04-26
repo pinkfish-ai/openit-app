@@ -186,13 +186,28 @@ export async function commitTouched(
 // The pull pipeline. Identical for every entity.
 // ---------------------------------------------------------------------------
 
+/// Engine pipeline phase signal. Fires inside the per-repo lock so wrapper
+/// status updates serialize against any in-flight push on the same lock,
+/// preventing the UI from flipping to "pulling" while a push is still
+/// running. "ready" fires right before the lock is released.
+export type EnginePhase = "pulling" | "ready";
+
 export function pullEntity(
   adapter: EntityAdapter,
   repo: string,
+  opts: { onPhase?: (phase: EnginePhase) => void } = {},
 ): Promise<PullResult> {
-  return withRepoLock(repo, adapter.prefix, () =>
-    pullEntityImpl(adapter, repo),
-  );
+  return withRepoLock(repo, adapter.prefix, async () => {
+    opts.onPhase?.("pulling");
+    try {
+      const r = await pullEntityImpl(adapter, repo);
+      opts.onPhase?.("ready");
+      return r;
+    } catch (e) {
+      opts.onPhase?.("ready");
+      throw e;
+    }
+  });
 }
 
 async function pullEntityImpl(
@@ -356,11 +371,12 @@ export function startPolling(
     pollMs?: number;
     onError?: (e: unknown) => void;
     onResult?: (r: PullResult) => void;
+    onPhase?: (phase: EnginePhase) => void;
   } = {},
 ): () => void {
   const interval = opts.pollMs ?? DEFAULT_POLL_INTERVAL_MS;
   const timer = setInterval(() => {
-    pullEntity(adapter, repo)
+    pullEntity(adapter, repo, { onPhase: opts.onPhase })
       .then((r) => opts.onResult?.(r))
       .catch((e) => {
         if (opts.onError) opts.onError(e);
