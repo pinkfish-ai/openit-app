@@ -126,16 +126,14 @@ For binary files (e.g. PDF), pick the correct version or replace manually, then 
 }
 
 async function runPull(args: {
-  creds: PinkfishCreds;
   repo: string;
-  collection: KbCollection;
+  adapter: ReturnType<typeof kbAdapter>;
 }): Promise<{ pulled: number; total: number }> {
   // ALL status updates fire inside the engine's per-repo lock via the
   // onPhase / onResult / onError callbacks. Doing them post-await would
   // race against a queued push grabbing the lock and updating status
   // first. Lock-held callbacks make the order deterministic.
-  const adapter = kbAdapter({ creds: args.creds, collection: args.collection });
-  const result = await pullEntity(adapter, args.repo, {
+  const result = await pullEntity(args.adapter, args.repo, {
     onPhase: (phase) => {
       if (phase === "pulling") update({ phase: "pulling" });
     },
@@ -210,17 +208,20 @@ export async function startKbSync(args: {
     });
   }
 
+  // Build the adapter once and share it for the initial pull and the
+  // 60s poll — saves the redundant construction and makes it obvious
+  // both paths run on the same configuration.
+  const adapter = kbAdapter({ creds, collection });
   // Catch initial-pull failures (e.g. transient network blip) so we still
   // start the poller — otherwise the user sits in `phase: "error"` with
   // no automatic recovery path. runPull already updates status on failure.
   // Also preserves the public `Promise<… | null>` contract.
   let result: { pulled: number; total: number } | null = null;
   try {
-    result = await runPull({ creds, repo, collection });
+    result = await runPull({ repo, adapter });
   } catch (e) {
     console.error("kb sync: initial pull failed (poll will still start):", e);
   }
-  const adapter = kbAdapter({ creds, collection });
   stopPoll = startPolling(adapter, repo, {
     onPhase: (phase) => {
       if (phase === "pulling") update({ phase: "pulling" });
@@ -258,12 +259,26 @@ export function stopKbSync() {
 
 /// Run a single pull (e.g. immediately before a push). Public wrapper.
 /// Goes through the engine's per-repo lock so it can't race the poller.
+///
+/// Always resolves — never rejects — to match the pre-engine contract
+/// callers (Shell.tsx ↻ button, SourceControl pre-push pull) depend on.
+/// The pull's success/failure is conveyed through the SyncStatus
+/// (`getSyncStatus().phase` becomes "error" on failure); callers that
+/// need to gate behavior on outcome should read the status rather than
+/// catch a rejection.
 export async function pullNow(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: KbCollection;
 }): Promise<void> {
-  await runPull(args);
+  const adapter = kbAdapter({ creds: args.creds, collection: args.collection });
+  try {
+    await runPull({ repo: args.repo, adapter });
+  } catch (e) {
+    // runPull's onError already set status to phase: "error"; swallowing
+    // the rejection here just preserves the void/no-reject contract.
+    console.error("kb pullNow failed:", e);
+  }
 }
 
 /// Push every local file to the KB. Updates manifest with the post-push

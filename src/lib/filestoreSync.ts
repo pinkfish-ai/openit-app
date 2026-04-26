@@ -302,14 +302,12 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
 // ---------------------------------------------------------------------------
 
 async function runPull(args: {
-  creds: PinkfishCreds;
   repo: string;
-  collection: FilestoreCollection;
+  adapter: ReturnType<typeof filestoreAdapter>;
 }): Promise<{ downloaded: number; total: number }> {
   // All status updates fire inside the engine's per-repo lock — see the
   // matching comment in kbSync.runPull for rationale.
-  const adapter = filestoreAdapter({ creds: args.creds, collection: args.collection });
-  const result = await pullEntity(adapter, args.repo, {
+  const result = await pullEntity(args.adapter, args.repo, {
     onPhase: (phase) => {
       if (phase === "pulling") update({ phase: "pulling" });
     },
@@ -380,15 +378,18 @@ export async function startFilestoreSync(args: {
 
   if (collections.length > 0) {
     const collection = collections[0];
+    // Build the adapter once and share for initial pull + 60s poll —
+    // saves the redundant construction and makes it obvious both paths
+    // run on the same configuration.
+    const adapter = filestoreAdapter({ creds, collection });
     // Catch initial-pull failures so we still start the poller. runPull
     // already updates status on failure; without this catch a transient
     // network blip on connect would leave the user without auto-recovery.
     try {
-      await runPull({ creds, repo, collection });
+      await runPull({ repo, adapter });
     } catch (e) {
       console.error("[filestoreSync] initial pull failed (poll will still start):", e);
     }
-    const adapter = filestoreAdapter({ creds, collection });
     stopPoll = startPolling(adapter, repo, {
       onPhase: (phase) => {
         if (phase === "pulling") update({ phase: "pulling" });
@@ -433,12 +434,22 @@ export function stopFilestoreSync() {
 
 /// Manual single-shot pull. Used by Shell.tsx's ↻ button and the modal
 /// connect flow. Goes through the engine's per-repo lock.
+///
+/// Always resolves — never rejects — to match the pre-engine contract.
+/// Failures are conveyed via getFilestoreSyncStatus() (phase becomes
+/// "error"); callers gating on outcome should read that, not catch.
 export async function pullOnce(args: {
   creds: PinkfishCreds;
   repo: string;
   collection: FilestoreCollection;
 }): Promise<{ downloaded: number; total: number }> {
-  return runPull(args);
+  const adapter = filestoreAdapter({ creds: args.creds, collection: args.collection });
+  try {
+    return await runPull({ repo: args.repo, adapter });
+  } catch (e) {
+    console.error("[filestoreSync] pullOnce failed:", e);
+    return { downloaded: 0, total: 0 };
+  }
 }
 
 /// Push all local filestore files to the remote collection. Called by the
