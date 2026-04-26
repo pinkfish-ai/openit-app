@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  fsDelete,
   fsList,
   fsReveal,
   gitAddAndCommit,
@@ -137,7 +138,7 @@ export function FileExplorer({
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
   const [gitRows, setGitRows] = useState<GitFileStatus[]>([]);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
 
   // Virtual resource state
   const [datastores, setDatastores] = useState<DataCollection[]>([]);
@@ -414,7 +415,7 @@ export function FileExplorer({
               style={{ paddingLeft: 8 + depth * 12 }}
               onContextMenu={(e) => {
                 e.preventDefault();
-                setContextMenu({ x: e.clientX, y: e.clientY, path: n.path });
+                setContextMenu({ x: e.clientX, y: e.clientY, path: n.path, isDir: n.is_dir });
               }}
               onDragOver={(e) => {
                 if (n.is_dir && e.dataTransfer.types.includes("Files")) {
@@ -564,6 +565,27 @@ export function FileExplorer({
             >
               Reveal in Finder
             </button>
+            {!contextMenu.isDir && (
+              <button
+                className="context-menu-item context-menu-item-danger"
+                onClick={() => {
+                  const filename = contextMenu.path.split("/").pop() ?? contextMenu.path;
+                  const ok = window.confirm(
+                    `Delete ${filename}?\n\nThis removes the file from disk. If it was tracked, the deletion will appear in the Sync tab as a pending change.`,
+                  );
+                  setContextMenu(null);
+                  if (!ok) return;
+                  fsDelete(contextMenu.path)
+                    .then(() => reload())
+                    .catch((e) => {
+                      console.error("delete failed:", e);
+                      window.alert(`Delete failed: ${String(e)}`);
+                    });
+                }}
+              >
+                Delete
+              </button>
+            )}
           </div>
         </>
       )}

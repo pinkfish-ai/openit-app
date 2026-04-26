@@ -322,6 +322,14 @@ body,
   background: var(--accent-soft);
 }
 
+.context-menu-item-danger {
+  color: #c0392b;
+}
+
+.context-menu-item-danger:hover {
+  background: rgba(192, 57, 43, 0.08);
+}
+
 .explorer.empty,
 .explorer.error {
   padding: 16px;

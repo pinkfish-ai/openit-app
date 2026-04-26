@@ -19,6 +19,10 @@ export async function fsReveal(path: string): Promise<void> {
   return invoke("fs_reveal", { path });
 }
 
+export async function fsDelete(path: string): Promise<void> {
+  return invoke("fs_delete", { path });
+}
+
 export type GitCommit = {
   sha: string;
   short_sha: string;

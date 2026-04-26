@@ -129,6 +129,21 @@ pub fn fs_reveal(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Delete a single file at `path`. Returns Ok(()) if the file was missing
+/// (idempotent). Refuses to remove directories — used by the file
+/// explorer's context menu where the user expects file-level deletes only.
+#[tauri::command]
+pub fn fs_delete(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Ok(());
+    }
+    if p.is_dir() {
+        return Err(format!("refusing to delete a directory: {}", path));
+    }
+    std::fs::remove_file(p).map_err(|e| format!("failed to delete file: {}", e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
