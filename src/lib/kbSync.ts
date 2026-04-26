@@ -27,7 +27,9 @@ import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { kbAdapter, kbServerShadowFilename } from "./entities/kb";
 import {
   canonicalFromShadow,
+  classifyAsShadow,
   commitTouched,
+  looksLikeShadow,
   pullEntity,
   startPolling,
   withRepoLock,
@@ -78,17 +80,33 @@ function update(patch: Partial<SyncStatus>) {
 
 let stopPoll: (() => void) | null = null;
 
-export function kbHasServerShadowFiles(repo: string): Promise<boolean> {
-  return kbListLocal(repo).then((files) =>
-    files.some((f) => f.filename.includes(".server.")),
+/// Compute the canonical-sibling set used by `classifyAsShadow`. A
+/// file is treated as a shadow only when its canonical sibling exists
+/// — otherwise legitimate filenames containing `.server.` (e.g.
+/// `nginx.server.conf`) get misclassified.
+function canonicalSiblingSet(files: { filename: string }[]): Set<string> {
+  return new Set(
+    files
+      .filter((f) => !looksLikeShadow(f.filename))
+      .map((f) => f.filename),
   );
+}
+
+export function kbHasServerShadowFiles(repo: string): Promise<boolean> {
+  return kbListLocal(repo).then((files) => {
+    const siblings = canonicalSiblingSet(files);
+    return files.some((f) => classifyAsShadow(f.filename, siblings));
+  });
 }
 
 /// Prompt text for Claude Code to resolve KB merge conflicts (pairs yours vs server shadow).
 export async function buildKbConflictPrompt(repo: string): Promise<string> {
   const sync = getSyncStatus();
   const local = await kbListLocal(repo);
-  const shadowNames = local.map((f) => f.filename).filter((n) => n.includes(".server."));
+  const siblings = canonicalSiblingSet(local);
+  const shadowNames = local
+    .map((f) => f.filename)
+    .filter((n) => classifyAsShadow(n, siblings));
   const lines: string[] = [];
   for (const c of sync.conflicts) {
     const sh = kbServerShadowFilename(c.filename);
@@ -291,8 +309,11 @@ async function pushAllToKbInner(args: {
       .map((g) => g.path.replace(/^knowledge-base\//, "")),
   );
 
+  // Sibling-aware shadow exclusion — a legitimate `nginx.server.conf`
+  // (no `nginx.conf` sibling) should still push.
+  const siblings = canonicalSiblingSet(local);
   const toPush = local.filter((f) => {
-    if (f.filename.includes(".server.")) return false;
+    if (classifyAsShadow(f.filename, siblings)) return false;
     const tracked = persisted.files[f.filename];
     if (!tracked) return true;
     if (dirtyPaths.has(f.filename)) return true;

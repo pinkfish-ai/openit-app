@@ -31,7 +31,13 @@ import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
 import { datastoreAdapter } from "./entities/datastore";
 import { fetchDatastoreItems } from "./entities/datastoreApi";
-import { pullEntity, startPolling, withRepoLock } from "./syncEngine";
+import {
+  classifyAsShadow,
+  looksLikeShadow,
+  pullEntity,
+  startPolling,
+  withRepoLock,
+} from "./syncEngine";
 
 export { fetchDatastoreItems };
 
@@ -427,15 +433,26 @@ async function pushAllToDatastoresImpl(args: {
     let localDirExists = true;
     try {
       const nodes = await fsList(colDir);
+      // Build canonical-sibling set (per-collection) so we exclude shadow
+      // rows but not legitimate filenames containing `.server.`. A row
+      // keyed `nginx.server` produces filename `nginx.server.json`; with
+      // no sibling `nginx.json` it should still push.
+      const candidateNames = nodes
+        .filter(
+          (n) =>
+            !n.is_dir && n.name.endsWith(".json") && n.name !== "_schema.json",
+        )
+        .map((n) => n.name);
+      const siblings = new Set(
+        candidateNames.filter((n) => !looksLikeShadow(n)),
+      );
       localFiles = nodes
         .filter(
           (n) =>
             !n.is_dir &&
             n.name.endsWith(".json") &&
             n.name !== "_schema.json" &&
-            // Exclude conflict shadow files — pushing them would create
-            // junk items with keys like `<key>.server` on the remote.
-            !n.name.includes(".server."),
+            !classifyAsShadow(n.name, siblings),
         )
         .map((n) => ({ key: n.name.replace(/\.json$/, ""), absPath: n.path }));
     } catch {

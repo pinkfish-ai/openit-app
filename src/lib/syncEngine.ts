@@ -158,11 +158,16 @@ export type EntityAdapter = {
   /// its default behavior of just dropping the manifest entry.
   /// Adapters that opt in MUST push the local working-tree path to
   /// `touched` themselves so the deletion gets committed.
+  ///
+  /// `local` is the same list returned by `listLocal()` at the top of the
+  /// pull pipeline, threaded through so adapters don't re-list the
+  /// directory once per deleted key (N+1 IPC calls).
   onServerDelete?(args: {
     repo: string;
     manifestKey: string;
     manifest: Manifest;
     touched: string[];
+    local: LocalItem[];
   }): Promise<boolean>;
 };
 
@@ -395,6 +400,7 @@ async function pullEntityImpl(
         manifestKey: mKey,
         manifest,
         touched,
+        local,
       });
       if (!handled) {
         // Default: just drop the manifest entry. Don't delete the file —

@@ -99,13 +99,17 @@ export function filestoreAdapter(args: {
     /// This matches user expectation ("I deleted it on Pinkfish, why is it
     /// still here") and mirrors KB's long-standing behavior. The deletion
     /// is added to `touched` so the auto-commit captures it.
-    async onServerDelete({ repo, manifestKey, manifest, touched }) {
+    async onServerDelete({ repo, manifestKey, manifest, touched, local }) {
       // No shadow guard: manifests only contain canonical keys, so an
       // isShadowFilename check here would only fire on false positives
       // (canonical names containing `.server.`) and prevent legitimate
       // cleanup. See matching note in KB adapter.
-      const local = await fsStoreListLocal(repo);
-      const stillOnDisk = local.some((f) => f.filename === manifestKey);
+      // `local` is the LocalItem[] threaded from listLocal — match on
+      // canonical entry's manifestKey to avoid an extra IPC list per
+      // deleted key.
+      const stillOnDisk = local.some(
+        (f) => !f.isShadow && f.manifestKey === manifestKey,
+      );
       if (!stillOnDisk) {
         delete manifest.files[manifestKey];
         return true;

@@ -180,7 +180,7 @@ export function datastoreAdapter(args: {
     /// `git_commit_paths` runs a single `git add -- <paths>` and fails
     /// the entire batch if any path is unknown to git, which would
     /// silently drop legitimate pulled-file commits in the same cycle.
-    async onServerDelete({ repo, manifestKey, manifest, touched }) {
+    async onServerDelete({ repo, manifestKey, manifest, touched, local }) {
       const slash = manifestKey.indexOf("/");
       if (slash < 0) {
         delete manifest.files[manifestKey];
@@ -190,15 +190,12 @@ export function datastoreAdapter(args: {
       const key = manifestKey.slice(slash + 1);
       const subdir = `databases/${colName}`;
       const filename = `${key}.json`;
-      // Check on-disk presence via the adapter's local listing rather than
-      // a separate stat — keeps the sandbox check Tauri-side.
-      let stillOnDisk = false;
-      try {
-        const local = await datastoreListLocal(repo, colName);
-        stillOnDisk = local.some((f) => f.filename === filename);
-      } catch {
-        // dir missing or unreadable → treat as not-on-disk
-      }
+      // `local` already contains every collection's rows (engine listed
+      // once at the top of the pull). Match on canonical entry's
+      // manifestKey to avoid re-listing per deleted row.
+      const stillOnDisk = local.some(
+        (f) => !f.isShadow && f.manifestKey === manifestKey,
+      );
       if (stillOnDisk) {
         try {
           await entityDeleteFile(repo, subdir, filename);

@@ -96,15 +96,19 @@ export function kbAdapter(args: {
     /// it (and the file is still on disk). The default engine behavior
     /// (drop manifest entry only) preserves user data; KB intentionally
     /// trusts the server as authoritative for files it tracks.
-    async onServerDelete({ repo, manifestKey, manifest, touched }) {
+    async onServerDelete({ repo, manifestKey, manifest, touched, local }) {
       // No shadow guard here: the manifest only ever contains canonical
       // keys (engine writes them via `manifest.files[r.manifestKey] = …`
       // where r.manifestKey is the canonical name). An old guard checking
       // `isShadowFilename(manifestKey)` only fired on false positives —
       // canonical names that happen to contain `.server.` — and prevented
       // the server-delete cleanup from running on them.
-      const local = await kbListLocal(repo);
-      const stillOnDisk = local.some((f) => f.filename === manifestKey);
+      // `local` is the LocalItem[] threaded through from listLocal — the
+      // canonical entry's manifestKey equals its filename for KB, so we
+      // can match directly without an extra IPC list.
+      const stillOnDisk = local.some(
+        (f) => !f.isShadow && f.manifestKey === manifestKey,
+      );
       if (!stillOnDisk) {
         delete manifest.files[manifestKey];
         return true;

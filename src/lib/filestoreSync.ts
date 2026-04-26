@@ -20,7 +20,13 @@ import { makeSkillsFetch } from "../api/fetchAdapter";
 import { fsStoreStateLoad, fsStoreStateSave } from "./api";
 import { fsStoreInit, fsStoreListLocal } from "./api";
 import { filestoreAdapter, type FilestoreCollection } from "./entities/filestore";
-import { pullEntity, startPolling, withRepoLock } from "./syncEngine";
+import {
+  classifyAsShadow,
+  looksLikeShadow,
+  pullEntity,
+  startPolling,
+  withRepoLock,
+} from "./syncEngine";
 
 export type { FilestoreCollection };
 
@@ -468,8 +474,13 @@ async function pushAllToFilestoreInner(args: {
   const local = await fsStoreListLocal(repo);
   const persisted: KbStatePersisted = await fsStoreStateLoad(repo);
 
+  // Sibling-aware shadow exclusion. Without the sibling check, a
+  // legitimate file like `app.server.js` would be silently skipped.
+  const siblings = new Set(
+    local.filter((f) => !looksLikeShadow(f.filename)).map((f) => f.filename),
+  );
   const toPush = local.filter((f) => {
-    if (f.filename.includes(".server.")) return false;
+    if (classifyAsShadow(f.filename, siblings)) return false;
     const tracked = persisted.files[f.filename];
     if (!tracked) return true;
     if (f.mtime_ms == null) return true;
