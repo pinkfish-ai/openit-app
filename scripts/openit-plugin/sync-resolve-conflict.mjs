@@ -115,7 +115,14 @@ async function main() {
   const entry = manifest.files[args.key];
   let action = "noop";
   if (entry) {
-    if (entry.conflict_remote_version) {
+    // Use a typeof check, NOT truthiness — adapters whose remote
+    // payload lacks an `updatedAt` normalize to "" (KB / filestore /
+    // datastore / agent / workflow all do this). The engine writes
+    // that "" into `conflict_remote_version` faithfully, and a
+    // truthiness check would skip past the force-push path into the
+    // legacy delete-entry path, which re-conflicts on the next pull
+    // when the user picked LOCAL.
+    if (typeof entry.conflict_remote_version === "string") {
       // Force-push case — preserves "the user merged, push their
       // local content to remote" for both pick-local AND pick-remote
       // outcomes. Pick-remote ends up uploading content the server

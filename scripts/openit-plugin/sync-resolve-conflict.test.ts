@@ -83,6 +83,46 @@ describe("sync-resolve-conflict.mjs", () => {
     });
   });
 
+  it("force-push: handles empty-string conflict_remote_version (adapter normalized missing updatedAt)", async () => {
+    // Regression test for the truthy-check bug: KB / filestore /
+    // datastore / agent / workflow adapters all normalize a missing
+    // remote `updatedAt` to "" before passing it to the engine. The
+    // engine writes that "" into `conflict_remote_version` faithfully.
+    // A truthy check (`if (entry.conflict_remote_version) …`) would
+    // fall through to the legacy delete-entry path, which the next
+    // pull's bootstrap-adopt would re-conflict if the user picked
+    // LOCAL. A typeof check correctly takes the force-push path.
+    await writeFile(
+      path.join(tmpDir, ".openit", "datastore-state.json"),
+      JSON.stringify({
+        collection_id: null,
+        collection_name: null,
+        files: {
+          "openit-people/row-A": {
+            remote_version: "v1-pre-conflict",
+            pulled_at_mtime_ms: 1000,
+            conflict_remote_version: "",
+          },
+        },
+      }),
+    );
+
+    const { stdout } = await runScript([
+      "--prefix",
+      "datastore",
+      "--key",
+      "openit-people/row-A",
+    ]);
+    const result = JSON.parse(stdout.trim());
+    expect(result.action).toBe("force-push");
+
+    const manifest = await readManifest("datastore");
+    expect(manifest.files["openit-people/row-A"]).toEqual({
+      remote_version: "",
+      pulled_at_mtime_ms: 1,
+    });
+  });
+
   it("legacy: deletes the entry when no conflict_remote_version is present", async () => {
     await writeFile(
       path.join(tmpDir, ".openit", "datastore-state.json"),
