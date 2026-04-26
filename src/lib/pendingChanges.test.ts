@@ -121,7 +121,7 @@ describe("kbHasPendingChanges", () => {
     expect(await kbHasPendingChanges("/repo")).toBe(false);
   });
 
-  it("does NOT count manifest-only entries (deletions) as pending — push doesn't reconcile them", async () => {
+  it("does NOT count manifest-only entries (deletions) as pending — KB push doesn't reconcile them", async () => {
     vi.mocked(kbStateLoad).mockResolvedValue({
       collection_id: null,
       collection_name: null,
@@ -130,6 +130,23 @@ describe("kbHasPendingChanges", () => {
       },
     });
     vi.mocked(kbListLocal).mockResolvedValue([]);
+    expect(await kbHasPendingChanges("/repo")).toBe(false);
+  });
+
+  it("does NOT flag null-mtime files as pending — KB push doesn't either", async () => {
+    // KB's toPush filter requires `mtime_ms != null && mtime_ms >
+    // pulled_at_mtime_ms`. Null mtime means push wouldn't have pushed,
+    // so the helper shouldn't claim pending.
+    vi.mocked(kbStateLoad).mockResolvedValue({
+      collection_id: null,
+      collection_name: null,
+      files: {
+        "intro.md": { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+      },
+    });
+    vi.mocked(kbListLocal).mockResolvedValue([
+      { filename: "intro.md", mtime_ms: null, size: 10 },
+    ]);
     expect(await kbHasPendingChanges("/repo")).toBe(false);
   });
 
@@ -171,6 +188,25 @@ describe("filestoreHasPendingChanges", () => {
       { filename: "doc.pdf", mtime_ms: 1000, size: 100 },
     ]);
     expect(await filestoreHasPendingChanges("/repo")).toBe(false);
+  });
+
+  it("flags null-mtime files as pending — filestore push DOES treat them as pushable", async () => {
+    // Regression test for the BugBot finding: filestore's push
+    // explicitly returns true on null mtime (`if (f.mtime_ms == null)
+    // return true;`). The helper had been suppressing those, so the
+    // file would silently never upload until something else marked
+    // the entity dirty.
+    vi.mocked(fsStoreStateLoad).mockResolvedValue({
+      collection_id: null,
+      collection_name: null,
+      files: {
+        "doc.pdf": { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+      },
+    });
+    vi.mocked(fsStoreListLocal).mockResolvedValue([
+      { filename: "doc.pdf", mtime_ms: null, size: 100 },
+    ]);
+    expect(await filestoreHasPendingChanges("/repo")).toBe(true);
   });
 });
 
@@ -255,6 +291,41 @@ describe("datastoreHasPendingChanges", () => {
       { filename: "row-A.json", mtime_ms: 1000, size: 50 },
       { filename: "row-NEW.json", mtime_ms: 2000, size: 50 },
     ]);
+    expect(await datastoreHasPendingChanges("/repo")).toBe(true);
+  });
+
+  it("flags a tracked row whose local file is missing as pending — datastore push DELETES on remote", async () => {
+    // Regression test for the BugBot finding: datastore push (unlike
+    // KB / filestore) reconciles local deletions, iterating remote
+    // rows whose key isn't in the local set and DELETEing them. If
+    // the helper had skipped pre-pull on a manifest-only entry, the
+    // user's deletion would silently never propagate until something
+    // else marked the entity dirty.
+    vi.mocked(datastoreStateLoad).mockResolvedValue({
+      collection_id: null,
+      collection_name: null,
+      files: {
+        "openit-people/row-A": { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+        "openit-people/row-DELETED": { remote_version: "v1", pulled_at_mtime_ms: 2000 },
+      },
+    });
+    vi.mocked(datastoreListLocal).mockResolvedValue([
+      // row-DELETED.json is missing — user deleted it locally.
+      { filename: "row-A.json", mtime_ms: 1000, size: 50 },
+    ]);
+    expect(await datastoreHasPendingChanges("/repo")).toBe(true);
+  });
+
+  it("flags pending when a tracked collection's local dir is missing entirely (wholesale delete)", async () => {
+    vi.mocked(datastoreStateLoad).mockResolvedValue({
+      collection_id: null,
+      collection_name: null,
+      files: {
+        "openit-people/row-A": { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+      },
+    });
+    // datastoreListLocal throws — directory doesn't exist.
+    vi.mocked(datastoreListLocal).mockRejectedValue(new Error("ENOENT"));
     expect(await datastoreHasPendingChanges("/repo")).toBe(true);
   });
 
