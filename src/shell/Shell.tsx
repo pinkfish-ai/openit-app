@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { stateLoad, stateSave, type AppPersistedState } from "../lib/api";
+import { entityWriteFile, fsDelete, fsRead, stateLoad, stateSave, type AppPersistedState } from "../lib/api";
+import { pushAllEntities } from "../lib/pushAll";
+import { clearConflictsForPrefix } from "../lib/syncEngine";
 import {
   buildKbConflictPrompt,
   getSyncStatus,
@@ -166,16 +168,90 @@ export function Shell({
     if (syncLines.length > 0) setSource({ kind: "sync", lines: syncLines });
   }, [syncLines]);
 
-  // Native filesystem watcher — emits fsTick bumps on real changes
+  // Native filesystem watcher — emits fsTick bumps on real changes,
+  // and acts as the trigger for `.openit/push-request.json` (the file
+  // `scripts/openit-plugin/sync-push.mjs` writes when Claude wants to
+  // push). When it appears, run pushAllEntities and write
+  // `.openit/push-result.json` so the script's poll loop can exit.
   useEffect(() => {
     if (!repo) return;
     let unlisten: (() => void) | null = null;
+    // Reentrancy guard: rapid back-to-back writes to the marker (or a
+    // mid-push fs event firing on a path we wrote) must not start a
+    // second push. Push helpers already serialize on per-repo locks,
+    // but this avoids a queue of redundant runs.
+    let pushInFlight = false;
+
+    const runPushFromMarker = async () => {
+      if (pushInFlight) return;
+      pushInFlight = true;
+      const requestPath = `${repo}/.openit/push-request.json`;
+      const lines: string[] = [];
+      const onLine = (line: string) => {
+        lines.push(line);
+        onSyncLine(line);
+      };
+      let status: "ok" | "error" = "ok";
+      let errorMsg: string | undefined;
+      try {
+        // Read+delete the marker first so we don't loop on it.
+        try {
+          await fsRead(requestPath);
+        } catch {
+          // Could be gone by the time we got here (script tidied up?).
+          // Either way nothing to do.
+          return;
+        }
+        try {
+          await fsDelete(requestPath);
+        } catch (e) {
+          console.warn("[shell] failed to delete push-request:", e);
+        }
+        // Clear the conflict aggregate immediately so the banner
+        // disappears as soon as the user confirms the sync. The push
+        // pre-pulls each entity inside pushAllEntities — if a true
+        // remote-side conflict still exists after the merge, that pull
+        // will repopulate the aggregate. So clearing optimistically is
+        // safe and gives the snappy "banner gone now" UX the user
+        // expected.
+        for (const p of ["kb", "filestore", "datastore", "agent", "workflow"]) {
+          clearConflictsForPrefix(p);
+        }
+        onSyncLine("─── push triggered by Claude ───");
+        await pushAllEntities(repo, onLine);
+      } catch (e) {
+        status = "error";
+        errorMsg = String(e);
+        onLine(`✗ sync: push trigger failed: ${errorMsg}`);
+      } finally {
+        // Write the result so the script's poll loop sees it.
+        const payload = JSON.stringify(
+          { status, error: errorMsg, lines, finishedAt: new Date().toISOString() },
+          null,
+          2,
+        );
+        try {
+          await entityWriteFile(repo, ".openit", "push-result.json", payload);
+        } catch (e) {
+          console.error("[shell] failed to write push-result:", e);
+        }
+        pushInFlight = false;
+      }
+    };
 
     (async () => {
       try {
         await fsWatchStart(repo);
-        unlisten = await onFsChanged((_paths) => {
+        unlisten = await onFsChanged((paths) => {
           bumpFs();
+          // Look for the push-request marker in the change set. The
+          // watcher is recursive over the repo root, so paths here are
+          // absolute. Match either the absolute or repo-relative form.
+          const marker = ".openit/push-request.json";
+          const hit = paths.some(
+            (p) => p.endsWith(`/${marker}`) || p.endsWith(marker),
+          );
+          if (hit) void runPushFromMarker();
         });
       } catch (e) {
         console.warn("[shell] fs watcher failed to start:", e);
@@ -186,7 +262,7 @@ export function Shell({
       unlisten?.();
       fsWatchStop().catch(() => {});
     };
-  }, [repo, bumpFs]);
+  }, [repo, bumpFs, onSyncLine]);
 
   const persist = useCallback(
     (patch: Partial<AppPersistedState>) => {

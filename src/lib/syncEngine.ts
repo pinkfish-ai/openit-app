@@ -368,17 +368,23 @@ export function buildConflictPrompt(
     "If a field is truly ambiguous and you must ask, refer to the **field name only** (e.g. \"`f_2` differs on both sides — which should win?\") — never paste the values.",
   );
   lines.push("");
-  lines.push("### After you finish");
+  lines.push("### After all conflicts are resolved — confirm and sync");
   lines.push(
-    "When all conflicts are merged, shadows deleted, and the resolve-script has been run for each one, end with a single line telling me to push:",
+    "Once the merge + shadow delete + resolve-script have run for every conflict above, ask me one question:",
   );
   lines.push("");
-  lines.push(
-    "> Done — click **Sync to Pinkfish** in the Sync tab to push the merge.",
-  );
+  lines.push("> Sync these changes to Pinkfish now? (yes/no)");
   lines.push("");
   lines.push(
-    "(Direct push from Claude is on the roadmap — for now the Sync tab is the only path that runs the pre-push pull guard, so always send me there.)",
+    "If I say yes, run the push script. The banner clears the moment the script writes its request marker, and OpenIT runs the actual push:",
+  );
+  lines.push("");
+  lines.push("```bash");
+  lines.push("node .claude/scripts/sync-push.mjs");
+  lines.push("```");
+  lines.push("");
+  lines.push(
+    "If I say no, leave it for me to push manually via the Sync tab.",
   );
 
   return lines.join("\n");
