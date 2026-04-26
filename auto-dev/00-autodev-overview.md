@@ -34,8 +34,35 @@ On connect, anything with a `updatedAt` newer than the local file pulls down. Th
 Tauri desktop wrapper for Claude Code targeted at IT admins building Pinkfish ITSM solutions. **Scaffolding around Claude Code, not a forked IDE** — launches a Claude session in an embedded terminal plus file explorer, viewer, Versions drawer, and Deploy button. Everything OpenIT writes to disk is identical to what a regular terminal writes; users can graduate to a terminal any time without changing the project.
 
 ### Repos
-- `/openit-app` — this app (Tauri + React).
-- `/web` — Claude plugin and scripts live here for public download.
+
+- **`/openit-app`** — this app (Tauri + React). Where this code lives.
+
+The four siblings below are **reference-only** for OpenIT work — we read them to understand contracts, patterns, and endpoint shapes; we don't usually edit them from here. All four are checked out under `/Users/benrigby/Documents/GitHub/`. When you need to look something up, `Grep`/`Read` against the path directly. Each section says when to reach for it.
+
+- **`/web`** — the main Pinkfish FE monorepo, AND the home of the Claude plugin OpenIT ships.
+  - **FE patterns reference:** when a UX question comes up here ("how do existing tables sort? how do dialogs render?") this is the canonical reference. Components live under `web/packages/app/src/`.
+  - **Plugin home (production source of truth):** the Claude plugin scripts, `CLAUDE.md`, and skills OpenIT ships to users live at `web/packages/app/public/openit-plugin/`. Dev source of truth is `openit-app/scripts/openit-plugin/` (this repo) — copy to `/web` at merge time. See "Plugin scripts and prompts" above.
+
+- **`/platform`** — Pinkfish backend monorepo. Reference for **MCPs and service endpoints**.
+  - When a scripts/REST/MCP wiring question comes up ("what's the actual route for this? what does this MCP tool expect?"), grep `/platform`.
+  - Pinkfish-owned MCPs (`pinkfish-sidekick`, `agent-management`, `knowledge-base`, `filestorage`, `datastore-structured`, `http-utils`) and the gateway live here.
+
+- **`/firebase-helpers`** — generated client + handlers for the **resource APIs** (datastores, knowledge-base, filestore, memory, agents, automations) hosted at `https://skills*.pinkfish.ai/`.
+  - This is the canonical reference for every endpoint OpenIT calls when it talks to the resource layer. If the auto-generated client at `openit-app/src/api/generated/firebase-helpers/` looks wrong or out of date, this is where to verify.
+  - Auth split: skills endpoints take `Auth-Token: Bearer …`; the few platform-side endpoints (`/user-agents`, `/automations`) take `Authorization: Bearer …` + `X-Selected-Org` — see `derivedUrls.appBaseUrl` usage in this repo.
+
+- **`/pinkfish-connections`** — connections proxy hosted at `https://proxy*.pinkfish.ai/`. Reference for **connection endpoints** (the layer between Pinkfish and connected SaaS systems — Slack, Zendesk, Salesforce, Jira, Okta, GitHub, GCP, AWS, Azure, …).
+  - Look here when a question is about connector-specific behavior, OAuth flows for third-party systems, or what the proxy returns for a given gateway call.
+
+**Quick "which repo answers this?" cheatsheet:**
+
+| Question | Repo |
+|---|---|
+| How does a similar UI render in the main app? | `/web` |
+| What does the plugin's production version actually contain? | `/web` (`packages/app/public/openit-plugin/`) |
+| Backend MCP / service endpoint shape? | `/platform` |
+| `skills*.pinkfish.ai/...` endpoint contract (datastore/KB/filestore/memory/agents/automations)? | `/firebase-helpers` |
+| `proxy*.pinkfish.ai/...` connection endpoint or third-party connector behavior? | `/pinkfish-connections` |
 
 ### Prerequisites
 - macOS (Windows + Linux supported by Tauri but not yet tested)
