@@ -11,6 +11,7 @@ import {
 } from "../lib/api";
 import { subscribeSync, type SyncStatus } from "../lib/kbSync";
 import { subscribeFilestoreSync, type FilestoreSyncStatus } from "../lib/filestoreSync";
+import { subscribeConflicts, type AggregatedConflict } from "../lib/syncEngine";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, fetchDatastoreSchema } from "../lib/datastoreSync";
 import type { DataCollection, MemoryItem } from "../lib/skillsApi";
@@ -109,10 +110,16 @@ function prettyName(
   return name;
 }
 
-function fileColorClass(n: FileNode, repo: string, gitRows: GitFileStatus[]): string {
+function fileColorClass(
+  n: FileNode,
+  repo: string,
+  gitRows: GitFileStatus[],
+  conflictPaths: Set<string>,
+): string {
   if (n.is_dir) return "";
   const rel = relPath(repo, n.path);
-  if (rel.includes(".server.")) return "file-color-conflict";
+  // Engine-tracked conflict on the canonical path beats git's view.
+  if (conflictPaths.has(rel)) return "file-color-conflict";
   const st = gitStatusForPath(rel, gitRows);
   if (!st) return "";
   if (st.status === "UU") return "file-color-conflict";
@@ -123,13 +130,20 @@ function fileColorClass(n: FileNode, repo: string, gitRows: GitFileStatus[]): st
   return "";
 }
 
-function fileStatusBadge(n: FileNode, repo: string, gitRows: GitFileStatus[]): string | null {
+function fileStatusBadge(
+  n: FileNode,
+  repo: string,
+  gitRows: GitFileStatus[],
+  conflictPaths: Set<string>,
+): string | null {
   if (n.is_dir) return null;
   const rel = relPath(repo, n.path);
-  if (rel.includes(".server.")) return "C";
+  // Conflict marker takes priority over git status — the user needs to
+  // resolve the conflict before the modified/untracked state matters.
+  if (conflictPaths.has(rel)) return "⚠";
   const st = gitStatusForPath(rel, gitRows);
   if (!st) return null;
-  if (st.status === "UU") return "C";
+  if (st.status === "UU") return "⚠";
   if (st.status === "?") return "U";
   if (st.status === "M") return "M";
   if (st.status === "A") return "A";
@@ -215,6 +229,17 @@ export function FileExplorer({
   // (loadingResources removed — initial load is fast enough)
 
   const [fsSync, setFsSync] = useState<FilestoreSyncStatus | null>(null);
+
+  // Engine conflict aggregate — drives the per-file conflict marker
+  // (⚠) on canonicals so the user can see at a glance which files
+  // need resolution. The shadow files themselves are hidden from the
+  // tree (see `visible` below).
+  const [engineConflicts, setEngineConflicts] = useState<AggregatedConflict[]>([]);
+  useEffect(() => subscribeConflicts(setEngineConflicts), []);
+  const conflictPaths = useMemo(
+    () => new Set(engineConflicts.map((c) => c.workingTreePath)),
+    [engineConflicts],
+  );
   
   useEffect(() => subscribeSync(setSync), []);
   useEffect(() => subscribeFilestoreSync(setFsSync), []);
@@ -345,6 +370,12 @@ export function FileExplorer({
   const visible = useMemo(() => {
     if (!repo) return [];
     return nodes.filter((n) => {
+      // Hide conflict shadows from the tree — they're a local-only
+      // implementation detail of the merge flow. The user sees a ⚠
+      // marker on the canonical instead (via fileStatusBadge +
+      // conflictPaths). Shadows reappear if the user wants to inspect
+      // via Reveal in Finder.
+      if (!n.is_dir && n.name.includes(".server.")) return false;
       for (const c of collapsed) {
         if (n.path !== c && n.path.startsWith(c + "/")) return false;
       }
@@ -465,8 +496,8 @@ export function FileExplorer({
           const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.name;
           const depth = rel.split("/").length - 1;
           const isCollapsedRow = collapsed.has(n.path);
-          const colorClass = repo ? fileColorClass(n, repo, gitRows) : "";
-          const badge = repo ? fileStatusBadge(n, repo, gitRows) : null;
+          const colorClass = repo ? fileColorClass(n, repo, gitRows, conflictPaths) : "";
+          const badge = repo ? fileStatusBadge(n, repo, gitRows, conflictPaths) : null;
           return (
             <li
               key={n.path}
