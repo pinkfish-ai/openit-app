@@ -121,6 +121,7 @@ body,
   font-weight: 600;
 }
 
+.conflict-banner-resolve,
 .conflict-banner-dismiss {
   flex: 0 0 auto;
   padding: 3px 10px;
@@ -130,6 +131,22 @@ body,
   border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
+}
+
+.conflict-banner-resolve {
+  background: #5c3d00;
+  color: #fff8e1;
+  border-color: #5c3d00;
+  font-weight: 500;
+}
+
+.conflict-banner-resolve:hover:not(:disabled) {
+  background: #3d2900;
+}
+
+.conflict-banner-resolve:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .conflict-banner-dismiss:hover {

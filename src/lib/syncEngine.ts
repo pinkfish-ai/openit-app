@@ -251,6 +251,92 @@ export function clearConflictsForPrefix(prefix: string): void {
   if (conflictsByPrefix.delete(prefix)) emitConflicts();
 }
 
+/// Compute the on-disk shadow path for a conflict's canonical
+/// workingTreePath. e.g. `databases/openit-people-XXX/p123.json`
+/// → `databases/openit-people-XXX/p123.server.json`. Used by the
+/// "Resolve in Claude" prompt builder so it can point Claude at both
+/// sides of every conflict.
+export function shadowPath(workingTreePath: string): string {
+  const slash = workingTreePath.lastIndexOf("/");
+  const dir = slash >= 0 ? workingTreePath.slice(0, slash + 1) : "";
+  const filename = slash >= 0 ? workingTreePath.slice(slash + 1) : workingTreePath;
+  return `${dir}${shadowFilename(filename)}`;
+}
+
+/// Compose a Claude-ready prompt that walks an LLM through every active
+/// conflict and instructs it to merge each, delete shadows, and (for
+/// pushable entities) push back. Generic across all five entities —
+/// per-entity hints embedded in the prompt body so Claude knows to
+/// preserve schema for datastore rows, leave workflow `releaseVersion`
+/// alone, etc.
+///
+/// Returns null when there are no conflicts (caller should hide the
+/// "Resolve in Claude" button).
+export function buildConflictPrompt(
+  conflicts: AggregatedConflict[],
+): string | null {
+  if (conflicts.length === 0) return null;
+
+  // Group by entity prefix so the prompt has per-entity sections —
+  // makes it easy for Claude to apply the right merge strategy.
+  const byPrefix = new Map<string, AggregatedConflict[]>();
+  for (const c of conflicts) {
+    const list = byPrefix.get(c.prefix) ?? [];
+    list.push(c);
+    byPrefix.set(c.prefix, list);
+  }
+
+  const lines: string[] = [];
+  lines.push(
+    `There are ${conflicts.length} sync conflict${conflicts.length === 1 ? "" : "s"} between local edits and the Pinkfish remote. For each one, both sides changed since the last sync, so the engine wrote a \`.server.\` shadow file containing the remote version next to your local copy. Merge them.`,
+  );
+  lines.push("");
+
+  const ENTITY_LABELS: Record<string, string> = {
+    kb: "Knowledge base",
+    filestore: "Filestore",
+    datastore: "Datastore rows",
+    agent: "Agents",
+    workflow: "Workflows",
+  };
+
+  for (const [prefix, list] of byPrefix) {
+    lines.push(`### ${ENTITY_LABELS[prefix] ?? prefix}`);
+    for (const c of list) {
+      lines.push(
+        `- \`${c.workingTreePath}\` (yours) ↔ \`${shadowPath(c.workingTreePath)}\` (server)`,
+      );
+    }
+    lines.push("");
+  }
+
+  lines.push("For each pair:");
+  lines.push(
+    "1. Read both files. Read the canonical (the one without `.server.`) and the `.server.` shadow.",
+  );
+  lines.push(
+    "2. Merge intelligently — the canonical has my edits, the shadow has the remote's. Preserve both sets of changes when they don't collide.",
+  );
+  lines.push(
+    "3. For text/markdown (KB), merge prose; for JSON (datastores, agents, workflows), do a field-level merge — keep both edits whenever they touch different keys.",
+  );
+  lines.push(
+    "4. For binary files (PDFs, images in filestore), I have to choose. Ask me which to keep.",
+  );
+  lines.push(
+    "5. Write the merged result to the canonical path, then delete the `.server.` shadow file.",
+  );
+  lines.push(
+    "6. Don't push yet — let me review the diff first. After I confirm, I'll commit in the Sync tab to push.",
+  );
+  lines.push("");
+  lines.push(
+    "Per-entity notes: for datastore rows, never modify the `_schema.json` (it's read-only). For workflows, only merge the draft fields — don't touch `releaseVersion` or anything release-related.",
+  );
+
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Auto-commit helper. Centralises the gitignore-safe pathspec rule: the
 // engine NEVER passes `*.server.*` paths to git_commit_paths because git
