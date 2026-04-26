@@ -2,16 +2,16 @@
 // live in `syncEngine.ts` driven by `datastoreAdapter`. This file owns:
 //   - Resolve (find or create the openit-* datastore collections, with the
 //     same 409-conflict + eventual-consistency handling as filestore).
-//   - Bootstrap-time `syncDatastoresToDisk` (writes _schema.json + seeds
-//     manifest from connect-modal-prefetched items so the modal completes
-//     immediately without waiting for a poll).
+//   - Schema-on-disk write (`_schema.json` per collection) — runs as a
+//     side-effect of startDatastoreSync since schemas have no `updatedAt`
+//     and don't fit the engine's version-diff model.
 //   - Push (full reconcile per collection — POST new, PUT changed, DELETE
 //     missing — with paginated post-push manifest reconcile).
 //   - Lifecycle: 60s poll wired through the engine.
 //
 // Per-repo serialization is provided by `withRepoLock(repo, "datastore")`
-// from the engine. All three entry points (pull, push, bootstrap) use it,
-// matching the iter-5 BugBot fix that consolidated locks.
+// from the engine. All entry points (pull, push, schema-write, bootstrap)
+// serialize on the same lock (iter-5 / iter-12 BugBot fixes).
 
 import {
   getCollection,
@@ -282,35 +282,27 @@ export async function fetchDatastoreSchema(
 }
 
 // ---------------------------------------------------------------------------
-// Bootstrap: connect-time write of _schema.json + seed of any prefetched
-// rows. Runs once during the modal connect flow. Subsequent polls go
-// through the engine. Manifest-aware: skips items whose remote `updatedAt`
-// already matches the manifest's `remote_version`, so a reconnect doesn't
-// blindly rewrite every row that's already on disk.
+// Schema write — `_schema.json` per collection. Schemas have no `updatedAt`
+// so they don't fit the engine's version-diff model; we write them once on
+// every startDatastoreSync as a content-equality side-effect. Cheap (one
+// fs read + maybe one write per collection) and idempotent.
+//
+// Row-seeding logic that used to live alongside this is gone: the engine's
+// bootstrap-adoption case (`!tracked && localFile`) handles already-on-disk
+// rows during the first pull, and brand-new rows are written by the engine
+// pipeline itself.
 // ---------------------------------------------------------------------------
 
-export async function syncDatastoresToDisk(
+async function writeDatastoreSchemas(
   repo: string,
   collections: DataCollection[],
-  itemsByCollection: Record<string, { items: MemoryItem[]; hasMore: boolean }>,
 ): Promise<{ written: number; unchanged: number }> {
-  return withRepoLock(repo, "datastore", () =>
-    syncDatastoresToDiskImpl(repo, collections, itemsByCollection),
-  );
-}
-
-async function syncDatastoresToDiskImpl(
-  repo: string,
-  collections: DataCollection[],
-  itemsByCollection: Record<string, { items: MemoryItem[]; hasMore: boolean }>,
-): Promise<{ written: number; unchanged: number }> {
-  const persisted: KbStatePersisted = await datastoreStateLoad(repo);
-  let written = 0;
-  let unchanged = 0;
-  for (const col of collections) {
-    const subdir = `databases/${col.name}`;
-    if (col.schema) {
-      // Schema has no `updatedAt` to diff against — content equality only.
+  return withRepoLock(repo, "datastore", async () => {
+    let written = 0;
+    let unchanged = 0;
+    for (const col of collections) {
+      if (!col.schema) continue;
+      const subdir = `databases/${col.name}`;
       const schemaContent = JSON.stringify(col.schema, null, 2);
       const schemaPath = `${repo}/${subdir}/_schema.json`;
       let existing: string | null = null;
@@ -322,33 +314,8 @@ async function syncDatastoresToDiskImpl(
         unchanged += 1;
       }
     }
-    const data = itemsByCollection[col.id];
-    if (!data) continue;
-    for (const item of data.items) {
-      const key = item.key || item.id;
-      const filename = `${key}.json`;
-      const mKey = `${col.name}/${key}`;
-      const tracked = persisted.files[mKey];
-      const remoteVer = item.updatedAt ?? "";
-      if (tracked && remoteVer && tracked.remote_version === remoteVer) {
-        unchanged += 1;
-        continue;
-      }
-      const content = typeof item.content === "object"
-        ? JSON.stringify(item.content, null, 2)
-        : item.content;
-      await entityWriteFile(repo, subdir, filename, content);
-      // Seed/advance manifest so the engine's first pull doesn't redundantly
-      // re-detect this row as a fresh bootstrap on its first poll.
-      persisted.files[mKey] = {
-        remote_version: remoteVer,
-        pulled_at_mtime_ms: Date.now(),
-      };
-      written += 1;
-    }
-  }
-  await datastoreStateSave(repo, persisted);
-  return { written, unchanged };
+    return { written, unchanged };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -627,8 +594,9 @@ let stopPoll: (() => void) | null = null;
 export async function startDatastoreSync(args: {
   creds: PinkfishCreds;
   repo: string;
+  onLog?: (msg: string) => void;
 }): Promise<void> {
-  const { creds, repo } = args;
+  const { creds, repo, onLog } = args;
   if (stopPoll) {
     stopPoll();
     stopPoll = null;
@@ -643,14 +611,34 @@ export async function startDatastoreSync(args: {
   //       network / auth blip), the poll keeps trying every 60s until
   //       resolve succeeds (avoids the iter 12 stuck state).
   let adapter: EntityAdapter | null = null;
+  let firstAttempt = true;
 
   const tryResolveAndPull = async () => {
+    // First-attempt failures re-throw so the modal's outer try/catch
+    // + syncErrors flag trips. The modal's catch logs the error, so we
+    // don't also onLog here (would duplicate lines, iter 2 finding).
+    // Subsequent poll-tick failures just log to console — auto-recovery
+    // takes care of itself.
+    const isFirst = firstAttempt;
+    firstAttempt = false;
+
     if (!adapter) {
       try {
-        const collections = await resolveProjectDatastores(creds);
+        const collections = await resolveProjectDatastores(creds, onLog);
         adapter = datastoreAdapter({ creds, collections });
+        try {
+          const r = await writeDatastoreSchemas(repo, collections);
+          if (isFirst) {
+            onLog?.(
+              `    ${collections.length} collection(s) — ${r.written} schema(s) written, ${r.unchanged} unchanged`,
+            );
+          }
+        } catch (e) {
+          console.warn("[datastoreSync] schema write failed:", e);
+        }
       } catch (e) {
         console.error("[datastoreSync] resolve failed:", e);
+        if (isFirst) throw e;
         return;
       }
     }
@@ -658,12 +646,18 @@ export async function startDatastoreSync(args: {
       await pullEntity(adapter, repo);
     } catch (e) {
       console.error("[datastoreSync] pull failed:", e);
+      if (isFirst) throw e;
     }
   };
 
-  await tryResolveAndPull();
+  // Install the poller BEFORE awaiting the first call. If the first
+  // attempt throws (transient resolve/pull failure on connect), the
+  // throw still reaches the caller — but the 60s timer is already
+  // registered and will keep retrying, preserving the iter-12
+  // auto-recovery guarantee.
   const timer = setInterval(tryResolveAndPull, DEFAULT_POLL_INTERVAL_MS);
   stopPoll = () => clearInterval(timer);
+  await tryResolveAndPull();
 }
 
 export function stopDatastoreSync(): void {

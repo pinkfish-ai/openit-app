@@ -12,7 +12,7 @@ import {
 import { subscribeSync, type SyncStatus } from "../lib/kbSync";
 import { subscribeFilestoreSync, type FilestoreSyncStatus } from "../lib/filestoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
-import { resolveProjectDatastores, fetchDatastoreItems, syncDatastoresToDisk, fetchDatastoreSchema } from "../lib/datastoreSync";
+import { resolveProjectDatastores, fetchDatastoreItems, fetchDatastoreSchema } from "../lib/datastoreSync";
 import { resolveProjectAgents, syncAgentsToDisk, type Agent } from "../lib/agentSync";
 import { resolveProjectWorkflows, syncWorkflowsToDisk, type Workflow } from "../lib/workflowSync";
 import { syncSkillsToDisk } from "../lib/skillsSync";
@@ -245,14 +245,16 @@ export function FileExplorer({
         if (cancelled) return;
         setDatastoreItems(itemsMap);
 
-        // Write to disk on initial load only
+        // Write to disk on initial load. Datastore disk-write now runs
+        // through App.tsx's startDatastoreSync (which the engine drives);
+        // FileExplorer just keeps the in-memory state for the UI.
+        // Agents/workflows still use their legacy sync*ToDisk helpers
+        // until R4 migrates them onto the engine.
         if (repo) {
           await Promise.all([
-            syncDatastoresToDisk(repo, ds, itemsMap).catch(() => {}),
             syncAgentsToDisk(repo, ag).catch(() => {}),
             syncWorkflowsToDisk(repo, wf).catch(() => {}),
           ]);
-          // Auto-commit the synced baseline so files show as clean (no U badges)
           await gitAddAndCommit(repo, "sync: update from Pinkfish").catch(() => {});
           reload();
         }
