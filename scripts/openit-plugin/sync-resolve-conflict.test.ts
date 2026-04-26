@@ -64,11 +64,13 @@ describe("sync-resolve-conflict.mjs", () => {
       "openit-people/row-A",
     ]);
     const result = JSON.parse(stdout.trim());
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       prefix: "datastore",
       key: "openit-people/row-A",
       action: "force-push",
+      // No shadow on disk in this test, so cleanup should report false.
+      shadowRemoved: false,
     });
 
     const manifest = await readManifest("datastore");
@@ -81,6 +83,50 @@ describe("sync-resolve-conflict.mjs", () => {
       remote_version: "v2",
       pulled_at_mtime_ms: 2000,
     });
+  });
+
+  it("defensively removes a leftover .server. shadow file (Claude skipped step 3)", async () => {
+    // The conflict prompt instructs Claude to delete the shadow before
+    // running this script. Claude has been observed to skip that step,
+    // leaving the shadow on disk and the explorer's "shadow next to
+    // canonical" detection lit up. This test pins the script's
+    // defensive cleanup.
+    await writeFile(
+      path.join(tmpDir, ".openit", "datastore-state.json"),
+      JSON.stringify({
+        collection_id: null,
+        collection_name: null,
+        files: {
+          "openit-people/row-A": {
+            remote_version: "v0",
+            pulled_at_mtime_ms: 1000,
+            conflict_remote_version: "v1",
+          },
+        },
+      }),
+    );
+    // Plant the merged canonical + the leftover shadow.
+    await mkdir(path.join(tmpDir, "databases", "openit-people"), { recursive: true });
+    await writeFile(
+      path.join(tmpDir, "databases", "openit-people", "row-A.json"),
+      '{"f_1":"merged"}',
+    );
+    const shadowPath = path.join(tmpDir, "databases", "openit-people", "row-A.server.json");
+    await writeFile(shadowPath, '{"f_1":"remote"}');
+
+    const { stdout } = await runScript([
+      "--prefix",
+      "datastore",
+      "--key",
+      "openit-people/row-A",
+    ]);
+    const result = JSON.parse(stdout.trim());
+    expect(result.action).toBe("force-push");
+    expect(result.shadowRemoved).toBe(true);
+
+    // Shadow gone from disk.
+    const { existsSync: exists } = await import("node:fs");
+    expect(exists(shadowPath)).toBe(false);
   });
 
   it("force-push: handles empty-string conflict_remote_version (adapter normalized missing updatedAt)", async () => {
@@ -142,7 +188,7 @@ describe("sync-resolve-conflict.mjs", () => {
       "openit-people/row-A",
     ]);
     const result = JSON.parse(stdout.trim());
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       prefix: "datastore",
       key: "openit-people/row-A",

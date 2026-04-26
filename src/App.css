@@ -758,6 +758,40 @@ body,
   white-space: pre;
 }
 
+/* Sync log: line-by-line container so we can color severity. */
+.sync-log {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sync-log-line {
+  padding: 0;
+}
+
+.sync-log-step {
+  color: var(--text);
+}
+
+.sync-log-ok {
+  color: #6cc78c; /* green */
+}
+
+.sync-log-err {
+  color: #e06c75; /* red */
+  font-weight: 600;
+}
+
+.sync-log-warn {
+  color: #e5c07b; /* amber */
+  font-weight: 600;
+}
+
+.sync-log-sep {
+  color: var(--text-muted);
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
 /* Right pane */
 .right-pane {
   position: relative;
