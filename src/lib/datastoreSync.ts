@@ -559,20 +559,35 @@ export type DatastoreConflict = {
   reason: "local-and-remote-changed";
 };
 
+/// Manual pull. Returns `ok: false` on resolve / pull failure so the
+/// pre-push guard in SourceControl can distinguish "no conflicts found"
+/// from "we couldn't even check". The function still doesn't reject —
+/// existing callers (Shell ↻ button, modal connect) keep working.
 export async function pullDatastoresOnce(args: {
   creds: PinkfishCreds;
   repo: string;
-}): Promise<{ pulled: number; conflicts: DatastoreConflict[] }> {
+}): Promise<{
+  ok: boolean;
+  error?: string;
+  pulled: number;
+  conflicts: DatastoreConflict[];
+}> {
   const { creds, repo } = args;
   let collections: DataCollection[];
   try {
     collections = await resolveProjectDatastores(creds);
   } catch (e) {
     console.error("[datastoreSync] resolve failed:", e);
-    return { pulled: 0, conflicts: [] };
+    return { ok: false, error: String(e), pulled: 0, conflicts: [] };
   }
   const adapter = datastoreAdapter({ creds, collections });
-  const result = await pullEntity(adapter, repo);
+  let result;
+  try {
+    result = await pullEntity(adapter, repo);
+  } catch (e) {
+    console.error("[datastoreSync] pull failed:", e);
+    return { ok: false, error: String(e), pulled: 0, conflicts: [] };
+  }
   // Map engine's manifest-key conflicts back into the DatastoreConflict
   // shape (collectionName + key) so callers don't see the engine's
   // `<col>/<key>` joined form.
@@ -587,7 +602,7 @@ export async function pullDatastoresOnce(args: {
       reason: c.reason,
     };
   });
-  return { pulled: result.pulled, conflicts };
+  return { ok: true, pulled: result.pulled, conflicts };
 }
 
 let stopPoll: (() => void) | null = null;

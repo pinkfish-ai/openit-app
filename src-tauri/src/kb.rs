@@ -22,6 +22,13 @@ pub struct KbFileState {
     pub remote_version: String,
     /// Local file mtime (ms since epoch) at the time of the last pull.
     pub pulled_at_mtime_ms: u128,
+    /// Set iff this row is in conflict state. Holds the remote
+    /// `updatedAt` we observed when we wrote the `.server.` shadow,
+    /// so the resolve script can encode "I've reconciled against this
+    /// remote version" without re-fetching. `skip_serializing_if` keeps
+    /// the field absent in the on-disk JSON when not in conflict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_remote_version: Option<String>,
 }
 
 #[derive(Serialize)]

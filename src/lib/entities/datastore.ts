@@ -103,6 +103,10 @@ export function datastoreAdapter(args: {
                 entityWriteFile(repo, subdir, filename, rowContent(item)),
               writeShadow: (repo) =>
                 entityWriteFile(repo, subdir, shadowFilename(filename), rowContent(item)),
+              // Cheap content access for engine's content-equality
+              // check at bootstrap-adoption — datastore content is
+              // already in the list response, no extra HTTP needed.
+              inlineContent: async () => rowContent(item),
             });
           }
           const hasMore = resp.pagination?.hasNextPage === true;

@@ -12,10 +12,7 @@ import {
   type GitCommit,
   type GitFileStatus,
 } from "../lib/api";
-import { getSyncStatus, kbHasServerShadowFiles, pullNow, pushAllToKb, startKbSync } from "../lib/kbSync";
-import { pushAllToFilestore, getFilestoreSyncStatus } from "../lib/filestoreSync";
-import { pushAllToDatastores } from "../lib/datastoreSync";
-import { loadCreds } from "../lib/pinkfishAuth";
+import { pushAllEntities } from "../lib/pushAll";
 
 type Props = {
   repo: string | null;
@@ -59,116 +56,6 @@ function commitDotClass(subject: string): string {
   if (subject.startsWith("sync: push")) return "sc-commit-dot dot-push";
   if (subject.startsWith("init:")) return "sc-commit-dot dot-init";
   return "sc-commit-dot";
-}
-
-/**
- * After a successful local commit, push every bidirectional entity to
- * Pinkfish. KB and filestore use their existing push functions; datastores
- * use the new pushAllToDatastores. We pre-pull KB to avoid clobbering
- * teammate edits, then push each entity in parallel and stream results.
- */
-async function pushOnCommit(
-  repo: string,
-  onLine: (line: string) => void,
-): Promise<void> {
-  const creds = await loadCreds().catch(() => null);
-  if (!creds) {
-    onLine("✗ sync: not authenticated");
-    return;
-  }
-
-  onLine("▸ sync: starting push to Pinkfish");
-
-  // KB requires a resolved collection; if sync hasn't run yet (e.g. user
-  // commits before the initial pull completes), kick it off inline.
-  let kbCollection = getSyncStatus().collection;
-  if (!kbCollection) {
-    onLine("▸ sync: resolving knowledge base");
-    try {
-      const slug = (repo.split("/").pop() ?? "").trim();
-      await startKbSync({ creds, repo, orgSlug: slug, orgName: slug });
-      kbCollection = getSyncStatus().collection;
-    } catch (e) {
-      onLine(`✗ sync: kb resolve failed: ${String(e)}`);
-    }
-  }
-
-  // KB: pre-pull to detect remote/local conflicts before we clobber anything.
-  if (kbCollection) {
-    const shadowBefore = await kbHasServerShadowFiles(repo);
-    if (shadowBefore) {
-      onLine(
-        "✗ sync: kb has unresolved merge shadow (.server.) files — resolve and commit again",
-      );
-    } else {
-      onLine("▸ sync: kb pre-push pull");
-      try {
-        await pullNow({ creds, repo, collection: kbCollection });
-        const conflicts = getSyncStatus().conflicts;
-        const hasShadow = await kbHasServerShadowFiles(repo);
-        if (conflicts.length > 0 || hasShadow) {
-          onLine(
-            "✗ sync: kb pull surfaced conflicts — resolve in Claude, then commit again:",
-          );
-          for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
-          if (hasShadow && conflicts.length === 0) {
-            onLine("  • server shadow files present under knowledge-base/");
-          }
-        } else {
-          onLine("▸ sync: kb pushing");
-          try {
-            const { pushed, failed } = await pushAllToKb({
-              creds,
-              repo,
-              collection: kbCollection,
-              onLine,
-            });
-            onLine(`▸ sync: kb push complete — ${pushed} ok, ${failed} failed`);
-          } catch (e) {
-            onLine(`✗ sync: kb push failed: ${String(e)}`);
-          }
-        }
-      } catch (e) {
-        onLine(`✗ sync: kb pull failed: ${String(e)}`);
-      }
-    }
-  } else {
-    onLine("▸ sync: kb skipped (no collection)");
-  }
-
-  // Filestore push.
-  const fsCollections = getFilestoreSyncStatus().collections;
-  if (fsCollections.length > 0) {
-    onLine("▸ sync: filestore pushing");
-    for (const collection of fsCollections) {
-      try {
-        const { pushed, failed } = await pushAllToFilestore({
-          creds,
-          repo,
-          collection,
-          onLine,
-        });
-        onLine(
-          `▸ sync: filestore push (${collection.name}) — ${pushed} ok, ${failed} failed`,
-        );
-      } catch (e) {
-        onLine(`✗ sync: filestore push (${collection.name}) failed: ${String(e)}`);
-      }
-    }
-  } else {
-    onLine("▸ sync: filestore skipped (no collections)");
-  }
-
-  // Datastore push.
-  onLine("▸ sync: datastores pushing");
-  try {
-    const { pushed, failed } = await pushAllToDatastores({ creds, repo, onLine });
-    onLine(`▸ sync: datastore push complete — ${pushed} ok, ${failed} failed`);
-  } catch (e) {
-    onLine(`✗ sync: datastore push failed: ${String(e)}`);
-  }
-
-  onLine("▸ sync: done");
 }
 
 /**
@@ -290,28 +177,37 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
 
   const handleCommit = async () => {
     if (!repo) return;
-    if (staged.length === 0 && unstaged.length === 0) return;
     setCommitting(true);
     setError(null);
     try {
-      // Auto-stage everything — no separate stage step in the UI.
-      if (unstaged.length > 0) {
-        await gitStage(repo, unstaged.map((f) => f.path));
+      // Commit-if-pending: when there are pending changes, stage and
+      // commit them locally first. When the working tree is clean (e.g.
+      // after a previous auto-commit swept up Claude's edits), skip the
+      // commit step but STILL run the push — the push internals use
+      // content equality and catch silent drift between local and
+      // remote regardless of git state.
+      const hasPending = staged.length > 0 || unstaged.length > 0;
+      if (hasPending) {
+        if (unstaged.length > 0) {
+          await gitStage(repo, unstaged.map((f) => f.path));
+        }
+        const msg = commitMsg.trim() || defaultCommitMessage(files);
+        await gitCommitStaged(repo, msg);
+        setCommitMsg("");
+        refresh();
+        onFsChange?.();
       }
-      // Empty input → fall back to an auto-derived subject so the user
-      // can just click Commit without typing.
-      const msg = commitMsg.trim() || defaultCommitMessage(files);
-      const created = await gitCommitStaged(repo, msg);
-      if (!created) {
-        setError("Nothing to commit");
-        return;
-      }
-      setCommitMsg("");
-      refresh();
-      onFsChange?.();
 
-      // Auto-push to Pinkfish across all bidirectional entities.
-      await pushOnCommit(repo, onSyncLine);
+      // Always push, regardless of whether a git commit just landed —
+      // this is the only path that detects + corrects content drift
+      // between local and remote (e.g. post-conflict-resolve state
+      // where the merged content sits unpushed).
+      await pushAllEntities(repo, onSyncLine);
+      if (!hasPending) {
+        // After push the engine's poll will detect the now-matching
+        // content and the conflict aggregate will clear naturally.
+        refresh();
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -397,10 +293,18 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
           type="button"
           className="sc-commit-btn"
           onClick={handleCommit}
-          disabled={committing || generating || files.length === 0}
-          title={files.length === 0 ? "No changes" : "Commit and push to Pinkfish"}
+          disabled={committing || generating}
+          title={
+            files.length === 0
+              ? "Push to Pinkfish (catches silent content drift)"
+              : "Commit and push to Pinkfish"
+          }
         >
-          {committing ? "…" : "Commit"}
+          {committing
+            ? "…"
+            : files.length === 0
+            ? "Sync to Pinkfish"
+            : "Commit"}
         </button>
       </div>
       {error && <div className="sc-error">{error}</div>}

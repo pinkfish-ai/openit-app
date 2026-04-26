@@ -59,6 +59,14 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
   const [tableHasMore, setTableHasMore] = useState(false);
   const [tableLoading, setTableLoading] = useState(false);
 
+  // Live override of the row content for datastore-row sources. Source
+  // captures the row at click time; this gets populated when the
+  // on-disk file changes (fsTick) so the table/raw view updates
+  // without re-clicking.
+  const [rowOverride, setRowOverride] = useState<MemoryItem | null>(null);
+  // Reset on source change so a new click clears the previous override.
+  useEffect(() => setRowOverride(null), [source]);
+
   useEffect(() => {
     setError(null);
     setBinaryData(null);
@@ -126,7 +134,10 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
       return;
     }
     if (source.kind === "datastore-row") {
-      setMode("raw");
+      // Default to the table-style key/value view — easier to read at a
+      // glance than raw JSON. Users who want raw JSON can click the
+      // Raw tab.
+      setMode("table");
       const raw = source.item.content;
       if (raw == null) {
         setContent("{}");
@@ -158,6 +169,35 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
     }
   }, [source]);
 
+  // Re-read the single-row file from disk when fsTick fires. Lets edits
+  // by Claude (or any process touching the .json file) reflect in the
+  // viewer without the user having to re-click the row.
+  useEffect(() => {
+    if (!source || source.kind !== "datastore-row" || !repo) return;
+    if (fsTick === 0) return;
+    const filePath = `${repo}/databases/${source.collection.name}/${source.item.key || source.item.id}.json`;
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await fsRead(filePath);
+        const parsed = JSON.parse(raw);
+        if (cancelled) return;
+        const merged: MemoryItem = {
+          ...source.item,
+          content: parsed,
+        };
+        setRowOverride(merged);
+        // Also update raw-mode content so the Raw tab stays current.
+        setContent(JSON.stringify(parsed, null, 2));
+      } catch (e) {
+        // File might have been deleted (server-delete propagated) —
+        // leave the existing view rather than error.
+        console.warn("[Viewer] row reload failed:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [fsTick, source, repo]);
+
   // Re-read disk-based datastore tables when filesystem changes (fsTick from native watcher)
   useEffect(() => {
     if (!source || source.kind !== "datastore-table" || source.collection.id || !repo) return;
@@ -172,6 +212,11 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
         const items: MemoryItem[] = [];
         for (const node of nodes) {
           if (node.is_dir || node.name === "_schema.json") continue;
+          // Skip conflict shadow files — they're a local-only artifact
+          // (`<key>.server.json` written when both sides edit the same
+          // row) and showing them as separate table rows misleads the
+          // user into thinking the remote has two rows.
+          if (node.name.includes(".server.")) continue;
           try {
             const raw = await fsRead(node.path);
             const content = JSON.parse(raw);
@@ -214,6 +259,28 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
   // --- Tabs ---
   const showFileTabs = source.kind === "file" && isMarkdown(source.path);
   const showRowTabs = source.kind === "datastore-row";
+  // The sync stream and the diff view are the two cases where the
+  // user's natural next step is "paste this into Claude". A copy
+  // button here saves a triple-click + ⌘C and avoids selection
+  // accidentally truncating long output.
+  const showCopy = source.kind === "sync" || source.kind === "diff";
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  const copyableText =
+    source.kind === "sync"
+      ? source.lines.join("\n")
+      : source.kind === "diff"
+      ? source.text
+      : "";
+  const handleCopy = async () => {
+    if (!copyableText) return;
+    try {
+      await navigator.clipboard.writeText(copyableText);
+      setCopyState("copied");
+      setTimeout(() => setCopyState("idle"), 1500);
+    } catch (e) {
+      console.error("[viewer] clipboard write failed:", e);
+    }
+  };
 
   // --- Render body ---
   const renderBody = () => {
@@ -272,11 +339,16 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
 
     // Datastore row view
     if (source.kind === "datastore-row") {
+      const liveItem = rowOverride ?? source.item;
       if (mode === "table") {
         return (
           <DataTable
             collection={source.collection}
-            items={[source.item]}
+            items={[liveItem]}
+            onRowClick={(key) => {
+              const filePath = `${repo}/databases/${source.collection.name}/${key}.json`;
+              writeToActiveSession(filePath + " ");
+            }}
           />
         );
       }
@@ -414,6 +486,16 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
               Table
             </button>
           </div>
+        )}
+        {showCopy && (
+          <button
+            type="button"
+            className="viewer-copy-btn"
+            onClick={handleCopy}
+            title="Copy contents to clipboard"
+          >
+            {copyState === "copied" ? "Copied!" : "Copy"}
+          </button>
         )}
       </div>
       {renderBody()}

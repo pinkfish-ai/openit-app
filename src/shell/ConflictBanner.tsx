@@ -2,18 +2,23 @@
 // store and renders a single line at the top of the shell whenever any
 // of the five entities has unresolved local-and-remote-changed conflicts.
 //
-// Minimum-viable R5 surface: count + first path + dismiss. Per-entity
-// "Resolve in Claude" prompt-builder integration is deferred.
+// Click "Resolve in Claude" → composes a generic prompt walking Claude
+// through each conflict (canonical vs `.server.` shadow) and pastes
+// it into the live Claude PTY. Claude reads, merges, deletes shadows;
+// user reviews diff before committing.
 
 import { useEffect, useState } from "react";
 import {
+  buildConflictPrompt,
   subscribeConflicts,
   type AggregatedConflict,
 } from "../lib/syncEngine";
+import { writeToActiveSession } from "./activeSession";
 
 export function ConflictBanner() {
   const [conflicts, setConflicts] = useState<AggregatedConflict[]>([]);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
 
   useEffect(() => subscribeConflicts(setConflicts), []);
 
@@ -31,6 +36,27 @@ export function ConflictBanner() {
   const first = conflicts[0];
   const others = conflicts.length - 1;
 
+  const onResolveInClaude = async () => {
+    if (resolving) return;
+    const prompt = buildConflictPrompt(conflicts);
+    if (!prompt) return;
+    setResolving(true);
+    try {
+      // Wrap in bracketed-paste escapes so the multi-line prompt lands
+      // as a single composed message instead of getting submitted line-
+      // by-line by the TUI's input layer. Modern Ink-based CLIs (Claude
+      // Code included) honor ESC[200~ … ESC[201~. Single-line prompts
+      // would be unaffected, but the pattern is harmless either way.
+      const wrapped = `\x1b[200~${prompt}\x1b[201~`;
+      await writeToActiveSession(wrapped);
+    } catch (e) {
+      console.error("[conflict-banner] paste-to-Claude failed:", e);
+    } finally {
+      // Re-enable quickly even on error — user might want to retry.
+      setTimeout(() => setResolving(false), 500);
+    }
+  };
+
   return (
     <div className="conflict-banner" role="alert">
       <span className="conflict-banner-icon" aria-hidden>⚠</span>
@@ -43,6 +69,15 @@ export function ConflictBanner() {
           : ""}
         .
       </span>
+      <button
+        type="button"
+        className="conflict-banner-resolve"
+        onClick={onResolveInClaude}
+        disabled={resolving}
+        title="Send the conflict list to Claude for guided merge"
+      >
+        {resolving ? "Sending…" : "Resolve in Claude"}
+      </button>
       <button
         type="button"
         className="conflict-banner-dismiss"

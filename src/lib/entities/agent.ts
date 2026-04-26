@@ -61,9 +61,14 @@ async function listUserAgents(creds: PinkfishCreds): Promise<AgentRow[]> {
   const token = getToken();
   if (!token) throw new Error("not authenticated");
   const urls = derivedUrls(creds.tokenUrl);
-  // Platform endpoints use Authorization: Bearer (vs Auth-Token for skills).
+  // OpenIT uses the runtime token (OAuth client-credentials access token)
+  // for everything — it's accepted by `/service/*` on platform, skills*,
+  // and proxy*. Unlike `/web` (Cognito sessions on `/api/*`), service
+  // routes here read the org from the token claims, so no
+  // X-Selected-Org header is needed. See auto-dev/00-autodev-overview.md
+  // §"Auth: one runtime token".
   const fetchFn = makeSkillsFetch(token.accessToken, "bearer");
-  const url = new URL("/user-agents", urls.appBaseUrl);
+  const url = new URL("/service/useragents", urls.appBaseUrl);
   const resp = await fetchFn(url.toString());
   if (!resp.ok) {
     throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);

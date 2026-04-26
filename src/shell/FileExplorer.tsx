@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  fsDelete,
   fsList,
   fsReveal,
-  gitAddAndCommit,
   gitStatusShort,
   kbDeleteFile,
   kbWriteFileBytes,
@@ -11,11 +11,9 @@ import {
 } from "../lib/api";
 import { subscribeSync, type SyncStatus } from "../lib/kbSync";
 import { subscribeFilestoreSync, type FilestoreSyncStatus } from "../lib/filestoreSync";
+import { subscribeConflicts, type AggregatedConflict } from "../lib/syncEngine";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, fetchDatastoreSchema } from "../lib/datastoreSync";
-import { resolveProjectAgents, type Agent } from "../lib/agentSync";
-import { resolveProjectWorkflows, type Workflow } from "../lib/workflowSync";
-import { syncSkillsToDisk } from "../lib/skillsSync";
 import type { DataCollection, MemoryItem } from "../lib/skillsApi";
 
 function relPath(repo: string, absPath: string): string {
@@ -37,18 +35,91 @@ function gitStatusForPath(rel: string, rows: GitFileStatus[]): GitFileStatus | u
  * top-level `databases/openit-*` directories — leaves filenames inside
  * them untouched.
  */
-function prettyName(name: string, rel: string): string {
+/// Pick the field whose value is the human-meaningful label for a row.
+/// Priority: case-number-like → email → name/title/subject → first string
+/// field. Returns the field id (e.g. "f_2") or null if no string fields.
+function pickDisplayFieldId(
+  schema: { fields?: Array<{ id?: string; label?: string; type?: string }> } | undefined,
+): string | null {
+  const fields = schema?.fields;
+  if (!fields || fields.length === 0) return null;
+  const matchers: RegExp[] = [
+    /case\s*number|ticket\s*id|^id$|^number$/i,
+    /email/i,
+    /^name$|title|subject/i,
+  ];
+  for (const re of matchers) {
+    const m = fields.find(
+      (f) =>
+        typeof f.label === "string" &&
+        re.test(f.label) &&
+        (f.type === "string" || f.type === undefined) &&
+        f.id,
+    );
+    if (m?.id) return m.id;
+  }
+  // Fall back to first string field with an id.
+  const first = fields.find((f) => f.id && (f.type === "string" || f.type === undefined));
+  return first?.id ?? null;
+}
+
+const ROW_LABEL_MAX = 40;
+
+function truncate(s: string): string {
+  if (s.length <= ROW_LABEL_MAX) return s;
+  return s.slice(0, ROW_LABEL_MAX - 1) + "…";
+}
+
+/// Display name for a tree node. Defaults to the filename, but rewrites:
+///   - collection dirs `databases/openit-foo-12345/` → `foo`
+///   - row files inside those `<key>.json` → label from a schema-picked
+///     field (email for people, case number for tickets, etc.). Falls
+///     back to the filename when content / schema isn't available.
+function prettyName(
+  name: string,
+  rel: string,
+  datastores: DataCollection[] = [],
+  datastoreItems: Record<string, { items: MemoryItem[]; hasMore: boolean }> = {},
+): string {
   if (rel.match(/^databases\/openit-[^/]+$/)) {
     const stripped = name.replace(/^openit-/, "").replace(/-\d+$/, "");
     if (stripped) return stripped;
   }
+  // Row file: databases/<col>/<key>.json
+  const rowMatch = rel.match(/^databases\/([^/]+)\/([^/]+)\.json$/);
+  if (rowMatch && rowMatch[2] !== "_schema" && !name.includes(".server.")) {
+    const colName = rowMatch[1];
+    const rowKey = rowMatch[2];
+    const col = datastores.find((d) => d.name === colName);
+    if (col) {
+      const fieldId = pickDisplayFieldId(col.schema);
+      if (fieldId) {
+        const item = datastoreItems[col.id]?.items.find(
+          (i) => (i.key || i.id) === rowKey,
+        );
+        const content = item?.content;
+        if (content && typeof content === "object") {
+          const value = (content as Record<string, unknown>)[fieldId];
+          if (typeof value === "string" && value.trim()) {
+            return truncate(value.trim());
+          }
+        }
+      }
+    }
+  }
   return name;
 }
 
-function fileColorClass(n: FileNode, repo: string, gitRows: GitFileStatus[]): string {
+function fileColorClass(
+  n: FileNode,
+  repo: string,
+  gitRows: GitFileStatus[],
+  conflictPaths: Set<string>,
+): string {
   if (n.is_dir) return "";
   const rel = relPath(repo, n.path);
-  if (rel.includes(".server.")) return "file-color-conflict";
+  // Engine-tracked conflict on the canonical path beats git's view.
+  if (conflictPaths.has(rel)) return "file-color-conflict";
   const st = gitStatusForPath(rel, gitRows);
   if (!st) return "";
   if (st.status === "UU") return "file-color-conflict";
@@ -59,13 +130,20 @@ function fileColorClass(n: FileNode, repo: string, gitRows: GitFileStatus[]): st
   return "";
 }
 
-function fileStatusBadge(n: FileNode, repo: string, gitRows: GitFileStatus[]): string | null {
+function fileStatusBadge(
+  n: FileNode,
+  repo: string,
+  gitRows: GitFileStatus[],
+  conflictPaths: Set<string>,
+): string | null {
   if (n.is_dir) return null;
   const rel = relPath(repo, n.path);
-  if (rel.includes(".server.")) return "C";
+  // Conflict marker takes priority over git status — the user needs to
+  // resolve the conflict before the modified/untracked state matters.
+  if (conflictPaths.has(rel)) return "⚠";
   const st = gitStatusForPath(rel, gitRows);
   if (!st) return null;
-  if (st.status === "UU") return "C";
+  if (st.status === "UU") return "⚠";
   if (st.status === "?") return "U";
   if (st.status === "M") return "M";
   if (st.status === "A") return "A";
@@ -78,12 +156,6 @@ const KB_SUPPORTED_EXTENSIONS = new Set([
   "docx", "xlsx", "pptx",
   "jpg", "jpeg", "png", "gif", "webp",
 ]);
-
-function setEntityDrag(e: React.DragEvent, ref: string) {
-  e.dataTransfer.setData("application/x-openit-ref", ref);
-  e.dataTransfer.setData("text/plain", ref);
-  e.dataTransfer.effectAllowed = "copy";
-}
 
 function isKbSupported(filename: string): boolean {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
@@ -137,18 +209,37 @@ export function FileExplorer({
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
   const [gitRows, setGitRows] = useState<GitFileStatus[]>([]);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
+  // Two-click delete confirm — `window.confirm` is blocked by Tauri
+  // permissions; this is the inline alternative. Click "Delete" once →
+  // button changes to "Click again to confirm" → second click inside the
+  // open menu actually deletes. Closing the menu (overlay click,
+  // selecting another item) resets it.
+  const [deleteArmed, setDeleteArmed] = useState(false);
 
   // Virtual resource state
   const [datastores, setDatastores] = useState<DataCollection[]>([]);
   const [datastoreItems, setDatastoreItems] = useState<
     Record<string, { items: MemoryItem[]; hasMore: boolean; schema?: any }>
   >({});
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  // (agents/workflows in-memory state was only used by the drag-emit
+  // entity blob, which is now path-only. The engine's start*Sync calls
+  // in App.tsx own the actual sync; FileExplorer reads them off disk
+  // via fsList for tree rendering.)
   // (loadingResources removed — initial load is fast enough)
 
   const [fsSync, setFsSync] = useState<FilestoreSyncStatus | null>(null);
+
+  // Engine conflict aggregate — drives the per-file conflict marker
+  // (⚠) on canonicals so the user can see at a glance which files
+  // need resolution. The shadow files themselves are hidden from the
+  // tree (see `visible` below).
+  const [engineConflicts, setEngineConflicts] = useState<AggregatedConflict[]>([]);
+  useEffect(() => subscribeConflicts(setEngineConflicts), []);
+  const conflictPaths = useMemo(
+    () => new Set(engineConflicts.map((c) => c.workingTreePath)),
+    [engineConflicts],
+  );
   
   useEffect(() => subscribeSync(setSync), []);
   useEffect(() => subscribeFilestoreSync(setFsSync), []);
@@ -207,15 +298,11 @@ export function FileExplorer({
       if (!creds || cancelled) return;
 
       try {
-        const [ds, ag, wf] = await Promise.all([
-          resolveProjectDatastores(creds).catch(() => [] as DataCollection[]),
-          resolveProjectAgents(creds).catch(() => [] as Agent[]),
-          resolveProjectWorkflows(creds).catch(() => [] as Workflow[]),
-        ]);
+        const ds = await resolveProjectDatastores(creds).catch(
+          () => [] as DataCollection[],
+        );
         if (cancelled) return;
         setDatastores(ds);
-        setAgents(ag);
-        setWorkflows(wf);
 
         const itemsMap: Record<string, { items: MemoryItem[]; hasMore: boolean; schema?: any }> = {};
         await Promise.all(
@@ -245,13 +332,15 @@ export function FileExplorer({
         if (cancelled) return;
         setDatastoreItems(itemsMap);
 
-        // Disk-writing for all five entities now runs through their
-        // engine-driven start*Sync calls (App.tsx + modal). FileExplorer
-        // only keeps in-memory state for rendering the tree.
-        if (repo) {
-          await gitAddAndCommit(repo, "sync: update from Pinkfish").catch(() => {});
-          reload();
-        }
+        // Disk-writing + auto-committing for all five entities runs
+        // through the engine-driven start*Sync calls (App.tsx + modal).
+        // The engine commits ONLY the paths it just pulled, scoped via
+        // gitCommitPaths. FileExplorer used to do a broad
+        // gitAddAndCommit(... "sync: update from Pinkfish") here, which
+        // swept up the user's pending edits (including Claude's merge
+        // result) under a misleading message — leaving "no changes" in
+        // the Sync tab. Removed.
+        if (repo) reload();
         initialLoadDoneRef.current = true;
       } catch (e) {
         console.warn("[FileExplorer] loadOnce failed:", e);
@@ -264,15 +353,11 @@ export function FileExplorer({
       const creds = await loadCreds();
       if (!creds || cancelled) return;
       try {
-        const [ds, ag, wf] = await Promise.all([
-          resolveProjectDatastores(creds).catch(() => [] as DataCollection[]),
-          resolveProjectAgents(creds).catch(() => [] as Agent[]),
-          resolveProjectWorkflows(creds).catch(() => [] as Workflow[]),
-        ]);
+        const ds = await resolveProjectDatastores(creds).catch(
+          () => [] as DataCollection[],
+        );
         if (cancelled) return;
         setDatastores(ds);
-        setAgents(ag);
-        setWorkflows(wf);
       } catch { /* silent */ }
     }
 
@@ -285,6 +370,12 @@ export function FileExplorer({
   const visible = useMemo(() => {
     if (!repo) return [];
     return nodes.filter((n) => {
+      // Hide conflict shadows from the tree — they're a local-only
+      // implementation detail of the merge flow. The user sees a ⚠
+      // marker on the canonical instead (via fileStatusBadge +
+      // conflictPaths). Shadows reappear if the user wants to inspect
+      // via Reveal in Finder.
+      if (!n.is_dir && n.name.includes(".server.")) return false;
       for (const c of collapsed) {
         if (n.path !== c && n.path.startsWith(c + "/")) return false;
       }
@@ -405,8 +496,8 @@ export function FileExplorer({
           const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.name;
           const depth = rel.split("/").length - 1;
           const isCollapsedRow = collapsed.has(n.path);
-          const colorClass = repo ? fileColorClass(n, repo, gitRows) : "";
-          const badge = repo ? fileStatusBadge(n, repo, gitRows) : null;
+          const colorClass = repo ? fileColorClass(n, repo, gitRows, conflictPaths) : "";
+          const badge = repo ? fileStatusBadge(n, repo, gitRows, conflictPaths) : null;
           return (
             <li
               key={n.path}
@@ -414,7 +505,11 @@ export function FileExplorer({
               style={{ paddingLeft: 8 + depth * 12 }}
               onContextMenu={(e) => {
                 e.preventDefault();
-                setContextMenu({ x: e.clientX, y: e.clientY, path: n.path });
+                // Reset delete-arm whenever the menu retargets — without this,
+                // arming Delete on file A and right-clicking file B preselects
+                // "Click again to confirm" on B, and the next click wipes B.
+                setDeleteArmed(false);
+                setContextMenu({ x: e.clientX, y: e.clientY, path: n.path, isDir: n.is_dir });
               }}
               onDragOver={(e) => {
                 if (n.is_dir && e.dataTransfer.types.includes("Files")) {
@@ -440,43 +535,18 @@ export function FileExplorer({
               }}
               draggable={!n.is_dir || rel.match(/^databases\/[^/]+$/) !== null}
               onDragStart={(e) => {
-                // Database collection directory drag
-                if (n.is_dir) {
-                  const dbMatch = rel.match(/^databases\/([^/]+)$/);
-                  if (dbMatch) {
-                    const col = datastores.find((d) => d.name === dbMatch[1]);
-                    if (col) {
-                      setEntityDrag(e, `[Pinkfish Datastore: ${col.name} (id: ${col.id}, type: structured datastore, fields: ${col.schema?.fields.map((f) => f.label).join(", ") ?? "unknown"})]`);
-                    }
-                  }
-                  return;
-                }
-                // Entity-aware drag references
-                if (rel.startsWith("agents/") && rel.endsWith(".json")) {
-                  const agent = agents.find((a) => rel === `agents/${a.name.replace(/[/\\:*?"<>|]/g, "_")}.json`);
-                  if (agent) { setEntityDrag(e, `[Pinkfish Agent: ${agent.name} (id: ${agent.id}${agent.description ? `, description: ${agent.description}` : ""})]`); return; }
-                }
-                if (rel.startsWith("workflows/") && rel.endsWith(".json")) {
-                  const wf = workflows.find((w) => rel === `workflows/${w.name.replace(/[/\\:*?"<>|]/g, "_")}.json`);
-                  if (wf) { setEntityDrag(e, `[Pinkfish Workflow: ${wf.name} (id: ${wf.id}${wf.description ? `, description: ${wf.description}` : ""})]`); return; }
-                }
-                if (rel.match(/^databases\/[^/]+\/[^/]+\.json$/)) {
-                  const parts = rel.split("/");
-                  const col = datastores.find((d) => d.name === parts[1]);
-                  if (col) {
-                    const rowKey = parts[2].replace(/\.json$/, "");
-                    const item = datastoreItems[col.id]?.items.find((i) => (i.key || i.id) === rowKey);
-                    if (item) { setEntityDrag(e, `[Pinkfish Datastore Row: ${col.name}/${rowKey} (datastore: ${col.name}, id: ${item.id}, content: ${JSON.stringify(typeof item.content === "object" ? item.content : item.content)})]`); return; }
-                  }
-                }
-                // Default: file path
+                // Drop the file (or collection-directory) path as the
+                // reference. Previously we built rich `[Pinkfish ...]`
+                // blobs with id + content inline, but those clutter the
+                // chat and Claude can read the path itself when it
+                // needs the content.
                 e.dataTransfer.setData("application/x-openit-path", n.path);
                 e.dataTransfer.setData("text/plain", n.path);
                 e.dataTransfer.effectAllowed = "copy";
               }}
             >
               {n.is_dir ? (isCollapsedRow ? "▸ " : "▾ ") : ""}
-              <span className="tree-item-name">{prettyName(n.name, rel)}</span>
+              <span className="tree-item-name">{prettyName(n.name, rel, datastores, datastoreItems)}</span>
               {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
               {isDeletable(n) && (
                 <button
@@ -549,7 +619,10 @@ export function FileExplorer({
         <>
           <div
             className="context-menu-overlay"
-            onClick={() => setContextMenu(null)}
+            onClick={() => {
+              setContextMenu(null);
+              setDeleteArmed(false);
+            }}
           />
           <div
             className="context-menu"
@@ -560,10 +633,32 @@ export function FileExplorer({
               onClick={() => {
                 fsReveal(contextMenu.path).catch(console.error);
                 setContextMenu(null);
+                setDeleteArmed(false);
               }}
             >
               Reveal in Finder
             </button>
+            {!contextMenu.isDir && (
+              <button
+                className="context-menu-item context-menu-item-danger"
+                onClick={() => {
+                  if (!deleteArmed) {
+                    setDeleteArmed(true);
+                    return;
+                  }
+                  const path = contextMenu.path;
+                  setContextMenu(null);
+                  setDeleteArmed(false);
+                  fsDelete(path)
+                    .then(() => reload())
+                    .catch((e) => {
+                      console.error("delete failed:", e);
+                    });
+                }}
+              >
+                {deleteArmed ? "Click again to confirm" : "Delete"}
+              </button>
+            )}
           </div>
         </>
       )}

@@ -10,9 +10,17 @@
 // 16 findings, every one a duplicated-pipeline drift. Centralizing makes the
 // next entity adapter ~50 lines instead of ~700.
 
-import { gitCommitPaths, type KbStatePersisted } from "./api";
+import { fsRead, gitCommitPaths, type KbStatePersisted } from "./api";
 
 export type Manifest = KbStatePersisted;
+
+/// Sentinel `pulled_at_mtime_ms` value the resolve script writes when
+/// flipping a row into "force-push" state after a user-resolved
+/// conflict. Any real local mtime exceeds it, so the engine's
+/// `localChanged = mtime > pulled_at_mtime_ms` test is guaranteed to
+/// fire. Mirrored in `scripts/openit-plugin/sync-resolve-conflict.mjs`
+/// — keep the two values in sync.
+export const FORCE_PUSH_MTIME_SENTINEL = 1;
 
 // ---------------------------------------------------------------------------
 // Shared shadow-filename helpers. Single source of truth for the
@@ -70,6 +78,42 @@ export function classifyAsShadow(
   return siblingNames.has(canonicalFromShadow(filename));
 }
 
+/// Sort-key recursive serializer. Two semantically-equal JSON values
+/// produce the same string regardless of key order in the source.
+/// Falls through arrays/primitives unchanged; only object key ordering
+/// is normalized.
+function canonicalJsonString(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJsonString).join(",")}]`;
+  }
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  const parts = keys.map((k) => {
+    const v = (value as Record<string, unknown>)[k];
+    return `${JSON.stringify(k)}:${canonicalJsonString(v)}`;
+  });
+  return `{${parts.join(",")}}`;
+}
+
+/// Equivalence check for the bootstrap-adoption content compare.
+/// A naive byte compare false-positives on harmless drift: trailing
+/// newline from an editor save, CRLF vs LF on Windows, key order
+/// differences from a different stringify path. We try a JSON-aware
+/// canonical compare first (handles all three for datastore rows,
+/// which are the only adapters using inlineContent today). If either
+/// side isn't valid JSON, we fall back to a whitespace-trimmed string
+/// compare, which still neutralises the trailing-newline + CRLF cases.
+export function contentsEquivalent(a: string, b: string): boolean {
+  if (a === b) return true;
+  try {
+    const aJ = JSON.parse(a);
+    const bJ = JSON.parse(b);
+    return canonicalJsonString(aJ) === canonicalJsonString(bJ);
+  } catch {
+    return a.replace(/\r\n/g, "\n").trimEnd() === b.replace(/\r\n/g, "\n").trimEnd();
+  }
+}
+
 
 export type RemoteItem = {
   /// Key under `manifest.files` (often equals workingTreePath, but datastore
@@ -91,6 +135,16 @@ export type RemoteItem = {
   /// paths to `touched` — they're gitignored, and adding them would fail
   /// `git add` and silently drop legitimate items in the same batch.
   writeShadow(repo: string): Promise<void>;
+  /// Optional cheap content access — returns the remote payload as it
+  /// would be written to disk, without an extra HTTP round-trip. Used by
+  /// the engine's content-equality check in the bootstrap-adoption
+  /// branch: if local content differs from remote content, treat as a
+  /// conflict instead of silently adopting (which would leave local edits
+  /// unpushed indefinitely). Adapters whose remote payloads are inline
+  /// in the list response (datastore via /memory/bquery) populate this.
+  /// KB/filestore where content is a signed-URL download leave it
+  /// undefined — the engine skips the check for them.
+  inlineContent?(): Promise<string>;
 };
 
 export type LocalItem = {
@@ -251,6 +305,135 @@ export function clearConflictsForPrefix(prefix: string): void {
   if (conflictsByPrefix.delete(prefix)) emitConflicts();
 }
 
+/// Compute the on-disk shadow path for a conflict's canonical
+/// workingTreePath. e.g. `databases/openit-people-XXX/p123.json`
+/// → `databases/openit-people-XXX/p123.server.json`. Used by the
+/// "Resolve in Claude" prompt builder so it can point Claude at both
+/// sides of every conflict.
+export function shadowPath(workingTreePath: string): string {
+  const slash = workingTreePath.lastIndexOf("/");
+  const dir = slash >= 0 ? workingTreePath.slice(0, slash + 1) : "";
+  const filename = slash >= 0 ? workingTreePath.slice(slash + 1) : workingTreePath;
+  return `${dir}${shadowFilename(filename)}`;
+}
+
+/// Compose a Claude-ready prompt that walks an LLM through every active
+/// conflict and instructs it to merge each, delete shadows, and (for
+/// pushable entities) push back. Generic across all five entities —
+/// per-entity hints embedded in the prompt body so Claude knows to
+/// preserve schema for datastore rows, leave workflow `releaseVersion`
+/// alone, etc.
+///
+/// Returns null when there are no conflicts (caller should hide the
+/// "Resolve in Claude" button).
+export function buildConflictPrompt(
+  conflicts: AggregatedConflict[],
+): string | null {
+  if (conflicts.length === 0) return null;
+
+  const lines: string[] = [];
+  lines.push(
+    `There ${conflicts.length === 1 ? "is" : "are"} ${conflicts.length} sync conflict${conflicts.length === 1 ? "" : "s"} between my local edits and the Pinkfish remote. For each, both sides changed since the last sync, so the engine wrote a \`.server.\` shadow file (containing the remote's version) next to my local canonical.`,
+  );
+  lines.push("");
+  lines.push(
+    "**For each conflict below, perform ALL FOUR actions as one atomic unit.** Skipping the final script call leaves the banner stuck — the engine doesn't know the merge happened until the script runs. Do not stop after deleting the shadow.",
+  );
+  lines.push("");
+  lines.push("### Conflicts to resolve");
+
+  for (const c of conflicts) {
+    const sh = shadowPath(c.workingTreePath);
+    lines.push("");
+    lines.push(`#### \`${c.workingTreePath}\``);
+    lines.push("");
+    lines.push(
+      `1. Read \`${c.workingTreePath}\` (mine) and \`${sh}\` (the remote's) and merge them. Preserve both sides' changes wherever they touch different keys/lines.`,
+    );
+    lines.push(
+      `2. Write the merged result to \`${c.workingTreePath}\`.`,
+    );
+    lines.push(
+      `3. Delete \`${sh}\` (e.g. \`rm "${sh}"\`).`,
+    );
+    lines.push(
+      "4. **Run the resolve-script — REQUIRED, banner won't clear without it:**",
+    );
+    lines.push("");
+    lines.push("   ```bash");
+    lines.push(
+      `   node .claude/scripts/sync-resolve-conflict.mjs --prefix ${c.prefix} --key '${c.manifestKey}'`,
+    );
+    lines.push("   ```");
+  }
+
+  lines.push("");
+  lines.push("### Merge guidance");
+  lines.push(
+    "**Default to auto-merging — do not interrogate me field-by-field.** Make the smart call yourself and proceed. The bar for stopping to ask is high (see below).",
+  );
+  lines.push("");
+  lines.push(
+    "- **JSON (datastore rows, agents, workflows):** walk the keys and decide silently.",
+  );
+  lines.push(
+    "  - Key only on one side, or both sides match → trivial, take the value.",
+  );
+  lines.push(
+    "  - Both sides changed the same key to different values → infer intent from context: edits I just made in this session win on those keys; the other side wins on keys it touched. Recency cues and obvious-correction heuristics (typo fix, more-complete data) are fair game.",
+  );
+  lines.push(
+    "  - Only stop and ask if a specific key is genuinely ambiguous (no contextual cue, both values equally plausible). Even then, ask about *that one key*, not the whole row.",
+  );
+  lines.push(
+    "- **Text/markdown (KB):** keep meaningful additions from both sides.",
+  );
+  lines.push(
+    "- **Binary (PDFs/images in filestore):** can't merge bytes — ask me which version to keep before doing anything.",
+  );
+  lines.push(
+    "- **Datastore `_schema.json` is read-only** — never touch it.",
+  );
+  lines.push(
+    "- **Workflows:** only merge draft fields. Never modify `releaseVersion` or anything release-related.",
+  );
+  lines.push("");
+  lines.push("### What to say back to me");
+  lines.push(
+    "**Do not surface raw field values** in your reply — they may be sensitive (PII, emails, phone numbers, secrets). After merging, summarise at the row/file level only:",
+  );
+  lines.push(
+    "- ✅ Good: \"Merged `databases/openit-people-.../row-123.json` — kept your local change to one field, took the remote change to two others.\"",
+  );
+  lines.push(
+    "- ❌ Avoid: tables or sentences that quote the actual before/after values.",
+  );
+  lines.push(
+    "If a field is truly ambiguous and you must ask, refer to the **field name only** (e.g. \"`f_2` differs on both sides — which should win?\") — never paste the values.",
+  );
+  lines.push("");
+  lines.push("### After all conflicts are resolved — confirm and sync");
+  lines.push(
+    "Once the merge + shadow delete + resolve-script have run for every conflict above, ask me one question:",
+  );
+  lines.push("");
+  lines.push("> Sync these changes to Pinkfish now? (yes/no)");
+  lines.push("");
+  lines.push(
+    "If I say yes, run the push script. The banner clears the moment the script writes its request marker, and OpenIT runs the actual push:",
+  );
+  lines.push("");
+  lines.push("```bash");
+  lines.push("node .claude/scripts/sync-push.mjs");
+  lines.push("```");
+  lines.push("");
+  lines.push(
+    "If I say no, leave it for me to push manually via the Sync tab.",
+  );
+
+  return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Auto-commit helper. Centralises the gitignore-safe pathspec rule: the
 // engine NEVER passes `*.server.*` paths to git_commit_paths because git
@@ -375,6 +558,77 @@ async function pullEntityImpl(
     // Without this, every poll lands on this state and the row is
     // permanently undiffable — high-severity gap caught by BugBot iter 2.
     if (!tracked && localFile) {
+      // Content-equality check (when the adapter exposes it cheaply).
+      // Without this, the bootstrap-adoption branch would silently
+      // accept any on-disk content as the new baseline — including
+      // post-merge content from a resolve flow where local has the
+      // user's merged changes and remote still has the pre-merge
+      // version. Treating that as "synced" hides the divergence.
+      // Instead: if content differs, write the shadow + record a
+      // conflict, just like the both-changed case below. Manifest
+      // does NOT advance — engine will keep flagging until the user
+      // pushes (which makes remote=local, content matches, conflict
+      // clears).
+      if (r.inlineContent) {
+        let remoteContent: string | null = null;
+        let localContent: string | null = null;
+        try {
+          remoteContent = await r.inlineContent();
+        } catch (e) {
+          console.warn(
+            `[syncEngine:${adapter.prefix}] inlineContent fetch failed:`,
+            e,
+          );
+        }
+        if (remoteContent != null) {
+          try {
+            localContent = await fsRead(`${repo}/${localFile.workingTreePath}`);
+          } catch (e) {
+            console.warn(
+              `[syncEngine:${adapter.prefix}] local read failed:`,
+              e,
+            );
+          }
+        }
+        if (
+          remoteContent != null &&
+          localContent != null &&
+          !contentsEquivalent(localContent, remoteContent)
+        ) {
+          if (!localShadowKeys.has(r.manifestKey)) {
+            try {
+              await r.writeShadow(repo);
+            } catch (e) {
+              console.error(
+                `[syncEngine:${adapter.prefix}] shadow ${r.manifestKey} failed:`,
+                e,
+              );
+            }
+          }
+          conflicts.push({
+            manifestKey: r.manifestKey,
+            workingTreePath: r.workingTreePath,
+            reason: "local-and-remote-changed",
+          });
+          // Seed the manifest entry with `conflict_remote_version` set
+          // to the current remote.updatedAt. The resolve script reads
+          // this back to encode "user has reconciled against this
+          // remote version, push local now". Without this, deleting
+          // the manifest on resolve would re-fire bootstrap-adopt's
+          // content-equality check on the next pull and re-create the
+          // shadow when the user picked LOCAL (their merged content
+          // diverges from the still-stale remote). remote_version=""
+          // and pulled_at_mtime_ms=0 keep the entry visibly "unpulled"
+          // so engine logic on next pull won't accidentally treat it
+          // as a sync'd row.
+          manifest.files[r.manifestKey] = {
+            remote_version: "",
+            pulled_at_mtime_ms: 0,
+            conflict_remote_version: r.updatedAt,
+          };
+          continue;
+        }
+      }
       manifest.files[r.manifestKey] = {
         remote_version: r.updatedAt,
         pulled_at_mtime_ms: localFile.mtime_ms ?? Date.now(),
@@ -391,11 +645,25 @@ async function pullEntityImpl(
         localFile.mtime_ms > tracked.pulled_at_mtime_ms;
 
       if (remoteChanged && localChanged) {
-        // Both moved → drop a shadow (only if no shadow already exists; a
-        // pre-existing shadow means the conflict is unresolved from a prior
-        // pass and re-writing it would re-touch on every poll). Engine never
-        // adds the shadow path to `touched` — shadow files are gitignored.
-        if (!localShadowKeys.has(r.manifestKey)) {
+        // Both moved → drop a shadow with the current remote content.
+        //
+        // Re-write the shadow whenever remote has advanced since the
+        // last shadow we wrote, even if a shadow file already exists.
+        // The recorded `tracked.conflict_remote_version` is what the
+        // existing shadow was sourced from; if r.updatedAt now differs,
+        // the shadow on disk is stale and the user would merge against
+        // out-of-date content. The resolve-script then writes that
+        // current `r.updatedAt` as the new manifest remote_version, the
+        // pre-push pull sees remoteChanged=false, and we silently
+        // overwrite the newer remote changes the user never saw.
+        // (Skipping when shadow exists AND remote hasn't moved since
+        // we wrote it preserves the original mtime-thrash protection.)
+        const shadowIsStale =
+          tracked.conflict_remote_version != null &&
+          tracked.conflict_remote_version !== r.updatedAt;
+        const needShadowWrite =
+          !localShadowKeys.has(r.manifestKey) || shadowIsStale;
+        if (needShadowWrite) {
           try {
             await r.writeShadow(repo);
           } catch (e) {
@@ -410,7 +678,29 @@ async function pullEntityImpl(
           workingTreePath: r.workingTreePath,
           reason: "local-and-remote-changed",
         });
+        // Record the current remote_version on the manifest entry so
+        // the resolve script can encode "I've reconciled against this
+        // remote version" on the user's behalf. remote_version /
+        // pulled_at_mtime_ms stay at their pre-conflict values so the
+        // pre-push pull on a subsequent (still-unresolved) cycle still
+        // sees both sides changed. See the bootstrap-adopt branch
+        // above for the parallel case.
+        manifest.files[r.manifestKey] = {
+          ...tracked,
+          conflict_remote_version: r.updatedAt,
+        };
         continue;
+      }
+
+      // Falling out of the conflict branch — clear any stale
+      // conflict_remote_version on this entry. Without this, a row
+      // that was conflicted, then pushed (by another path), then
+      // pulled again would carry a stale conflict marker.
+      if (tracked.conflict_remote_version != null) {
+        manifest.files[r.manifestKey] = {
+          remote_version: tracked.remote_version,
+          pulled_at_mtime_ms: tracked.pulled_at_mtime_ms,
+        };
       }
 
       if (remoteChanged && !localChanged) {

@@ -32,15 +32,17 @@ pub fn fs_list(root: String) -> Result<Vec<FileNode>, String> {
     for entry in walker.flatten() {
         let path = entry.path();
         let rel = path.strip_prefix(&root_path).unwrap_or(path);
-        // Hide top-level dotfiles/dotdirs except `.claude`, which holds the
-        // skills the user edits. Without this whitelist, .git/.vscode/.env
-        // would clutter the explorer.
+        // Hide ALL top-level dotfiles/dotdirs from the explorer —
+        // including `.claude` (plugin scripts/skills are managed by
+        // the manifest sync, not user-edited from this surface yet)
+        // and `.openit` (engine state). Without this filter,
+        // .git/.vscode/.env etc. would clutter the tree.
         let top = rel
             .components()
             .next()
             .and_then(|c| c.as_os_str().to_str())
             .unwrap_or("");
-        if top.starts_with('.') && top != ".claude" {
+        if top.starts_with('.') {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -127,6 +129,21 @@ pub fn fs_reveal(path: String) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Delete a single file at `path`. Returns Ok(()) if the file was missing
+/// (idempotent). Refuses to remove directories — used by the file
+/// explorer's context menu where the user expects file-level deletes only.
+#[tauri::command]
+pub fn fs_delete(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Ok(());
+    }
+    if p.is_dir() {
+        return Err(format!("refusing to delete a directory: {}", path));
+    }
+    std::fs::remove_file(p).map_err(|e| format!("failed to delete file: {}", e))
 }
 
 #[cfg(test)]

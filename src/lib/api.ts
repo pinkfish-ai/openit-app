@@ -19,6 +19,10 @@ export async function fsReveal(path: string): Promise<void> {
   return invoke("fs_reveal", { path });
 }
 
+export async function fsDelete(path: string): Promise<void> {
+  return invoke("fs_delete", { path });
+}
+
 export type GitCommit = {
   sha: string;
   short_sha: string;
@@ -198,7 +202,15 @@ export async function pinkfishListConnections(args: {
 }
 
 export type KbLocalFile = { filename: string; mtime_ms: number | null; size: number };
-export type KbFileState = { remote_version: string; pulled_at_mtime_ms: number };
+export type KbFileState = {
+  remote_version: string;
+  pulled_at_mtime_ms: number;
+  /// Present iff the row is in conflict state. Records the remote
+  /// `updatedAt` at conflict-write time so the resolve script can
+  /// signal "user has reconciled against this remote version" without
+  /// re-fetching.
+  conflict_remote_version?: string;
+};
 export type KbStatePersisted = {
   collection_id: string | null;
   collection_name: string | null;

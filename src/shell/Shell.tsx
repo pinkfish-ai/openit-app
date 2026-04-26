@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { stateLoad, stateSave, type AppPersistedState } from "../lib/api";
+import {
+  entityWriteFile,
+  fsDelete,
+  fsRead,
+  gitCommitStaged,
+  gitStage,
+  gitStatusShort,
+  stateLoad,
+  stateSave,
+  type AppPersistedState,
+} from "../lib/api";
+import { pushAllEntities } from "../lib/pushAll";
+import { clearConflictsForPrefix } from "../lib/syncEngine";
 import {
   buildKbConflictPrompt,
   getSyncStatus,
@@ -26,6 +38,14 @@ import { resolvePathToSource } from "./entityRouting";
 const DEFAULT_SIZES = [18, 42, 40];
 
 type LeftTab = "files" | "source-control";
+
+/// Module-level reentrancy guard for Claude-triggered pushes. Hoisted
+/// out of the useEffect closure so a transient cleanup race (effect
+/// re-runs faster than the async fs-watcher subscription tears down)
+/// can't end up with two listeners that each have their own
+/// `pushInFlight` flag — without this, a single push-request marker
+/// fanned out into 3 parallel push runs in the wild.
+const pushInFlightByRepo = new Set<string>();
 
 export function Shell({
   repo,
@@ -166,16 +186,122 @@ export function Shell({
     if (syncLines.length > 0) setSource({ kind: "sync", lines: syncLines });
   }, [syncLines]);
 
-  // Native filesystem watcher — emits fsTick bumps on real changes
+  // Native filesystem watcher — emits fsTick bumps on real changes,
+  // and acts as the trigger for `.openit/push-request.json` (the file
+  // `scripts/openit-plugin/sync-push.mjs` writes when Claude wants to
+  // push). When it appears, run pushAllEntities and write
+  // `.openit/push-result.json` so the script's poll loop can exit.
   useEffect(() => {
     if (!repo) return;
     let unlisten: (() => void) | null = null;
 
+    const runPushFromMarker = async () => {
+      // Module-level guard so concurrent listeners (transient
+      // useEffect cleanup race) can't each kick off a separate push.
+      if (pushInFlightByRepo.has(repo)) return;
+      pushInFlightByRepo.add(repo);
+      try {
+        const requestPath = `${repo}/.openit/push-request.json`;
+
+        // Confirm the marker actually exists. If not, this fs event
+        // came from something else (the script's own cleanup, a stale
+        // event from a prior run, etc.) — bail without writing a
+        // result file. Writing one regardless would let a *concurrent*
+        // sync-push.mjs poll loop read it and report success even
+        // though no push ran, leaving its real request marker
+        // stranded on disk.
+        try {
+          await fsRead(requestPath);
+        } catch {
+          return;
+        }
+
+        // We own this push. Delete the marker first so a watcher
+        // event for the deletion itself doesn't loop us.
+        try {
+          await fsDelete(requestPath);
+        } catch (e) {
+          console.warn("[shell] failed to delete push-request:", e);
+        }
+
+        // Clear the conflict aggregate immediately so the banner
+        // disappears as soon as the user confirms the sync. The push
+        // pre-pulls each entity inside pushAllEntities — if a true
+        // remote-side conflict still exists after the merge, that pull
+        // will repopulate the aggregate. So clearing optimistically is
+        // safe and gives the snappy "banner gone now" UX the user
+        // expected.
+        for (const p of ["kb", "filestore", "datastore", "agent", "workflow"]) {
+          clearConflictsForPrefix(p);
+        }
+        onSyncLine("─── push triggered by Claude ───");
+
+        const lines: string[] = [];
+        const onLine = (line: string) => {
+          lines.push(line);
+          onSyncLine(line);
+        };
+        let status: "ok" | "error" = "ok";
+        let errorMsg: string | undefined;
+
+        try {
+          // Auto-commit any pending working-tree changes BEFORE pushing.
+          // After Claude's merge, disk has the merged content but git
+          // HEAD still has the pre-merge content, so `git status` reports
+          // a pending change. If the user picked remote, local now
+          // matches remote and the push reports `0 ok, 0 failed` — the
+          // user is left staring at "1 change to push" forever. Commit
+          // here so HEAD catches up. Same pattern handleCommit uses.
+          try {
+            const wsStatus = await gitStatusShort(repo);
+            if (wsStatus.length > 0) {
+              const unstaged = wsStatus.filter((f) => !f.staged).map((f) => f.path);
+              if (unstaged.length > 0) await gitStage(repo, unstaged);
+              const ts = new Date().toISOString();
+              await gitCommitStaged(repo, `sync: claude-resolve auto-commit @ ${ts}`);
+              onLine("▸ sync: auto-committed merged files");
+            }
+          } catch (e) {
+            console.warn("[shell] auto-commit before push failed:", e);
+          }
+
+          await pushAllEntities(repo, onLine);
+        } catch (e) {
+          status = "error";
+          errorMsg = String(e);
+          onLine(`✗ sync: push trigger failed: ${errorMsg}`);
+        }
+
+        // Always write the result file when we got this far — we
+        // claimed ownership of the marker and a script may be polling.
+        const payload = JSON.stringify(
+          { status, error: errorMsg, lines, finishedAt: new Date().toISOString() },
+          null,
+          2,
+        );
+        try {
+          await entityWriteFile(repo, ".openit", "push-result.json", payload);
+        } catch (e) {
+          console.error("[shell] failed to write push-result:", e);
+        }
+      } finally {
+        pushInFlightByRepo.delete(repo);
+      }
+    };
+
     (async () => {
       try {
         await fsWatchStart(repo);
-        unlisten = await onFsChanged((_paths) => {
+        unlisten = await onFsChanged((paths) => {
           bumpFs();
+          // Look for the push-request marker in the change set. The
+          // watcher is recursive over the repo root, so paths here are
+          // absolute. Match either the absolute or repo-relative form.
+          const marker = ".openit/push-request.json";
+          const hit = paths.some(
+            (p) => p.endsWith(`/${marker}`) || p.endsWith(marker),
+          );
+          if (hit) void runPushFromMarker();
         });
       } catch (e) {
         console.warn("[shell] fs watcher failed to start:", e);
@@ -186,7 +312,7 @@ export function Shell({
       unlisten?.();
       fsWatchStop().catch(() => {});
     };
-  }, [repo, bumpFs]);
+  }, [repo, bumpFs, onSyncLine]);
 
   const persist = useCallback(
     (patch: Partial<AppPersistedState>) => {
