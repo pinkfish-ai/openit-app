@@ -59,6 +59,14 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
   const [tableHasMore, setTableHasMore] = useState(false);
   const [tableLoading, setTableLoading] = useState(false);
 
+  // Live override of the row content for datastore-row sources. Source
+  // captures the row at click time; this gets populated when the
+  // on-disk file changes (fsTick) so the table/raw view updates
+  // without re-clicking.
+  const [rowOverride, setRowOverride] = useState<MemoryItem | null>(null);
+  // Reset on source change so a new click clears the previous override.
+  useEffect(() => setRowOverride(null), [source]);
+
   useEffect(() => {
     setError(null);
     setBinaryData(null);
@@ -160,6 +168,35 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
       return;
     }
   }, [source]);
+
+  // Re-read the single-row file from disk when fsTick fires. Lets edits
+  // by Claude (or any process touching the .json file) reflect in the
+  // viewer without the user having to re-click the row.
+  useEffect(() => {
+    if (!source || source.kind !== "datastore-row" || !repo) return;
+    if (fsTick === 0) return;
+    const filePath = `${repo}/databases/${source.collection.name}/${source.item.key || source.item.id}.json`;
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await fsRead(filePath);
+        const parsed = JSON.parse(raw);
+        if (cancelled) return;
+        const merged: MemoryItem = {
+          ...source.item,
+          content: parsed,
+        };
+        setRowOverride(merged);
+        // Also update raw-mode content so the Raw tab stays current.
+        setContent(JSON.stringify(parsed, null, 2));
+      } catch (e) {
+        // File might have been deleted (server-delete propagated) —
+        // leave the existing view rather than error.
+        console.warn("[Viewer] row reload failed:", e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [fsTick, source, repo]);
 
   // Re-read disk-based datastore tables when filesystem changes (fsTick from native watcher)
   useEffect(() => {
@@ -280,11 +317,12 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
 
     // Datastore row view
     if (source.kind === "datastore-row") {
+      const liveItem = rowOverride ?? source.item;
       if (mode === "table") {
         return (
           <DataTable
             collection={source.collection}
-            items={[source.item]}
+            items={[liveItem]}
             onRowClick={(key) => {
               const filePath = `${repo}/databases/${source.collection.name}/${key}.json`;
               writeToActiveSession(filePath + " ");

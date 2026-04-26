@@ -14,9 +14,6 @@ import { subscribeSync, type SyncStatus } from "../lib/kbSync";
 import { subscribeFilestoreSync, type FilestoreSyncStatus } from "../lib/filestoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { resolveProjectDatastores, fetchDatastoreItems, fetchDatastoreSchema } from "../lib/datastoreSync";
-import { resolveProjectAgents, type Agent } from "../lib/agentSync";
-import { resolveProjectWorkflows, type Workflow } from "../lib/workflowSync";
-import { syncSkillsToDisk } from "../lib/skillsSync";
 import type { DataCollection, MemoryItem } from "../lib/skillsApi";
 
 function relPath(repo: string, absPath: string): string {
@@ -212,8 +209,10 @@ export function FileExplorer({
   const [datastoreItems, setDatastoreItems] = useState<
     Record<string, { items: MemoryItem[]; hasMore: boolean; schema?: any }>
   >({});
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  // (agents/workflows in-memory state was only used by the drag-emit
+  // entity blob, which is now path-only. The engine's start*Sync calls
+  // in App.tsx own the actual sync; FileExplorer reads them off disk
+  // via fsList for tree rendering.)
   // (loadingResources removed — initial load is fast enough)
 
   const [fsSync, setFsSync] = useState<FilestoreSyncStatus | null>(null);
@@ -275,15 +274,11 @@ export function FileExplorer({
       if (!creds || cancelled) return;
 
       try {
-        const [ds, ag, wf] = await Promise.all([
-          resolveProjectDatastores(creds).catch(() => [] as DataCollection[]),
-          resolveProjectAgents(creds).catch(() => [] as Agent[]),
-          resolveProjectWorkflows(creds).catch(() => [] as Workflow[]),
-        ]);
+        const ds = await resolveProjectDatastores(creds).catch(
+          () => [] as DataCollection[],
+        );
         if (cancelled) return;
         setDatastores(ds);
-        setAgents(ag);
-        setWorkflows(wf);
 
         const itemsMap: Record<string, { items: MemoryItem[]; hasMore: boolean; schema?: any }> = {};
         await Promise.all(
@@ -332,15 +327,11 @@ export function FileExplorer({
       const creds = await loadCreds();
       if (!creds || cancelled) return;
       try {
-        const [ds, ag, wf] = await Promise.all([
-          resolveProjectDatastores(creds).catch(() => [] as DataCollection[]),
-          resolveProjectAgents(creds).catch(() => [] as Agent[]),
-          resolveProjectWorkflows(creds).catch(() => [] as Workflow[]),
-        ]);
+        const ds = await resolveProjectDatastores(creds).catch(
+          () => [] as DataCollection[],
+        );
         if (cancelled) return;
         setDatastores(ds);
-        setAgents(ag);
-        setWorkflows(wf);
       } catch { /* silent */ }
     }
 
