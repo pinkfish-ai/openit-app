@@ -44,12 +44,33 @@ export function canonicalFromShadow(filename: string): string {
   return `${filename.slice(0, i)}.${filename.slice(i + SHADOW_MARKER.length)}`;
 }
 
-/// True for `<base>.server.<ext>` shadow files (and any path/name that
-/// contains the shadow marker — adapters use this on raw filenames, not
-/// on full working-tree paths).
-export function isShadowFilename(filename: string): boolean {
+/// Necessary-but-not-sufficient: filename literally contains the shadow
+/// marker. Use `classifyAsShadow` for the authoritative check that also
+/// verifies a canonical sibling exists.
+export function looksLikeShadow(filename: string): boolean {
   return filename.includes(SHADOW_MARKER);
 }
+
+/// Authoritative shadow classification. A file is a shadow IFF its
+/// filename matches the `<base>.server.<ext>` pattern AND its canonical
+/// sibling (`<base>.<ext>`) is also present in `siblingNames`.
+///
+/// Without the sibling check, a legitimate file like `nginx.server.conf`
+/// (with no `nginx.conf` sibling) would be misclassified as a shadow —
+/// the engine would skip tracking it as canonical and re-download a
+/// fictional canonical sibling on every poll.
+export function classifyAsShadow(
+  filename: string,
+  siblingNames: Set<string>,
+): boolean {
+  if (!looksLikeShadow(filename)) return false;
+  return siblingNames.has(canonicalFromShadow(filename));
+}
+
+/// Backward-compat alias — equivalent to `looksLikeShadow`. Several call
+/// sites still use this name; new code should use `looksLikeShadow` (for
+/// raw checks) or `classifyAsShadow` (for the authoritative check).
+export const isShadowFilename = looksLikeShadow;
 
 export type RemoteItem = {
   /// Key under `manifest.files` (often equals workingTreePath, but datastore

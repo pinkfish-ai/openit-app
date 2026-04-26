@@ -15,7 +15,8 @@ import {
 import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
 import {
   canonicalFromShadow,
-  isShadowFilename,
+  classifyAsShadow,
+  looksLikeShadow,
   shadowFilename,
   type EntityAdapter,
   type LocalItem,
@@ -74,8 +75,16 @@ export function filestoreAdapter(args: {
 
     async listLocal(repo) {
       const files = await fsStoreListLocal(repo);
+      // Sibling-aware shadow classification — see KB adapter for details.
+      // Without this, `app.server.js` (no `app.js` sibling) would be
+      // misclassified as a shadow.
+      const canonicalSiblings = new Set(
+        files
+          .filter((f) => !looksLikeShadow(f.filename))
+          .map((f) => f.filename),
+      );
       const out: LocalItem[] = files.map((f) => {
-        const shadow = isShadowFilename(f.filename);
+        const shadow = classifyAsShadow(f.filename, canonicalSiblings);
         return {
           manifestKey: shadow ? canonicalFromShadow(f.filename) : f.filename,
           workingTreePath: `${DIR}/${f.filename}`,
@@ -88,11 +97,13 @@ export function filestoreAdapter(args: {
 
     /// Server-deleted file → drop the manifest entry AND remove from disk.
     /// This matches user expectation ("I deleted it on Pinkfish, why is it
-    /// still here") and mirrors KB's long-standing behavior. Skips shadow
-    /// files (engine should ignore those — they're local-only artifacts).
-    /// The deletion is added to `touched` so the auto-commit captures it.
+    /// still here") and mirrors KB's long-standing behavior. The deletion
+    /// is added to `touched` so the auto-commit captures it.
     async onServerDelete({ repo, manifestKey, manifest, touched }) {
-      if (isShadowFilename(manifestKey)) return true;
+      // No shadow guard: manifests only contain canonical keys, so an
+      // isShadowFilename check here would only fire on false positives
+      // (canonical names containing `.server.`) and prevent legitimate
+      // cleanup. See matching note in KB adapter.
       const local = await fsStoreListLocal(repo);
       const stillOnDisk = local.some((f) => f.filename === manifestKey);
       if (!stillOnDisk) {

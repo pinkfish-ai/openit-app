@@ -13,7 +13,8 @@ import { type KbCollection } from "../kb";
 import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
 import {
   canonicalFromShadow,
-  isShadowFilename,
+  classifyAsShadow,
+  looksLikeShadow,
   shadowFilename,
   type EntityAdapter,
   type LocalItem,
@@ -66,8 +67,18 @@ export function kbAdapter(args: {
 
     async listLocal(repo) {
       const files = await kbListLocal(repo);
+      // Build the canonical-sibling set first so we can classify shadows
+      // accurately: a file is a shadow IFF it matches `<base>.server.<ext>`
+      // AND `<base>.<ext>` is also present on disk. Without the sibling
+      // check, a legitimate file like `nginx.server.conf` (no
+      // `nginx.conf` sibling) would be misclassified and never tracked.
+      const canonicalSiblings = new Set(
+        files
+          .filter((f) => !looksLikeShadow(f.filename))
+          .map((f) => f.filename),
+      );
       const out: LocalItem[] = files.map((f) => {
-        const shadow = isShadowFilename(f.filename);
+        const shadow = classifyAsShadow(f.filename, canonicalSiblings);
         return {
           // Shadow files key off the canonical filename so the engine's
           // "does a shadow already exist for this remote item?" check
@@ -86,9 +97,12 @@ export function kbAdapter(args: {
     /// (drop manifest entry only) preserves user data; KB intentionally
     /// trusts the server as authoritative for files it tracks.
     async onServerDelete({ repo, manifestKey, manifest, touched }) {
-      if (isShadowFilename(manifestKey)) return true; // engine should ignore shadows
-      // If the file isn't on disk, just drop the manifest entry — nothing
-      // to delete. Skip the default branch by returning true.
+      // No shadow guard here: the manifest only ever contains canonical
+      // keys (engine writes them via `manifest.files[r.manifestKey] = …`
+      // where r.manifestKey is the canonical name). An old guard checking
+      // `isShadowFilename(manifestKey)` only fired on false positives —
+      // canonical names that happen to contain `.server.` — and prevented
+      // the server-delete cleanup from running on them.
       const local = await kbListLocal(repo);
       const stillOnDisk = local.some((f) => f.filename === manifestKey);
       if (!stillOnDisk) {
