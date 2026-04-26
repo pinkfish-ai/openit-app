@@ -130,13 +130,22 @@ export type EntityAdapter = {
   loadManifest(repo: string): Promise<Manifest>;
   saveManifest(repo: string, manifest: Manifest): Promise<void>;
 
-  /// Fully paginate the remote list. Returning `paginationFailed: true`
-  /// means the response is incomplete — engine will skip server-delete
-  /// detection since a partial list would wrongly classify items beyond
-  /// the cutoff as deleted.
+  /// Fully paginate the remote list.
+  ///
+  /// `paginationFailed: true` means the entire listing is incomplete —
+  /// engine skips server-delete detection across the board.
+  ///
+  /// `unreliableKeyPrefixes` is the per-scope variant: when only part of
+  /// the listing is unreliable (e.g., datastore where one of N
+  /// collections failed mid-paginate), the adapter returns the failed
+  /// scopes' key prefixes here. Engine excludes only manifest keys whose
+  /// `manifestKey` starts with one of these prefixes from the
+  /// server-delete pass — collections that listed successfully still
+  /// have their server-deleted rows reconciled.
   listRemote(repo: string): Promise<{
     items: RemoteItem[];
     paginationFailed: boolean;
+    unreliableKeyPrefixes?: string[];
   }>;
 
   /// List items currently on disk for this entity's working-tree dirs.
@@ -255,7 +264,11 @@ async function pullEntityImpl(
   repo: string,
 ): Promise<PullResult> {
   const manifest = await adapter.loadManifest(repo);
-  const { items: remote, paginationFailed } = await adapter.listRemote(repo);
+  const {
+    items: remote,
+    paginationFailed,
+    unreliableKeyPrefixes = [],
+  } = await adapter.listRemote(repo);
   const local = await adapter.listLocal(repo);
 
   // Index local items so we can answer "is this manifestKey on disk?" and
@@ -366,13 +379,17 @@ async function pullEntityImpl(
     // Push will reconcile this.
   }
 
-  // Server-side deletion: anything tracked that's NOT in `remote`. Skip
-  // entirely if pagination didn't complete — items beyond the cap would
-  // be wrongly classified as deleted.
+  // Server-side deletion: anything tracked that's NOT in `remote`.
+  //   - paginationFailed=true: skip the entire pass (the listing is
+  //     unreliable in aggregate).
+  //   - unreliableKeyPrefixes: per-scope skip — keys with a prefix in
+  //     this list are also skipped (e.g., datastore where one collection
+  //     out of N failed mid-paginate; other collections still reconcile).
   if (!paginationFailed) {
     const remoteKeys = new Set(remote.map((r) => r.manifestKey));
     for (const mKey of Object.keys(manifest.files)) {
       if (remoteKeys.has(mKey)) continue;
+      if (unreliableKeyPrefixes.some((p) => mKey.startsWith(p))) continue;
       const handled = await adapter.onServerDelete?.({
         repo,
         manifestKey: mKey,

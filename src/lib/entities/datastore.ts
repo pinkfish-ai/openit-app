@@ -70,18 +70,23 @@ export function datastoreAdapter(args: {
 
     async listRemote(_repo) {
       const items: RemoteItem[] = [];
-      let paginationFailed = false;
+      // Per-collection failure tracking: when collection A fails (network,
+      // safety-cap, etc.), only A's manifest keys should be excluded from
+      // the engine's server-delete pass. Other collections that listed
+      // successfully still reconcile their server-deleted rows correctly.
+      const unreliableKeyPrefixes: string[] = [];
 
       for (const col of collections) {
         let offset = 0;
         let collected = 0;
+        let colFailed = false;
         while (true) {
           let resp;
           try {
             resp = await fetchDatastoreItems(creds, col.id, PAGE, offset);
           } catch (e) {
             console.error(`[datastore] list ${col.name} failed:`, e);
-            paginationFailed = true;
+            colFailed = true;
             break;
           }
           for (const r of resp.items) {
@@ -107,15 +112,24 @@ export function datastoreAdapter(args: {
           collected += resp.items.length;
           if (collected >= PAGINATION_SAFETY_CAP) {
             console.warn(
-              `[datastore] ${col.name}: stopped paginating at ${collected} items; skipping server-delete pass`,
+              `[datastore] ${col.name}: stopped paginating at ${collected} items; skipping server-delete pass for this collection`,
             );
-            paginationFailed = true;
+            colFailed = true;
             break;
           }
         }
+        if (colFailed) {
+          // Use the same `<colName>/` prefix the manifestKey helper produces.
+          // Engine's server-delete loop excludes any mKey starting with this.
+          unreliableKeyPrefixes.push(`${col.name}/`);
+        }
       }
 
-      return { items, paginationFailed };
+      // paginationFailed stays false — the per-scope flag is the right
+      // tool here. (If we want to keep `true` as "nothing in items can
+      // be trusted", that case is covered by listRemote throwing
+      // upstream of pullEntity, not by this branch.)
+      return { items, paginationFailed: false, unreliableKeyPrefixes };
     },
 
     async listLocal(repo) {
