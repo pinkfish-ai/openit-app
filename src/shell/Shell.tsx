@@ -27,8 +27,10 @@ import {
 import { pullDatastoresOnce } from "../lib/datastoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
+import { refreshEscalatedTickets } from "../lib/ticketStatus";
 import { ChatPane } from "./ChatPane";
 import { ConflictBanner } from "./ConflictBanner";
+import { EscalatedTicketBanner } from "./EscalatedTicketBanner";
 import { FileExplorer } from "./FileExplorer";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
@@ -165,6 +167,16 @@ export function Shell({
         });
     }
   }, [repo, source]);
+
+  // Re-classify escalated tickets on fs-tick. Cheap on small ticket
+  // sets; the helper bails early if databases/ doesn't exist yet.
+  useEffect(() => {
+    if (!repo) {
+      void refreshEscalatedTickets("");
+      return;
+    }
+    void refreshEscalatedTickets(repo);
+  }, [repo, fsTick]);
 
   useEffect(() => {
     if (!repo) {
@@ -359,6 +371,7 @@ export function Shell({
   return (
     <div className="shell">
       <ConflictBanner refreshTick={refreshTick} />
+      <EscalatedTicketBanner refreshTick={refreshTick} />
       <PanelGroup
         direction="horizontal"
         autoSaveId="openit-shell"

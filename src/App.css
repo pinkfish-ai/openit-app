@@ -153,6 +153,65 @@ body,
   background: rgba(0, 0, 0, 0.05);
 }
 
+/* Escalated-ticket banner — same shape as conflict-banner with a
+   blue-leaning palette to read as "informational, not warning". */
+.escalated-ticket-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #e8f1fa;
+  color: #1f3a52;
+  border-bottom: 1px solid #88b3da;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+.escalated-ticket-banner-icon {
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+
+.escalated-ticket-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.escalated-ticket-banner-resolve,
+.escalated-ticket-banner-dismiss {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border: 1px solid #5e8db8;
+  background: transparent;
+  color: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.escalated-ticket-banner-resolve {
+  background: #1f3a52;
+  color: #e8f1fa;
+  border-color: #1f3a52;
+  font-weight: 500;
+}
+
+.escalated-ticket-banner-resolve:hover:not(:disabled) {
+  background: #112638;
+}
+
+.escalated-ticket-banner-resolve:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.escalated-ticket-banner-dismiss:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
 .resize-handle {
   width: 4px;
   background: transparent;
