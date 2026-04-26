@@ -251,16 +251,6 @@ export function clearConflictsForPrefix(prefix: string): void {
   if (conflictsByPrefix.delete(prefix)) emitConflicts();
 }
 
-/// Drop ALL conflict entries — used when leaving a project (modal
-/// reconnect with a different repo, sign-out). Without this, a freshly
-/// mounted ConflictBanner would see leftover entries from the prior
-/// project until each entity's first pull rewrote them.
-export function clearAllConflicts(): void {
-  if (conflictsByPrefix.size === 0) return;
-  conflictsByPrefix.clear();
-  emitConflicts();
-}
-
 // ---------------------------------------------------------------------------
 // Auto-commit helper. Centralises the gitignore-safe pathspec rule: the
 // engine NEVER passes `*.server.*` paths to git_commit_paths because git
