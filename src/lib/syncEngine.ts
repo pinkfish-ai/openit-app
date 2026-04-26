@@ -189,8 +189,9 @@ export async function commitTouched(
 /// Engine pipeline phase signal. Fires inside the per-repo lock so wrapper
 /// status updates serialize against any in-flight push on the same lock,
 /// preventing the UI from flipping to "pulling" while a push is still
-/// running. "ready" fires right before the lock is released.
-export type EnginePhase = "pulling" | "ready";
+/// running. Exactly one terminal phase fires: "ready" on success, "error"
+/// on a thrown pipeline error. Wrappers can react to each separately.
+export type EnginePhase = "pulling" | "ready" | "error";
 
 export function pullEntity(
   adapter: EntityAdapter,
@@ -204,7 +205,10 @@ export function pullEntity(
       opts.onPhase?.("ready");
       return r;
     } catch (e) {
-      opts.onPhase?.("ready");
+      // Distinct phase on failure so callers can respond differently to
+      // success vs error (e.g. update UI status). Earlier the catch
+      // branch also emitted "ready", lying about completion state.
+      opts.onPhase?.("error");
       throw e;
     }
   });
