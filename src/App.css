@@ -876,6 +876,11 @@ body,
   padding: 10px 12px;
   border-top: 1px solid var(--border);
   background: var(--surface);
+  /* Bubbles can overflow the right pane (6+ skill labels at narrow
+     widths). Horizontal scroll keeps them all reachable. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 
 .bubble {
@@ -887,6 +892,12 @@ body,
   font-size: 12px;
   cursor: pointer;
   transition: background 0.1s, border-color 0.1s;
+  /* Don't let flex shrink the bubbles below their natural width — at
+     narrow pane widths shrinking truncates the labels and clips the
+     hit target along with them. White-space:nowrap preserves multi-
+     word labels ("Get Started", "Create Workflow") on one line. */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .bubble:hover {
