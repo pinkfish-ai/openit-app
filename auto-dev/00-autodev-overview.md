@@ -56,12 +56,34 @@ npm run tauri build
 ```
 Produces an unsigned `.app` / `.dmg` in `src-tauri/target/release/bundle/`. Code signing tracked separately.
 
-### Plugin script dev loop
-Sync logic lives in plugin scripts shipped from `/web/packages/app/public/openit-plugin/scripts/`. To iterate:
-1. Connect once — scripts land in `~/OpenIT/<orgId>/.claude/scripts/`.
-2. Edit in place there. Test via sync, or `node .claude/scripts/sync-pull.mjs` directly.
-3. When working, copy back to `/web/.../scripts/`, bump `manifest.json` version, push.
-4. Don't reconnect mid-dev — manifest sync overwrites local edits with canonical.
+### Plugin scripts and prompts (cross-repo loop)
+
+Plugin scripts (and the `CLAUDE.md` / skills Claude reads when running inside an OpenIT project) are **owned by the `/web` repo** but get developed against in this repo. The dev source of truth lives at:
+
+```
+openit-app/scripts/openit-plugin/
+```
+
+Production users get them via the plugin manifest at `/web/packages/app/public/openit-plugin/scripts/`. The two paths mirror each other on purpose so the eventual cp is mechanical.
+
+**While developing on a feature branch:**
+1. Edit `openit-app/scripts/openit-plugin/<script>.mjs` in this repo (commits travel with the PR).
+2. Copy to your test org's project dir so you can actually run it:
+   ```
+   cp openit-app/scripts/openit-plugin/<script>.mjs ~/OpenIT/<orgId>/.claude/scripts/<script>.mjs
+   ```
+   Ben's working test org is `~/OpenIT/653713545258/.claude/scripts/`.
+3. Test from inside that project: `cd ~/OpenIT/<orgId> && node .claude/scripts/<script>.mjs <args>`.
+4. **Don't reconnect** OpenIT mid-dev — the manifest sync would overwrite your local copy with whatever's currently in `/web` (which is older). When you do reconnect after publishing, the manifest sync is what delivers the new version to all users.
+
+**When merging the PR:**
+1. Merge the openit-app PR.
+2. Copy the script into the `/web` repo at `web/packages/app/public/openit-plugin/scripts/<script>.mjs` (mirrors path).
+3. Bump `web/packages/app/public/openit-plugin/manifest.json` version.
+4. Commit + push `/web`.
+5. Verify: any reconnect now pulls the new script down to `~/OpenIT/<orgId>/.claude/scripts/`.
+
+The same pattern applies to the plugin's `CLAUDE.md` and any skills under `web/.../openit-plugin/skills/` — develop in this repo's `scripts/openit-plugin/` (or a sibling `scripts/openit-plugin-prompts/` once we have prompts to track), copy to test org, copy to `/web` at merge time.
 
 ---
 
