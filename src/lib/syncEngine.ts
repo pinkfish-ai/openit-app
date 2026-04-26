@@ -14,6 +14,14 @@ import { fsRead, gitCommitPaths, type KbStatePersisted } from "./api";
 
 export type Manifest = KbStatePersisted;
 
+/// Sentinel `pulled_at_mtime_ms` value the resolve script writes when
+/// flipping a row into "force-push" state after a user-resolved
+/// conflict. Any real local mtime exceeds it, so the engine's
+/// `localChanged = mtime > pulled_at_mtime_ms` test is guaranteed to
+/// fire. Mirrored in `scripts/openit-plugin/sync-resolve-conflict.mjs`
+/// — keep the two values in sync.
+export const FORCE_PUSH_MTIME_SENTINEL = 1;
+
 // ---------------------------------------------------------------------------
 // Shared shadow-filename helpers. Single source of truth for the
 // `<base>.server.<ext>` convention used by every text/binary entity.

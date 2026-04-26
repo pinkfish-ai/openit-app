@@ -46,6 +46,13 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+/// Sentinel `pulled_at_mtime_ms` for force-push state. Mirrors
+/// `FORCE_PUSH_MTIME_SENTINEL` in src/lib/syncEngine.ts — any real
+/// local mtime exceeds it, so the engine's `localChanged` check fires
+/// on the next pull and the row gets pushed. Keep the two values in
+/// sync if either side ever changes.
+const FORCE_PUSH_MTIME_SENTINEL = 1;
+
 const PREFIX_TO_FILE = {
   kb: ".openit/kb-state.json",
   filestore: ".openit/fs-state.json",
@@ -116,7 +123,7 @@ async function main() {
       // distinguishing the two cases here.
       manifest.files[args.key] = {
         remote_version: entry.conflict_remote_version,
-        pulled_at_mtime_ms: 1,
+        pulled_at_mtime_ms: FORCE_PUSH_MTIME_SENTINEL,
       };
       action = "force-push";
     } else {
