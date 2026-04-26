@@ -22,7 +22,6 @@ import { fsStoreInit, fsStoreListLocal } from "./api";
 import { filestoreAdapter, type FilestoreCollection } from "./entities/filestore";
 import {
   classifyAsShadow,
-  looksLikeShadow,
   pullEntity,
   startPolling,
   withRepoLock,
@@ -485,11 +484,9 @@ async function pushAllToFilestoreInner(args: {
   const local = await fsStoreListLocal(repo);
   const persisted: KbStatePersisted = await fsStoreStateLoad(repo);
 
-  // Sibling-aware shadow exclusion. Without the sibling check, a
-  // legitimate file like `app.server.js` would be silently skipped.
-  const siblings = new Set(
-    local.filter((f) => !looksLikeShadow(f.filename)).map((f) => f.filename),
-  );
+  // Sibling-aware shadow exclusion. Pass the full filename set; see
+  // classifyAsShadow doc for why pre-filtering is wrong.
+  const siblings = new Set(local.map((f) => f.filename));
   const toPush = local.filter((f) => {
     if (classifyAsShadow(f.filename, siblings)) return false;
     const tracked = persisted.files[f.filename];

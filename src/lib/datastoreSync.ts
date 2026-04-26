@@ -34,7 +34,6 @@ import { fetchDatastoreItems } from "./entities/datastoreApi";
 import {
   classifyAsShadow,
   DEFAULT_POLL_INTERVAL_MS,
-  looksLikeShadow,
   pullEntity,
   withRepoLock,
   type EntityAdapter,
@@ -444,9 +443,8 @@ async function pushAllToDatastoresImpl(args: {
             !n.is_dir && n.name.endsWith(".json") && n.name !== "_schema.json",
         )
         .map((n) => n.name);
-      const siblings = new Set(
-        candidateNames.filter((n) => !looksLikeShadow(n)),
-      );
+      // Full set of candidate filenames; see classifyAsShadow doc.
+      const siblings = new Set(candidateNames);
       localFiles = nodes
         .filter(
           (n) =>

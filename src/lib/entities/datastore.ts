@@ -27,7 +27,6 @@ import { type DataCollection, type MemoryItem } from "../skillsApi";
 import { type PinkfishCreds } from "../pinkfishAuth";
 import {
   classifyAsShadow,
-  looksLikeShadow,
   shadowFilename,
   type EntityAdapter,
   type LocalItem,
@@ -141,18 +140,13 @@ export function datastoreAdapter(args: {
         } catch {
           continue;
         }
-        // Sibling-aware shadow classification, scoped per collection. A
-        // file is a shadow IFF its name matches `<key>.server.json` AND
-        // `<key>.json` exists in the same collection dir. Without the
-        // sibling check, a row with a key like `nginx.server` would
-        // produce a file `nginx.server.json` that gets misclassified
-        // as a shadow of a non-existent `nginx.json`.
+        // Sibling-aware shadow classification, scoped per collection.
+        // Use the full filename set (excluding _schema.json) so legit
+        // shadow-shaped names still appear in siblings — a follow-on
+        // double-shadow like `<key>.server.server.json` then maps back
+        // to its canonical via canonicalFromShadow.
         const canonicalSiblings = new Set(
-          files
-            .filter(
-              (f) => f.filename !== "_schema.json" && !looksLikeShadow(f.filename),
-            )
-            .map((f) => f.filename),
+          files.filter((f) => f.filename !== "_schema.json").map((f) => f.filename),
         );
         for (const f of files) {
           if (f.filename === "_schema.json") continue;

@@ -16,7 +16,6 @@ import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
 import {
   canonicalFromShadow,
   classifyAsShadow,
-  looksLikeShadow,
   shadowFilename,
   type EntityAdapter,
   type LocalItem,
@@ -76,13 +75,10 @@ export function filestoreAdapter(args: {
     async listLocal(repo) {
       const files = await fsStoreListLocal(repo);
       // Sibling-aware shadow classification — see KB adapter for details.
-      // Without this, `app.server.js` (no `app.js` sibling) would be
-      // misclassified as a shadow.
-      const canonicalSiblings = new Set(
-        files
-          .filter((f) => !looksLikeShadow(f.filename))
-          .map((f) => f.filename),
-      );
+      // Use the full filename set so a legit `a.server.conf` appears in
+      // siblings and a follow-on `a.server.server.conf` shadow maps back
+      // to it correctly.
+      const canonicalSiblings = new Set(files.map((f) => f.filename));
       const out: LocalItem[] = files.map((f) => {
         const shadow = classifyAsShadow(f.filename, canonicalSiblings);
         return {

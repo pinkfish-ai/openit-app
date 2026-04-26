@@ -55,10 +55,13 @@ export function looksLikeShadow(filename: string): boolean {
 /// filename matches the `<base>.server.<ext>` pattern AND its canonical
 /// sibling (`<base>.<ext>`) is also present in `siblingNames`.
 ///
-/// Without the sibling check, a legitimate file like `nginx.server.conf`
-/// (with no `nginx.conf` sibling) would be misclassified as a shadow —
-/// the engine would skip tracking it as canonical and re-download a
-/// fictional canonical sibling on every poll.
+/// `siblingNames` should contain the FULL set of local filenames in the
+/// scope being checked — do NOT pre-filter shadow-shaped names out.
+/// A legitimate `a.server.conf` (no `a.conf` sibling) returns false; a
+/// `b.server.conf` with a `b.conf` sibling returns true. Pre-filtering
+/// would cause a follow-on conflict shadow `a.server.server.conf` to
+/// go undetected because its canonical-form (`a.server.conf`) was
+/// excluded from the sibling set.
 export function classifyAsShadow(
   filename: string,
   siblingNames: Set<string>,

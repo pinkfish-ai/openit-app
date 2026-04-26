@@ -29,7 +29,6 @@ import {
   canonicalFromShadow,
   classifyAsShadow,
   commitTouched,
-  looksLikeShadow,
   pullEntity,
   startPolling,
   withRepoLock,
@@ -80,16 +79,12 @@ function update(patch: Partial<SyncStatus>) {
 
 let stopPoll: (() => void) | null = null;
 
-/// Compute the canonical-sibling set used by `classifyAsShadow`. A
-/// file is treated as a shadow only when its canonical sibling exists
-/// — otherwise legitimate filenames containing `.server.` (e.g.
-/// `nginx.server.conf`) get misclassified.
+/// Compute the sibling set used by `classifyAsShadow`. Returns ALL
+/// local filenames — including shadow-shaped names — because a legit
+/// `a.server.conf` should still appear so a follow-on double-shadow
+/// `a.server.server.conf` correctly maps back via canonicalFromShadow.
 function canonicalSiblingSet(files: { filename: string }[]): Set<string> {
-  return new Set(
-    files
-      .filter((f) => !looksLikeShadow(f.filename))
-      .map((f) => f.filename),
-  );
+  return new Set(files.map((f) => f.filename));
 }
 
 export function kbHasServerShadowFiles(repo: string): Promise<boolean> {

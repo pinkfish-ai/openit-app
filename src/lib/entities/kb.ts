@@ -14,7 +14,6 @@ import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
 import {
   canonicalFromShadow,
   classifyAsShadow,
-  looksLikeShadow,
   shadowFilename,
   type EntityAdapter,
   type LocalItem,
@@ -67,16 +66,12 @@ export function kbAdapter(args: {
 
     async listLocal(repo) {
       const files = await kbListLocal(repo);
-      // Build the canonical-sibling set first so we can classify shadows
-      // accurately: a file is a shadow IFF it matches `<base>.server.<ext>`
-      // AND `<base>.<ext>` is also present on disk. Without the sibling
-      // check, a legitimate file like `nginx.server.conf` (no
-      // `nginx.conf` sibling) would be misclassified and never tracked.
-      const canonicalSiblings = new Set(
-        files
-          .filter((f) => !looksLikeShadow(f.filename))
-          .map((f) => f.filename),
-      );
+      // Use the full local filename set as the sibling lookup. Pre-
+      // filtering shadow-shaped names was wrong: a legitimate file like
+      // `a.server.conf` should still appear in siblings so a follow-on
+      // shadow `a.server.server.conf` correctly maps back to it via
+      // canonicalFromShadow.
+      const canonicalSiblings = new Set(files.map((f) => f.filename));
       const out: LocalItem[] = files.map((f) => {
         const shadow = classifyAsShadow(f.filename, canonicalSiblings);
         return {
