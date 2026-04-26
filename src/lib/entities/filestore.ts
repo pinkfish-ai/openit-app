@@ -13,7 +13,14 @@ import {
   kbListRemote,
 } from "../api";
 import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
-import { type EntityAdapter, type LocalItem, type RemoteItem } from "../syncEngine";
+import {
+  canonicalFromShadow,
+  isShadowFilename,
+  shadowFilename,
+  type EntityAdapter,
+  type LocalItem,
+  type RemoteItem,
+} from "../syncEngine";
 
 const DIR = "filestore";
 
@@ -22,28 +29,6 @@ export type FilestoreCollection = {
   name: string;
   description?: string;
 };
-
-export function fsServerShadowFilename(filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  if (dot <= 0 || dot === filename.length - 1) return `${filename}.server`;
-  return `${filename.slice(0, dot)}.server.${filename.slice(dot + 1)}`;
-}
-
-function isShadow(filename: string): boolean {
-  return filename.includes(".server.");
-}
-
-/// `runbook.server.pdf` → `runbook.pdf`. Inverse of fsServerShadowFilename.
-/// Used by listLocal so shadows share their canonical sibling's manifestKey
-/// — otherwise the engine's "does a shadow already exist?" check (keyed
-/// off the canonical name) never matches, and the shadow gets re-written
-/// every poll cycle.
-function canonicalFromShadow(filename: string): string {
-  const marker = ".server.";
-  const i = filename.indexOf(marker);
-  if (i < 0) return filename;
-  return `${filename.slice(0, i)}.${filename.slice(i + marker.length)}`;
-}
 
 export function filestoreAdapter(args: {
   creds: PinkfishCreds;
@@ -79,7 +64,7 @@ export function filestoreAdapter(args: {
           writeShadow: (repo) =>
             fsStoreDownloadToLocal(
               repo,
-              fsServerShadowFilename(filename),
+              shadowFilename(filename),
               downloadUrl,
             ),
         });
@@ -90,7 +75,7 @@ export function filestoreAdapter(args: {
     async listLocal(repo) {
       const files = await fsStoreListLocal(repo);
       const out: LocalItem[] = files.map((f) => {
-        const shadow = isShadow(f.filename);
+        const shadow = isShadowFilename(f.filename);
         return {
           manifestKey: shadow ? canonicalFromShadow(f.filename) : f.filename,
           workingTreePath: `${DIR}/${f.filename}`,
@@ -107,7 +92,7 @@ export function filestoreAdapter(args: {
     /// files (engine should ignore those — they're local-only artifacts).
     /// The deletion is added to `touched` so the auto-commit captures it.
     async onServerDelete({ repo, manifestKey, manifest, touched }) {
-      if (isShadow(manifestKey)) return true;
+      if (isShadowFilename(manifestKey)) return true;
       const local = await fsStoreListLocal(repo);
       const stillOnDisk = local.some((f) => f.filename === manifestKey);
       if (!stillOnDisk) {

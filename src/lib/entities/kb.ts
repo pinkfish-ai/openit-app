@@ -11,34 +11,20 @@ import {
 } from "../api";
 import { type KbCollection } from "../kb";
 import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
-import { type EntityAdapter, type LocalItem, type RemoteItem } from "../syncEngine";
+import {
+  canonicalFromShadow,
+  isShadowFilename,
+  shadowFilename,
+  type EntityAdapter,
+  type LocalItem,
+  type RemoteItem,
+} from "../syncEngine";
 
 const DIR = "knowledge-base";
 
-/// `runbook.md` → `runbook.server.md`. Matches the long-standing convention
-/// in kbSync; kept identical so existing UI helpers (buildKbConflictPrompt
-/// etc.) keep working without reformatting.
-export function kbServerShadowFilename(filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  if (dot <= 0 || dot === filename.length - 1) return `${filename}.server`;
-  return `${filename.slice(0, dot)}.server.${filename.slice(dot + 1)}`;
-}
-
-function isShadow(filename: string): boolean {
-  return filename.includes(".server.");
-}
-
-/// `runbook.server.md` → `runbook.md`. Inverse of kbServerShadowFilename.
-/// Used by listLocal so shadows share their canonical sibling's manifestKey
-/// — otherwise the engine's "does a shadow already exist?" check (keyed
-/// off the canonical name) never matches, and the shadow gets re-written
-/// every poll cycle.
-function canonicalFromShadow(filename: string): string {
-  const marker = ".server.";
-  const i = filename.indexOf(marker);
-  if (i < 0) return filename;
-  return `${filename.slice(0, i)}.${filename.slice(i + marker.length)}`;
-}
+/// Backward-compat alias. `kbSync.buildKbConflictPrompt` imports this name;
+/// keeping it as an alias avoids touching that public-facing helper.
+export const kbServerShadowFilename = shadowFilename;
 
 export function kbAdapter(args: {
   creds: PinkfishCreds;
@@ -81,7 +67,7 @@ export function kbAdapter(args: {
     async listLocal(repo) {
       const files = await kbListLocal(repo);
       const out: LocalItem[] = files.map((f) => {
-        const shadow = isShadow(f.filename);
+        const shadow = isShadowFilename(f.filename);
         return {
           // Shadow files key off the canonical filename so the engine's
           // "does a shadow already exist for this remote item?" check
@@ -100,7 +86,7 @@ export function kbAdapter(args: {
     /// (drop manifest entry only) preserves user data; KB intentionally
     /// trusts the server as authoritative for files it tracks.
     async onServerDelete({ repo, manifestKey, manifest, touched }) {
-      if (isShadow(manifestKey)) return true; // engine should ignore shadows
+      if (isShadowFilename(manifestKey)) return true; // engine should ignore shadows
       // If the file isn't on disk, just drop the manifest entry — nothing
       // to delete. Skip the default branch by returning true.
       const local = await kbListLocal(repo);

@@ -14,6 +14,43 @@ import { gitCommitPaths, type KbStatePersisted } from "./api";
 
 export type Manifest = KbStatePersisted;
 
+// ---------------------------------------------------------------------------
+// Shared shadow-filename helpers. Single source of truth for the
+// `<base>.server.<ext>` convention used by every text/binary entity.
+// Datastore uses a fixed `.json` extension so it doesn't call these
+// directly — but it tests with the same `isShadowFilename` check.
+//
+// Centralised here because the entire premise of this refactor is
+// eliminating duplicated logic that drifts independently. Three byte-
+// for-byte copies of these helpers across the adapters would be exactly
+// the class of bug the engine was designed to prevent.
+// ---------------------------------------------------------------------------
+
+const SHADOW_MARKER = ".server.";
+
+/// `runbook.md` → `runbook.server.md`. Returned filename keeps the
+/// extension so downstream tooling (mime detection, viewers, etc.) still
+/// recognises the format.
+export function shadowFilename(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  if (dot <= 0 || dot === filename.length - 1) return `${filename}.server`;
+  return `${filename.slice(0, dot)}.server.${filename.slice(dot + 1)}`;
+}
+
+/// `runbook.server.md` → `runbook.md`. Inverse of shadowFilename.
+export function canonicalFromShadow(filename: string): string {
+  const i = filename.indexOf(SHADOW_MARKER);
+  if (i < 0) return filename;
+  return `${filename.slice(0, i)}.${filename.slice(i + SHADOW_MARKER.length)}`;
+}
+
+/// True for `<base>.server.<ext>` shadow files (and any path/name that
+/// contains the shadow marker — adapters use this on raw filenames, not
+/// on full working-tree paths).
+export function isShadowFilename(filename: string): boolean {
+  return filename.includes(SHADOW_MARKER);
+}
+
 export type RemoteItem = {
   /// Key under `manifest.files` (often equals workingTreePath, but datastore
   /// uses `<collectionName>/<key>` so the mapping is adapter-specific).

@@ -25,7 +25,13 @@ import {
 } from "../api";
 import { type DataCollection, type MemoryItem } from "../skillsApi";
 import { type PinkfishCreds } from "../pinkfishAuth";
-import { type EntityAdapter, type LocalItem, type RemoteItem } from "../syncEngine";
+import {
+  isShadowFilename,
+  shadowFilename,
+  type EntityAdapter,
+  type LocalItem,
+  type RemoteItem,
+} from "../syncEngine";
 import { fetchDatastoreItems } from "./datastoreApi";
 
 const PAGE = 1000;
@@ -42,13 +48,7 @@ function rowKey(item: MemoryItem): string {
   return (item.key ?? item.id ?? "").toString();
 }
 
-function shadowFilename(key: string): string {
-  return `${key}.server.json`;
-}
-
-function isShadow(filename: string): boolean {
-  return filename.includes(".server.");
-}
+// shadow naming + detection both live in syncEngine.ts; imported above.
 
 function rowContent(item: MemoryItem): string {
   return typeof item.content === "object"
@@ -97,7 +97,7 @@ export function datastoreAdapter(args: {
               fetchAndWrite: (repo) =>
                 entityWriteFile(repo, subdir, filename, rowContent(item)),
               writeShadow: (repo) =>
-                entityWriteFile(repo, subdir, shadowFilename(key), rowContent(item)),
+                entityWriteFile(repo, subdir, shadowFilename(filename), rowContent(item)),
             });
           }
           const hasMore = resp.pagination?.hasNextPage === true;
@@ -132,7 +132,7 @@ export function datastoreAdapter(args: {
           // shadows). Strip the suffix and any `.server` segment to recover
           // the raw key for the manifest lookup.
           const base = f.filename.replace(/\.json$/, "");
-          const isShadowFile = isShadow(f.filename);
+          const isShadowFile = isShadowFilename(f.filename);
           const key = isShadowFile ? base.replace(/\.server$/, "") : base;
           out.push({
             manifestKey: manifestKey(col.name, key),
