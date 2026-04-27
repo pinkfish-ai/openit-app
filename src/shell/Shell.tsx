@@ -171,6 +171,34 @@ export function Shell({
     };
   }, [repo]);
 
+  // Re-resolve conversation views when the filesystem changes. The
+  // conversations-list reads ticket files for subject/status (so a
+  // ticket status flip from "incoming" → "open" should refresh the
+  // pill). The conversation-thread view reads each message file (so
+  // a new turn from Claude should append to the bubbles). Both are
+  // computed at click time in entityRouting; without this effect they
+  // stay frozen at the snapshot.
+  useEffect(() => {
+    if (!repo || !source || fsTick === 0) return;
+    const isConversation =
+      source.kind === "conversations-list" ||
+      source.kind === "conversation-thread";
+    if (!isConversation) return;
+    const path =
+      source.kind === "conversations-list"
+        ? `${repo}/databases/conversations`
+        : `${repo}/databases/conversations/${source.ticketId}`;
+    let cancelled = false;
+    resolvePathToSource(path, repo)
+      .then((s) => {
+        if (!cancelled) setSource(s);
+      })
+      .catch((e) => console.warn("[shell] conversation re-resolve failed:", e));
+    return () => {
+      cancelled = true;
+    };
+  }, [fsTick, repo, source]);
+
   // First-load auto-open of welcome (only when nothing else is loaded yet).
   useEffect(() => {
     if (repo && !source) {
