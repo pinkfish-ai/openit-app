@@ -38,10 +38,10 @@
       "id": "status",
       "label": "Status",
       "type": "enum",
-      "values": ["incoming", "agent-responding", "escalated", "resolved", "closed"],
+      "values": ["incoming", "agent-responding", "open", "escalated", "resolved", "closed"],
       "required": true,
       "default": "incoming",
-      "comment": "incoming = just landed, agent hasn't run (transient). agent-responding = claude -p subprocess running; admin sees an activity banner. resolved = answered (either by agent KB hit or by admin completing). escalated = agent gave up; escalated banner fires. closed = no further action."
+      "comment": "Lifecycle states: incoming = just landed, server hasn't kicked off the agent yet (transient). agent-responding = claude -p subprocess actively running this turn — admin sees the activity banner ONLY in this state. open = agent finished its turn (KB hit, answered the asker), conversation alive but the agent is idle waiting for the asker's next message; no banner. escalated = KB miss / agent gave up — escalated banner fires for the admin. resolved = the asker's question has been fully answered and the conversation is done (set by admin or by an explicit confirmation flow). closed = no further action; archived."
     },
     {
       "id": "priority",

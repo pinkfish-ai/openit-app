@@ -146,6 +146,7 @@ export async function syncSkillsToDisk(
     let skillCount = 0;
     let fileCount = 0;
     const bubbleCount = (manifest.bubbles ?? []).length;
+    const writtenPaths: string[] = [];
 
     for (const file of manifest.files) {
       try {
@@ -168,10 +169,36 @@ export async function syncSkillsToDisk(
           filename: route.filename,
           content,
         });
-        console.log(`[skillsSync] Synced ${file.path} → ${route.subdir}/${route.filename}`);
+        const relPath = route.subdir ? `${route.subdir}/${route.filename}` : route.filename;
+        // Skip paths that .gitignore rejects (.claude/, CLAUDE.md). Passing
+        // them to `git add` is fatal — git refuses the entire add list with
+        // "paths are ignored by one of your .gitignore files", which then
+        // blocks the auto-commit of the non-ignored siblings.
+        const isGitignored =
+          relPath.startsWith(".claude/") ||
+          relPath === "CLAUDE.md" ||
+          relPath.startsWith(".openit/");
+        if (!isGitignored) writtenPaths.push(relPath);
+        console.log(`[skillsSync] Synced ${file.path} → ${relPath}`);
       } catch (err) {
         console.warn(`[skillsSync] Failed to sync ${file.path}:`, err);
         onLog?.(`  ✗ ${file.path}: ${err}`);
+      }
+    }
+
+    // Roll the synced files into a commit so a fresh bootstrap doesn't
+    // surface bundled scaffolding as "untracked changes" in the Deploy
+    // panel. git_commit_paths is a no-op when nothing in `paths` has
+    // changed, so this stays clean on subsequent re-syncs.
+    if (writtenPaths.length > 0) {
+      try {
+        await invoke("git_commit_paths", {
+          repo,
+          paths: writtenPaths,
+          message: "init: bundled plugin",
+        });
+      } catch (err) {
+        console.warn("[skillsSync] commit of bundled plugin failed:", err);
       }
     }
 

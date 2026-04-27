@@ -92,7 +92,11 @@ function prettyName(
   if (rel.match(/^(agents|workflows)\/[^/]+\.json$/)) {
     return name.replace(/\.json$/, "");
   }
-  // Row file: databases/<col>/<key>.json
+  // Row file: databases/<col>/<key>.json. Try a schema-picked display
+  // field first (email for people, case number for tickets, etc.); if
+  // anything in that lookup fails, fall through to the bare row key
+  // (filename without `.json`) — never the raw filename, since `.json`
+  // is implementation noise the user doesn't think of as part of the id.
   const rowMatch = rel.match(/^databases\/([^/]+)\/([^/]+)\.json$/);
   if (rowMatch && rowMatch[2] !== "_schema" && !name.includes(".server.")) {
     const colName = rowMatch[1];
@@ -113,6 +117,19 @@ function prettyName(
         }
       }
     }
+    return rowKey;
+  }
+  // Conversation message: databases/conversations/<ticketId>/msg-*.json.
+  // The filename is `msg-<unix-ms>-<rand>.json`; the user thinks of these
+  // as messages, not files, so drop the .json. (We keep the msg- prefix
+  // and timestamp because they sort the explorer list usefully.)
+  if (rel.match(/^databases\/conversations\/[^/]+\/.+\.json$/) && !name.includes(".server.")) {
+    return name.replace(/\.json$/, "");
+  }
+  // Knowledge-base markdown articles — same logic as agents/workflows:
+  // the .md is implementation noise; users think of them by title.
+  if (rel.match(/^knowledge-base\/[^/]+\.(md|markdown)$/)) {
+    return name.replace(/\.(md|markdown)$/, "");
   }
   return name;
 }
@@ -565,12 +582,23 @@ export function FileExplorer({
                 if (n.is_dir) {
                   toggle(n.path);
                   // Open viewer for:
+                  //   - top-level `databases/` parent → databases-list
+                  //     (collections overview with empty state)
                   //   - top-level datastore dirs (databases/<col>/) → table
                   //   - conversation thread subfolders
                   //     (databases/conversations/<ticketId>/) → chat thread
+                  //   - top-level entity dirs (agents, workflows,
+                  //     knowledge-base, filestore) → entity-folder view
+                  //     so empty folders show a friendly notice instead
+                  //     of nothing.
                   if (
+                    rel === "databases" ||
                     rel.match(/^databases\/[^/]+$/) ||
-                    rel.match(/^databases\/conversations\/[^/]+$/)
+                    rel.match(/^databases\/conversations\/[^/]+$/) ||
+                    rel === "agents" ||
+                    rel === "workflows" ||
+                    rel === "knowledge-base" ||
+                    rel === "filestore"
                   ) {
                     onSelect(n.path);
                   }

@@ -44,4 +44,23 @@ export type ViewerSource =
   | { kind: "workflow"; workflow: Workflow }
   | { kind: "conversation-thread"; ticketId: string; turns: ConversationTurn[] }
   | { kind: "conversations-list"; threads: ConversationThreadSummary[] }
+  // Top-level entity folder (agents/, workflows/, knowledge-base/, filestore/).
+  // Carries the files inside so the viewer can either show a list or a
+  // friendly empty-state notice — the same affordance the conversations-
+  // list provides for the databases/conversations folder.
+  | {
+      kind: "entity-folder";
+      entity: "agents" | "workflows" | "knowledge-base" | "filestore";
+      // displayName drops the file extension and falls back to the
+      // entity's own `name` field when readable (agents/workflows JSON);
+      // description is the entity's `description` field, or the first
+      // markdown heading for knowledge-base, or empty for filestore.
+      files: { name: string; displayName: string; description: string; path: string }[];
+    }
+  // Top-level `databases/` directory. Each collection is its own
+  // subfolder (databases/<col>/) — the parent view shows them as cards
+  // with item counts and routes clicks to the per-collection viewer
+  // (datastore-table or conversations-list, whichever the child
+  // resolver picks up).
+  | { kind: "databases-list"; collections: { name: string; path: string; itemCount: number; hasSchema: boolean }[] }
   | null;

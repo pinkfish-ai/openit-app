@@ -2257,6 +2257,132 @@ body,
   width: 100%;
 }
 
+/* Top-level entity folder list (agents/, workflows/, knowledge-base/,
+   filestore/). Card-style rows mirror the databases-list / thread-card
+   layout so the three list views feel like siblings. */
+.entity-folder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.entity-folder-list li {
+  margin: 0;
+}
+
+.entity-folder-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  background: var(--card-bg, #fafafa);
+  border: 1px solid var(--border-subtle, #eee);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+.entity-folder-item:hover {
+  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
+  border-color: var(--border, #ddd);
+}
+
+.entity-folder-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.entity-folder-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  /* Cap at two lines so a long description doesn't push other cards
+     way down. The full text is still visible via the title attribute. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Top-level databases overview — one card per collection. Mirrors the
+   thread-card layout so the two list views feel like siblings. */
+.databases-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.databases-list li {
+  margin: 0;
+}
+
+.databases-list-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--card-bg, #fafafa);
+  border: 1px solid var(--border-subtle, #eee);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+
+.databases-list-item:hover {
+  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
+  border-color: var(--border, #ddd);
+}
+
+.databases-list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.databases-list-name {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.databases-list-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.databases-list-meta {
+  margin-top: 4px;
+  display: flex;
+  gap: 6px;
+}
+
+.databases-list-tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--tag-bg, rgba(0, 0, 0, 0.04));
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.databases-list-tag-warn {
+  color: var(--warn-text, #a85b00);
+  background: var(--warn-bg, rgba(255, 170, 50, 0.15));
+}
+
 .summary-table th,
 .summary-table td {
   border: 1px solid var(--border);

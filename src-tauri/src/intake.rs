@@ -362,13 +362,13 @@ async fn chat_turn(
     };
 
     // Parse the agent's status marker out of stdout. Contract: the
-    // agent's last non-empty line is `<<STATUS:resolved>>` /
-    // `<<STATUS:escalated>>` / `<<STATUS:clarifying>>`. Server strips
-    // the marker before writing the reply turn, and uses it as the
-    // authoritative status decision (no more agent free-Edit'ing the
-    // ticket status field, which raced against `ensure_responding_stub`
-    // and the post-turn safety net). Missing marker → escalated, so
-    // a malformed agent run still surfaces to the admin.
+    // agent's last non-empty line is `<<STATUS:answered>>` (KB hit)
+    // or `<<STATUS:escalated>>` (KB miss). `resolved` is accepted as
+    // a legacy alias for `answered`. Server strips the marker before
+    // writing the reply turn and uses the parsed outcome as the
+    // authoritative decision (no agent free-Edit'ing of the ticket
+    // status field, which raced against `ensure_responding_stub` and
+    // the post-turn safety net). Missing marker → escalated.
     let (reply_body, decided_status) = parse_status_marker(&reply);
 
     // Persist the assistant reply to the in-memory history.
@@ -389,18 +389,31 @@ async fn chat_turn(
     // status marker — so the server controls sender + role + body.
     let _ = write_agent_turn(&repo, &ticket_id, &reply_body).await;
 
-    // Apply the agent's decision. `Clarifying` is a no-op: the ticket
-    // is already at `agent-responding` (set by ensure_responding_stub
-    // at the top of this turn) and we want it to stay there until a
-    // future turn decides resolved/escalated.
+    // Apply the agent's decision. Two valid outcomes:
+    //   Answered  → ticket status `open` (KB hit; conversation alive,
+    //               waiting for the asker's next message; no banner).
+    //   Escalated → ticket status `escalated` (KB miss; admin banner).
+    // Either way the ticket exits `agent-responding`, so the activity
+    // banner is visible only during the ~3-5s claude -p window —
+    // never after the turn completes.
+    //
+    // Note: `resolved` is intentionally NOT set by the agent. That
+    // status means the case is end-to-end done (asker's issue fixed,
+    // admin marks closed) and only an admin / explicit confirmation
+    // flow should set it. Treating each KB-hit answer as `resolved`
+    // would mislabel ongoing conversations as closed.
+    //
+    // The Clarifying variant is kept for backwards compatibility with
+    // any in-flight legacy skill; treating it as Escalated is the safe
+    // fallback so the admin gets visibility and the ticket can't pin
+    // the banner.
     match decided_status {
-        DecidedStatus::Resolved => {
-            let _ = mark_status(&repo, &ticket_id, "resolved").await;
+        DecidedStatus::Answered => {
+            let _ = mark_status(&repo, &ticket_id, "open").await;
         }
-        DecidedStatus::Escalated => {
+        DecidedStatus::Escalated | DecidedStatus::Clarifying => {
             let _ = mark_status(&repo, &ticket_id, "escalated").await;
         }
-        DecidedStatus::Clarifying => {}
     }
 
     // Read status from disk for the response payload.
@@ -643,18 +656,40 @@ fn build_chat_prompt(
          agent-side Edit will race against the server and may be \
          clobbered.\n\n\
          Your job: (1) read the ticket + conversation history for \
-         context, (2) run kb-search if the message warrants it, (3) \
-         decide one of `resolved` (confident answer, KB hit), \
-         `escalated` (KB miss or needs a human), or `clarifying` \
-         (you're asking the user for more info before deciding), \
-         (4) output your reply to the user, then (5) end with a \
-         status marker on its own line: `<<STATUS:resolved>>`, \
-         `<<STATUS:escalated>>`, or `<<STATUS:clarifying>>`.\n\n\
+         context, (2) run `Bash node .claude/scripts/kb-search.mjs \
+         \"<query>\"` to search the local knowledge base — pass a \
+         compact query that captures the user's current question, \
+         (3) decide one of exactly two outcomes — `answered` (KB \
+         had a relevant article and you replied from it) or \
+         `escalated` (KB had no relevant match, or the question \
+         needs a human), (4) output your reply to the user, then \
+         (5) end with a status marker on its own line: \
+         `<<STATUS:answered>>` or `<<STATUS:escalated>>`.\n\n\
+         The marker reflects your *turn outcome*, not the case \
+         lifecycle. `answered` means you answered THIS turn — the \
+         server flips the ticket to `open` (conversation alive, no \
+         banner) and the asker may follow up. Multiple answered \
+         turns in a row is normal for ongoing back-and-forth. Only \
+         an admin (or an explicit confirmation flow) sets the \
+         terminal `resolved` status; do NOT emit `<<STATUS:resolved>>` \
+         even though it's accepted as a legacy alias.\n\n\
+         CRITICAL: do NOT ask the user a follow-up question. There \
+         is no \"clarifying\" outcome. If you can't answer from the \
+         KB on the information you already have, escalate — the \
+         admin will ask the asker any follow-ups themselves. Asking \
+         the user another question instead of escalating leaves the \
+         ticket stuck and frustrates the user.\n\n\
          The reply is what the user sees in the chat — conversational, \
-         no file paths, no status narration, no meta-commentary. The \
-         server strips the marker line before writing the turn. \
-         Missing or malformed marker → defaults to escalated, so the \
-         admin still sees the ticket.",
+         no file paths, no status narration, no meta-commentary. \
+         Plain text only: no markdown formatting (no `**bold**`, no \
+         `*italics*`, no `# headings`, no `- bullet lists`, no fenced \
+         code blocks, no tables). The chat surface renders raw text \
+         and so will the eventual Slack/Teams ingest, so markdown \
+         shows through as literal asterisks and pound signs. If you \
+         need to enumerate steps, use plain numbers (`1. `, `2. `) in \
+         normal sentences. The server strips the marker line before \
+         writing the turn. Missing or malformed marker → defaults to \
+         escalated, so the admin still sees the ticket.",
     );
     prompt
 }
@@ -905,24 +940,34 @@ fn evict_idle_sessions(sessions: &mut HashMap<String, SessionData>) {
     }
 }
 
-/// The agent's per-turn status decision, parsed out of stdout.
+/// The agent's per-turn outcome, parsed out of stdout. Note: this is
+/// the agent's *intent* for the turn, not the final ticket status.
+/// `Answered` maps to ticket status `open` (KB hit, conversation
+/// alive), `Escalated` maps to `escalated`. The `Clarifying` variant
+/// is kept only for backwards compatibility with any in-flight legacy
+/// skill — it is treated as Escalated so the banner clears and the
+/// admin gets visibility instead of leaving the ticket stuck.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DecidedStatus {
-    /// KB hit — the agent answered confidently.
-    Resolved,
-    /// KB miss / can't help — admin needs to respond.
+    /// KB hit — the agent answered. Ticket → `open`.
+    Answered,
+    /// KB miss / can't help — admin needs to respond. Ticket → `escalated`.
     Escalated,
-    /// Agent asked for more info; ticket stays at agent-responding.
+    /// Legacy: agent asked for clarification. Treated as Escalated by
+    /// the dispatcher so a stale skill doesn't pin the banner.
     Clarifying,
 }
 
 /// Parse the agent's status marker out of its stdout. Contract:
-/// the marker is `<<STATUS:resolved>>` / `<<STATUS:escalated>>` /
-/// `<<STATUS:clarifying>>` somewhere in the output (typically last
-/// line). Returns the body with ALL marker spans stripped, plus the
-/// status from the LAST marker (the agent's final decision wins).
-/// Missing or unrecognized marker → Escalated, so the admin always
-/// gets visibility on a malformed agent run.
+/// the marker is `<<STATUS:answered>>` (KB hit) or
+/// `<<STATUS:escalated>>` (KB miss) somewhere in the output
+/// (typically last line). `<<STATUS:resolved>>` is accepted as a
+/// legacy alias for `answered` since older skills used it; the
+/// dispatcher above maps both to ticket status `open`. Returns the
+/// body with ALL marker spans stripped, plus the status from the
+/// LAST marker (the agent's final decision wins). Missing or
+/// unrecognized marker → Escalated, so the admin always gets
+/// visibility on a malformed agent run.
 fn parse_status_marker(raw: &str) -> (String, DecidedStatus) {
     let spans = regex_lite_find_all(raw);
     if spans.is_empty() {
@@ -961,7 +1006,11 @@ fn regex_lite_find_all(s: &str) -> Vec<(DecidedStatus, usize, usize)> {
         let close = after_open + rel_close;
         let value = s[after_open..close].trim().to_ascii_lowercase();
         let status = match value.as_str() {
-            "resolved" => Some(DecidedStatus::Resolved),
+            // `answered` is the canonical KB-hit marker. `resolved`
+            // is the pre-rename alias kept for any unsynced skill on
+            // an older repo; both produce the same DecidedStatus and
+            // the dispatcher maps it to ticket status `open`.
+            "answered" | "resolved" => Some(DecidedStatus::Answered),
             "escalated" => Some(DecidedStatus::Escalated),
             "clarifying" => Some(DecidedStatus::Clarifying),
             _ => None,
@@ -1528,11 +1577,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_resolved_marker() {
-        let raw = "Per our VPN guide, click Reset.\n\n<<STATUS:resolved>>";
+    fn parses_answered_marker() {
+        let raw = "Per our VPN guide, click Reset.\n\n<<STATUS:answered>>";
         let (body, status) = parse_status_marker(raw);
-        assert_eq!(status, DecidedStatus::Resolved);
+        assert_eq!(status, DecidedStatus::Answered);
         assert_eq!(body, "Per our VPN guide, click Reset.");
+    }
+
+    #[test]
+    fn legacy_resolved_marker_maps_to_answered() {
+        // Older skills emit `resolved`; the parser accepts it as an
+        // alias so the dispatcher can still flip the ticket to `open`.
+        let raw = "Per our VPN guide, click Reset.\n\n<<STATUS:resolved>>";
+        let (_body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Answered);
     }
 
     #[test]
@@ -1545,6 +1603,8 @@ mod tests {
 
     #[test]
     fn parses_clarifying_marker() {
+        // Legacy variant — kept so older skills still parse, but the
+        // dispatcher treats it the same as Escalated.
         let raw = "Which system do you mean?\n\n<<STATUS:clarifying>>";
         let (body, status) = parse_status_marker(raw);
         assert_eq!(status, DecidedStatus::Clarifying);
@@ -1570,9 +1630,9 @@ mod tests {
     fn last_marker_wins_when_multiple_present() {
         // The agent might mention an earlier status inline; the final
         // marker is the authoritative decision.
-        let raw = "I considered <<STATUS:clarifying>> but actually:\n\nHere's the answer.\n<<STATUS:resolved>>";
+        let raw = "I considered <<STATUS:clarifying>> but actually:\n\nHere's the answer.\n<<STATUS:answered>>";
         let (body, status) = parse_status_marker(raw);
-        assert_eq!(status, DecidedStatus::Resolved);
+        assert_eq!(status, DecidedStatus::Answered);
         assert!(body.contains("Here's the answer"));
         // Both markers stripped.
         assert!(!body.contains("<<STATUS:"));
@@ -1580,9 +1640,9 @@ mod tests {
 
     #[test]
     fn marker_with_surrounding_whitespace() {
-        let raw = "answer\n<<STATUS: resolved >>";
+        let raw = "answer\n<<STATUS: answered >>";
         let (_body, status) = parse_status_marker(raw);
-        assert_eq!(status, DecidedStatus::Resolved);
+        assert_eq!(status, DecidedStatus::Answered);
     }
 
     #[test]

@@ -61,18 +61,27 @@ function tokenize(s) {
 /// Word-overlap score: weighted fraction of distinct query tokens
 /// that appear in the doc. Range 0..1. Filename hits weight 2x body
 /// hits because a token in `how-to-reset-vpn.md`'s name is much more
-/// meaningful than the same token buried in body noise — the prior
-/// version concatenated the filename twice into the search string,
-/// which did nothing because `String.includes` is boolean. Cheap,
-/// no IDF — fine for V1.
+/// meaningful than the same token buried in body noise. Cheap, no
+/// IDF — fine for V1.
+///
+/// Each token is matched twice: against the raw lowercased text, and
+/// against a punctuation-stripped "dense" form. The dense pass exists
+/// because real queries lose to boundary mismatches: a user typing
+/// `cant login` against an article that reads `if you can't log in`
+/// gets zero overlap with raw `.includes` (the apostrophe blocks
+/// `cant`, the space blocks `login`). Stripping non-alphanumerics
+/// from both sides closes the gap without exploding false positives.
 function score(queryTokens, filename, body) {
   if (queryTokens.length === 0) return 0;
   const filenameLower = filename.toLowerCase();
+  const filenameDense = filenameLower.replace(/[^a-z0-9]/g, "");
   const bodyLower = body.toLowerCase();
+  const bodyDense = bodyLower.replace(/[^a-z0-9]/g, "");
   let weightedHits = 0;
   for (const tok of queryTokens) {
-    const inName = filenameLower.includes(tok);
-    const inBody = bodyLower.includes(tok);
+    const inName =
+      filenameLower.includes(tok) || filenameDense.includes(tok);
+    const inBody = bodyLower.includes(tok) || bodyDense.includes(tok);
     if (inName) weightedHits += 1.0;
     else if (inBody) weightedHits += 0.5;
   }

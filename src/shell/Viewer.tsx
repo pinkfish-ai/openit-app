@@ -22,6 +22,37 @@ import type { ViewerSource } from "./types";
 
 export type { ViewerSource };
 
+/// Title labels for the entity-folder view. Capital case for the title
+/// bar; the explorer rows use the lowercase folder names directly.
+const ENTITY_FOLDER_LABELS: Record<"agents" | "workflows" | "knowledge-base" | "filestore", string> = {
+  agents: "Agents",
+  workflows: "Workflows",
+  "knowledge-base": "Knowledge base",
+  filestore: "Filestore",
+};
+
+/// Singular noun for the count pill in the title — "3 agents", "1 file".
+const ENTITY_FOLDER_NOUN: Record<"agents" | "workflows" | "knowledge-base" | "filestore", string> = {
+  agents: "agent",
+  workflows: "workflow",
+  "knowledge-base": "article",
+  filestore: "file",
+};
+
+/// Friendly empty-state copy per top-level entity folder, mirroring the
+/// conversations-list notice. Each message says what lives here, why it
+/// is empty, and the natural way to populate it.
+const ENTITY_FOLDER_EMPTY_COPY: Record<"agents" | "workflows" | "knowledge-base" | "filestore", string> = {
+  agents:
+    "No agents yet. Agents are reusable Claude prompts (triage, onboarding, audits) that drive the workflows in this project. Ask Claude in the chat — \"draft an agent that triages tickets by urgency\" — and it will scaffold one here.",
+  workflows:
+    "No workflows yet. Workflows orchestrate agents and connections to automate IT work end-to-end. Ask Claude — \"build a workflow that escalates SLA breaches\" — and it will land a workflow file here.",
+  "knowledge-base":
+    "No knowledge-base articles yet. This is where runbooks and reference docs live — Claude reads them when answering tickets. Drop in markdown files, or ask Claude to draft one (\"write a runbook for resetting a Slack workspace owner\").",
+  filestore:
+    "No files yet. Drag any file into this folder (PDFs, screenshots, logs) and Claude can reference them when answering tickets or building workflows.",
+};
+
 /// Anchor tag override for ReactMarkdown rendering. Three URL shapes
 /// are routed:
 ///
@@ -286,6 +317,16 @@ export function Viewer({
       setContent("");
       return;
     }
+    if (source.kind === "entity-folder") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
+    if (source.kind === "databases-list") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
   }, [source]);
 
   // Re-read the single-row file from disk when fsTick fires. Lets edits
@@ -372,6 +413,15 @@ export function Viewer({
       case "workflow": return source.workflow?.name ?? "Workflow";
       case "conversation-thread": return `Conversation — ${source.ticketId}`;
       case "conversations-list": return `Conversations — ${source.threads.length} thread${source.threads.length === 1 ? "" : "s"}`;
+      case "entity-folder": {
+        const label = ENTITY_FOLDER_LABELS[source.entity];
+        const noun = ENTITY_FOLDER_NOUN[source.entity];
+        return `${label} — ${source.files.length} ${noun}${source.files.length === 1 ? "" : "s"}`;
+      }
+      case "databases-list": {
+        const n = source.collections.length;
+        return `Databases — ${n} collection${n === 1 ? "" : "s"}`;
+      }
       default: return "";
     }
   };
@@ -452,6 +502,25 @@ export function Viewer({
     if (source.kind === "datastore-table") {
       if (tableLoading && tableItems.length === 0) {
         return <div className="viewer-content" style={{ opacity: 0.5 }}>Loading table data...</div>;
+      }
+      // Friendly empty-state — mirrors the conversations-list notice so
+      // an empty `databases/<col>/` folder reads as "ready to receive
+      // rows" rather than a broken table. Tickets and people are the
+      // built-in collections; user-created collections share the same
+      // generic copy.
+      if (tableItems.length === 0) {
+        const colName = source.collection.name;
+        const message =
+          colName === "tickets"
+            ? "No tickets yet. Tickets land here when someone files one via the Intake form (top-right header) — share that URL on your machine and the new rows show up immediately."
+            : colName === "people"
+              ? "No people records yet. People rows are referenced by tickets (asker, assignee) and access audits. Ask Claude — \"add Alice from Engineering\" — or sync a directory once you connect to cloud."
+              : `No rows in "${colName}" yet. Add one by editing the JSON files on disk under databases/${colName}/, or ask Claude to populate this collection.`;
+        return (
+          <div className="viewer-summary">
+            <p className="summary-desc">{message}</p>
+          </div>
+        );
       }
       return (
         <DataTable
@@ -622,6 +691,102 @@ export function Viewer({
               </div>
             </button>
           ))}
+        </div>
+      );
+    }
+
+    // Top-level `databases/` parent. Each subfolder is a collection
+    // with its own row format (datastore-table for tickets/people,
+    // conversations-list for conversations). The parent view here
+    // surfaces an at-a-glance overview — name, item count, schema
+    // status — so the user sees the shape of their data without
+    // expanding every folder. Click a card → onOpenPath routes into
+    // the per-collection viewer.
+    if (source.kind === "databases-list") {
+      if (source.collections.length === 0) {
+        return (
+          <div className="viewer-summary">
+            <p className="summary-desc">
+              No collections yet. Collections are JSON-backed tables that hold tickets,
+              people, conversations, and any custom entities you create. Ask Claude —
+              <em> "create a collection for inventory items"</em> — and it will scaffold
+              one under <code>databases/</code> with a starter schema.
+            </p>
+          </div>
+        );
+      }
+      return (
+        <div className="viewer-summary">
+          <p className="summary-desc">
+            One row per collection. Click a card to open its rows; the schema lives in
+            <code> _schema.json</code> inside each folder.
+          </p>
+          <ul className="databases-list">
+            {source.collections.map((c) => (
+              <li key={c.path}>
+                <button
+                  type="button"
+                  className="databases-list-item"
+                  onClick={() => {
+                    if (onOpenPath) void onOpenPath(c.path);
+                  }}
+                  title={`Open ${c.name}`}
+                >
+                  <div className="databases-list-row">
+                    <span className="databases-list-name">{c.name}</span>
+                    <span className="databases-list-count">
+                      {c.itemCount} {c.name === "conversations" ? "thread" : "row"}{c.itemCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div className="databases-list-meta">
+                    <span className="databases-list-tag">
+                      {c.hasSchema ? "schema" : "schema-less"}
+                    </span>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    }
+
+    // Generic top-level entity folder (agents/, workflows/, knowledge-
+    // base/, filestore/). Empty → friendly notice, same affordance the
+    // conversations-list provides. Non-empty → simple file list whose
+    // entries route through onOpenPath so per-file viewers (agent /
+    // workflow / file) take over on click.
+    if (source.kind === "entity-folder") {
+      if (source.files.length === 0) {
+        return (
+          <div className="viewer-summary">
+            <p className="summary-desc">{ENTITY_FOLDER_EMPTY_COPY[source.entity]}</p>
+          </div>
+        );
+      }
+      return (
+        <div className="viewer-summary">
+          <ul className="entity-folder-list">
+            {source.files.map((f) => (
+              <li key={f.path}>
+                <button
+                  type="button"
+                  className="entity-folder-item"
+                  onClick={() => {
+                    if (onOpenPath) void onOpenPath(f.path);
+                  }}
+                  // Surface the full description on hover for long
+                  // strings the line-clamp truncates.
+                  title={f.description ? `${f.displayName} — ${f.description}` : `Open ${f.name}`}
+                >
+                  <span className="entity-folder-name">{f.displayName}</span>
+                  {f.description && (
+                    <span className="entity-folder-desc">{f.description}</span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       );
     }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   entityWriteFile,
@@ -200,26 +200,48 @@ export function Shell({
   // a new turn from Claude should append to the bubbles). Both are
   // computed at click time in entityRouting; without this effect they
   // stay frozen at the snapshot.
+  // Stash `source` in a ref so the fs-tick re-resolver below can read
+  // the current value without subscribing to it. Without this, every
+  // re-resolve produces a new source object, the effect's `source` dep
+  // re-fires, the resolver kicks off again — an infinite loop that
+  // also raced with click-driven setSource calls and made viewer
+  // updates feel flaky ("opens/closes but doesn't always show").
+  const sourceRef = useRef<ViewerSource>(source);
   useEffect(() => {
-    if (!repo || !source || fsTick === 0) return;
+    sourceRef.current = source;
+  }, [source]);
+
+  useEffect(() => {
+    if (!repo || fsTick === 0) return;
+    const current = sourceRef.current;
+    if (!current) return;
     const isConversation =
-      source.kind === "conversations-list" ||
-      source.kind === "conversation-thread";
-    if (!isConversation) return;
+      current.kind === "conversations-list" ||
+      current.kind === "conversation-thread";
+    const isEntityFolder = current.kind === "entity-folder";
+    const isDatabasesList = current.kind === "databases-list";
+    if (!isConversation && !isEntityFolder && !isDatabasesList) return;
     const path =
-      source.kind === "conversations-list"
+      current.kind === "conversations-list"
         ? `${repo}/databases/conversations`
-        : `${repo}/databases/conversations/${source.ticketId}`;
+        : current.kind === "conversation-thread"
+          ? `${repo}/databases/conversations/${current.ticketId}`
+          : current.kind === "entity-folder"
+            ? `${repo}/${current.entity}`
+            : current.kind === "databases-list"
+              ? `${repo}/databases`
+              : "";
+    if (!path) return;
     let cancelled = false;
     resolvePathToSource(path, repo)
       .then((s) => {
         if (!cancelled) setSource(s);
       })
-      .catch((e) => console.warn("[shell] conversation re-resolve failed:", e));
+      .catch((e) => console.warn("[shell] re-resolve failed:", e));
     return () => {
       cancelled = true;
     };
-  }, [fsTick, repo, source]);
+  }, [fsTick, repo]);
 
   // First-load auto-open of welcome (only when nothing else is loaded yet).
   useEffect(() => {
