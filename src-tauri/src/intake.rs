@@ -73,6 +73,10 @@ struct RunningServer {
 #[derive(Clone)]
 struct SessionData {
     ticket_id: String,
+    /// Email captured from the gate form before chat starts. Always
+    /// present (validated at /chat/start). Passed to the agent on
+    /// every turn so it doesn't have to ask.
+    email: String,
     history: Vec<ChatMessage>,
 }
 
@@ -193,6 +197,11 @@ async fn serve_chat() -> Html<&'static str> {
 // /chat/start — allocate session + ticketId.
 // ---------------------------------------------------------------------------
 
+#[derive(Deserialize)]
+struct ChatStartReq {
+    email: String,
+}
+
 #[derive(Serialize)]
 struct ChatStartResp {
     session_id: String,
@@ -202,9 +211,14 @@ struct ChatStartResp {
 async fn chat_start(
     State(state): State<ServerState>,
     headers: HeaderMap,
+    Json(req): Json<ChatStartReq>,
 ) -> Response {
     if !origin_is_localhost(&headers) {
         return (StatusCode::FORBIDDEN, "cross-origin not allowed").into_response();
+    }
+    let email = req.email.trim();
+    if email.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "a valid email is required").into_response();
     }
 
     let session_id = Uuid::new_v4().to_string();
@@ -219,6 +233,7 @@ async fn chat_start(
         session_id.clone(),
         SessionData {
             ticket_id: ticket_id.clone(),
+            email: email.to_string(),
             history: Vec::new(),
         },
     );
@@ -268,13 +283,14 @@ async fn chat_turn(
 
     // Snapshot the session for this turn. Done with the lock held;
     // released before we spawn `claude -p` (which can take seconds).
-    let (ticket_id, history_before, repo) = {
+    let (ticket_id, email, history_before, repo) = {
         let sessions = state.sessions.lock().await;
         let Some(session) = sessions.get(&req.session_id) else {
             return (StatusCode::NOT_FOUND, "unknown session").into_response();
         };
         (
             session.ticket_id.clone(),
+            session.email.clone(),
             session.history.clone(),
             state.repo.clone(),
         )
@@ -303,7 +319,7 @@ async fn chat_turn(
     // Build the prompt and run claude -p. This is the slow part
     // (~3-5s per turn). The skill is auto-loaded by Claude based on
     // the cwd's .claude/skills/ directory.
-    let prompt = build_chat_prompt(&agent_instructions, &history, &ticket_id);
+    let prompt = build_chat_prompt(&agent_instructions, &history, &ticket_id, &email);
     let reply_result = spawn_claude_chat(&repo, &model, &prompt).await;
 
     let reply = match reply_result {
@@ -501,9 +517,14 @@ async fn load_triage_agent(repo: &PathBuf) -> (String, String) {
 }
 
 /// Compose the prompt for `claude -p`. Format: agent persona, then
-/// the conversation history rendered as USER/ASSISTANT lines, then
-/// the operational context (ticket id, skill hint).
-fn build_chat_prompt(persona: &str, history: &[ChatMessage], ticket_id: &str) -> String {
+/// the operational context (ticket id, asker email, skill hint),
+/// then the conversation history rendered as USER/ASSISTANT lines.
+fn build_chat_prompt(
+    persona: &str,
+    history: &[ChatMessage],
+    ticket_id: &str,
+    asker_email: &str,
+) -> String {
     let mut prompt = String::new();
     prompt.push_str(persona);
     prompt.push_str("\n\n");
@@ -514,6 +535,14 @@ fn build_chat_prompt(persona: &str, history: &[ChatMessage], ticket_id: &str) ->
          `Bash node .claude/scripts/kb-search.mjs \"<query>\"` to find \
          relevant knowledge-base articles.\n\n",
     );
+    prompt.push_str(&format!(
+        "The asker's email is `{}` — captured in the gate form before \
+         this chat started. You already have it; do NOT ask the user \
+         for it again. Use this email as the `asker` and `sender` \
+         field on the ticket and on conversation turns from the \
+         asker, and as the key for the people row.\n\n",
+        asker_email
+    ));
     prompt.push_str(&format!(
         "The ticket id for this conversation is `{}`. Always use this \
          exact id when writing the ticket file at \
@@ -542,12 +571,19 @@ fn build_chat_prompt(persona: &str, history: &[ChatMessage], ticket_id: &str) ->
 /// Spawn `claude -p` with the prompt on stdin. Returns the trimmed
 /// stdout as the agent's reply. Stderr is captured but not surfaced
 /// to the user (logged for forensics).
+///
+/// Resolves the `claude` binary via `which` because Tauri-spawned
+/// subprocesses don't always inherit the user's full shell PATH —
+/// dev mode and .app launches may only see `/usr/bin:/bin`. Same
+/// pattern as `claude_generate_commit_message`.
 async fn spawn_claude_chat(
     repo: &PathBuf,
     model: &str,
     prompt: &str,
 ) -> Result<String, String> {
-    let mut child = TokioCommand::new("claude")
+    let claude_path = which::which("claude")
+        .map_err(|_| "Claude CLI not found on PATH. Install claude (see https://docs.anthropic.com/claude/docs/claude-code) and ensure it's reachable from this app.".to_string())?;
+    let mut child = TokioCommand::new(&claude_path)
         .arg("-p")
         .arg("--output-format")
         .arg("text")
@@ -721,6 +757,52 @@ const CHAT_HTML: &str = r#"<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OpenIT — Help Desk</title>
 <style>
+.gate {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+.gate form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  max-width: 420px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.gate h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.gate p { margin: 0; color: var(--text-muted); font-size: 13px; }
+.gate label {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.gate input[type=email] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.gate button {
+  margin-top: 8px;
+}
+.gate-error {
+  color: #c0392b;
+  font-size: 12px;
+  margin: 0;
+}
+</style>
+<style>
 :root {
   --bg: #faf9f6;
   --surface: #ffffff;
@@ -839,15 +921,31 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   <h1>OpenIT — Help Desk</h1>
   <p>Describe your issue. The agent will try to help, or escalate to a human.</p>
 </header>
-<div class="status-banner" id="banner"></div>
-<div id="chat"></div>
-<form id="form">
+
+<!-- Gate: collect email before starting the chat. Hidden once the
+     session is created. -->
+<div class="gate" id="gate">
+  <form id="gateForm">
+    <h2>Before we start</h2>
+    <p>What's your email? The IT admin uses this to follow up if your question needs a human.</p>
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required>
+    <p class="gate-error" id="gateError"></p>
+    <button type="submit">Start chat</button>
+  </form>
+</div>
+
+<!-- Chat surface — hidden until the gate is satisfied. -->
+<div class="status-banner" id="banner" hidden></div>
+<div id="chat" hidden></div>
+<form id="form" hidden>
   <input id="msg" type="text" placeholder="Type your message…" autocomplete="off" required>
   <button type="submit" id="send">Send</button>
 </form>
 <script>
 let sessionId = null;
 let ticketId = null;
+let userEmail = null;
 let lastSeen = '';
 let pollTimer = null;
 const seenTurnKeys = new Set();
@@ -856,6 +954,10 @@ const form = document.getElementById('form');
 const input = document.getElementById('msg');
 const sendBtn = document.getElementById('send');
 const banner = document.getElementById('banner');
+const gate = document.getElementById('gate');
+const gateForm = document.getElementById('gateForm');
+const emailInput = document.getElementById('email');
+const gateError = document.getElementById('gateError');
 
 function bubble(role, body, sender) {
   const el = document.createElement('div');
@@ -897,11 +999,26 @@ function setBanner(status) {
   }
 }
 
-async function start() {
-  const r = await fetch('/chat/start', { method: 'POST' });
+async function start(email) {
+  const r = await fetch('/chat/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(txt || 'failed to start session');
+  }
   const j = await r.json();
   sessionId = j.session_id;
   ticketId = j.ticket_id;
+  userEmail = email;
+  // Hide the gate, show the chat surface.
+  gate.hidden = true;
+  chat.hidden = false;
+  form.hidden = false;
+  banner.hidden = false;
+  input.focus();
   startPolling();
 }
 
@@ -965,8 +1082,19 @@ form.addEventListener('submit', async (e) => {
   }
 });
 
-start().catch((e) => {
-  bubble('assistant', '⚠ Could not start chat session: ' + e.message);
+gateForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  gateError.textContent = '';
+  const email = emailInput.value.trim();
+  if (!email || !email.includes('@')) {
+    gateError.textContent = 'Please enter a valid email address.';
+    return;
+  }
+  try {
+    await start(email);
+  } catch (err) {
+    gateError.textContent = err.message || 'Could not start chat session.';
+  }
 });
 </script>
 </body>
