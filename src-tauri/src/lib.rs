@@ -11,6 +11,7 @@ mod project;
 mod pty;
 mod reports;
 mod skills;
+mod slack;
 mod state;
 mod watcher;
 
@@ -34,6 +35,7 @@ pub fn run() {
         .manage(pty::PtyState::default())
         .manage(watcher::WatcherState::default())
         .manage(intake::IntakeState::default())
+        .manage(slack::SlackSupervisorState::default())
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_write,
@@ -106,6 +108,13 @@ pub fn run() {
             intake::intake_start,
             intake::intake_stop,
             intake::intake_url,
+            slack::slack_connect,
+            slack::slack_disconnect,
+            slack::slack_config_read,
+            slack::slack_listener_start,
+            slack::slack_listener_stop,
+            slack::slack_listener_status,
+            slack::slack_listener_send_intro,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
