@@ -41,7 +41,14 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
              Open the intake page and ask a question to test it — \
              *\"I can't log in\"*, *\"how do I reset my VPN\"*, anything. The \
              agent will answer or flag it for you.\n\n\
-             [**Open the intake page**]({{INTAKE_URL}})\n";
+             [**Open the intake page**]({{INTAKE_URL}})\n\n\
+             ## Making the intake page public\n\n\
+             Right now your intake URL only works on this machine. \
+             Connecting OpenIT to Pinkfish (the cloud companion) gets you \
+             a stable public URL anyone can use, plus channel ingest \
+             (Slack/Teams/email → tickets), always-on agents, and \
+             multi-device sync.\n\n\
+             [**Connect to Cloud**](openit://skill/connect-to-cloud)\n";
         let welcome = welcome.to_string();
         fs::write(path.join("_welcome.md"), welcome)
             .map_err(|e| format!("could not write README: {}", e))?;

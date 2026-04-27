@@ -11,19 +11,53 @@ import { PdfViewer } from "./viewers/PdfViewer";
 import { SpreadsheetViewer } from "./viewers/SpreadsheetViewer";
 import { OfficeViewer } from "./viewers/OfficeViewer";
 import { writeToActiveSession } from "./activeSession";
+
+/// Pasting a slash command into the active Claude PTY uses bracketed-
+/// paste sequences so the terminal treats it as a single atomic input,
+/// not as the user typing key-by-key. Same pattern as the
+/// EscalatedTicketBanner.
+const BRACKETED_PASTE_OPEN = "\x1b[200~";
+const BRACKETED_PASTE_CLOSE = "\x1b[201~";
 import type { ViewerSource } from "./types";
 
 export type { ViewerSource };
 
-/// Anchor tag override for ReactMarkdown rendering. External links
-/// (http/https) open in the user's default browser via Tauri's
-/// `openUrl` plugin instead of navigating the in-app webview, which
-/// otherwise would replace the OpenIT shell with the linked page.
+/// Anchor tag override for ReactMarkdown rendering. Three URL shapes
+/// are routed:
+///
+/// - `openit://skill/<name>` → pastes `/<name>` into the active Claude
+///   PTY, kicking off that skill conversationally. Used by the welcome
+///   doc's "Connect to Cloud" CTA. Future: support args via query
+///   string.
+/// - `http(s)://...` → opens in the user's default browser via Tauri's
+///   `openUrl` plugin so the in-app webview isn't replaced by the
+///   linked page.
+/// - Anything else → renders as a normal `<a>` (in-page anchors,
+///   `mailto:`, etc.).
 function ExternalAnchor({
   href,
   children,
   ...rest
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+  if (href && href.startsWith("openit://skill/")) {
+    const skillName = href.slice("openit://skill/".length).split("?")[0];
+    return (
+      <a
+        href={href}
+        onClick={(e) => {
+          e.preventDefault();
+          const cmd = `/${skillName}`;
+          const wrapped = `${BRACKETED_PASTE_OPEN}${cmd}${BRACKETED_PASTE_CLOSE}`;
+          writeToActiveSession(wrapped).catch((err) =>
+            console.warn("[viewer] paste-to-Claude failed:", err),
+          );
+        }}
+        {...rest}
+      >
+        {children}
+      </a>
+    );
+  }
   const isExternal = !!href && /^https?:\/\//i.test(href);
   if (!isExternal) {
     return (

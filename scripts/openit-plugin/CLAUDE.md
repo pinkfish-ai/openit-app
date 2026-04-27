@@ -76,6 +76,7 @@ Naming convention: skills prefixed with **`ai-`** are agent-facing — auto-load
 |---|---|---|
 | `ai-intake` | Agent (claude -p) | Auto-loaded per chat-intake turn. The user opens the localhost chat URL, asks a question; the server invokes this skill to KB-search and decide answer-vs-escalate. Not normally invoked by hand. |
 | `answer-ticket` | Admin (desktop) | The user (or the escalated-ticket banner) hands you tickets needing a human reply. Walks the response loop and captures the answer as a KB article — "answer once". |
+| `connect-to-cloud` | Admin (desktop) | The user wants to connect this project to Pinkfish (cloud companion) — for public intake URL, channel ingest, multi-device sync, always-on agents. Conversational walkthrough: one step at a time, confirm, advance. |
 | `resolve-sync-conflict` | Admin (desktop) | The conflict banner hands you sync conflicts (cloud mode only). Per-conflict merge + resolve-script call + optional push. |
 | `deploy` | Admin (desktop) | Push current local state to Pinkfish. Cloud-connected only. |
 

@@ -1,5 +1,5 @@
 {
-  "version": "2026-04-27-007",
+  "version": "2026-04-27-008",
   "bubbles": [
     { "label": "Answer ticket", "skill": "/answer-ticket" }
   ],
@@ -7,6 +7,7 @@
     { "path": "CLAUDE.md" },
     { "path": "skills/ai-intake.md" },
     { "path": "skills/answer-ticket.md" },
+    { "path": "skills/connect-to-cloud.md" },
     { "path": "schemas/tickets._schema.json" },
     { "path": "schemas/people._schema.json" },
     { "path": "agents/triage.template.json" },
