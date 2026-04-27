@@ -630,4 +630,23 @@ mod tests {
             .expect("post");
         assert!(resp.status().is_success(), "status: {}", resp.status());
     }
+
+    #[tokio::test]
+    async fn post_with_ipv6_loopback_origin_is_accepted() {
+        // Round-2 BugBot finding: an earlier version of the check
+        // matched url.host_str() against bare "::1", but for IPv6
+        // host_str returns the bracketed form. Using Url::host() with
+        // stdlib is_loopback covers both. Lock the IPv6 acceptance in.
+        let (base, _dir) = spawn_test_server().await;
+        let port = base.rsplit(':').next().expect("port");
+        let ipv6_origin = format!("http://[::1]:{}", port);
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", ipv6_origin)
+            .form(&[("question", "x")])
+            .send()
+            .await
+            .expect("post");
+        assert!(resp.status().is_success(), "status: {}", resp.status());
+    }
 }
