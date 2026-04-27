@@ -26,6 +26,15 @@ import {
 // user-created KB folders aren't synced yet.
 const DIR = "knowledge-bases/default";
 
+/// Prefix shared by the KB adapter (pull path), the push lock,
+/// and `clearConflictsForPrefix` calls. Hoisted to a single
+/// constant so push / pull / conflict-clear all serialize on the
+/// same `${prefix}:${repo}` lock and operate on the same conflict
+/// scope. Drift here was the BugBot finding on the rename PR —
+/// push held the old `"kb"` lock while pull held the new
+/// `"knowledge-bases/default"` lock, breaking serialization.
+export const KB_SYNC_PREFIX = "knowledge-bases/default";
+
 /// Backward-compat alias. `kbSync.buildKbConflictPrompt` imports this name;
 /// keeping it as an alias avoids touching that public-facing helper.
 export const kbServerShadowFilename = shadowFilename;
@@ -36,7 +45,7 @@ export function kbAdapter(args: {
 }): EntityAdapter {
   const { creds, collection } = args;
   return {
-    prefix: "knowledge-bases/default",
+    prefix: KB_SYNC_PREFIX,
 
     loadManifest: (repo) => kbStateLoad(repo),
     saveManifest: (repo, m) => kbStateSave(repo, m),

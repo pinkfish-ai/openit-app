@@ -363,14 +363,7 @@ async fn chat_turn(
             }
         })
         .collect();
-    let _ = ensure_responding_stub(
-        &repo,
-        &ticket_id,
-        &email,
-        trimmed,
-        &valid_attachments,
-    )
-    .await;
+    let _ = ensure_responding_stub(&repo, &ticket_id, &email, trimmed, &valid_attachments).await;
 
     // Append the user's message to the in-memory history before
     // invoking the agent so the prompt contains it.

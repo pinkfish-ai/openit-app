@@ -24,7 +24,7 @@ import {
 } from "./api";
 import { resolveProjectKb, type KbCollection } from "./kb";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
-import { kbAdapter, kbServerShadowFilename } from "./entities/kb";
+import { KB_SYNC_PREFIX, kbAdapter, kbServerShadowFilename } from "./entities/kb";
 import {
   canonicalFromShadow,
   classifyAsShadow,
@@ -255,7 +255,10 @@ export function stopKbSync() {
     stopPoll = null;
   }
   update({ phase: "idle", collection: null, conflicts: [], lastError: null });
-  clearConflictsForPrefix("kb");
+  // Must use the same prefix the adapter registers conflicts under
+  // (`knowledge-bases/default` post-2026-04-27 rename) — otherwise
+  // stale KB conflicts would persist in the aggregated banner.
+  clearConflictsForPrefix(KB_SYNC_PREFIX);
 }
 
 /// Run a single pull (e.g. immediately before a push). Public wrapper.
@@ -292,7 +295,10 @@ export async function pushAllToKb(args: {
   collection: KbCollection;
   onLine?: (msg: string) => void;
 }): Promise<{ pushed: number; failed: number }> {
-  return withRepoLock(args.repo, "kb", () => pushAllToKbInner(args));
+  // Must match the kbAdapter's prefix so push and pull share the
+  // same `${prefix}:${repo}` lock. With drift, the 60s pull poller
+  // could race the push and corrupt the manifest / fetch order.
+  return withRepoLock(args.repo, KB_SYNC_PREFIX, () => pushAllToKbInner(args));
 }
 
 async function pushAllToKbInner(args: {
