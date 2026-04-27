@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
-import { projectBootstrap, stateLoad, stateSave } from "./lib/api";
+import { fsRead, projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
@@ -26,14 +26,35 @@ const DEFAULT_BUBBLES: PromptBubble[] = [
 const LOCAL_ORG_ID = "local";
 const LOCAL_ORG_NAME = "OpenIT (local)";
 
-// Dev escape-hatch: when set, behave as if no creds even if dev-env creds
-// exist. Lets a dev exercise the local-only path without clearing the
-// keychain.
-const FORCE_LOCAL_ONLY = import.meta.env.VITE_DEV_LOCAL_ONLY === "true";
+// `VITE_DEV_LOCAL_ONLY=true` (the local-only escape hatch) is honored
+// inside `loadCreds()` — every caller (this file, Shell.tsx push
+// handler, sync engines) sees the flag take effect uniformly.
 
 function basename(p: string): string {
   const parts = p.split("/").filter((s) => s.length > 0);
   return parts[parts.length - 1] ?? p;
+}
+
+/// Has the bundled plugin been synced into this project? Checks for the
+/// triage agent file as a sentinel — written by `syncSkillsToDisk` from
+/// the bundled `agents/openit-triage.template.json`. Used to decide
+/// whether to (re)run the bundle sync.
+///
+/// Why this sentinel rather than `projectBootstrap.created`: bootstrap
+/// creates the dir before `git_ensure_repo` runs. If git init fails,
+/// the throw skips `stateSave` and `syncSkillsToDisk` — but the dir
+/// exists. On retry, `created: false`, and the old `freshBootstrap`
+/// heuristic would permanently skip the sync, leaving the user with an
+/// empty folder. Checking the sentinel file makes the sync idempotent
+/// and self-healing.
+async function bundledFilesAreOnDisk(repo: string): Promise<boolean> {
+  const slug = basename(repo);
+  try {
+    await fsRead(`${repo}/agents/openit-triage-${slug}.json`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubble[] {
@@ -92,18 +113,13 @@ function App() {
 
   useEffect(() => {
     Promise.all([stateLoad(), startAuth(), loadCreds()])
-      .then(async ([s, _token, rawCreds]) => {
+      .then(async ([s, _token, creds]) => {
         // Repos created before we moved out of ~/Documents are stale — TCC blocks
         // fs/git ops there. Discard so we re-bootstrap into the new ~/OpenIT/ root.
         const stale = s.last_repo?.includes("/Documents/OpenIT/") ?? false;
         const lastRepo = stale ? null : s.last_repo;
         if (stale) {
           console.log("[app] discarding legacy ~/Documents/OpenIT/ last_repo — connect via modal to bootstrap into ~/OpenIT/");
-        }
-        // Honor the dev local-only flag by treating creds as absent.
-        const creds = FORCE_LOCAL_ONLY ? null : rawCreds;
-        if (FORCE_LOCAL_ONLY && rawCreds) {
-          console.log("[app] VITE_DEV_LOCAL_ONLY set — ignoring stored creds");
         }
         console.log("[app] startup state:", {
           hasRepo: !!lastRepo,
@@ -112,7 +128,7 @@ function App() {
           localOnly: !creds,
         });
         setRepo(lastRepo);
-        setSavedCreds(rawCreds);
+        setSavedCreds(creds);
 
         const finish = () => setLoaded(true);
 
@@ -169,7 +185,6 @@ function App() {
           // fresh local folder so a user who disconnected doesn't lose
           // access to their existing data.
           let projectPath: string;
-          let freshBootstrap = false;
           if (lastRepo) {
             projectPath = lastRepo;
           } else {
@@ -178,7 +193,6 @@ function App() {
               orgId: LOCAL_ORG_ID,
             });
             projectPath = result.path;
-            freshBootstrap = result.created;
             await stateSave({
               last_repo: projectPath,
               pane_sizes: s.pane_sizes ?? null,
@@ -188,11 +202,14 @@ function App() {
           }
           setRepo(projectPath);
           setBypassOnboarding(true);
-          // Sync the bundled plugin only on fresh bootstrap. On relaunch
-          // we trust whatever's already on disk so user edits to skills /
-          // agents / schemas survive across launches. Plugin upgrades are
-          // a Phase 3b concern (versioning + diff prompt).
-          if (freshBootstrap) {
+          // Sync the bundled plugin if the sentinel triage agent file
+          // isn't on disk yet. Self-healing on retry: a partial first-
+          // run (e.g. git init failing after the dir was created) leaves
+          // the sentinel missing, so the next launch resyncs. User edits
+          // to skills/agents/schemas survive across launches because the
+          // sentinel exists. Plugin *upgrades* (newer bundle than what's
+          // on disk) are a Phase 3b concern — versioning + diff prompt.
+          if (!(await bundledFilesAreOnDisk(projectPath))) {
             syncSkillsToDisk(projectPath, null)
               .then((manifest) => {
                 console.log("[app] bundled skill sync complete, bubbles:", manifest.bubbles);
