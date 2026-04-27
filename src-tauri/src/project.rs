@@ -34,9 +34,14 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
         let welcome = "# Welcome to OpenIT\n\n\
              ## The idea\n\n\
              Describe IT work in plain English and Claude builds it for you — triage tickets, onboard new hires, audit access, write runbooks. Everything lands as a regular file in this folder: agents, workflows, ticket data, knowledge articles. You own it, it versions cleanly, and it stays useful even outside this app.\n\n\
-             ## Getting started\n\n\
-             The bubbles below the chat (right pane) are good starting points. Click one, or just type a request.\n\n\
-             Share the **Intake** URL in the header with your team — submitted tickets land in `databases/tickets/` and the banner up top will surface them for triage.\n\n\
+             ## Try it in 30 seconds\n\n\
+             1. **Click the Intake button** in the top-right of the header. It opens a ticket-submission form in your browser.\n\
+             2. Fill in a name + a question (anything — *\"VPN broken\"*, *\"can't access GitHub\"*) and submit.\n\
+             3. Watch the green banner appear above the file explorer — that's the new ticket.\n\
+             4. Click **Triage in Claude** on the banner. Claude reads the row, drafts a reply, and updates the status.\n\n\
+             That's the loop. Share the Intake URL with anyone on your machine and they can file tickets the same way.\n\n\
+             ## Other starting points\n\n\
+             The bubbles below the chat (right pane) are quick entry points. Click one, or just type a request.\n\n\
              ## A few things to try\n\n\
              - **Triage today's tickets.** Claude reads `databases/tickets/`, groups by urgency, and suggests next actions for each.\n\n\
              - **Onboard a new hire** — *\"Onboard Alice in Engineering.\"* Claude creates the people record, drafts a welcome email, queues access requests.\n\n\
