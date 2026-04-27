@@ -25,5 +25,9 @@ dist-ssr
 *.sln
 *.sw?
 
-# Dev credentials (keychain bypass)
+# Dev credentials (keychain bypass) — also catch .disabled / .bak renames
+# so a "rename aside" doesn't accidentally commit creds.
 .env.development
+.env*.disabled
+.env*.bak
+.env*.bak.*

@@ -154,7 +154,11 @@ export function Onboarding({
   }, [authOpen]);
 
   const claudeReady = typeof claudePath === "string" && claudePath !== null;
-  const canContinue = pinkfishConnected;
+  // Continue is always enabled now: local-only is a valid end state, so
+  // "Continue without Pinkfish" should bring the user into the shell
+  // (Phase 3a's local bootstrap). The label changes when not connected
+  // so the user understands they're skipping the cloud upgrade.
+  const canContinue = true;
   const chatConnected = chat.slack !== null || chat.teams !== null;
 
   return (
@@ -272,9 +276,13 @@ export function Onboarding({
             className="deploy-btn"
             onClick={onContinue}
             disabled={!canContinue}
-            title={canContinue ? "" : "Connect Pinkfish to continue"}
+            title={
+              pinkfishConnected
+                ? ""
+                : "Continue without Pinkfish — your project stays local"
+            }
           >
-            Continue
+            {pinkfishConnected ? "Continue" : "Continue without Pinkfish"}
           </button>
           {!pinkfishConnected && (
             <button
