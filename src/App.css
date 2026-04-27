@@ -859,7 +859,7 @@ body,
   margin-left: auto;
 }
 
-/* Wrapper around the thread bubbles + a top toolbar. */
+/* Wrapper around the thread bubbles. */
 .viewer-thread-wrapper {
   display: flex;
   flex-direction: column;
@@ -867,27 +867,24 @@ body,
   min-height: 0;
 }
 
-.viewer-thread-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-  flex: 0 0 auto;
-}
-
+/* Small Add-to-Claude button rendered inline in the viewer header
+   for the conversation-thread source. Sized to match the View / Raw
+   tabs so it visually belongs in that row. */
 .viewer-add-btn {
-  font-size: 12px;
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
   background: transparent;
+  border: 1px solid transparent;
   color: var(--text-muted);
+  border-radius: 5px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: -apple-system, sans-serif;
   cursor: pointer;
 }
 
 .viewer-add-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--surface-soft);
+  color: var(--text);
+  border-color: var(--border);
 }
 
 /* Conversation thread: chat-style bubbles for messages under

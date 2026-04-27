@@ -516,26 +516,12 @@ export function Viewer({
     }
 
     // Conversation thread — chat-style bubbles, ordered by timestamp.
+    // The Add-to-Claude affordance is rendered inline with the title
+    // up in the viewer-header (see below) — keeping this body clean.
     if (source.kind === "conversation-thread") {
       const turns = source.turns;
-      const threadPath = `${repo}/databases/conversations/${source.ticketId}`;
-      const onAddToClaude = () => {
-        writeToActiveSession(threadPath + " ").catch((e) =>
-          console.warn("[viewer] add-to-claude failed:", e),
-        );
-      };
       return (
         <div className="viewer-thread-wrapper">
-          <div className="viewer-thread-toolbar">
-            <button
-              type="button"
-              className="viewer-add-btn"
-              onClick={onAddToClaude}
-              title="Reference this conversation in Claude (pastes the thread path into the chat)"
-            >
-              Add to Claude
-            </button>
-          </div>
           {turns.length === 0 ? (
             <div className="viewer-summary">
               <p className="summary-desc">No turns logged yet for this thread.</p>
@@ -574,6 +560,21 @@ export function Viewer({
     <div className="viewer">
       <div className="viewer-header">
         <span className="viewer-title">{title}</span>
+        {source && source.kind === "conversation-thread" && (
+          <button
+            type="button"
+            className="viewer-add-btn"
+            onClick={() => {
+              const path = `${repo}/databases/conversations/${source.ticketId}`;
+              writeToActiveSession(path + " ").catch((e) =>
+                console.warn("[viewer] add-to-claude failed:", e),
+              );
+            }}
+            title="Reference this conversation in Claude"
+          >
+            Add to Claude
+          </button>
+        )}
         {showFileTabs && (
           <div className="viewer-tabs" role="tablist">
             <button
