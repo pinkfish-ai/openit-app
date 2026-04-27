@@ -30,7 +30,8 @@ import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
 import { ChatPane } from "./ChatPane";
 import { ConflictBanner } from "./ConflictBanner";
 import { FileExplorer } from "./FileExplorer";
-import { IncomingTicketBanner } from "./IncomingTicketBanner";
+import { EscalatedTicketBanner } from "./EscalatedTicketBanner";
+import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
 import { Viewer, type ViewerSource } from "./Viewer";
@@ -410,7 +411,8 @@ export function Shell({
   return (
     <div className="shell">
       <ConflictBanner />
-      <IncomingTicketBanner repo={repo} fsTick={fsTick} />
+      <AgentActivityBanner repo={repo} fsTick={fsTick} />
+      <EscalatedTicketBanner repo={repo} fsTick={fsTick} />
       <PanelGroup
         direction="horizontal"
         autoSaveId="openit-shell"

@@ -1,28 +1,25 @@
-// Local-mode incoming-ticket banner. Pinned to the top of the shell
-// (just below the conflict banner) whenever any ticket row has
-// `status: "incoming"`. Click "Triage in Claude" → pastes a /triage
-// invocation referencing the queued ticket files into the active
-// Claude PTY.
+// Banner for tickets the agent escalated — admin must handle. Pinned
+// near the top of the shell (just below the conflict banner). Click
+// "Answer ticket" → pastes an /answer-ticket invocation referencing
+// the queued ticket files into the active Claude PTY, where the
+// admin can draft a reply with Claude's help.
 //
 // Driven by fs-tick: the parent Shell's fs watcher bumps `fsTick` on
-// every change under the project root, which re-scans the
-// openit-tickets-* dirs and refreshes the banner. The watcher already
-// covers row writes (admin's `Write` from chat, the localhost intake
-// form's POST handler, cloud channel ingest), so no separate event
-// source is needed.
+// every change under the project root, which re-scans `databases/
+// tickets/` for `status: "escalated"`. No separate event source.
 
 import { useEffect, useState } from "react";
-import { scanIncomingTickets, type IncomingTicket } from "../lib/incomingTickets";
+import { scanEscalatedTickets, type TicketSummary } from "../lib/escalatedTickets";
 import { writeToActiveSession } from "./activeSession";
 
-export function IncomingTicketBanner({
+export function EscalatedTicketBanner({
   repo,
   fsTick,
 }: {
   repo: string | null;
   fsTick: number;
 }) {
-  const [tickets, setTickets] = useState<IncomingTicket[]>([]);
+  const [tickets, setTickets] = useState<TicketSummary[]>([]);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
@@ -32,13 +29,13 @@ export function IncomingTicketBanner({
       return;
     }
     let cancelled = false;
-    scanIncomingTickets(repo)
+    scanEscalatedTickets(repo)
       .then((rows) => {
         if (!cancelled) setTickets(rows);
       })
       .catch((e) => {
         if (!cancelled) {
-          console.warn("[incoming-banner] scan failed:", e);
+          console.warn("[escalated-banner] scan failed:", e);
           setTickets([]);
         }
       });
@@ -48,8 +45,7 @@ export function IncomingTicketBanner({
   }, [repo, fsTick]);
 
   // Stable key from the ticket set so a new ticket re-shows the banner
-  // even after the user dismissed a prior set. Same pattern as
-  // ConflictBanner.
+  // even after the user dismissed a prior set.
   const ticketKey = tickets.map((t) => t.relPath).sort().join("|");
 
   if (tickets.length === 0) return null;
@@ -59,35 +55,27 @@ export function IncomingTicketBanner({
   const others = tickets.length - 1;
   const subjectLabel = first.subject || first.relPath.split("/").pop() || first.relPath;
 
-  const onTriage = async () => {
+  const onAnswer = async () => {
     if (sending) return;
     setSending(true);
     try {
-      // Compose a /triage invocation that references the queued ticket
-      // file(s) by repo-relative path. The triage skill (Phase 1) reads
-      // those files, picks up subject/asker/description, and walks the
-      // log → search → answer/escalate flow, flipping each row's status
-      // out of "incoming" when done.
+      // The agent already triaged — its asker turn + escalation reply
+      // are in the conversation thread. The admin's job: read the
+      // thread, draft a reply, log it.
       const lines: string[] = [];
       lines.push(
         tickets.length === 1
-          ? `/triage incoming ticket: ${first.relPath}`
-          : `/triage ${tickets.length} incoming tickets:`,
+          ? `/answer-ticket ${first.relPath}`
+          : `/answer-ticket ${tickets.length} escalated tickets:`,
       );
       if (tickets.length > 1) {
         for (const t of tickets) lines.push(`  - ${t.relPath}`);
       }
-      lines.push("");
-      lines.push(
-        "Read each file, then run the triage flow on the row: log a conversation turn capturing the asker's question, search the knowledge base, answer if confident or escalate if not, and update the row's status. Do not invent answers.",
-      );
       const prompt = lines.join("\n");
-      // Bracketed-paste so the multi-line invocation lands as a single
-      // composed message (matches ConflictBanner's pattern).
       const wrapped = `\x1b[200~${prompt}\x1b[201~`;
       await writeToActiveSession(wrapped);
     } catch (e) {
-      console.error("[incoming-banner] paste-to-Claude failed:", e);
+      console.error("[escalated-banner] paste-to-Claude failed:", e);
     } finally {
       setTimeout(() => setSending(false), 500);
     }
@@ -99,24 +87,24 @@ export function IncomingTicketBanner({
         ✎
       </span>
       <span className="incoming-ticket-banner-text">
-        {tickets.length} new ticket{tickets.length === 1 ? "" : "s"} —{" "}
+        {tickets.length} ticket{tickets.length === 1 ? "" : "s"} need{tickets.length === 1 ? "s" : ""} your help —{" "}
         <strong>{subjectLabel}</strong>
         {others > 0 ? ` and ${others} other${others === 1 ? "" : "s"}` : ""}.
       </span>
       <button
         type="button"
         className="incoming-ticket-banner-action"
-        onClick={onTriage}
+        onClick={onAnswer}
         disabled={sending}
-        title="Send the queued tickets to Claude for triage"
+        title="Open the queued tickets with Claude to draft a response"
       >
-        {sending ? "Sending…" : "Triage in Claude"}
+        {sending ? "Sending…" : "Answer ticket"}
       </button>
       <button
         type="button"
         className="incoming-ticket-banner-dismiss"
         onClick={() => setDismissedKey(ticketKey)}
-        title="Hide until a new ticket arrives"
+        title="Hide until a new ticket escalates"
       >
         Dismiss
       </button>
