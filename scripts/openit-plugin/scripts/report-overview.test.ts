@@ -189,4 +189,28 @@ describe("report-overview.mjs", () => {
     const entries = await readdir(path.join(tmpDir, "reports"));
     expect(entries.some((e) => e.endsWith("-overview.md"))).toBe(true);
   });
+
+  it("escapes pipe characters in free-form ticket fields", async () => {
+    await writeTicket("t-1", {
+      // Subject and asker both carry literal pipes that would
+      // otherwise break the markdown table column count.
+      subject: "Outage | P1: VPN down",
+      asker: "alice|bob@example.com",
+      status: "escalated",
+      createdAt: new Date().toISOString(),
+    });
+
+    const md = await readReportFromResult((await runScript()).stdout);
+    expect(md).toContain("Outage \\| P1: VPN down");
+    expect(md).toContain("alice\\|bob@example.com");
+    // The "Currently escalated" row should have exactly the expected
+    // column count — three pipes as separators plus the leading and
+    // trailing pipes for four total.
+    const escalatedRow = md
+      .split("\n")
+      .find((l) => l.includes("Outage"));
+    expect(escalatedRow).toBeDefined();
+    const unescapedPipes = (escalatedRow ?? "").replace(/\\\|/g, "").match(/\|/g) ?? [];
+    expect(unescapedPipes.length).toBe(4);
+  });
 });

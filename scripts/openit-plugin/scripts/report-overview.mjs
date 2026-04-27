@@ -186,10 +186,22 @@ function activityWindow(tickets, days, now) {
   return { created, resolved, escalated };
 }
 
+/// Escape characters that would break a GFM table cell. Pipes are
+/// the structural separator and must be backslash-escaped; raw
+/// newlines split a row. Matters for free-form ticket fields
+/// (subject, asker) that flow straight from user input — a subject
+/// like "Outage | P1: VPN down" otherwise produces a row with the
+/// wrong column count and a visibly broken table.
+function escapeTableCell(s) {
+  return String(s).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
 function renderTable(headers, rows) {
-  const head = `| ${headers.join(" | ")} |`;
+  const head = `| ${headers.map(escapeTableCell).join(" | ")} |`;
   const sep = `| ${headers.map(() => "---").join(" | ")} |`;
-  const body = rows.map((r) => `| ${r.join(" | ")} |`).join("\n");
+  const body = rows
+    .map((r) => `| ${r.map(escapeTableCell).join(" | ")} |`)
+    .join("\n");
   return [head, sep, body].join("\n");
 }
 
