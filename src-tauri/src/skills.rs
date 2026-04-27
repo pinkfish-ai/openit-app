@@ -112,7 +112,7 @@ fn sanitize_bundled_relpath(rel: &str) -> Result<String, String> {
     // anchors any result inside the bundle, but normalizing here closes
     // the defense-in-depth gap on Windows where a `\foo` prefix would
     // otherwise pass through unstripped.
-    let trimmed = rel.trim_start_matches(|c| c == '/' || c == '\\');
+    let trimmed = rel.trim_start_matches(['/', '\\']);
     let candidate = PathBuf::from(trimmed);
     if candidate.is_absolute()
         || candidate
@@ -223,11 +223,7 @@ fn extract_env_root(app_api_url: &str) -> Result<String, String> {
     let host = url.host_str().ok_or_else(|| "No host in URL".to_string())?;
 
     // Replace "app-api." prefix if present
-    let env_host = if host.starts_with("app-api.") {
-        &host[8..] // Skip "app-api."
-    } else {
-        host
-    };
+    let env_host = host.strip_prefix("app-api.").unwrap_or(host);
 
     Ok(format!("{}://{}", url.scheme(), env_host))
 }

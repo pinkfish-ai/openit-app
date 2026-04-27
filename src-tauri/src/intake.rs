@@ -32,7 +32,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -553,7 +553,7 @@ async fn chat_poll(
 /// Read `agents/triage.json` for the persona instructions + selected
 /// model. Falls back to safe defaults if the file is missing or
 /// malformed (rare — the bundled-skills sync writes it on first run).
-async fn load_triage_agent(repo: &PathBuf) -> (String, String) {
+async fn load_triage_agent(repo: &Path) -> (String, String) {
     let path = repo.join("agents").join("triage.json");
     let raw = match tokio::fs::read_to_string(&path).await {
         Ok(s) => s,
@@ -667,7 +667,7 @@ fn build_chat_prompt(
 /// subprocesses don't always inherit the user's full shell PATH —
 /// dev mode and .app launches may only see `/usr/bin:/bin`. Same
 /// pattern as `claude_generate_commit_message`.
-async fn spawn_claude_chat(repo: &PathBuf, model: &str, prompt: &str) -> Result<String, String> {
+async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<String, String> {
     let claude_path = which::which("claude")
         .map_err(|_| "Claude CLI not found on PATH. Install claude (see https://docs.anthropic.com/claude/docs/claude-code) and ensure it's reachable from this app.".to_string())?;
     // `--permission-mode bypassPermissions` so the headless run can
@@ -739,7 +739,7 @@ async fn spawn_claude_chat(repo: &PathBuf, model: &str, prompt: &str) -> Result<
 /// Read `databases/tickets/<ticket_id>.json` and return the `status`
 /// field. Returns None if the file doesn't exist (agent hasn't
 /// committed a ticket yet) or can't be parsed.
-async fn read_ticket_status(repo: &PathBuf, ticket_id: &str) -> Option<String> {
+async fn read_ticket_status(repo: &Path, ticket_id: &str) -> Option<String> {
     let path = repo
         .join("databases")
         .join("tickets")
@@ -756,7 +756,7 @@ async fn read_ticket_status(repo: &PathBuf, ticket_id: &str) -> Option<String> {
 /// before invoking claude -p (so the activity banner shows) and to
 /// flip back to `escalated` if claude errors out. No-op if the ticket
 /// file doesn't exist yet.
-async fn mark_status(repo: &PathBuf, ticket_id: &str, status: &str) -> Result<(), String> {
+async fn mark_status(repo: &Path, ticket_id: &str, status: &str) -> Result<(), String> {
     let path = repo
         .join("databases")
         .join("tickets")
@@ -792,7 +792,7 @@ async fn mark_status(repo: &PathBuf, ticket_id: &str, status: &str) -> Result<()
 /// ticket already exists, so we only flip status + append a new
 /// asker turn, and update the ticket's `updatedAt` field.
 async fn ensure_responding_stub(
-    repo: &PathBuf,
+    repo: &Path,
     ticket_id: &str,
     email: &str,
     user_message: &str,
@@ -1003,7 +1003,7 @@ fn iso_one_second_ago() -> String {
 /// `databases/conversations/<ticket_id>/msg-*.json`. Sender is
 /// hardcoded to `triage` so the admin sees a stable label instead
 /// of whatever the agent decides to call itself.
-async fn write_agent_turn(repo: &PathBuf, ticket_id: &str, body: &str) -> Result<(), String> {
+async fn write_agent_turn(repo: &Path, ticket_id: &str, body: &str) -> Result<(), String> {
     let conv_dir = repo.join("databases").join("conversations").join(ticket_id);
     tokio::fs::create_dir_all(&conv_dir)
         .await
@@ -1141,7 +1141,7 @@ fn now_iso() -> String {
 }
 
 fn unix_to_ymdhms(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
-    let days = secs.div_euclid(86_400) as i64;
+    let days = secs.div_euclid(86_400);
     let mut s_of_day = secs.rem_euclid(86_400) as u32;
     let h = s_of_day / 3600;
     s_of_day %= 3600;
