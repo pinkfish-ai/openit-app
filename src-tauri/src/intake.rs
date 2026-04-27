@@ -103,6 +103,14 @@ struct ChatMessage {
     role: String,
     content: String,
     timestamp: String,
+    /// Repo-relative paths of files the asker attached on this turn
+    /// (`filestores/attachments/<ticketId>/<filename>`). Empty for
+    /// assistant turns and for asker turns without attachments. The
+    /// prompt builder lists these inline so the agent knows to
+    /// `Read` them before answering — Claude Code can ingest image
+    /// content via the Read tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -371,6 +379,7 @@ async fn chat_turn(
         role: "user".to_string(),
         content: trimmed.to_string(),
         timestamp: now_iso(),
+        attachments: valid_attachments.clone(),
     };
     let mut history = history_before;
     history.push(user_msg);
@@ -435,6 +444,7 @@ async fn chat_turn(
                 role: "assistant".to_string(),
                 content: reply_body.clone(),
                 timestamp: now_iso(),
+                attachments: Vec::new(),
             });
         }
     }
@@ -1024,6 +1034,24 @@ fn build_chat_prompt(
             "ASSISTANT"
         };
         prompt.push_str(&format!("{}: {}\n", label, msg.content));
+        if !msg.attachments.is_empty() {
+            // Inline the attachment paths so the agent knows which
+            // files belong to this turn. Reading them is up to the
+            // agent — for screenshots / diagrams the model can ingest
+            // image content via the Read tool.
+            for att in &msg.attachments {
+                prompt.push_str(&format!("  [attachment: {}]\n", att));
+            }
+        }
+    }
+    if history.iter().any(|m| !m.attachments.is_empty()) {
+        prompt.push_str(
+            "\nWhen a USER turn lists attachments, use the Read tool on each \
+             repo-relative path BEFORE deciding the outcome. Screenshots, \
+             logs, and PDFs often carry the actual question (e.g. \"this?\" \
+             with a screenshot of an error). Skipping the attachment and \
+             escalating because the body looks vague is the wrong move.\n",
+        );
     }
     prompt.push_str(
         "\nIMPORTANT: Do NOT write any conversation turn files (no \
