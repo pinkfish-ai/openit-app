@@ -64,6 +64,11 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
   // on-disk file changes (fsTick) so the table/raw view updates
   // without re-clicking.
   const [rowOverride, setRowOverride] = useState<MemoryItem | null>(null);
+  // Lifted from below the early returns (was at the copy-button section)
+  // — calling useState after a conditional early return broke the
+  // Rules of Hooks: hook count differed between "no source" and "with
+  // source" renders, surfacing as a blank-screen render error.
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   // Reset on source change so a new click clears the previous override.
   useEffect(() => setRowOverride(null), [source]);
 
@@ -264,7 +269,6 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
   // button here saves a triple-click + ⌘C and avoids selection
   // accidentally truncating long output.
   const showCopy = source.kind === "sync" || source.kind === "diff";
-  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const copyableText =
     source.kind === "sync"
       ? source.lines.join("\n")
