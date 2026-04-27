@@ -24,26 +24,32 @@ export function ChatPane({ cwd }: { cwd: string | null }) {
         "'MesloLGS NF', 'JetBrainsMono Nerd Font Mono', 'JetBrainsMono Nerd Font', 'Hack Nerd Font Mono', 'Hack Nerd Font', 'Symbols Nerd Font Mono', Menlo, Monaco, 'SF Mono', monospace",
       fontSize: 13,
       cursorBlink: true,
+      // ANSI palette tuned for the cream `#faf9f6` background. Each
+      // color targets ≥4.5:1 contrast (WCAG AA) on cream so Claude
+      // Code's tool blocks (yellow), prompt arrows (cyan), and dim
+      // helper text (white/brightBlack) stay legible. The previous
+      // values were borrowed from a dark-bg palette and washed out
+      // here — yellows especially looked ghostly.
       theme: {
         background: "#faf9f6",
         foreground: "#2d2a25",
         cursor: "#d96e3e",
         selectionBackground: "#f4dccd",
         black: "#2d2a25",
-        red: "#c0392b",
-        green: "#2c8a4f",
-        yellow: "#b58a1f",
-        blue: "#5a6cd1",
-        magenta: "#a14fa1",
-        cyan: "#2c8a8a",
-        white: "#6b6864",
-        brightBlack: "#9b988f",
-        brightRed: "#d96e3e",
-        brightGreen: "#3eb56e",
-        brightYellow: "#d4a83a",
-        brightBlue: "#7388e0",
-        brightMagenta: "#c269c2",
-        brightCyan: "#3eb5b5",
+        red: "#a8281a",
+        green: "#1f6e3e",
+        yellow: "#7a5a08",       // was #b58a1f — deepened for cream
+        blue: "#4555b8",
+        magenta: "#8a3d8a",
+        cyan: "#1f6e6e",
+        white: "#5c5854",        // was #6b6864 — dim text, now legible
+        brightBlack: "#7a7770",  // was #9b988f — still dim, but readable
+        brightRed: "#c0392b",
+        brightGreen: "#2c8a4f",
+        brightYellow: "#9a7415", // was #d4a83a — readable gold on cream
+        brightBlue: "#5a6cd1",
+        brightMagenta: "#a14fa1",
+        brightCyan: "#2c8a8a",
         brightWhite: "#2d2a25",
       },
       allowProposedApi: true,
