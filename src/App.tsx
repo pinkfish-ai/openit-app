@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
-import { fsRead, projectBootstrap, stateLoad, stateSave } from "./lib/api";
+import { fsRead, intakeStart, projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
@@ -87,6 +87,35 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, orgName: string): v
   );
 }
 
+/// Small pill in the header showing the localhost intake URL. Click to
+/// copy. Surfaced here as a temporary home until the Phase 3b settings
+/// panel lands — that's where the URL + the LAN-toggle will live
+/// long-term, per the local-first plan.
+function IntakeUrlPill({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      console.warn("[app] clipboard write failed:", e);
+    }
+  };
+  return (
+    <button
+      type="button"
+      className="intake-url-pill"
+      onClick={onCopy}
+      title="Click to copy. Share with someone on this machine to file a ticket via web form."
+    >
+      <span className="intake-url-pill-label">Intake</span>
+      <code className="intake-url-pill-value">{url.replace(/^https?:\/\//, "")}</code>
+      <span className="intake-url-pill-status">{copied ? "copied" : "copy"}</span>
+    </button>
+  );
+}
+
 function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -96,6 +125,7 @@ function App() {
   const [savedCreds, setSavedCreds] = useState<PinkfishCreds | null>(null);
   const [bypassOnboarding, setBypassOnboarding] = useState(false);
   const [bubbles, setBubbles] = useState<PromptBubble[]>(DEFAULT_BUBBLES);
+  const [intakeServerUrl, setIntakeServerUrl] = useState<string | null>(null);
 
   useEffect(() => {
     // Stop the WebView from navigating to a dropped file when the drop
@@ -242,6 +272,49 @@ function App() {
     };
   }, []);
 
+  // Localhost ticket-intake server lifecycle. Tied to `repo` — start
+  // when a project opens, transparently restart with the new path on
+  // project switch. The Rust side enforces single-instance semantics:
+  // intakeStart awaits an internal stop_inner before binding, so calling
+  // it with a new repo cleanly swaps the previous server.
+  //
+  // Why no intakeStop in cleanup: a rapid repo change A → B can have
+  // intakeStart(A)'s promise still pending when B's effect runs. If
+  // A's cleanup called intakeStop and then A's promise resolved, the
+  // resolve handler would see `cancelled=true`. Worse: if the cleanup
+  // *and* a follow-up resolve both call intakeStop, the second one
+  // kills server B that B's effect just brought up. Trusting Rust's
+  // swap semantics + skipping cleanup-stop is simpler and race-free.
+  // App close kills the spawned task via the tokio runtime drop on
+  // process exit — no manual stop needed there either.
+  const intakeGenRef = useRef(0);
+  useEffect(() => {
+    // Bump the generation counter unconditionally — including when
+    // repo transitions to null. Without this, a still-pending
+    // intakeStart from the previous repo could resolve after we set
+    // the URL to null and overwrite it with a stale value (its gen
+    // would still match because we didn't increment).
+    const myGen = ++intakeGenRef.current;
+    if (!repo) {
+      setIntakeServerUrl(null);
+      return;
+    }
+    intakeStart(repo)
+      .then((url) => {
+        // Only commit the URL if no later effect has superseded us. A
+        // stale resolve setting an old URL would leave the header
+        // pointing at a dead server.
+        if (intakeGenRef.current !== myGen) return;
+        console.log("[app] intake server up at", url);
+        setIntakeServerUrl(url);
+      })
+      .catch((e) => {
+        if (intakeGenRef.current !== myGen) return;
+        console.error("[app] intake start failed:", e);
+        setIntakeServerUrl(null);
+      });
+  }, [repo]);
+
   const onSyncLine = (line: string) => setSyncLines((prev) => [...prev, line]);
 
   const onPinkfishConnected = async (incoming: string | null) => {
@@ -303,6 +376,7 @@ function App() {
       <header className="app-header">
         <span className="app-title">OpenIT</span>
         <span className="app-tagline">get IT done</span>
+        {intakeServerUrl && <IntakeUrlPill url={intakeServerUrl} />}
         <button
           className={`icon-btn ${connected ? "key-set" : ""}`}
           onClick={() => setBypassOnboarding(false)}

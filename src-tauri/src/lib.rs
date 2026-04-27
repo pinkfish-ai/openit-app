@@ -3,6 +3,7 @@ mod filestore;
 mod fs_tree;
 mod git_history;
 mod git_ops;
+mod intake;
 mod kb;
 mod keychain;
 mod pinkfish;
@@ -31,6 +32,7 @@ pub fn run() {
         })
         .manage(pty::PtyState::default())
         .manage(watcher::WatcherState::default())
+        .manage(intake::IntakeState::default())
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_write,
@@ -96,6 +98,9 @@ pub fn run() {
             filestore::datastore_list_collections,
             watcher::fs_watch_start,
             watcher::fs_watch_stop,
+            intake::intake_start,
+            intake::intake_stop,
+            intake::intake_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

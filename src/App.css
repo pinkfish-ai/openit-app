@@ -62,6 +62,52 @@ body,
   font-size: 13px;
 }
 
+/* Localhost ticket-intake URL pill. Click to copy. Temporary home in
+   the header until Phase 3b's settings panel lands. */
+.intake-url-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.intake-url-pill:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.intake-url-pill-label {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.intake-url-pill-value {
+  font-family: Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-faint);
+  background: transparent;
+  padding: 0;
+}
+
+.intake-url-pill-status {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* When the intake pill is present, it claims the auto-margin so the
+   connect button no longer needs to push itself to the right. */
+.app-header .intake-url-pill + button {
+  margin-left: 0;
+}
+
 .app-repo {
   flex: 1;
   font-family: Menlo, monospace;
