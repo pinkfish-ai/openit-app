@@ -49,9 +49,23 @@ and pause until they confirm.
 
 ### Step 2 — Create the Slack app from manifest
 
-> "Open https://api.slack.com/apps in a browser. Click **Create
-> New App** → **From an app manifest**. Pick your workspace. Then
-> paste this exact YAML and click Next, then Create:"
+The manifest YAML lives in two places: inline below for visibility,
+and on a **Copy Slack app manifest** button inside the OpenIT
+modal. Tell the user to use the button — copying from the terminal
+output here is fragile (line wrapping splits values across lines
+and Slack's editor rejects the malformed YAML).
+
+> "Click the dotted **Slack · CONNECT** pill in the OpenIT header
+> to open the Connect Slack modal, then click **Copy Slack app
+> manifest**. The button flips to '✓ Copied to clipboard' for a
+> few seconds.
+>
+> Now open https://api.slack.com/apps → **Create New App** →
+> **From an app manifest** → pick your workspace → clear any
+> default content in the YAML editor → paste (Cmd+V) → Next →
+> Create."
+
+For reference, the manifest contents:
 
 ```yaml
 display_information:

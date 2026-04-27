@@ -17,6 +17,47 @@ import {
 } from "./lib/api";
 import "./SlackConnectModal.css";
 
+// Source of truth for the Slack app manifest the admin pastes into
+// api.slack.com → Create New App → From an app manifest. Kept inline
+// here so the Copy button is one click away — copying from the
+// Claude terminal output is unreliable (line wrapping breaks the
+// YAML, see incident with `messages_tab_read_only_enabled: false`
+// getting split across lines). The connect-slack skill text mirrors
+// this same content for human reference; if you change one, change
+// both.
+const SLACK_APP_MANIFEST = `display_information:
+  name: OpenIT
+  description: Local IT helpdesk bot
+  background_color: "#2c2d72"
+features:
+  bot_user:
+    display_name: OpenIT
+    always_online: false
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - im:history
+      - im:read
+      - im:write
+      - users:read
+      - users:read.email
+      - team:read
+settings:
+  event_subscriptions:
+    bot_events:
+      - message.im
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
+`;
+
 type Props = {
   repo: string;
   orgId: string;
@@ -50,9 +91,24 @@ export function SlackConnectModal({
   );
   const [error, setError] = useState<string | null>(null);
   const [introSent, setIntroSent] = useState(false);
+  const [manifestCopied, setManifestCopied] = useState(false);
   const [botToken, setBotToken] = useState("");
   const [appToken, setAppToken] = useState("");
   const [introEmail, setIntroEmail] = useState(adminEmail ?? "");
+
+  async function handleCopyManifest() {
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(SLACK_APP_MANIFEST);
+      setManifestCopied(true);
+      // Auto-clear the "copied!" pill after a few seconds so the
+      // button reverts to its idle label and the user can copy
+      // again if they accidentally clobbered the clipboard.
+      window.setTimeout(() => setManifestCopied(false), 4_000);
+    } catch (e) {
+      setError(`Copy failed: ${String(e)}. Select the YAML manually from the skill output and copy with Cmd+C.`);
+    }
+  }
 
   // While the modal is open, poll status every 2s so the "running"
   // pill flips quickly after start/stop without needing the user to
@@ -204,10 +260,44 @@ export function SlackConnectModal({
         {!config && (
           <section className="slack-modal-body">
             <p className="slack-modal-blurb">
-              Run the <code>/connect-slack</code> skill in the chat pane for the full
-              walkthrough. Once you have the two tokens from your Slack app, paste
-              them here.
+              Run the <code>/connect-slack</code> skill in the chat pane for the
+              full walkthrough. The short version is below.
             </p>
+            <ol className="slack-modal-steps">
+              <li>
+                Click <strong>Copy Slack app manifest</strong> below.
+              </li>
+              <li>
+                At <a
+                  href="https://api.slack.com/apps"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  api.slack.com/apps
+                </a>{" "}
+                → <strong>Create New App</strong> →{" "}
+                <strong>From an app manifest</strong> → pick your workspace →
+                paste → Next → Create.
+              </li>
+              <li>
+                <strong>Install to Workspace</strong>. Copy the{" "}
+                <code>xoxb-</code> bot token shown right after install.
+              </li>
+              <li>
+                <strong>Basic Information</strong> → <strong>App-Level Tokens</strong>
+                → Generate a token with <code>connections:write</code> scope. Copy
+                the <code>xapp-</code>.
+              </li>
+              <li>Paste both tokens below and click <strong>Connect</strong>.</li>
+            </ol>
+            <button
+              type="button"
+              className="slack-modal-secondary"
+              onClick={handleCopyManifest}
+              disabled={busy !== null}
+            >
+              {manifestCopied ? "✓ Copied to clipboard" : "Copy Slack app manifest"}
+            </button>
             <label className="slack-modal-field">
               <span>Bot User OAuth Token</span>
               <input

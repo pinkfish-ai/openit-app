@@ -93,6 +93,46 @@
   background: #3b3d8c;
 }
 
+/* Secondary action — used for the "Copy Slack app manifest" button.
+   Reads as obviously clickable but visually subordinate to the
+   primary "Connect" button below the token inputs. */
+.slack-modal-secondary {
+  background: #fff !important;
+  color: #2c2d72 !important;
+  border: 1px solid #2c2d72 !important;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.slack-modal-secondary:hover:not(:disabled) {
+  background: #f0f1ff !important;
+}
+
+.slack-modal-steps {
+  margin: 0;
+  padding-left: 20px;
+  color: #444;
+  line-height: 1.55;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.slack-modal-steps a {
+  color: #2c2d72;
+}
+
+.slack-modal-steps code {
+  background: #f4f4f6;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
 .slack-modal-primary:disabled,
 .slack-modal-body button:disabled {
   opacity: 0.55;
