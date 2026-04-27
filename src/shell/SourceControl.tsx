@@ -183,25 +183,20 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
 
   const handleCommit = async () => {
     if (!repo) return;
-    // Local-only mode: clicking "Sync to Cloud" with no creds is a CTA,
-    // not a real sync. Hand off to the App-level connect flow. Any
-    // pending local commits stay pending — the user can either commit
-    // by editing files (auto-handled by the engine post-connect) or
-    // we'll wire an explicit local-commit button in Phase 3b.
-    if (!cloudConnected) {
+    const hasPending = staged.length > 0 || unstaged.length > 0;
+
+    // Local-mode + nothing pending → button is the connect CTA (there's
+    // nothing to commit and no cloud to push to). Local-mode + pending
+    // changes → just commit locally. Cloud-connected → today's commit
+    // + push behavior.
+    if (!cloudConnected && !hasPending) {
       onConnectRequest();
       return;
     }
+
     setCommitting(true);
     setError(null);
     try {
-      // Commit-if-pending: when there are pending changes, stage and
-      // commit them locally first. When the working tree is clean (e.g.
-      // after a previous auto-commit swept up Claude's edits), skip the
-      // commit step but STILL run the push — the push internals use
-      // content equality and catch silent drift between local and
-      // remote regardless of git state.
-      const hasPending = staged.length > 0 || unstaged.length > 0;
       if (hasPending) {
         if (unstaged.length > 0) {
           await gitStage(repo, unstaged.map((f) => f.path));
@@ -213,15 +208,17 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
         onFsChange?.();
       }
 
-      // Always push, regardless of whether a git commit just landed —
-      // this is the only path that detects + corrects content drift
-      // between local and remote (e.g. post-conflict-resolve state
-      // where the merged content sits unpushed).
-      await pushAllEntities(repo, onSyncLine);
-      if (!hasPending) {
-        // After push the engine's poll will detect the now-matching
-        // content and the conflict aggregate will clear naturally.
-        refresh();
+      // Push only when connected — local-only mode has nothing to push
+      // to. The push internals use content equality and catch silent
+      // drift between local and remote (e.g. post-conflict-resolve
+      // state where the merged content sits unpushed).
+      if (cloudConnected) {
+        await pushAllEntities(repo, onSyncLine);
+        if (!hasPending) {
+          // After push the engine's poll will detect the now-matching
+          // content and the conflict aggregate will clear naturally.
+          refresh();
+        }
       }
     } catch (e) {
       setError(String(e));
@@ -310,20 +307,20 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
           onClick={handleCommit}
           disabled={committing || generating}
           title={
-            !cloudConnected
-              ? "Connect to Cloud to enable sync"
-              : files.length === 0
-              ? "Sync to Cloud (catches silent content drift)"
-              : "Commit and sync to Cloud"
+            files.length > 0
+              ? cloudConnected
+                ? "Commit and sync to Cloud"
+                : "Commit locally (Connect to Cloud to also sync)"
+              : cloudConnected
+                ? "Sync to Cloud (catches silent content drift)"
+                : "Connect to Cloud to enable sync"
           }
         >
           {committing
             ? "…"
-            : !cloudConnected
-            ? "Sync to Cloud"
-            : files.length === 0
-            ? "Sync to Cloud"
-            : "Commit"}
+            : files.length > 0
+            ? "Commit"
+            : "Sync to Cloud"}
         </button>
       </div>
       {error && <div className="sc-error">{error}</div>}
