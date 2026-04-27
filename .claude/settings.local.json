@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p ~/OpenIT/local/.claude/skills/report)",
+      "Bash(mv ~/OpenIT/local/.claude/skills/report.md ~/OpenIT/local/.claude/skills/report/SKILL.md)",
+      "Read(//Users/benjaminrigby/OpenIT/local/.claude/skills/**)"
+    ]
+  }
+}
