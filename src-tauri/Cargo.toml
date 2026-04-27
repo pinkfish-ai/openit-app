@@ -28,7 +28,7 @@ notify = { version = "7", default-features = false, features = ["macos_fsevent"]
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "net", "process", "io-util"] }
-axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "form", "query"] }
+axum = { version = "0.7", default-features = false, features = ["json", "tokio", "http1", "form", "query", "multipart"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 

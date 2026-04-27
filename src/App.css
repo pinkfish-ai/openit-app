@@ -1178,6 +1178,104 @@ body,
   opacity: 0.7;
 }
 
+.thread-reply-composer-drag {
+  outline: 2px dashed var(--accent, #c43e3e);
+  outline-offset: -3px;
+  background: var(--accent-soft, rgba(196, 62, 62, 0.05));
+}
+
+.thread-reply-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 8px;
+}
+
+.thread-reply-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: var(--surface-soft, #f0f0f0);
+  border: 1px solid var(--border-subtle, #e0e0e0);
+  border-radius: 999px;
+  max-width: 220px;
+}
+
+.thread-reply-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-reply-chip-remove {
+  background: transparent;
+  border: 0;
+  padding: 0 0 0 2px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.thread-reply-chip-remove:hover { color: var(--text); }
+
+/* Inline attachment list under each conversation bubble. */
+.attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.attach-image-btn {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: zoom-in;
+  display: inline-flex;
+}
+
+.attach-image {
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #ddd);
+  object-fit: cover;
+  display: block;
+}
+
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  max-width: 240px;
+}
+
+.attach-chip:hover {
+  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
+}
+
+.attach-chip-error {
+  border-color: var(--warn-text, #a85b00);
+  color: var(--warn-text, #a85b00);
+}
+
+.attach-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Conversation thread: chat-style bubbles for messages under
    databases/conversations/<ticketId>/. Asker turns left-aligned;
    agent/admin turns right-aligned. */

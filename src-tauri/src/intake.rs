@@ -22,8 +22,9 @@
 // Claude's Read/Write/Edit tools.
 
 use axum::{
-    extract::{Query, State},
-    http::{HeaderMap, StatusCode},
+    body::Bytes,
+    extract::{Multipart, Query, State},
+    http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -202,8 +203,20 @@ fn build_router(repo: PathBuf) -> Router {
         .route("/chat/start", post(chat_start))
         .route("/chat/turn", post(chat_turn))
         .route("/chat/poll", get(chat_poll))
+        // Attachments: upload (multipart, asker side) lands in
+        // `filestores/attachments/<ticketId>/<filename>`; file fetch
+        // serves bytes back to the chat browser, sandboxed to the
+        // session's ticket folder.
+        .route("/chat/upload", post(chat_upload))
+        .route("/chat/file", get(chat_file))
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(state)
 }
+
+/// Hard cap on a single uploaded attachment. 25 MB is plenty for the
+/// asker-uploaded screenshots / log files we expect; larger payloads
+/// are almost always videos that don't belong in a ticket history.
+const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 
 async fn serve_chat() -> Html<&'static str> {
     Html(CHAT_HTML)
@@ -271,6 +284,13 @@ async fn chat_start(
 struct ChatTurnReq {
     session_id: String,
     message: String,
+    // Repo-relative paths produced by /chat/upload, e.g.
+    // `filestores/attachments/<ticketId>/<filename>`. Server stamps
+    // them onto the asker's turn JSON so both the chat browser and
+    // the desktop conversation viewer can render them inline. Empty
+    // / missing → no attachments on this turn.
+    #[serde(default)]
+    attachments: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -323,7 +343,34 @@ async fn chat_turn(
     // file may not exist yet — write a minimal stub with the
     // user's message as the description. The skill will fill in
     // any remaining fields when it writes the full row.
-    let _ = ensure_responding_stub(&repo, &ticket_id, &email, trimmed).await;
+    // Sanitize attachments: keep only paths that look like they came
+    // from /chat/upload for THIS ticket. The path is stamped onto the
+    // turn JSON; we never trust it for filesystem operations later
+    // (the chat browser fetches via /chat/file which re-validates).
+    let valid_attachments: Vec<String> = req
+        .attachments
+        .iter()
+        .filter_map(|p| {
+            let trimmed = p.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let prefix = format!("filestores/attachments/{}/", ticket_id);
+            if trimmed.starts_with(&prefix) && !trimmed.contains("..") {
+                Some(trimmed.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let _ = ensure_responding_stub(
+        &repo,
+        &ticket_id,
+        &email,
+        trimmed,
+        &valid_attachments,
+    )
+    .await;
 
     // Append the user's message to the in-memory history before
     // invoking the agent so the prompt contains it.
@@ -470,6 +517,11 @@ struct PolledTurn {
     sender: String,
     body: String,
     timestamp: String,
+    /// Repo-relative paths (filestores/attachments/<ticketId>/<filename>).
+    /// Empty when the turn has no attachments. The chat UI fetches the
+    /// bytes via `/chat/file?path=...` for inline rendering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<String>,
 }
 
 async fn chat_poll(
@@ -533,6 +585,15 @@ async fn chat_poll(
             if !since.is_empty() && timestamp < since {
                 continue;
             }
+            let attachments = parsed
+                .get("attachments")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             turns.push(PolledTurn {
                 role: parsed
                     .get("role")
@@ -550,6 +611,7 @@ async fn chat_poll(
                     .unwrap_or("")
                     .to_string(),
                 timestamp,
+                attachments,
             });
         }
     }
@@ -565,6 +627,289 @@ async fn chat_poll(
         status,
     })
     .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// /chat/upload — multipart upload for asker attachments. Saves under
+// `filestores/attachments/<ticketId>/<filename>`. Returns the
+// repo-relative path the client should include on the next /chat/turn.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct ChatUploadResp {
+    /// Repo-relative path of the saved file. The client stores this on
+    /// a per-attachment chip in the composer and forwards it as part
+    /// of `attachments: [...]` on the next /chat/turn.
+    path: String,
+    filename: String,
+}
+
+async fn chat_upload(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Response {
+    if !origin_is_localhost(&headers) {
+        return (StatusCode::FORBIDDEN, "cross-origin not allowed").into_response();
+    }
+
+    // Expected multipart fields: `session_id` (text) + `file` (binary).
+    let mut session_id: Option<String> = None;
+    let mut filename: Option<String> = None;
+    let mut bytes: Option<Bytes> = None;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "session_id" => {
+                if let Ok(v) = field.text().await {
+                    session_id = Some(v);
+                }
+            }
+            "file" => {
+                filename = field.file_name().map(|s| s.to_string());
+                if let Ok(b) = field.bytes().await {
+                    bytes = Some(b);
+                }
+            }
+            _ => {
+                // Drain unknown fields so the multipart cursor advances.
+                let _ = field.bytes().await;
+            }
+        }
+    }
+
+    let Some(session_id) = session_id else {
+        return (StatusCode::BAD_REQUEST, "missing session_id field").into_response();
+    };
+    let Some(bytes) = bytes else {
+        return (StatusCode::BAD_REQUEST, "missing file field").into_response();
+    };
+    let raw_filename = filename.unwrap_or_else(|| "upload".to_string());
+    let safe_filename = sanitize_attachment_filename(&raw_filename);
+    if bytes.len() > MAX_UPLOAD_BYTES {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "attachment exceeds {} MB cap",
+                MAX_UPLOAD_BYTES / (1024 * 1024)
+            ),
+        )
+            .into_response();
+    }
+
+    // Resolve the session's ticket id under the lock.
+    let ticket_id = {
+        let mut sessions = state.sessions.lock().await;
+        match sessions.get_mut(&session_id) {
+            Some(s) => {
+                s.last_seen_unix = unix_now_secs();
+                s.ticket_id.clone()
+            }
+            None => return (StatusCode::NOT_FOUND, "unknown session").into_response(),
+        }
+    };
+
+    let dir = state
+        .repo
+        .join("filestores")
+        .join("attachments")
+        .join(&ticket_id);
+    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("mkdir attachments dir: {}", e),
+        )
+            .into_response();
+    }
+
+    // Resolve a non-colliding filename. If `name.ext` already exists,
+    // try `name (2).ext`, `name (3).ext`, etc. up to 99 — beyond that
+    // the user's having a name-collision party and a hard error is
+    // probably the right surface.
+    let final_name = unique_attachment_name(&dir, &safe_filename).await;
+    let final_path = dir.join(&final_name);
+    if let Err(e) = tokio::fs::write(&final_path, &bytes).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("write attachment: {}", e),
+        )
+            .into_response();
+    }
+
+    let rel_path = format!("filestores/attachments/{}/{}", ticket_id, final_name);
+    Json(ChatUploadResp {
+        path: rel_path,
+        filename: final_name,
+    })
+    .into_response()
+}
+
+/// Strip path separators and characters that would break filesystems.
+/// Preserves the extension so MIME sniffing on the chat side still
+/// works. Returns at least `"upload"` so we never end up with an
+/// empty filename.
+fn sanitize_attachment_filename(name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return "upload".to_string();
+    }
+    // Take the basename — drops any leading path the browser might
+    // have leaked (some Linux file managers send full paths).
+    let base = trimmed
+        .rsplit(|c: char| c == '/' || c == '\\')
+        .next()
+        .unwrap_or(trimmed);
+    let cleaned: String = base
+        .chars()
+        .map(|c| {
+            if c.is_control() || c == ':' || c == '\0' {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    if cleaned.starts_with('.') {
+        format!("attachment{}", cleaned)
+    } else if cleaned.is_empty() {
+        "upload".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// Find a non-colliding filename in `dir`. If `desired` doesn't exist
+/// returns it as-is; otherwise tries `name (2).ext`, `name (3).ext`,
+/// etc.
+async fn unique_attachment_name(dir: &Path, desired: &str) -> String {
+    if !dir.join(desired).exists() {
+        return desired.to_string();
+    }
+    let (stem, ext) = match desired.rfind('.') {
+        Some(i) if i > 0 => (&desired[..i], &desired[i..]),
+        _ => (desired, ""),
+    };
+    for n in 2..100u32 {
+        let candidate = format!("{} ({}){}", stem, n, ext);
+        if !dir.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    // Fall through with a timestamp — better than overwriting.
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{}-{}{}", stem, ms, ext)
+}
+
+// ---------------------------------------------------------------------------
+// /chat/file — serve attachment bytes back to the chat browser.
+// Sandboxed: only paths under
+// `filestores/attachments/<thisSessionsTicketId>/...` are allowed,
+// preventing path traversal or cross-ticket leaks even when a session
+// has stale links to a different thread.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ChatFileQuery {
+    session_id: String,
+    path: String,
+}
+
+async fn chat_file(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<ChatFileQuery>,
+) -> Response {
+    if !origin_is_localhost(&headers) {
+        return (StatusCode::FORBIDDEN, "cross-origin not allowed").into_response();
+    }
+
+    // Resolve ticket_id under the lock so concurrent /chat/start
+    // doesn't see torn state.
+    let ticket_id = {
+        let mut sessions = state.sessions.lock().await;
+        match sessions.get_mut(&q.session_id) {
+            Some(s) => {
+                s.last_seen_unix = unix_now_secs();
+                s.ticket_id.clone()
+            }
+            None => return (StatusCode::NOT_FOUND, "unknown session").into_response(),
+        }
+    };
+
+    // Reject anything that doesn't look like an attachment path for
+    // THIS ticket. The double check (string prefix + canonicalized
+    // ancestor) is intentional: the prefix check is cheap and
+    // explicit; canonicalize prevents `..` traversal even when the
+    // caller submits a path like
+    // `filestores/attachments/<tid>/../../../../etc/passwd`.
+    let expected_prefix = format!("filestores/attachments/{}/", ticket_id);
+    if !q.path.starts_with(&expected_prefix) || q.path.contains("..") {
+        return (StatusCode::FORBIDDEN, "path out of bounds").into_response();
+    }
+
+    let abs = state.repo.join(&q.path);
+    let canonical = match tokio::fs::canonicalize(&abs).await {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::NOT_FOUND, "file not found").into_response(),
+    };
+    let allowed_root = state
+        .repo
+        .join("filestores")
+        .join("attachments")
+        .join(&ticket_id);
+    let allowed_canonical = match tokio::fs::canonicalize(&allowed_root).await {
+        Ok(p) => p,
+        Err(_) => return (StatusCode::NOT_FOUND, "ticket folder not found").into_response(),
+    };
+    if !canonical.starts_with(&allowed_canonical) {
+        return (StatusCode::FORBIDDEN, "path out of bounds").into_response();
+    }
+
+    let bytes = match tokio::fs::read(&canonical).await {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::NOT_FOUND, "file not found").into_response(),
+    };
+
+    // Best-effort content-type from extension. Falls back to
+    // octet-stream so the browser hands the user a download dialog
+    // for unknown types instead of misrendering.
+    let mime = mime_for_attachment(&canonical);
+    let mut response = (StatusCode::OK, bytes).into_response();
+    if let Ok(value) = header::HeaderValue::from_str(&mime) {
+        response.headers_mut().insert(header::CONTENT_TYPE, value);
+    }
+    response
+}
+
+/// Lightweight extension → MIME type map. Tightly scoped to what
+/// users typically attach to a ticket. Anything outside the map gets
+/// `application/octet-stream` and the browser handles via download.
+fn mime_for_attachment(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "txt" | "log" => "text/plain; charset=utf-8",
+        "json" => "application/json",
+        "csv" => "text/csv",
+        "md" => "text/markdown; charset=utf-8",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "zip" => "application/zip",
+        _ => "application/octet-stream",
+    }
+    .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -839,6 +1184,7 @@ async fn ensure_responding_stub(
     ticket_id: &str,
     email: &str,
     user_message: &str,
+    attachments: &[String],
 ) -> Result<(), String> {
     let now = now_iso();
     let ticket_path = repo
@@ -900,7 +1246,7 @@ async fn ensure_responding_stub(
         .take(4)
         .collect();
     let msg_id = format!("msg-{}-{}", now_ms, rand4);
-    let msg = serde_json::json!({
+    let mut msg = serde_json::json!({
         "id": msg_id,
         "ticketId": ticket_id,
         "role": "asker",
@@ -908,6 +1254,19 @@ async fn ensure_responding_stub(
         "timestamp": now,
         "body": user_message,
     });
+    if !attachments.is_empty() {
+        msg.as_object_mut()
+            .expect("constructed json object literal")
+            .insert(
+                "attachments".to_string(),
+                serde_json::Value::Array(
+                    attachments
+                        .iter()
+                        .map(|s| serde_json::Value::String(s.clone()))
+                        .collect(),
+                ),
+            );
+    }
     let msg_json =
         serde_json::to_string_pretty(&msg).map_err(|e| format!("serialize asker turn: {}", e))?;
     let msg_path = conv_dir.join(format!("{}.json", msg_id));
@@ -1431,6 +1790,95 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   color: #5c3d00;
 }
 .status-banner:empty { display: none; }
+/* --- Attachments --- */
+.bubble .attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.bubble .attachments img {
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  object-fit: cover;
+  cursor: zoom-in;
+}
+.bubble .attachments a.attach-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+.bubble .attachments a.attach-link:hover {
+  background: var(--accent-soft);
+  border-color: #82c39a;
+}
+.bubble .attachments .attach-icon { font-size: 14px; }
+form {
+  position: relative;
+}
+form.drag-over {
+  background: var(--accent-soft);
+  outline: 2px dashed #82c39a;
+  outline-offset: -4px;
+}
+.compose-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 20px 6px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.compose-chips:empty { display: none; }
+.compose-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: var(--accent-soft);
+  border: 1px solid #82c39a;
+  border-radius: 999px;
+  max-width: 200px;
+}
+.compose-chip-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compose-chip-status {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.compose-chip-remove {
+  background: transparent;
+  border: 0;
+  padding: 0 0 0 4px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.compose-chip-remove:hover { color: var(--text); }
+.attach-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+}
+.attach-btn:hover { background: var(--accent-soft); color: var(--text); }
 </style>
 </head>
 <body>
@@ -1455,8 +1903,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 <!-- Chat surface — hidden until the gate is satisfied. -->
 <div class="status-banner" id="banner" hidden></div>
 <div id="chat" hidden></div>
+<div class="compose-chips" id="chips" hidden></div>
 <form id="form" hidden>
-  <input id="msg" type="text" placeholder="Type your message…" autocomplete="off" required>
+  <button type="button" class="attach-btn" id="attachBtn" title="Attach a file">📎</button>
+  <input id="fileInput" type="file" multiple hidden>
+  <input id="msg" type="text" placeholder="Type your message…" autocomplete="off">
   <button type="submit" id="send">Send</button>
 </form>
 <script>
@@ -1475,8 +1926,135 @@ const gate = document.getElementById('gate');
 const gateForm = document.getElementById('gateForm');
 const emailInput = document.getElementById('email');
 const gateError = document.getElementById('gateError');
+const chipsBar = document.getElementById('chips');
+const fileInput = document.getElementById('fileInput');
+const attachBtn = document.getElementById('attachBtn');
 
-function bubble(role, body, sender) {
+// Pending attachments awaiting Send. Each entry tracks its upload
+// state so the chip renders accurately and the submit handler only
+// includes successfully-uploaded paths. Browser-native File objects
+// are stashed for retry on transient failures.
+const pendingAttachments = [];
+
+function renderChips() {
+  chipsBar.innerHTML = '';
+  if (pendingAttachments.length === 0) {
+    chipsBar.hidden = true;
+    return;
+  }
+  chipsBar.hidden = false;
+  for (const att of pendingAttachments) {
+    const chip = document.createElement('span');
+    chip.className = 'compose-chip';
+    const name = document.createElement('span');
+    name.className = 'compose-chip-name';
+    name.textContent = att.filename;
+    chip.appendChild(name);
+    if (att.status !== 'ready') {
+      const status = document.createElement('span');
+      status.className = 'compose-chip-status';
+      status.textContent = att.status;
+      chip.appendChild(status);
+    }
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'compose-chip-remove';
+    remove.title = 'Remove';
+    remove.textContent = '×';
+    remove.addEventListener('click', () => {
+      const idx = pendingAttachments.indexOf(att);
+      if (idx >= 0) pendingAttachments.splice(idx, 1);
+      renderChips();
+    });
+    chip.appendChild(remove);
+    chipsBar.appendChild(chip);
+  }
+}
+
+async function uploadOne(att) {
+  const fd = new FormData();
+  fd.append('session_id', sessionId);
+  fd.append('file', att.file, att.filename);
+  try {
+    const r = await fetch('/chat/upload', { method: 'POST', body: fd });
+    if (!r.ok) {
+      const txt = await r.text();
+      att.status = 'failed: ' + (txt || r.status);
+      renderChips();
+      return;
+    }
+    const j = await r.json();
+    att.path = j.path;
+    att.filename = j.filename;
+    att.status = 'ready';
+  } catch (e) {
+    att.status = 'failed: network';
+  }
+  renderChips();
+}
+
+function addFiles(files) {
+  if (!sessionId) return;
+  for (const file of files) {
+    const att = {
+      file,
+      filename: file.name || 'upload',
+      status: 'uploading…',
+      path: null,
+    };
+    pendingAttachments.push(att);
+    void uploadOne(att);
+  }
+  renderChips();
+}
+
+function isImagePath(p) {
+  return /\.(png|jpe?g|gif|webp|svg)$/i.test(p);
+}
+
+function attachmentUrl(path) {
+  return '/chat/file?session_id=' + encodeURIComponent(sessionId) + '&path=' + encodeURIComponent(path);
+}
+
+function basenameFromPath(p) {
+  const slash = p.lastIndexOf('/');
+  return slash >= 0 ? p.slice(slash + 1) : p;
+}
+
+function renderAttachmentsInto(el, attachments) {
+  if (!attachments || attachments.length === 0) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'attachments';
+  for (const path of attachments) {
+    if (isImagePath(path)) {
+      const img = document.createElement('img');
+      img.src = attachmentUrl(path);
+      img.alt = basenameFromPath(path);
+      img.title = basenameFromPath(path);
+      img.addEventListener('click', () => {
+        // Clicking an inline image opens it full-size in a new tab
+        // so the asker can pinch-zoom on phones / inspect details.
+        window.open(img.src, '_blank');
+      });
+      wrap.appendChild(img);
+    } else {
+      const link = document.createElement('a');
+      link.className = 'attach-link';
+      link.href = attachmentUrl(path);
+      link.target = '_blank';
+      link.rel = 'noopener';
+      const icon = document.createElement('span');
+      icon.className = 'attach-icon';
+      icon.textContent = '📎';
+      link.appendChild(icon);
+      link.appendChild(document.createTextNode(basenameFromPath(path)));
+      wrap.appendChild(link);
+    }
+  }
+  el.appendChild(wrap);
+}
+
+function bubble(role, body, sender, attachments) {
   const el = document.createElement('div');
   el.className = 'bubble ' + role;
   if (sender) {
@@ -1485,7 +2063,8 @@ function bubble(role, body, sender) {
     meta.textContent = sender;
     el.appendChild(meta);
   }
-  el.appendChild(document.createTextNode(body));
+  if (body) el.appendChild(document.createTextNode(body));
+  renderAttachmentsInto(el, attachments);
   chat.appendChild(el);
   chat.scrollTop = chat.scrollHeight;
 }
@@ -1553,8 +2132,11 @@ async function poll() {
       seenTurnKeys.add(key);
       // Only render admin / agent turns we haven't seen via the
       // direct /chat/turn response. Asker turns we already echoed
-      // when the user typed.
-      if (t.role === 'admin') bubble('admin', t.body, t.sender || 'admin');
+      // when the user typed. Attachments come down on the same turn
+      // payload now — pass through so the bubble renders them inline.
+      if (t.role === 'admin') {
+        bubble('admin', t.body, t.sender || 'admin', t.attachments);
+      }
       lastSeen = t.timestamp;
     }
     if (j.status) setBanner(j.status);
@@ -1566,19 +2148,81 @@ function startPolling() {
   pollTimer = setInterval(poll, 1000);
 }
 
+attachBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', () => {
+  if (fileInput.files && fileInput.files.length > 0) {
+    addFiles(Array.from(fileInput.files));
+    // Reset so re-selecting the same file re-fires `change`.
+    fileInput.value = '';
+  }
+});
+
+// Drag-and-drop on the composer area. We treat the form as the drop
+// zone (visible + always present once gate is passed). The window-
+// level dragover/drop handlers prevent the browser from navigating
+// to the dropped file when the user releases outside the form.
+['dragover', 'dragenter'].forEach((evt) => {
+  form.addEventListener(evt, (e) => {
+    if (!sessionId) return;
+    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
+    form.classList.add('drag-over');
+  });
+});
+['dragleave', 'dragend'].forEach((evt) => {
+  form.addEventListener(evt, () => form.classList.remove('drag-over'));
+});
+form.addEventListener('drop', (e) => {
+  form.classList.remove('drag-over');
+  if (!sessionId) return;
+  if (!e.dataTransfer || !e.dataTransfer.files) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.dataTransfer.files.length > 0) {
+    addFiles(Array.from(e.dataTransfer.files));
+  }
+});
+// Stop the browser from navigating to a dropped file outside the
+// form (would replace the whole chat with a file preview).
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => e.preventDefault());
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = input.value.trim();
-  if (!text || !sessionId) return;
-  bubble('user', text);
+  if (!sessionId) return;
+  // Allow attachment-only sends (text empty + at least one ready
+  // attachment). The agent skill expects SOMETHING in `body`; supply
+  // a placeholder so the turn JSON stays well-formed and the agent
+  // can still triage based on the attachment.
+  const readyAttachments = pendingAttachments.filter((a) => a.status === 'ready' && a.path);
+  if (!text && readyAttachments.length === 0) return;
+  // Block send while uploads are still in flight — surfacing the
+  // chip status to the user is enough; we don't want to drop their
+  // attachment because they hit Send too soon.
+  if (pendingAttachments.some((a) => a.status === 'uploading…')) return;
+
+  const turnText = text || '(attachment)';
+  const attachmentPaths = readyAttachments.map((a) => a.path);
+  bubble('user', text, undefined, attachmentPaths);
+  // Clear the composer + chips immediately. Failed attachments are
+  // already filtered out (only `ready` ones are sent).
   input.value = '';
+  pendingAttachments.length = 0;
+  renderChips();
   sendBtn.disabled = true;
   typing();
   try {
     const r = await fetch('/chat/turn', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, message: text }),
+      body: JSON.stringify({
+        session_id: sessionId,
+        message: turnText,
+        attachments: attachmentPaths,
+      }),
     });
     untype();
     if (!r.ok) {

@@ -98,6 +98,27 @@ export async function gitGlobalUserEmail(): Promise<string | null> {
   return invoke<string | null>("git_global_user_email");
 }
 
+/// Generic binary write to `<repo>/<subdir>/<filename>`. Used by the
+/// admin reply composer to land attachment bytes into
+/// `filestores/attachments/<ticketId>/`. Mirrors `entityWriteFile`
+/// but takes `ArrayBuffer | Uint8Array` for the payload.
+export async function entityWriteFileBytes(
+  repo: string,
+  subdir: string,
+  filename: string,
+  bytes: ArrayBuffer | Uint8Array,
+): Promise<void> {
+  const arr = bytes instanceof Uint8Array ? Array.from(bytes) : Array.from(new Uint8Array(bytes));
+  return invoke("entity_write_file_bytes", { repo, subdir, filename, bytes: arr });
+}
+
+/// Open `path` with the OS default application (Finder/Preview/etc.
+/// on macOS, `start` on Windows, `xdg-open` on Linux). Used by the
+/// attachment chips in the conversation viewer.
+export async function fsOpen(path: string): Promise<void> {
+  return invoke("fs_open", { path });
+}
+
 export type AppPersistedState = {
   last_repo: string | null;
   pane_sizes: number[] | null;

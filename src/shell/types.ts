@@ -11,6 +11,13 @@ export type ConversationTurn = {
   sender: string;
   timestamp: string;
   body: string;
+  /// Repo-relative paths to attachments associated with this turn —
+  /// e.g. `filestores/attachments/<ticketId>/<filename>`. Asker
+  /// uploads land here via `/chat/upload`; admin replies sent from
+  /// the desktop composer write attachments through `entityWriteFile`
+  /// to the same path. Empty / missing when the turn has no
+  /// attachments.
+  attachments?: string[];
 };
 
 /// Summary of a single conversation thread, shown as a clickable card

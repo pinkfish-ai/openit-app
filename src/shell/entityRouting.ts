@@ -163,6 +163,11 @@ export async function resolvePathToSource(
           const raw = await fsRead(node.path);
           const parsed = JSON.parse(raw);
           if (parsed && typeof parsed === "object") {
+            const attachments = Array.isArray((parsed as { attachments?: unknown }).attachments)
+              ? ((parsed as { attachments?: unknown[] }).attachments ?? []).filter(
+                  (v): v is string => typeof v === "string",
+                )
+              : undefined;
             turns.push({
               id: typeof parsed.id === "string" ? parsed.id : node.name,
               ticketId: typeof parsed.ticketId === "string" ? parsed.ticketId : ticketId,
@@ -170,6 +175,7 @@ export async function resolvePathToSource(
               sender: typeof parsed.sender === "string" ? parsed.sender : "",
               timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : "",
               body: typeof parsed.body === "string" ? parsed.body : "",
+              ...(attachments && attachments.length > 0 ? { attachments } : {}),
             });
           }
         } catch {

@@ -7,6 +7,7 @@ import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
 import { DataTable } from "./DataTable";
 import { RowEditForm } from "./RowEditForm";
+import { AttachmentList } from "./AttachmentList";
 import { ImageViewer } from "./viewers/ImageViewer";
 import { PdfViewer } from "./viewers/PdfViewer";
 import { SpreadsheetViewer } from "./viewers/SpreadsheetViewer";
@@ -240,10 +241,20 @@ export function Viewer({
   const [replySending, setReplySending] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  // Pending attachments staged in the admin composer. `path` is the
+  // repo-relative location after the file lands on disk; we write
+  // straight to `filestores/attachments/<ticketId>/<filename>` and
+  // include the path on the next reply turn.
+  const [replyAttachments, setReplyAttachments] = useState<
+    { path: string; filename: string }[]
+  >([]);
+  const [replyDragOver, setReplyDragOver] = useState(false);
   useEffect(() => {
     setReplyText("");
     setReplySending(false);
     setReplyError(null);
+    setReplyAttachments([]);
+    setReplyDragOver(false);
   }, [source]);
   useEffect(() => {
     // Fetch the admin's git email once and cache it so the composer
@@ -1033,7 +1044,11 @@ export function Viewer({
       const ticketId = source.ticketId;
       const sendReply = async () => {
         const trimmed = replyText.trim();
-        if (!trimmed || !repo) return;
+        // Allow attachment-only replies (admin drops a screenshot
+        // showing the fix and sends without typing). Otherwise text
+        // is required.
+        if (!repo) return;
+        if (!trimmed && replyAttachments.length === 0) return;
         setReplySending(true);
         setReplyError(null);
         try {
@@ -1043,14 +1058,17 @@ export function Viewer({
           const msgId = `msg-${nowMs}-${rand}`;
           const isoNow = new Date().toISOString().replace(/\.\d+Z$/, "Z");
           const sender = adminEmail ?? "admin";
-          const payload = {
+          const payload: Record<string, unknown> = {
             id: msgId,
             ticketId,
             role: "admin",
             sender,
             timestamp: isoNow,
-            body: trimmed,
+            body: trimmed || "(attachment)",
           };
+          if (replyAttachments.length > 0) {
+            payload.attachments = replyAttachments.map((a) => a.path);
+          }
           await entityWriteFile(
             repo,
             `databases/conversations/${ticketId}`,
@@ -1058,6 +1076,7 @@ export function Viewer({
             JSON.stringify(payload, null, 2),
           );
           setReplyText("");
+          setReplyAttachments([]);
           // Bumping the ticket back to `open` (it might be at
           // escalated / resolved / closed). Done as a best-effort
           // optimistic write — the auto-commit driver picks both
@@ -1112,15 +1131,76 @@ export function Viewer({
                       )}
                     </div>
                     <div className="thread-turn-body">{t.body}</div>
+                    {t.attachments && t.attachments.length > 0 && (
+                      <AttachmentList attachments={t.attachments} repo={repo} />
+                    )}
                   </div>
                 );
               })}
             </div>
           )}
-          <div className="thread-reply-composer">
+          <div
+            className={`thread-reply-composer${replyDragOver ? " thread-reply-composer-drag" : ""}`}
+            onDragOver={(e) => {
+              if (Array.from(e.dataTransfer.types).includes("Files")) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.dataTransfer.dropEffect = "copy";
+                setReplyDragOver(true);
+              }
+            }}
+            onDragLeave={() => setReplyDragOver(false)}
+            onDrop={async (e) => {
+              setReplyDragOver(false);
+              const files = Array.from(e.dataTransfer.files ?? []);
+              if (files.length === 0 || !repo) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const { entityWriteFileBytes } = await import("../lib/api");
+              const subdir = `filestores/attachments/${ticketId}`;
+              const newAttachments: { path: string; filename: string }[] = [];
+              for (const f of files) {
+                const filename = f.name || "upload";
+                try {
+                  const buf = await f.arrayBuffer();
+                  await entityWriteFileBytes(repo, subdir, filename, buf);
+                  newAttachments.push({
+                    path: `${subdir}/${filename}`,
+                    filename,
+                  });
+                } catch (err) {
+                  console.error(`[admin-reply] failed to attach ${filename}:`, err);
+                }
+              }
+              if (newAttachments.length > 0) {
+                setReplyAttachments((prev) => [...prev, ...newAttachments]);
+              }
+            }}
+          >
+            {replyAttachments.length > 0 && (
+              <div className="thread-reply-chips">
+                {replyAttachments.map((att) => (
+                  <span key={att.path} className="thread-reply-chip">
+                    <span className="thread-reply-chip-name">{att.filename}</span>
+                    <button
+                      type="button"
+                      className="thread-reply-chip-remove"
+                      onClick={() =>
+                        setReplyAttachments((prev) =>
+                          prev.filter((a) => a.path !== att.path),
+                        )
+                      }
+                      title="Remove"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <textarea
               className="thread-reply-input"
-              placeholder={`Reply as ${adminEmail ?? "admin"}…`}
+              placeholder={`Reply as ${adminEmail ?? "admin"} (drop files to attach)…`}
               value={replyText}
               onChange={(e) => setReplyText(e.target.value)}
               onKeyDown={(e) => {
@@ -1139,12 +1219,15 @@ export function Viewer({
               {replyError && (
                 <span className="thread-reply-error">{replyError}</span>
               )}
-              <span className="thread-reply-hint">⌘↩ to send</span>
+              <span className="thread-reply-hint">⌘↩ to send · drop files to attach</span>
               <button
                 type="button"
                 className="viewer-edit-btn viewer-edit-btn-primary"
                 onClick={() => void sendReply()}
-                disabled={replySending || !replyText.trim()}
+                disabled={
+                  replySending ||
+                  (!replyText.trim() && replyAttachments.length === 0)
+                }
               >
                 {replySending ? "Sending…" : "Send"}
               </button>

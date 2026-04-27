@@ -142,6 +142,37 @@ fn is_skipped(p: &Path, root: &Path) -> bool {
     })
 }
 
+/// Open `path` with the OS default application. Used by the
+/// conversation viewer's attachment links — the asker uploaded a PDF
+/// or image, the admin clicks the chip, OS handler takes over (e.g.
+/// Preview.app for an image, the default PDF reader for a PDF).
+/// Path is shelled out as-is to avoid manual URL encoding bugs.
+#[tauri::command]
+pub fn fs_open(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&path)
+            .output()
+            .map_err(|e| format!("failed to open file: {}", e))?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &path])
+            .output()
+            .map_err(|e| format!("failed to open file: {}", e))?;
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        Command::new("xdg-open")
+            .arg(&path)
+            .output()
+            .map_err(|e| format!("failed to open file: {}", e))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn fs_reveal(path: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]

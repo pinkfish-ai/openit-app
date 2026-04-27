@@ -437,7 +437,6 @@ pub fn kb_supported_extensions() -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 const FS_DIR: &str = "filestores/library";
-const FS_ATTACHMENTS_DIR: &str = "filestores/attachments";
 
 fn fs_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(FS_DIR)
@@ -723,6 +722,23 @@ pub fn entity_write_file(
     ensure_dir(&dir)?;
     let path = dir.join(&filename);
     fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+/// Generic byte-write to `<repo>/<subdir>/<filename>`. Used for
+/// admin-reply attachments (PDF/image/etc. into
+/// `filestores/attachments/<ticketId>/<filename>`) and any other
+/// case the string-based `entity_write_file` would corrupt.
+#[tauri::command]
+pub fn entity_write_file_bytes(
+    repo: String,
+    subdir: String,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
+    let dir = Path::new(&repo).join(&subdir);
+    ensure_dir(&dir)?;
+    let path = dir.join(&filename);
+    fs::write(&path, &bytes).map_err(|e| e.to_string())
 }
 
 /// Delete `<repo>/<subdir>/<filename>` if it exists. No-op when missing.
