@@ -369,23 +369,25 @@ function App() {
       <header className="app-header">
         <span className="app-title">OpenIT</span>
         <span className="app-tagline">get IT done</span>
-        {intakeServerUrl && <IntakeUrlPill url={intakeServerUrl} />}
-        <button
-          className="icon-btn"
-          onClick={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
-          title="Open the welcome / getting-started doc"
-        >
-          Getting Started
-        </button>
-        <button
-          className={`icon-btn ${connected ? "key-set" : ""}`}
-          onClick={() => setBypassOnboarding(false)}
-          title={connected ? "Connected — click to update credentials" : "Connect to Cloud"}
-        >
-          {connected
-            ? `Cloud: ${orgName ?? "connected"}`
-            : "Connect to Cloud"}
-        </button>
+        <div className="app-header-actions">
+          {intakeServerUrl && <IntakeUrlPill url={intakeServerUrl} />}
+          <button
+            className="icon-btn"
+            onClick={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
+            title="Open the welcome / getting-started doc"
+          >
+            Getting Started
+          </button>
+          <button
+            className={`icon-btn ${connected ? "key-set" : ""}`}
+            onClick={() => setBypassOnboarding(false)}
+            title={connected ? "Connected — click to update credentials" : "Connect to Cloud"}
+          >
+            {connected
+              ? `Cloud: ${orgName ?? "connected"}`
+              : "Connect to Cloud"}
+          </button>
+        </div>
       </header>
       <section className="app-pane">
         <Shell

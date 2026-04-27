@@ -459,7 +459,7 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
               className={`viewer-tab ${mode === "rendered" ? "active" : ""}`}
               onClick={() => setMode("rendered")}
             >
-              Rendered
+              View
             </button>
             <button
               role="tab"

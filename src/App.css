@@ -43,8 +43,11 @@ body,
   color: var(--text-muted);
 }
 
-.app-header button {
+.app-header-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .app-title {
@@ -76,7 +79,6 @@ body,
   color: var(--text-muted);
   font-size: 12px;
   cursor: pointer;
-  margin-left: auto;
 }
 
 .intake-url-pill:hover {
@@ -103,11 +105,6 @@ body,
   letter-spacing: 0.05em;
 }
 
-/* When the intake pill is present, it claims the auto-margin so the
-   connect button no longer needs to push itself to the right. */
-.app-header .intake-url-pill + button {
-  margin-left: 0;
-}
 
 .app-repo {
   flex: 1;
@@ -764,9 +761,9 @@ body,
 }
 
 .viewer-tab.active {
-  background: var(--accent-soft);
+  background: transparent;
   color: var(--text);
-  border-color: var(--accent);
+  border-color: var(--border);
 }
 
 .viewer-copy-btn {
