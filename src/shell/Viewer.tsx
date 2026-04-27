@@ -41,16 +41,30 @@ function ExternalAnchor({
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
   if (href && href.startsWith("openit://skill/")) {
     const skillName = href.slice("openit://skill/".length).split("?")[0];
+    // Use href="#" rather than the openit:// URL — the Tauri webview
+    // tries to navigate the whole shell when it sees a real custom
+    // scheme, which reloads the app. Stash the skill name on a
+    // data attribute so the CSS selector can still target this kind
+    // of link for the secondary-button styling.
     return (
       <a
-        href={href}
+        href="#"
+        data-openit-skill={skillName}
         onClick={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           const cmd = `/${skillName}`;
           const wrapped = `${BRACKETED_PASTE_OPEN}${cmd}${BRACKETED_PASTE_CLOSE}`;
-          writeToActiveSession(wrapped).catch((err) =>
-            console.warn("[viewer] paste-to-Claude failed:", err),
-          );
+          console.log("[viewer] pasting skill into Claude:", cmd);
+          writeToActiveSession(wrapped)
+            .then((ok) => {
+              if (!ok) {
+                alert(
+                  "Couldn't reach Claude — make sure Claude is running in the right-hand pane, then click again.",
+                );
+              }
+            })
+            .catch((err) => console.warn("[viewer] paste-to-Claude failed:", err));
         }}
         {...rest}
       >
