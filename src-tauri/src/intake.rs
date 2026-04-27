@@ -454,6 +454,7 @@ async fn chat_turn(
         }
         DecidedStatus::Resolved => {
             let _ = mark_status(&repo, &ticket_id, "resolved").await;
+            "resolved"
         }
         DecidedStatus::Escalated | DecidedStatus::Clarifying => {
             let _ = mark_status(&repo, &ticket_id, "escalated").await;
