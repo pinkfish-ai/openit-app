@@ -5,7 +5,12 @@ description: Handle a new support question. Log the ticket, check the knowledge 
 
 ## When to use
 
-Invoked when the user sends a support question — *"my VPN is broken"*, *"how do I get access to the staging GCP project?"*, *"alice can't log in"*. Either via `/triage <question>` or implicitly (CLAUDE.md tells you to behave as the triage agent for incoming support questions). Also invoked by the **incoming-ticket banner** when a row appears with `status: "incoming"` from a future intake channel.
+Invoked when the user sends a support question — *"my VPN is broken"*, *"how do I get access to the staging GCP project?"*, *"alice can't log in"*. Either via `/triage <question>` or implicitly (CLAUDE.md tells you to behave as the triage agent for incoming support questions). Also invoked by the **incoming-ticket banner** when a row already exists on disk with `status: "incoming"` (the localhost intake form, channel ingest, or any cold write).
+
+### Two invocation shapes
+
+1. **Question-shape** — `/triage <question text>`. No ticket exists yet. Step 1 below creates one.
+2. **Existing-row-shape** — `/triage incoming ticket: <repo-relative path>`. The ticket file is already on disk with `status: "incoming"`. **Skip Step 1's row creation.** `Read` the file for subject/description/asker, log the asker's first conversation turn, then jump to Step 2 (KB search). Step 3 still updates the row's status — only this time it's `"incoming"` → `"answered"` or `"open"`, not `"open"` → `"answered"`.
 
 ## What to do
 
