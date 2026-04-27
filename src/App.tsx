@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
-import { fsRead, intakeStart, intakeStop, projectBootstrap, stateLoad, stateSave } from "./lib/api";
+import { fsRead, intakeStart, projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
@@ -274,34 +274,40 @@ function App() {
 
   // Localhost ticket-intake server lifecycle. Tied to `repo` — start
   // when a project opens, transparently restart with the new path on
-  // project switch, stop on app close. The Rust side enforces single-
-  // instance semantics: calling intakeStart with a new repo stops the
-  // previous server before binding the new one.
+  // project switch. The Rust side enforces single-instance semantics:
+  // intakeStart awaits an internal stop_inner before binding, so calling
+  // it with a new repo cleanly swaps the previous server.
+  //
+  // Why no intakeStop in cleanup: a rapid repo change A → B can have
+  // intakeStart(A)'s promise still pending when B's effect runs. If
+  // A's cleanup called intakeStop and then A's promise resolved, the
+  // resolve handler would see `cancelled=true`. Worse: if the cleanup
+  // *and* a follow-up resolve both call intakeStop, the second one
+  // kills server B that B's effect just brought up. Trusting Rust's
+  // swap semantics + skipping cleanup-stop is simpler and race-free.
+  // App close kills the spawned task via the tokio runtime drop on
+  // process exit — no manual stop needed there either.
+  const intakeGenRef = useRef(0);
   useEffect(() => {
     if (!repo) {
       setIntakeServerUrl(null);
       return;
     }
-    let cancelled = false;
+    const myGen = ++intakeGenRef.current;
     intakeStart(repo)
       .then((url) => {
-        if (cancelled) {
-          // Component unmounted before bind completed — stop the server
-          // so we don't leak a listening socket.
-          intakeStop().catch((e) => console.warn("[app] intake stop after cancel:", e));
-          return;
-        }
+        // Only commit the URL if no later effect has superseded us. A
+        // stale resolve setting an old URL would leave the header
+        // pointing at a dead server.
+        if (intakeGenRef.current !== myGen) return;
         console.log("[app] intake server up at", url);
         setIntakeServerUrl(url);
       })
       .catch((e) => {
+        if (intakeGenRef.current !== myGen) return;
         console.error("[app] intake start failed:", e);
-        if (!cancelled) setIntakeServerUrl(null);
+        setIntakeServerUrl(null);
       });
-    return () => {
-      cancelled = true;
-      intakeStop().catch((e) => console.warn("[app] intake stop:", e));
-    };
   }, [repo]);
 
   const onSyncLine = (line: string) => setSyncLines((prev) => [...prev, line]);

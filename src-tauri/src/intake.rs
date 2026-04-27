@@ -21,7 +21,7 @@
 
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Form, Router,
@@ -148,8 +148,21 @@ async fn serve_form() -> Html<&'static str> {
 
 async fn handle_post(
     State(state): State<ServerState>,
+    headers: HeaderMap,
     Form(form): Form<TicketForm>,
 ) -> Response {
+    // CSRF: the form is served on http://127.0.0.1:<port> and the only
+    // legitimate caller is that same origin. A malicious cross-origin
+    // site that discovers the port can fire a CORS-simple POST without
+    // preflight; reject it by requiring Origin's host to be a localhost
+    // alias. We don't pin the port — it's OS-assigned per launch — and
+    // the host-only check is enough to defeat the attacker scenario
+    // because any attacker origin lives at a different hostname.
+    if !origin_is_localhost(&headers) {
+        return (StatusCode::FORBIDDEN, "cross-origin requests are not allowed")
+            .into_response();
+    }
+
     let trimmed_question = form.question.trim();
     if trimmed_question.is_empty() {
         return (
@@ -202,7 +215,10 @@ async fn handle_post(
         .repo
         .join("databases")
         .join(format!("openit-tickets-{}", slug));
-    if let Err(e) = std::fs::create_dir_all(&dir) {
+    // tokio::fs to avoid blocking the runtime worker. Matters less in
+    // practice (single user, fast local disk) but the async handler
+    // shouldn't be the place we serialize tokio threads on slow IO.
+    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
         eprintln!("[intake] mkdir {} failed: {}", dir.display(), e);
         return (StatusCode::INTERNAL_SERVER_ERROR, "could not create ticket directory")
             .into_response();
@@ -217,13 +233,40 @@ async fn handle_post(
                 .into_response();
         }
     };
-    if let Err(e) = std::fs::write(&path, json) {
+    if let Err(e) = tokio::fs::write(&path, json).await {
         eprintln!("[intake] write {} failed: {}", path.display(), e);
         return (StatusCode::INTERNAL_SERVER_ERROR, "could not write ticket file")
             .into_response();
     }
 
     Html(success_page(&id)).into_response()
+}
+
+/// Validate the Origin (or, as a fallback, Referer) header against a
+/// localhost-host allowlist. Returns true iff the request looks
+/// same-origin to the OpenIT-bound localhost server.
+///
+/// Both headers are sent by modern browsers on POST. Origin is the
+/// preferred CSRF signal — present on cross-origin POSTs and form
+/// submissions alike. We accept either `127.0.0.1`, `localhost`, or
+/// `[::1]` as a host (browsers may rewrite between them depending on
+/// how the user typed the URL). Port intentionally not checked — the
+/// intake port is OS-assigned and rotates per launch.
+///
+/// If neither header is present, reject. A modern browser always
+/// includes one on a cross-origin POST; absence implies either an
+/// attacker tool (curl, etc.) or an unusual client where we'd rather
+/// be conservative than permissive.
+fn origin_is_localhost(headers: &HeaderMap) -> bool {
+    let candidate = headers
+        .get("origin")
+        .or_else(|| headers.get("referer"))
+        .and_then(|v| v.to_str().ok());
+    let Some(s) = candidate else { return false };
+    let Ok(url) = reqwest::Url::parse(s) else {
+        return false;
+    };
+    matches!(url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("::1"))
 }
 
 fn first_line_truncated(s: &str, max: usize) -> String {
