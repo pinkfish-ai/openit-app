@@ -49,17 +49,17 @@ describe("routeFile", () => {
   });
 
   describe("schemas/", () => {
-    it("routes <col>._schema.json to databases/<col>-<slug>/_schema.json", () => {
-      expect(routeFile("schemas/openit-tickets._schema.json", slug)).toEqual({
-        subdir: "databases/openit-tickets-my-helpdesk",
+    it("routes <col>._schema.json to databases/<col>/_schema.json (slug-free)", () => {
+      expect(routeFile("schemas/tickets._schema.json", slug)).toEqual({
+        subdir: "databases/tickets",
         filename: "_schema.json",
         substituteSlug: false,
       });
     });
 
-    it("handles people schema with the same suffix shape", () => {
-      expect(routeFile("schemas/openit-people._schema.json", "local")).toEqual({
-        subdir: "databases/openit-people-local",
+    it("handles people schema the same way", () => {
+      expect(routeFile("schemas/people._schema.json", "local")).toEqual({
+        subdir: "databases/people",
         filename: "_schema.json",
         substituteSlug: false,
       });
@@ -67,15 +67,15 @@ describe("routeFile", () => {
   });
 
   describe("agents/<name>.template.json", () => {
-    it("strips .template, appends -<slug>, and flags slug substitution", () => {
-      expect(routeFile("agents/openit-triage.template.json", slug)).toEqual({
+    it("strips .template suffix; lands at agents/<name>.json (slug-free)", () => {
+      expect(routeFile("agents/triage.template.json", slug)).toEqual({
         subdir: "agents",
-        filename: "openit-triage-my-helpdesk.json",
-        substituteSlug: true,
+        filename: "triage.json",
+        substituteSlug: false,
       });
     });
 
-    it("non-template agent files don't get slug substitution", () => {
+    it("non-template agent files preserved as-is", () => {
       expect(routeFile("agents/some-other.json", slug)).toEqual({
         subdir: "agents",
         filename: "some-other.json",
@@ -120,15 +120,15 @@ describe("routeFile", () => {
     });
   });
 
-  describe("slug variations", () => {
-    it("handles a simple slug", () => {
-      const r = routeFile("agents/openit-triage.template.json", "local");
-      expect(r?.filename).toBe("openit-triage-local.json");
+  describe("slug parameter", () => {
+    it("ignores slug for schemas (output is slug-free)", () => {
+      const r = routeFile("schemas/tickets._schema.json", "any-slug-here");
+      expect(r?.subdir).toBe("databases/tickets");
     });
 
-    it("handles a numeric-id slug", () => {
-      const r = routeFile("schemas/openit-tickets._schema.json", "653713545258");
-      expect(r?.subdir).toBe("databases/openit-tickets-653713545258");
+    it("ignores slug for agents (output is slug-free)", () => {
+      const r = routeFile("agents/triage.template.json", "any-slug-here");
+      expect(r?.filename).toBe("triage.json");
     });
   });
 });

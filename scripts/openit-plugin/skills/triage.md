@@ -17,16 +17,15 @@ Invoked when the user sends a support question — *"my VPN is broken"*, *"how d
 
 ## What to do
 
-The triage agent's instructions live at `agents/openit-triage-<slug>.json`. **Read it once at the start of the loop** — the file is the source of truth for what the agent does. CLAUDE.md gives you the local-runtime mapping for the agent's intent steps (where files live, what tools to use). The skill body below is a quick reference.
+The triage agent's instructions live at `agents/triage.json`. **Read it once at the start of the loop** — the file is the source of truth for what the agent does. CLAUDE.md gives you the local-runtime mapping for the agent's intent steps (where files live, what tools to use). The skill body below is a quick reference.
 
 ### Step 1 — Log the ticket
 
 A ticket exists for every incoming question. Even when you can answer instantly, log it — the audit trail matters.
 
-- Find the project slug: look at the directory name `databases/openit-tickets-<slug>/`.
 - Generate a ticket id: `ticket-<unix-timestamp-ms>-<4-char-rand>` (e.g. `ticket-1777234492000-x9q1`).
-- Read `databases/openit-tickets-<slug>/_schema.json` once to confirm field IDs (they're plain language: `subject`, `description`, `asker`, `status`, etc.).
-- `Write` a JSON file at `databases/openit-tickets-<slug>/<ticket-id>.json`:
+- Read `databases/tickets/_schema.json` once to confirm field IDs (they're plain language: `subject`, `description`, `asker`, `status`, etc.).
+- `Write` a JSON file at `databases/tickets/<ticket-id>.json`:
 
   ```json
   {
@@ -42,7 +41,7 @@ A ticket exists for every incoming question. Even when you can answer instantly,
   }
   ```
 
-- Log the user's first turn as a conversation row: `Write` to `databases/openit-conversations-<slug>/msg-<timestamp>-<rand>.json`:
+- Log the user's first turn as a conversation row: `Write` to `databases/conversations/msg-<timestamp>-<rand>.json`:
 
   ```json
   {

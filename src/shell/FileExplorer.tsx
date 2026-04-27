@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import sunburstIcon from "../assets/sunburst.svg";
 import {
   fsDelete,
   fsList,
@@ -216,6 +217,10 @@ export function FileExplorer({
   // open menu actually deletes. Closing the menu (overlay click,
   // selecting another item) resets it.
   const [deleteArmed, setDeleteArmed] = useState(false);
+  // System-file visibility toggle: CLAUDE.md and `_*` files are
+  // scaffolding the user usually doesn't want to see. Default off;
+  // toolbar icon toggles.
+  const [showSystemFiles, setShowSystemFiles] = useState(false);
 
   // Virtual resource state
   const [datastores, setDatastores] = useState<DataCollection[]>([]);
@@ -367,6 +372,20 @@ export function FileExplorer({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repo]);
 
+  // System / scaffolding entries hidden by default. The toggle in
+  // the toolbar exposes them when the user wants to inspect:
+  //   - `CLAUDE.md` — the agent instructions doc at repo root
+  //   - `_*` files (`_welcome.md`, `_schema.json`, etc.) at any depth
+  //   - `.claude/` directory and everything under it (skills source)
+  const isSystemEntry = (n: FileNode): boolean => {
+    if (!repo) return false;
+    const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.path;
+    if (rel === "CLAUDE.md") return true;
+    if (rel === ".claude" || rel.startsWith(".claude/")) return true;
+    if (n.name.startsWith("_")) return true;
+    return false;
+  };
+
   const visible = useMemo(() => {
     if (!repo) return [];
     return nodes.filter((n) => {
@@ -376,12 +395,13 @@ export function FileExplorer({
       // conflictPaths). Shadows reappear if the user wants to inspect
       // via Reveal in Finder.
       if (!n.is_dir && n.name.includes(".server.")) return false;
+      if (!showSystemFiles && isSystemEntry(n)) return false;
       for (const c of collapsed) {
         if (n.path !== c && n.path.startsWith(c + "/")) return false;
       }
       return true;
     });
-  }, [nodes, collapsed, repo]);
+  }, [nodes, collapsed, repo, showSystemFiles]);
 
   const onDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -487,6 +507,19 @@ export function FileExplorer({
       <div className="explorer-toolbar">
         <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={allCollapsed ? "Expand all" : "Collapse all"}>
           {allCollapsed ? "⊞" : "⊟"}
+        </button>
+        <button
+          type="button"
+          className={`explorer-icon-btn explorer-system-toggle ${showSystemFiles ? "active" : ""}`}
+          onClick={() => setShowSystemFiles((v) => !v)}
+          title={
+            showSystemFiles
+              ? "Hide system files (CLAUDE.md, _welcome.md, _schema.json, .claude/)"
+              : "Show system files (CLAUDE.md, _welcome.md, _schema.json, .claude/)"
+          }
+          aria-pressed={showSystemFiles}
+        >
+          <img src={sunburstIcon} alt="" className="explorer-system-icon" />
         </button>
       </div>
 

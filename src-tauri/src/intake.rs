@@ -230,26 +230,18 @@ async fn handle_post(
         "updatedAt": now,
     });
 
-    let slug = state
-        .repo
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("local")
-        .to_string();
-    let dir = state
-        .repo
-        .join("databases")
-        .join(format!("openit-tickets-{}", slug));
-    // tokio::fs to avoid blocking the runtime worker. Matters less in
-    // practice (single user, fast local disk) but the async handler
-    // shouldn't be the place we serialize tokio threads on slow IO.
-    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-        eprintln!("[intake] mkdir {} failed: {}", dir.display(), e);
+    // Tickets land in `databases/tickets/`. Slug-free dir names match
+    // the bundled-schema convention and stay stable across local/cloud
+    // modes (the cloud sync engine maps to `tickets-<orgId>` at push
+    // time).
+    let tickets_dir = state.repo.join("databases").join("tickets");
+    if let Err(e) = tokio::fs::create_dir_all(&tickets_dir).await {
+        eprintln!("[intake] mkdir {} failed: {}", tickets_dir.display(), e);
         return (StatusCode::INTERNAL_SERVER_ERROR, "could not create ticket directory")
             .into_response();
     }
 
-    let path = dir.join(format!("{}.json", id));
+    let path = tickets_dir.join(format!("{}.json", id));
     let json = match serde_json::to_string_pretty(&row) {
         Ok(s) => s,
         Err(e) => {
@@ -264,7 +256,89 @@ async fn handle_post(
             .into_response();
     }
 
+    // Best-effort: also create a people row for the asker if we have
+    // an email. Idempotent (skips if a row with the same email-derived
+    // filename already exists). Failures here don't fail the ticket
+    // submission — the ticket already landed.
+    if let Some(email) = form
+        .email
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s.contains('@'))
+    {
+        if let Err(e) = ensure_people_row(
+            &state.repo,
+            &email,
+            form.name.as_deref().unwrap_or("").trim(),
+            &now,
+        )
+        .await
+        {
+            eprintln!("[intake] people row write failed (non-fatal): {}", e);
+        }
+    }
+
     Html(success_page(&id)).into_response()
+}
+
+/// Create `databases/people/<sanitized-email>.json` if one doesn't
+/// already exist. Sanitization: lowercase + replace anything outside
+/// `[a-z0-9.-]` with `_`. Idempotent — repeat tickets from the same
+/// email don't create duplicate rows. Returns the path written or
+/// None when a row with that email was already on disk.
+async fn ensure_people_row(
+    repo: &std::path::Path,
+    email: &str,
+    name: &str,
+    now: &str,
+) -> Result<(), String> {
+    let people_dir = repo.join("databases").join("people");
+    tokio::fs::create_dir_all(&people_dir)
+        .await
+        .map_err(|e| format!("mkdir people: {}", e))?;
+
+    let key = sanitize_email_key(email);
+    let path = people_dir.join(format!("{}.json", key));
+    if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return Ok(());
+    }
+
+    let display_name = if name.is_empty() {
+        email.to_string()
+    } else {
+        name.to_string()
+    };
+    let row = serde_json::json!({
+        "displayName": display_name,
+        "email": email,
+        "channels": [format!("web:{}", email)],
+        "createdAt": now,
+        "updatedAt": now,
+    });
+    let json = serde_json::to_string_pretty(&row)
+        .map_err(|e| format!("serialize people row: {}", e))?;
+    tokio::fs::write(&path, json)
+        .await
+        .map_err(|e| format!("write people row: {}", e))?;
+    Ok(())
+}
+
+/// Convert an email to a filesystem-safe filename. `Alice@Example.com`
+/// → `alice_example.com`. Doesn't preserve uniqueness across all
+/// possible emails (e.g. `a@b.c` and `a_b.c` collide), but for the
+/// realistic email shape it's stable and readable.
+fn sanitize_email_key(email: &str) -> String {
+    email
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Validate the Origin (or, as a fallback, Referer) header against a

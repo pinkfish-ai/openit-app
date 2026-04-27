@@ -1,8 +1,7 @@
-// Local-mode incoming-ticket detection. Walks every
-// `databases/openit-tickets-*/<row>.json` under the project repo and
-// returns rows with `status === "incoming"`. Used by the shell's
-// IncomingTicketBanner to surface tickets the admin should run through
-// triage.
+// Local-mode incoming-ticket detection. Walks `databases/tickets/<row>.json`
+// under the project repo and returns rows with `status === "incoming"`.
+// Used by the shell's IncomingTicketBanner to surface tickets the admin
+// should run through triage.
 //
 // "incoming" is the status assigned to rows that arrived via a path
 // other than the admin typing in chat: the localhost intake form
@@ -13,15 +12,15 @@
 // Scanning is fs-tick driven, not engine-driven — incoming rows can
 // land independently of any sync (a coworker submits the form while
 // offline). We rescan on every fs change. The work is bounded: only
-// the openit-tickets-* dirs, only JSON files, and we stop reading a
-// file as soon as we see a non-incoming status.
+// `databases/tickets/`, only JSON files, and we stop reading a file
+// as soon as we see a non-incoming status.
 
 import { fsList, fsRead, type FileNode } from "./api";
 
 export type IncomingTicket = {
   // Absolute path to the row file on disk.
   path: string;
-  // Path relative to repo root (e.g. "databases/openit-tickets-local/foo.json").
+  // Path relative to repo root (e.g. "databases/tickets/foo.json").
   relPath: string;
   // Best-effort subject from the row JSON; empty string if missing.
   subject: string;
@@ -38,35 +37,25 @@ export type IncomingTicket = {
 /// simple — files are the source of truth.
 export async function scanIncomingTickets(repo: string): Promise<IncomingTicket[]> {
   const results: IncomingTicket[] = [];
-  let dbDirs: FileNode[];
+  const ticketsDir = `${repo}/databases/tickets`;
+  let rows: FileNode[];
   try {
-    dbDirs = await fsList(`${repo}/databases`);
+    rows = await fsList(ticketsDir);
   } catch {
-    // databases/ doesn't exist yet (fresh project, no schemas synced).
+    // databases/tickets/ doesn't exist yet (fresh project, no bundled
+    // schema written, or pre-rename layout).
     return results;
   }
 
-  for (const dir of dbDirs) {
-    if (!dir.is_dir) continue;
-    if (!dir.name.startsWith("openit-tickets-")) continue;
+  for (const row of rows) {
+    if (row.is_dir) continue;
+    if (!row.name.endsWith(".json")) continue;
+    // Skip schema + state-shadow files — only ticket rows have a status.
+    if (row.name === "_schema.json") continue;
+    if (row.name.endsWith(".server.json")) continue;
 
-    let rows: FileNode[];
-    try {
-      rows = await fsList(dir.path);
-    } catch {
-      continue;
-    }
-
-    for (const row of rows) {
-      if (row.is_dir) continue;
-      if (!row.name.endsWith(".json")) continue;
-      // Skip schema + state-shadow files — only ticket rows have a status.
-      if (row.name === "_schema.json") continue;
-      if (row.name.endsWith(".server.json")) continue;
-
-      const ticket = await readIfIncoming(row.path, repo);
-      if (ticket) results.push(ticket);
-    }
+    const ticket = await readIfIncoming(row.path, repo);
+    if (ticket) results.push(ticket);
   }
 
   results.sort((a, b) => a.path.localeCompare(b.path));

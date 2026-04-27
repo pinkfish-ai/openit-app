@@ -478,6 +478,27 @@ body,
   border-color: var(--accent);
 }
 
+.explorer-icon-btn.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.explorer-system-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  /* Greyed out when system files are hidden; full accent when shown. */
+  opacity: 0.4;
+  filter: grayscale(100%);
+  transition: opacity 0.1s, filter 0.1s;
+}
+
+.explorer-system-toggle.active .explorer-system-icon {
+  opacity: 1;
+  filter: none;
+}
+
 .explorer-skills-section {
   border-bottom: 1px solid var(--border);
   padding: 4px 0;

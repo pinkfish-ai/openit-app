@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="currentColor" aria-hidden="true">
+  <!-- Stylized sunburst / Pinkfish-style mark. 11 irregular spikes
+       radiating from a soft center. Single-color so it inherits
+       currentColor (we tint it via CSS). -->
+  <g transform="translate(50 50)">
+    <polygon points="-3,-48 0,-50 3,-48 4,-22 -4,-22" />
+    <polygon points="11,-46 14,-44 14,-41 8,-21 1,-22" transform="rotate(33)"/>
+    <polygon points="-3,-48 0,-50 3,-48 4,-22 -4,-22" transform="rotate(66)"/>
+    <polygon points="11,-46 14,-44 14,-41 8,-21 1,-22" transform="rotate(99)"/>
+    <polygon points="-3,-48 0,-50 3,-48 4,-22 -4,-22" transform="rotate(132)"/>
+    <polygon points="11,-46 14,-44 14,-41 8,-21 1,-22" transform="rotate(165)"/>
+    <polygon points="-3,-48 0,-50 3,-48 4,-22 -4,-22" transform="rotate(198)"/>
+    <polygon points="11,-46 14,-44 14,-41 8,-21 1,-22" transform="rotate(231)"/>
+    <polygon points="-3,-48 0,-50 3,-48 4,-22 -4,-22" transform="rotate(264)"/>
+    <polygon points="11,-46 14,-44 14,-41 8,-21 1,-22" transform="rotate(297)"/>
+    <polygon points="-3,-48 0,-50 3,-48 4,-22 -4,-22" transform="rotate(330)"/>
+    <circle r="14" />
+  </g>
+</svg>

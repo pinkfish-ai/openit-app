@@ -6,15 +6,15 @@ This project folder is a **local IT helpdesk you own.** Tickets, knowledge base,
 
 | Path | What's there |
 |---|---|
-| `databases/openit-tickets-<slug>/*.json` | Ticket rows, structured. `_schema.json` next to them documents fields. |
-| `databases/openit-people-<slug>/*.json` | Contacts directory, structured. |
-| `databases/openit-conversations-<slug>/*.json` | One JSON file per conversation turn. **Unstructured** — no schema enforcement. Linked to a ticket via `ticketId`. |
+| `databases/tickets/*.json` | Ticket rows, structured. `_schema.json` next to them documents fields. |
+| `databases/people/*.json` | Contacts directory, structured. |
+| `databases/conversations/*.json` | One JSON file per conversation turn. **Unstructured** — no schema enforcement. Linked to a ticket via `ticketId`. |
 | `knowledge-base/*.md` | Solution articles. Markdown. The "answer once" capture target. |
 | `filestore/*` | Document storage — PDFs, screenshots, attachments. |
-| `agents/<name>.json` | Agent configurations. The triage agent lives at `agents/openit-triage-<slug>.json`. |
+| `agents/<name>.json` | Agent configurations. The triage agent lives at `agents/triage.json`. |
 | `workflows/<name>.json` | (Future, V2.) Captured action playbooks. |
 
-`<slug>` is the project slug — derived from the project name on first run, stable thereafter.
+The directory names are stable — same in local mode and after connecting to cloud. The cloud sync engine maps these to per-org collections on Pinkfish at push time; the local layout doesn't change.
 
 ## How to interact with the data — local file ops first
 
@@ -29,13 +29,14 @@ You don't need to call any gateway / network tool to read or write tickets, KB a
 
 ## The triage agent
 
-This project has a triage agent at `agents/openit-triage-<slug>.json`. When the user sends what looks like a support question (someone needs help with an IT thing), behave as the triage agent: read its `instructions` field and follow it.
+This project has a triage agent at `agents/triage.json`. When the user sends what looks like a support question (someone needs help with an IT thing), behave as the triage agent: read its `instructions` field and follow it.
 
-The agent's instructions describe the **intent** of each step (log the ticket, search the KB, answer or escalate, capture the answer as a KB article on resolve). Map intent to mechanism using this CLAUDE.md and the data layout above:
+The agent's instructions describe the **intent** of each step (record the asker, log the ticket, search the KB, answer or escalate, capture the answer as a KB article on resolve). Map intent to mechanism using this CLAUDE.md and the data layout above:
 
-- *"Create a ticket"* → `Write` a new file at `databases/openit-tickets-<slug>/ticket-<timestamp>-<short-rand>.json`. Read `databases/openit-tickets-<slug>/_schema.json` for field IDs (they're plain language: `subject`, `description`, `asker`, `status`, etc.). Set `status: "incoming"` for newly-arrived tickets, `"open"` once you've decided the ticket needs human attention, `"answered"` once it's been resolved.
+- *"Record the asker as a person"* → look up `databases/people/` for an existing row matching the asker's email; if none, `Write` a new row. Read `databases/people/_schema.json` for field IDs (`displayName`, `email`, `role`, `department`, `channels`, etc.). Idempotent — skip the write if a row with that email already exists.
+- *"Create a ticket"* → `Write` a new file at `databases/tickets/ticket-<timestamp>-<short-rand>.json`. Read `databases/tickets/_schema.json` for field IDs (they're plain language: `subject`, `description`, `asker`, `status`, etc.). Set `status: "incoming"` for newly-arrived tickets, `"open"` once you've decided the ticket needs human attention, `"answered"` once it's been resolved.
 - *"Search the KB"* → `Glob "knowledge-base/*.md"` + `Read` the most relevant files. Filename + headings are usually enough cue. Be willing to read 3–5 articles if the question's topic matches multiple.
-- *"Log a conversation turn"* → `Write` to `databases/openit-conversations-<slug>/msg-<timestamp>-<short-rand>.json`. Required fields: `id`, `ticketId`, `role` (asker / agent / admin / system), `sender`, `timestamp`, `body`. No schema enforcement; just follow the convention.
+- *"Log a conversation turn"* → `Write` to `databases/conversations/msg-<timestamp>-<short-rand>.json`. Required fields: `id`, `ticketId`, `role` (asker / agent / admin / system), `sender`, `timestamp`, `body`. No schema enforcement; just follow the convention.
 - *"Reply to the user"* → write your reply text into a conversation turn (`role: "agent"`) AND surface it in the chat for the admin to copy/paste to the user (until cloud channel ingest does that automatically).
 
 ## How to talk to me about changes

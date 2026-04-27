@@ -26,27 +26,46 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     let already_existed = path.exists();
     if !already_existed {
         fs::create_dir_all(&path).map_err(|e| format!("create_dir_all failed: {}", e))?;
-        let welcome = format!(
-            "# Welcome to {}\n\n\
-             Your OpenIT workspace for org `{}`.\n\n\
-             ## What's in this folder?\n\n\
-             **agents/** — AI agents that handle tasks. Create new agents via Claude Code with `/create-agent`.\n\n\
-             **workflows/** — Automated processes triggered by events. Create workflows with `/run-workflow`.\n\n\
-             **databases/** — Structured data tables from Pinkfish (openit-tickets, openit-people, etc.).\n\n\
-             **filestore/** — Document storage. Ask Claude to upload or retrieve files here.\n\n\
-             **knowledge-base/** — Solution articles. Syncs with Pinkfish; ask Claude to search or write KB articles.\n\n\
-             ## Next steps\n\n\
-             1. Open a project folder in Claude Code\n\
-             2. Ask Claude to create your first agent: \"Create a helpdesk agent\"\n\
-             3. Use `/create-workflow` to automate repetitive tasks\n\n\
-             Everything you create here is a regular file on your disk. OpenIT just provides the interface.\n",
-            org_name, org_id
-        );
+        // Welcome message: lead with what OpenIT *does*, not what's in
+        // the folder. Both local-only and cloud-connected modes land
+        // here; the cloud upgrade is an option exposed via the header
+        // pill, not a state worth highlighting on first launch.
+        let _ = (org_name, org_id);
+        let welcome = "# Welcome to OpenIT\n\n\
+             ## The idea\n\n\
+             Describe IT work in plain English and Claude builds it for you — triage tickets, onboard new hires, audit access, write runbooks. Everything lands as a regular file in this folder: agents, workflows, ticket data, knowledge articles. You own it, it versions cleanly, and it stays useful even outside this app.\n\n\
+             ## Getting started\n\n\
+             The bubbles below the chat (right pane) are good starting points. Click one, or just type a request.\n\n\
+             Share the **Intake** URL in the header with your team — submitted tickets land in `databases/tickets/` and the banner up top will surface them for triage.\n\n\
+             ## A few things to try\n\n\
+             - **Triage today's tickets.** Claude reads `databases/tickets/`, groups by urgency, and suggests next actions for each.\n\n\
+             - **Onboard a new hire** — *\"Onboard Alice in Engineering.\"* Claude creates the people record, drafts a welcome email, queues access requests.\n\n\
+             - **Audit access to a system** — *\"Who has admin on GitHub?\"* Cross-references connected systems against `databases/people/`.\n\n\
+             - **Build a new workflow** — *\"Draft a workflow that escalates SLA breaches to the team lead.\"* Claude scaffolds `workflows/<name>.json` and any agents it needs.\n\n\
+             - **Update or write a knowledge-base article** — *\"Write a runbook for resetting a Slack workspace owner.\"* Lands in `knowledge-base/`.\n\n\
+             ## How it works\n\n\
+             Everything in this folder is a regular file on your disk. Edit agents and workflows in your editor of choice; the **Deploy** tab on the left commits changes locally. **Connect to Cloud** in the header turns on multi-device sync, channel ingest (Slack/Teams/email → tickets), semantic KB search, and runs your agents server-side so they answer even when this app isn't open.\n";
+        let welcome = welcome.to_string();
         fs::write(path.join("_welcome.md"), welcome)
             .map_err(|e| format!("could not write README: {}", e))?;
 
-        // Create standard subdirectories so they appear in the file explorer even if empty
-        for dir in &["agents", "workflows", "databases", "filestore", "knowledge-base"] {
+        // Create standard subdirectories so they appear in the file
+        // explorer even if empty. The three core datastore dirs
+        // (tickets, people, conversations) are created upfront so the
+        // explorer + Claude both see them on day-one — without this,
+        // `databases/conversations/` only appeared after the first
+        // turn was logged, which felt incomplete to users browsing
+        // the layout.
+        for dir in &[
+            "agents",
+            "workflows",
+            "databases",
+            "databases/tickets",
+            "databases/people",
+            "databases/conversations",
+            "filestore",
+            "knowledge-base",
+        ] {
             fs::create_dir_all(path.join(dir))
                 .map_err(|e| format!("create_dir failed for {}: {}", dir, e))?;
         }

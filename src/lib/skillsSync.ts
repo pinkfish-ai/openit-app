@@ -58,17 +58,26 @@ export async function fetchSkillFile(
 /// Resolve where on disk a manifest file lands. Returns { subdir, filename }
 /// relative to the repo root, or null to skip writing this file.
 ///
+/// Database/agent dirs use stable, slug-free names so the layout matches
+/// the user's mental model and stays consistent if they later connect to
+/// cloud (the engine maps these to `<colName>-<orgId>` collections at
+/// push time; the local layout doesn't change).
+///
 /// Routing rules:
 ///   - `CLAUDE.md`                          → `CLAUDE.md` (repo root)
 ///   - `claude-md.template.md` (legacy)     → `CLAUDE.md` (repo root)
 ///   - `skills/<name>.md`                   → `.claude/skills/<name>/SKILL.md`
-///   - `schemas/<col>._schema.json`         → `databases/<col>-<slug>/_schema.json`
-///   - `agents/<name>.template.json`        → `agents/<name-stripped>-<slug>.json` (with `{{slug}}` subst)
+///   - `schemas/<col>._schema.json`         → `databases/<col>/_schema.json`
+///   - `agents/<name>.template.json`        → `agents/<name>.json`
 ///   - `scripts/<file>`                     → `.claude/scripts/<file>`
 ///   - anything else                        → preserve original layout
+///
+/// `substituteSlug` is no longer set by any current rule (the slug
+/// suffix on dirs was dropped) but the field is kept for future per-
+/// file substitution if needed.
 export function routeFile(
   filePath: string,
-  slug: string,
+  _slug: string,
 ): { subdir: string; filename: string; substituteSlug: boolean } | null {
   if (filePath === "CLAUDE.md" || filePath === "claude-md.template.md") {
     return { subdir: "", filename: "CLAUDE.md", substituteSlug: false };
@@ -86,7 +95,7 @@ export function routeFile(
       .replace("schemas/", "")
       .replace("._schema.json", "");
     return {
-      subdir: `databases/${colName}-${slug}`,
+      subdir: `databases/${colName}`,
       filename: "_schema.json",
       substituteSlug: false,
     };
@@ -97,8 +106,8 @@ export function routeFile(
       .replace(".template.json", "");
     return {
       subdir: "agents",
-      filename: `${agentBase}-${slug}.json`,
-      substituteSlug: true,
+      filename: `${agentBase}.json`,
+      substituteSlug: false,
     };
   }
   if (filePath.startsWith("scripts/")) {

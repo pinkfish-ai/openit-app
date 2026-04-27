@@ -32,17 +32,19 @@ pub fn fs_list(root: String) -> Result<Vec<FileNode>, String> {
     for entry in walker.flatten() {
         let path = entry.path();
         let rel = path.strip_prefix(&root_path).unwrap_or(path);
-        // Hide ALL top-level dotfiles/dotdirs from the explorer —
-        // including `.claude` (plugin scripts/skills are managed by
-        // the manifest sync, not user-edited from this surface yet)
-        // and `.openit` (engine state). Without this filter,
-        // .git/.vscode/.env etc. would clutter the tree.
+        // Top-level dotdirs split into two buckets:
+        //   - Always hidden: `.git`, `.openit` (engine state),
+        //     `.vscode`, `.env*` (creds). Tooling internals — the user
+        //     never wants to see these.
+        //   - User-toggleable: `.claude` (skills source). Returned
+        //     here; the explorer filters under its "show system
+        //     files" toggle.
         let top = rel
             .components()
             .next()
             .and_then(|c| c.as_os_str().to_str())
             .unwrap_or("");
-        if top.starts_with('.') {
+        if top.starts_with('.') && top != ".claude" {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
@@ -171,13 +173,12 @@ mod tests {
     }
 
     #[test]
-    fn fs_list_hides_all_top_level_dot_dirs() {
-        // `.claude` (plugin-managed skills/scripts), `.openit` (engine
-        // state), `.git` (vcs internals) — all of these are managed by
-        // OpenIT internals or external tools. Surfacing them in the
-        // explorer just clutters the tree without giving the user
-        // anything actionable. The implementation hides all top-level
-        // dotfiles/dotdirs uniformly; this test pins that behavior.
+    fn fs_list_returns_dot_claude_but_hides_other_dot_dirs() {
+        // `.claude` (skills source) is user-toggleable so fs_list
+        // returns it; the frontend FileExplorer filters under a
+        // "show system files" toggle. Everything else dotty
+        // (`.git`, `.openit`, `.vscode`) is always hidden — those
+        // are tooling internals the user never wants to see.
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join(".claude")).unwrap();
         fs::create_dir(dir.path().join(".claude/skills")).unwrap();
@@ -188,11 +189,12 @@ mod tests {
 
         let nodes = fs_list(dir.path().to_string_lossy().to_string()).unwrap();
         let names: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
-        // Visible siblings still come through.
+        // Regular files come through.
         assert!(names.contains(&"README.md"));
-        // Top-level dotdirs and everything beneath them are hidden.
-        assert!(!names.contains(&".claude"));
-        assert!(!names.contains(&"SKILL.md"));
+        // .claude AND its descendants come through (frontend will hide).
+        assert!(names.contains(&".claude"));
+        assert!(names.contains(&"SKILL.md"));
+        // .git and its contents stay hidden — never surfaced.
         assert!(!names.contains(&".git"));
         assert!(!names.contains(&"HEAD"));
     }

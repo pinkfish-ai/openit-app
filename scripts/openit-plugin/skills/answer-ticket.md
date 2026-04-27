@@ -5,7 +5,7 @@ description: Walks the IT admin through responding to an escalated ticket — re
 
 ## When to use
 
-Invoked when the admin clicks the **Solve with Claude** button on the escalated-ticket banner, or directly via `/answer-ticket <ticket-path>` for a specific ticket. The caller will name the ticket file path(s); if not, scan `databases/openit-tickets-<slug>/` for rows with `status: "open"` and surface them.
+Invoked when the admin clicks the **Solve with Claude** button on the escalated-ticket banner, or directly via `/answer-ticket <ticket-path>` for a specific ticket. The caller will name the ticket file path(s); if not, scan `databases/tickets/` for rows with `status: "open"` and surface them.
 
 ## The principle — answer once
 
@@ -18,8 +18,8 @@ If the ticket is action-shaped (the admin had to *do* something rather than just
 ### 1. Read the ticket and the conversation
 
 - `Read` the ticket JSON at the path you were given.
-- `Read` `databases/openit-tickets-<slug>/_schema.json` to refresh on field meanings (the schema's field IDs are plain language — `subject`, `description`, `status`, `asker` — so this is mostly a sanity check).
-- List `databases/openit-conversations-<slug>/`, filter by `ticketId === <this ticket's id>`, sort by `timestamp`. `Read` each turn.
+- `Read` `databases/tickets/_schema.json` to refresh on field meanings (the schema's field IDs are plain language — `subject`, `description`, `status`, `asker` — so this is mostly a sanity check).
+- List `databases/conversations/`, filter by `ticketId === <this ticket's id>`, sort by `timestamp`. `Read` each turn.
 
 ### 2. Summarise it for the admin
 
@@ -42,7 +42,7 @@ For V1, OpenIT doesn't have channel ingest yet — show the admin the final text
 ### 6. Update the ticket and log the conversation turn
 
 - `Edit` the ticket: set `status: "answered"`, append cited KB filenames (if any) to `kbArticleRefs`, set `updatedAt` to now. If the admin assigned themselves, set `assignee`.
-- `Write` a conversation turn at `databases/openit-conversations-<slug>/msg-<timestamp>-<rand>.json`:
+- `Write` a conversation turn at `databases/conversations/msg-<timestamp>-<rand>.json`:
 
   ```json
   {
