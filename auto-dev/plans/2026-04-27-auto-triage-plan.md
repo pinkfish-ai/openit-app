@@ -1,24 +1,25 @@
-# Auto-triage on intake — plan
+# Auto-triage on intake — plan (REVISED, simpler)
 
-**Goal**: every ticket that arrives via form (today) or chat (new) gets auto-handled by an agent before the admin ever sees it. The admin only sees tickets the agent escalated. No manual "triage in Claude" button click for the common case.
+**Goal**: chat-based intake where a single agent gathers the question, searches the KB, and either answers inline or escalates to the admin. Admin only sees escalated tickets via a banner. When admin replies, asker sees it in their open chat tab.
 
-**Non-goals (V1)**: emailing the agent's reply back to the asker (the form submitter). Status feedback to the form user is a thank-you page only; email response is a future channel.
+**Non-goals (V1)**: form intake (dropped — chat is the only channel). Email channel (future).
+
+**The first plan was overengineered** — separate form + chat + headless triage subprocess. Simplification: drop the form entirely; the chat IS the triage. One agent, one skill, one subprocess type (`claude -p` per chat turn).
 
 ---
 
 ## State machine
 
-Status enum simplifies to **3 active states + 2 terminal**:
-
 | Status | Meaning | Who sets it |
 |---|---|---|
-| `incoming` | Just landed, agent hasn't run yet. **Transient** — should only persist if the app was killed mid-triage. | Intake (form/chat) |
-| `answered` | Agent found a confident KB answer and replied. The asker has their answer. | Triage agent (KB hit) |
-| `escalated` | Agent gave up, admin needs to handle. **Banner fires only on this.** | Triage agent (KB miss) |
-| `resolved` | Admin (or asker confirmation) marked it done. | Admin via `/answer-ticket` |
-| `closed` | No further action expected (won't-fix, duplicate, spam). | Admin |
+| `incoming` | Just landed, no agent action yet (transient). | Intake on first message before claude -p |
+| `agent-responding` | Server has spawned `claude -p` for this ticket; subprocess is running. | Server before claude -p; cleared by agent on exit |
+| `answered` | Agent found a confident KB answer and replied. | Agent (KB hit) |
+| `escalated` | Agent gave up, admin must handle. **Escalated banner fires.** | Agent (KB miss) |
+| `resolved` | Admin completed the handling. | Admin via `/answer-ticket` |
+| `closed` | No further action (won't-fix / duplicate / spam). | Admin |
 
-Schema enum changes from `[incoming, open, answered, resolved, closed]` → `[incoming, answered, escalated, resolved, closed]`. The word "open" is dropped from the enum (it was ambiguous — meant "not resolved" colloquially). When admins say "open tickets" they mean `incoming | escalated`.
+Schema enum: `[incoming, agent-responding, answered, escalated, resolved, closed]`. "open" is dropped (ambiguous — admins use it colloquially for "not resolved"; the enum stays specific).
 
 ### Transitions
 
@@ -198,15 +199,15 @@ This protects against:
 
 ---
 
-## Banner re-wire
+## Banners
 
-`EscalatedTicketBanner` (renamed from IncomingTicketBanner):
-- Filter: `status === "escalated"`
-- Click action: paste `/answer-ticket <relPath>` to the active Claude session (not `/triage`)
-- Copy: "1 ticket needs your help — <subject>"
-- Existing dismiss-key + multi-ticket prompt format ports over
+Three banners stack at the top of the shell, in priority order:
 
-The `/triage` skill stays — it's used by the headless `claude -p`. The skill's "two invocation shapes" doc collapses to one (an admin manually running `/triage <path>` is rare with auto-triage; we can leave the skill general but the banner no longer invokes it).
+1. **ConflictBanner** (existing, amber) — sync conflicts. Unchanged.
+2. **AgentActivityBanner** (new, neutral/info) — "Agent is responding to *<subject>*…". Fires whenever any ticket has `status: agent-responding`. Gives admin live visibility into agent work without surfacing the chat itself. Auto-clears when the agent finishes.
+3. **EscalatedTicketBanner** (renamed from IncomingTicketBanner, green) — "1 ticket needs your help — *<subject>*". Fires on `status: escalated`. Click → paste `/answer-ticket <relPath>` to the admin's chat session. Existing dismiss-key + multi-ticket prompt format ports over.
+
+The `/triage` skill stays for headless `claude -p` invocations from the chat. Skill's "invocation shapes" doc collapses to: chat-driven (per-turn) or admin-CLI for debugging.
 
 ---
 
