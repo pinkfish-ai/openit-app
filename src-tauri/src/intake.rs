@@ -266,7 +266,17 @@ fn origin_is_localhost(headers: &HeaderMap) -> bool {
     let Ok(url) = reqwest::Url::parse(s) else {
         return false;
     };
-    matches!(url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("::1"))
+    // Use Url::host() — returns a typed Host<&str> enum, which lets us
+    // delegate loopback detection to the stdlib's `is_loopback` instead
+    // of guessing whether `host_str()` returns IPv6 with or without
+    // brackets (it returns "[::1]" — the bracketed form). Stdlib
+    // `is_loopback` covers 127.0.0.0/8 and ::1 correctly.
+    match url.host() {
+        Some(url::Host::Domain(d)) => d == "localhost",
+        Some(url::Host::Ipv4(addr)) => addr.is_loopback(),
+        Some(url::Host::Ipv6(addr)) => addr.is_loopback(),
+        None => false,
+    }
 }
 
 fn first_line_truncated(s: &str, max: usize) -> String {
