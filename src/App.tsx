@@ -398,6 +398,7 @@ function App() {
           bubbles={bubbles}
           cloudConnected={connected}
           onConnectRequest={() => setBypassOnboarding(false)}
+          intakeUrl={intakeServerUrl}
         />
       </section>
     </main>

@@ -1035,6 +1035,18 @@ body,
   line-height: 1.6;
 }
 
+/* Brief yellow flash when the user clicks "Getting Started" while the
+   welcome doc is already showing — gives feedback that the click did
+   something. Keyed re-mount in Viewer.tsx makes the animation re-fire
+   on each click. */
+@keyframes viewer-md-flash {
+  0%   { background: #fff4c2; }
+  100% { background: transparent; }
+}
+.viewer-md-flash {
+  animation: viewer-md-flash 0.6s ease-out;
+}
+
 .viewer-md h1,
 .viewer-md h2,
 .viewer-md h3,

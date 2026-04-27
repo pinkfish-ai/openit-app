@@ -56,6 +56,7 @@ export function Shell({
   bubbles,
   cloudConnected,
   onConnectRequest,
+  intakeUrl,
 }: {
   repo: string | null;
   syncLines: string[];
@@ -67,6 +68,10 @@ export function Shell({
   /** Called when the user wants to start the Pinkfish OAuth flow from
    *  inside the Sync tab (no creds + clicked Sync to Cloud). */
   onConnectRequest: () => void;
+  /** Current intake server URL (or null if not yet started). Substituted
+   *  into `{{INTAKE_URL}}` placeholders in markdown content (e.g. the
+   *  welcome doc). */
+  intakeUrl: string | null;
 }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
   const [source, setSource] = useState<ViewerSource>(null);
@@ -158,10 +163,26 @@ export function Shell({
   // `openit:open-welcome` custom event. Listening for the event here
   // (rather than plumbing a callback through props) keeps the
   // viewer-state ownership inside Shell.
+  //
+  // If the welcome is already the active source when the event fires,
+  // we bump `welcomeFlashKey` instead of resolving again. The Viewer
+  // observes this key and runs a brief yellow-flash animation, so the
+  // user gets visual feedback that their click did something — without
+  // it, clicking Getting Started while already on the welcome looked
+  // like a no-op.
+  const [welcomeFlashKey, setWelcomeFlashKey] = useState(0);
   useEffect(() => {
     if (!repo) return;
+    const welcomePath = `${repo}/_welcome.md`;
     const openWelcome = () => {
-      const welcomePath = `${repo}/_welcome.md`;
+      const onWelcome =
+        source &&
+        source.kind === "file" &&
+        source.path === welcomePath;
+      if (onWelcome) {
+        setWelcomeFlashKey((k) => k + 1);
+        return;
+      }
       resolvePathToSource(welcomePath, repo)
         .then(setSource)
         .catch((e) => console.error("[shell] welcome resolution failed:", e));
@@ -170,7 +191,7 @@ export function Shell({
     return () => {
       window.removeEventListener("openit:open-welcome", openWelcome);
     };
-  }, [repo]);
+  }, [repo, source]);
 
   // Re-resolve conversation views when the filesystem changes. The
   // conversations-list reads ticket files for subject/status (so a
@@ -491,6 +512,8 @@ export function Shell({
             source={source}
             repo={repo ?? ""}
             fsTick={fsTick}
+            intakeUrl={intakeUrl}
+            welcomeFlashKey={welcomeFlashKey}
             onOpenPath={async (path) => {
               const resolved = await resolvePathToSource(path, repo);
               setSource(resolved);
