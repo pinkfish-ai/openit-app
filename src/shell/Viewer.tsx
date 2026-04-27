@@ -1206,19 +1206,21 @@ export function Viewer({
           )}
           <ul className="entity-folder-list">
             {source.files.map((f) => {
-              // Reports filenames carry a leading
-              //   `YYYY-MM-DD[-HHMM]-<slug>` stamp so they sort
-              // newest-first by name. Splitting the date out into a
-              // separate label keeps the slug readable as a name and
-              // surfaces the timestamp as metadata rather than
-              // line-noise.
-              let nameLabel = f.displayName;
+              // Reports flip the standard `name → description` card
+              // layout: description is the primary title (it's the
+              // human-readable label — "Helpdesk overview", "Tickets
+              // by asker — all time") and the filename + parsed date
+              // become the muted metadata below. Other entities keep
+              // the standard layout (filename as title, description
+              // as subtitle).
+              const isReport = source.entity === "reports";
+              let slug = f.displayName;
               let dateLabel = "";
-              if (source.entity === "reports") {
+              if (isReport) {
                 const m = f.displayName.match(/^(\d{4})-(\d{2})-(\d{2})(?:-(\d{2})(\d{2}))?-(.+)$/);
                 if (m) {
-                  const [, yyyy, mm, dd, hh, mi, slug] = m;
-                  nameLabel = slug;
+                  const [, yyyy, mm, dd, hh, mi, parsedSlug] = m;
+                  slug = parsedSlug;
                   const monthShort = [
                     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -1230,6 +1232,9 @@ export function Viewer({
                     : `${monthShort} ${Number(dd)}${yearTail}`;
                 }
               }
+              const titleText = isReport
+                ? f.description || slug
+                : f.displayName;
               return (
                 <li key={f.path}>
                   <button
@@ -1238,16 +1243,25 @@ export function Viewer({
                     onClick={() => {
                       if (onOpenPath) void onOpenPath(f.path);
                     }}
-                    title={f.description ? `${nameLabel} — ${f.description}` : `Open ${f.name}`}
+                    title={`Open ${f.name}`}
                   >
-                    <span className="entity-folder-name-row">
-                      <span className="entity-folder-name">{nameLabel}</span>
-                      {dateLabel && (
-                        <span className="entity-folder-date">{dateLabel}</span>
-                      )}
-                    </span>
-                    {f.description && (
-                      <span className="entity-folder-desc">{f.description}</span>
+                    {isReport ? (
+                      <>
+                        <span className="entity-folder-name-row">
+                          <span className="entity-folder-name">{titleText}</span>
+                          {dateLabel && (
+                            <span className="entity-folder-date">{dateLabel}</span>
+                          )}
+                        </span>
+                        <span className="entity-folder-meta">{slug}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="entity-folder-name">{titleText}</span>
+                        {f.description && (
+                          <span className="entity-folder-desc">{f.description}</span>
+                        )}
+                      </>
                     )}
                   </button>
                 </li>

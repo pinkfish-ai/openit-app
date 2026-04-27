@@ -2698,6 +2698,19 @@ body,
   flex-shrink: 0;
 }
 
+/* Reports cards use this for the slug-as-metadata line under the
+   description-as-title. Same muted treatment as the standard
+   description but always single-line, mono so it reads as a
+   filename rather than prose. */
+.entity-folder-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .entity-folder-desc {
   font-size: 12px;
   color: var(--text-muted);
