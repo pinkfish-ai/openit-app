@@ -1,3 +1,4 @@
+mod agent_trace;
 mod claude;
 mod filestore;
 mod fs_tree;

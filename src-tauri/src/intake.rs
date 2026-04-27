@@ -36,7 +36,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{oneshot, Mutex as TokioMutex};
@@ -382,9 +382,10 @@ async fn chat_turn(
     // (~3-5s per turn). The skill is auto-loaded by Claude based on
     // the cwd's .claude/skills/ directory.
     let prompt = build_chat_prompt(&agent_instructions, &history, &ticket_id, &email);
+    let started_at = now_iso();
     let reply_result = spawn_claude_chat(&repo, &model, &prompt).await;
 
-    let reply = match reply_result {
+    let ChatTurnOutput { reply, events } = match reply_result {
         Ok(out) => out,
         Err(e) => {
             eprintln!("[intake/chat] claude -p failed: {}", e);
@@ -447,13 +448,33 @@ async fn chat_turn(
     // any in-flight legacy skill; treating it as Escalated is the safe
     // fallback so the admin gets visibility and the ticket can't pin
     // the banner.
-    match decided_status {
+    let outcome_label = match decided_status {
         DecidedStatus::Answered => {
             let _ = mark_status(&repo, &ticket_id, "open").await;
+            "answered"
         }
         DecidedStatus::Escalated | DecidedStatus::Clarifying => {
             let _ = mark_status(&repo, &ticket_id, "escalated").await;
+            "escalated"
         }
+    };
+
+    // Persist the agent-trace audit log for this turn. Best-effort;
+    // a failed write shouldn't block the chat reply (the conversation
+    // turn is already on disk and the user is waiting). The frontend
+    // banner / activity viewer will pick the file up via the watcher
+    // once it lands.
+    let trace_doc = crate::agent_trace::TraceDoc {
+        ticket_id: ticket_id.clone(),
+        turn_id: format!("turn-{}", unix_now_secs()),
+        started_at,
+        completed_at: now_iso(),
+        model: model.clone(),
+        outcome: outcome_label.to_string(),
+        events,
+    };
+    if let Err(e) = crate::agent_trace::persist_trace(&repo, &trace_doc).await {
+        eprintln!("[intake/chat] persist_trace failed: {}", e);
     }
 
     // Auto-commit everything this turn touched so the admin's Versions
@@ -1045,7 +1066,21 @@ fn build_chat_prompt(
 /// subprocesses don't always inherit the user's full shell PATH —
 /// dev mode and .app launches may only see `/usr/bin:/bin`. Same
 /// pattern as `claude_generate_commit_message`.
-async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<String, String> {
+/// Output of a single `claude -p` chat turn — the assistant's reply
+/// text plus a normalized timeline of events the model emitted while
+/// running (tool calls, text deltas, the final `result`). The
+/// dispatcher in `chat_turn` consumes the reply for the chat UI and
+/// hands the events to `agent_trace::persist_trace` for the audit log.
+struct ChatTurnOutput {
+    reply: String,
+    events: Vec<crate::agent_trace::TraceEvent>,
+}
+
+async fn spawn_claude_chat(
+    repo: &Path,
+    model: &str,
+    prompt: &str,
+) -> Result<ChatTurnOutput, String> {
     let claude_path = which::which("claude")
         .map_err(|_| "Claude CLI not found on PATH. Install claude (see https://docs.anthropic.com/claude/docs/claude-code) and ensure it's reachable from this app.".to_string())?;
     // `--permission-mode bypassPermissions` so the headless run can
@@ -1053,13 +1088,24 @@ async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<Str
     // script without prompting. Safe in this context — scope is the
     // user's own repo, the skill is OpenIT-bundled, and the only
     // shell command is the local kb-search.mjs.
+    //
+    // `--verbose --output-format stream-json` makes claude emit one
+    // JSON event per line: a `system/init`, then per-step
+    // `assistant`/`user`/`tool_*` messages, ending with a `result`.
+    // We parse those into a normalized timeline so the audit log
+    // (`.openit/agent-traces/`) and the eventual live banner can
+    // surface friendly verbs ("Reading the ticket", "Searching the
+    // knowledge base for …") without re-parsing claude's wire format
+    // on the frontend.
+    //
     // `kill_on_drop(true)` so a timeout (or any early-return below)
     // reaps the subprocess instead of leaving an orphaned `claude`
     // running with the user's prompt.
     let mut child = TokioCommand::new(&claude_path)
         .arg("-p")
+        .arg("--verbose")
         .arg("--output-format")
-        .arg("text")
+        .arg("stream-json")
         .arg("--permission-mode")
         .arg("bypassPermissions")
         .arg("--model")
@@ -1081,6 +1127,9 @@ async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<Str
         stdin.flush().await.ok();
     }
 
+    let stdout = child.stdout.take().ok_or("no stdout handle")?;
+    let stderr = child.stderr.take().ok_or("no stderr handle")?;
+
     // Bound the subprocess lifetime. A hung `claude` (model stall,
     // network blip, stuck stdin) would otherwise pin the ticket at
     // `agent-responding` forever and tie up the request indefinitely.
@@ -1088,30 +1137,242 @@ async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<Str
     // anything past that the admin should handle, and the caller
     // surfaces the timeout as an escalation so the user isn't blocked.
     const CLAUDE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
-    let output = match tokio::time::timeout(CLAUDE_TIMEOUT, child.wait_with_output()).await {
-        Ok(Ok(out)) => out,
-        Ok(Err(e)) => return Err(format!("wait claude: {}", e)),
-        Err(_) => {
-            return Err(format!(
-                "claude -p timed out after {}s",
-                CLAUDE_TIMEOUT.as_secs()
-            ));
-        }
-    };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    let stream_task = parse_stream_json(stdout);
+    let stderr_task = collect_stderr(stderr);
+    let wait_task = child.wait();
+
+    // Drive all three (stdout parse, stderr collect, child wait) as
+    // a single bounded future. tokio::join! aborts the timeout on
+    // any one of them returning, so claude crashing mid-stream still
+    // surfaces the partial events we managed to parse.
+    let combined = async move {
+        let (parse_result, stderr_text, wait_result) =
+            tokio::join!(stream_task, stderr_task, wait_task);
+        (parse_result, stderr_text, wait_result)
+    };
+    let (parse_result, stderr_text, wait_result) =
+        match tokio::time::timeout(CLAUDE_TIMEOUT, combined).await {
+            Ok(triple) => triple,
+            Err(_) => {
+                return Err(format!(
+                    "claude -p timed out after {}s",
+                    CLAUDE_TIMEOUT.as_secs()
+                ));
+            }
+        };
+
+    let exit_status = wait_result.map_err(|e| format!("wait claude: {}", e))?;
+    if !exit_status.success() {
         return Err(format!(
             "claude exited {} — stderr: {}",
-            output.status, stderr
+            exit_status, stderr_text
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() {
+    let parse = parse_result.map_err(|e| format!("read claude stdout: {}", e))?;
+    if parse.reply.trim().is_empty() {
         return Err("claude returned empty output".to_string());
     }
-    Ok(stdout)
+    Ok(ChatTurnOutput {
+        reply: parse.reply,
+        events: parse.events,
+    })
+}
+
+/// Read the child's stderr to completion. Used for diagnostics on a
+/// non-zero exit only — we don't surface stderr lines on the happy
+/// path since stream-json carries everything we need.
+async fn collect_stderr<R: tokio::io::AsyncRead + Unpin>(reader: R) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut buf = String::new();
+    let mut r = reader;
+    let _ = r.read_to_string(&mut buf).await;
+    buf
+}
+
+struct StreamParseResult {
+    reply: String,
+    events: Vec<crate::agent_trace::TraceEvent>,
+}
+
+/// Parse claude's `--output-format stream-json` ndjson stream into
+/// a normalized timeline of `TraceEvent`s plus the final reply text.
+///
+/// Event shape (claude wire format, abbreviated):
+///   `{"type":"system","subtype":"init",...}`               — ignored
+///   `{"type":"assistant","message":{"content":[
+///       {"type":"text","text":"…"},
+///       {"type":"tool_use","name":"Read","input":{…}}
+///   ],...}}`
+///   `{"type":"user","message":{"content":[
+///       {"type":"tool_result","tool_use_id":"…","content":"…"}
+///   ]}}`
+///   `{"type":"result","subtype":"success","result":"…"}`   — final reply
+///
+/// We pull tool_use blocks out of assistant messages (one TraceEvent
+/// per call) and use the `result.result` field as the reply. Text
+/// blocks inside intermediate assistant messages are recorded as
+/// `kind="text"` events but NOT used as the reply — claude
+/// occasionally emits a "draft" block before tool calls; relying on
+/// the explicit `result` event is safer.
+async fn parse_stream_json<R: tokio::io::AsyncRead + Unpin>(
+    reader: R,
+) -> Result<StreamParseResult, std::io::Error> {
+    use crate::agent_trace::{verb_for_tool, TraceEvent};
+    let mut events: Vec<TraceEvent> = Vec::new();
+    let mut reply: Option<String> = None;
+    let mut buf_reader = BufReader::new(reader);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = buf_reader.read_line(&mut line).await?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parsed: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => {
+                events.push(TraceEvent {
+                    ts: now_iso(),
+                    kind: "raw".to_string(),
+                    tool: None,
+                    verb: None,
+                    raw: Some(serde_json::Value::String(trimmed.to_string())),
+                    text: None,
+                });
+                continue;
+            }
+        };
+        let kind = parsed
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        match kind.as_str() {
+            "system" => {
+                // `system/init` carries session metadata; not useful
+                // for the audit timeline.
+            }
+            "assistant" => {
+                let content = parsed
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                if let Some(blocks) = content {
+                    for block in blocks {
+                        let btype = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        match btype {
+                            "tool_use" => {
+                                let tool = block
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let input = block
+                                    .get("input")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
+                                let verb = verb_for_tool(&tool, &input).or_else(|| {
+                                    if !tool.is_empty() {
+                                        Some(format!("Running {}", tool))
+                                    } else {
+                                        None
+                                    }
+                                });
+                                events.push(TraceEvent {
+                                    ts: now_iso(),
+                                    kind: "tool_use".to_string(),
+                                    tool: Some(tool),
+                                    verb,
+                                    raw: Some(input),
+                                    text: None,
+                                });
+                            }
+                            "text" => {
+                                if let Some(t) = block
+                                    .get("text")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.trim().is_empty())
+                                {
+                                    events.push(TraceEvent {
+                                        ts: now_iso(),
+                                        kind: "text".to_string(),
+                                        tool: None,
+                                        verb: None,
+                                        raw: None,
+                                        text: Some(t.to_string()),
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            "user" => {
+                // tool_result blocks live under user messages. Worth
+                // keeping in the audit trail for "Read returned 0
+                // matches" debugging, but we record only that they
+                // happened — the full payload would balloon the
+                // trace file.
+                let content = parsed
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                if let Some(blocks) = content {
+                    for block in blocks {
+                        if block.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
+                            events.push(TraceEvent {
+                                ts: now_iso(),
+                                kind: "tool_result".to_string(),
+                                tool: None,
+                                verb: None,
+                                raw: Some(block.clone()),
+                                text: None,
+                            });
+                        }
+                    }
+                }
+            }
+            "result" => {
+                if let Some(text) = parsed.get("result").and_then(|v| v.as_str()) {
+                    reply = Some(text.to_string());
+                }
+                events.push(TraceEvent {
+                    ts: now_iso(),
+                    kind: "result".to_string(),
+                    tool: None,
+                    verb: None,
+                    raw: Some(parsed.clone()),
+                    text: parsed
+                        .get("result")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                });
+            }
+            _ => {
+                // Unknown event types — preserve verbatim so future
+                // claude versions don't lose audit info silently.
+                events.push(TraceEvent {
+                    ts: now_iso(),
+                    kind: "raw".to_string(),
+                    tool: None,
+                    verb: None,
+                    raw: Some(parsed),
+                    text: None,
+                });
+            }
+        }
+    }
+    Ok(StreamParseResult {
+        reply: reply.unwrap_or_default(),
+        events,
+    })
 }
 
 /// Read `databases/tickets/<ticket_id>.json` and return the `status`
