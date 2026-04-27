@@ -107,6 +107,7 @@ pub fn run() {
             intake::intake_start,
             intake::intake_stop,
             intake::intake_url,
+            agent_trace::agent_trace_latest,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

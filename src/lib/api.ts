@@ -499,3 +499,15 @@ export async function pinkfishMcpCall(args: {
     baseUrl: args.baseUrl ?? null,
   });
 }
+
+import type { TraceDoc } from "../shell/types";
+
+/// Latest persisted agent-trace doc for a ticket, or null if none yet.
+/// Backed by `.openit/agent-traces/<ticketId>/<startedAt>.json` —
+/// filenames are ISO timestamps so the lex-max sort = most recent.
+export async function agentTraceLatest(
+  repo: string,
+  ticketId: string,
+): Promise<TraceDoc | null> {
+  return invoke("agent_trace_latest", { repo, ticketId });
+}

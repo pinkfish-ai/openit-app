@@ -243,6 +243,58 @@ pub async fn persist_trace(repo: &Path, doc: &TraceDoc) -> Result<(), String> {
     Ok(())
 }
 
+/// Tauri command: return the latest persisted trace document for a
+/// given ticket, or `None` if no trace has been written yet (no
+/// turns have been processed by the chat-intake agent for this
+/// ticket).
+///
+/// Used by the desktop UI to render the agent-activity banner's
+/// click-through into the center-panel timeline. Filenames are
+/// ISO-8601 timestamps with `:` replaced by `-`, so a lex-max sort
+/// over directory entries is equivalent to "most recent turn".
+#[tauri::command]
+pub async fn agent_trace_latest(
+    repo: String,
+    ticket_id: String,
+) -> Result<Option<TraceDoc>, String> {
+    let dir = Path::new(&repo)
+        .join(".openit")
+        .join("agent-traces")
+        .join(&ticket_id);
+    let mut read_dir = match fs::read_dir(&dir).await {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("read agent-traces dir: {}", e)),
+    };
+    let mut latest: Option<(String, std::path::PathBuf)> = None;
+    while let Some(entry) = read_dir
+        .next_entry()
+        .await
+        .map_err(|e| format!("walk agent-traces dir: {}", e))?
+    {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let take = match &latest {
+            None => true,
+            Some((cur, _)) => name.as_str() > cur.as_str(),
+        };
+        if take {
+            latest = Some((name, entry.path()));
+        }
+    }
+    let Some((_, path)) = latest else {
+        return Ok(None);
+    };
+    let bytes = fs::read(&path)
+        .await
+        .map_err(|e| format!("read trace file: {}", e))?;
+    let doc: TraceDoc =
+        serde_json::from_slice(&bytes).map_err(|e| format!("parse trace file: {}", e))?;
+    Ok(Some(doc))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

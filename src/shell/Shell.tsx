@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
+  agentTraceLatest,
   entityWriteFile,
   fsDelete,
   fsRead,
@@ -495,7 +496,27 @@ export function Shell({
   return (
     <div className="shell">
       <ConflictBanner />
-      <AgentActivityBanner repo={repo} fsTick={fsTick} />
+      <AgentActivityBanner
+        repo={repo}
+        fsTick={fsTick}
+        onOpenTrace={async (ticketId, subject) => {
+          if (!repo) return;
+          try {
+            const doc = await agentTraceLatest(repo, ticketId);
+            if (!doc) {
+              // No trace persisted yet — first turn of a brand-new
+              // ticket arrives at the banner before the file lands.
+              // Silently no-op for now; the banner will be clickable
+              // again on next render once fsTick advances.
+              console.warn("[shell] no agent-trace yet for", ticketId);
+              return;
+            }
+            setSource({ kind: "agent-trace", ticketId, subject, doc });
+          } catch (e) {
+            console.warn("[shell] agent-trace open failed:", e);
+          }
+        }}
+      />
       <EscalatedTicketBanner
         repo={repo}
         fsTick={fsTick}

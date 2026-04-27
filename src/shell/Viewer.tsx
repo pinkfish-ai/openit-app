@@ -443,6 +443,11 @@ export function Viewer({
       setContent("");
       return;
     }
+    if (source.kind === "agent-trace") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
   }, [source]);
 
   // Re-read the single-row file from disk when fsTick fires. Lets edits
@@ -559,6 +564,8 @@ export function Viewer({
         const n = source.collections.length;
         return `Knowledge bases — ${n} collection${n === 1 ? "" : "s"}`;
       }
+      case "agent-trace":
+        return `Agent trace — ${source.subject}`;
       default: return "";
     }
   };
@@ -1419,6 +1426,89 @@ export function Viewer({
               </button>
             </div>
           </div>
+        </div>
+      );
+    }
+
+    // Agent-trace timeline — the verbs the agent emitted while
+    // running this turn, in order. The banner click-through opens
+    // the most recent turn's trace; admins use this to audit "what
+    // did the agent actually do" without paging through the JSON.
+    if (source.kind === "agent-trace") {
+      const { doc, subject } = source;
+      // Filter to events that have something to show. Tool_result
+      // entries carry only the tool_use_id (for UI pairing); we
+      // skip them in this list to keep the timeline focused on
+      // *actions taken* rather than their internal correlation.
+      const items = doc.events.filter(
+        (e) => e.kind === "tool_use" || e.kind === "text" || e.kind === "result",
+      );
+      const formatTs = (iso: string) => {
+        // The trace timestamps are ISO-8601 UTC with second precision.
+        // Render as local time HH:MM:SS so the relative ordering reads
+        // naturally without making the admin parse a Z-suffixed UTC.
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        return d.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+      };
+      return (
+        <div className="agent-trace-view">
+          <div className="agent-trace-header">
+            <div className="agent-trace-subject">{subject}</div>
+            <div className="agent-trace-meta">
+              <span className={`agent-trace-outcome agent-trace-outcome-${doc.outcome}`}>
+                {doc.outcome}
+              </span>
+              <span className="agent-trace-model">{doc.model}</span>
+              <span className="agent-trace-time">
+                {formatTs(doc.started_at)} → {formatTs(doc.completed_at)}
+              </span>
+            </div>
+          </div>
+          {items.length === 0 ? (
+            <div className="viewer-summary">
+              <p className="summary-desc">
+                No actions recorded for this turn yet.
+              </p>
+            </div>
+          ) : (
+            <ol className="agent-trace-timeline">
+              {items.map((e, idx) => {
+                const verb =
+                  e.verb ?? (e.tool ? `Running ${e.tool}` : null);
+                const isFinalResult = e.kind === "result";
+                const isText = e.kind === "text";
+                const label = isFinalResult
+                  ? "Replied"
+                  : isText
+                    ? "Thinking"
+                    : verb || e.kind;
+                // For text/result events, show the model's wording
+                // truncated to one line so the timeline stays scannable.
+                const snippet = (() => {
+                  if (!e.text) return null;
+                  const first = e.text.split("\n")[0]?.trim() ?? "";
+                  return first.length > 140 ? `${first.slice(0, 137)}…` : first;
+                })();
+                return (
+                  <li
+                    key={`${e.ts}-${idx}`}
+                    className={`agent-trace-step agent-trace-step-${e.kind}`}
+                  >
+                    <span className="agent-trace-step-time">{formatTs(e.ts)}</span>
+                    <span className="agent-trace-step-label">{label}</span>
+                    {snippet && (
+                      <span className="agent-trace-step-snippet">{snippet}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
         </div>
       );
     }
