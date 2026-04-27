@@ -9,7 +9,11 @@ export function ImageViewer({ data, mimeType }: Props) {
   const [fitToPane, setFitToPane] = useState(true);
 
   const objectUrl = useMemo(() => {
-    const blob = new Blob([data], { type: mimeType });
+    const buf = data.buffer.slice(
+      data.byteOffset,
+      data.byteOffset + data.byteLength,
+    ) as ArrayBuffer;
+    const blob = new Blob([buf], { type: mimeType });
     return URL.createObjectURL(blob);
   }, [data, mimeType]);
 
