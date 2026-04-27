@@ -2678,9 +2678,24 @@ body,
   border-color: var(--border, #ddd);
 }
 
+.entity-folder-name-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .entity-folder-name {
   font-weight: 500;
   font-size: 14px;
+}
+
+.entity-folder-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .entity-folder-desc {

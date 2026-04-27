@@ -1205,25 +1205,54 @@ export function Viewer({
             <p className="viewer-edit-error">{reportError}</p>
           )}
           <ul className="entity-folder-list">
-            {source.files.map((f) => (
-              <li key={f.path}>
-                <button
-                  type="button"
-                  className="entity-folder-item"
-                  onClick={() => {
-                    if (onOpenPath) void onOpenPath(f.path);
-                  }}
-                  // Surface the full description on hover for long
-                  // strings the line-clamp truncates.
-                  title={f.description ? `${f.displayName} — ${f.description}` : `Open ${f.name}`}
-                >
-                  <span className="entity-folder-name">{f.displayName}</span>
-                  {f.description && (
-                    <span className="entity-folder-desc">{f.description}</span>
-                  )}
-                </button>
-              </li>
-            ))}
+            {source.files.map((f) => {
+              // Reports filenames carry a leading
+              //   `YYYY-MM-DD[-HHMM]-<slug>` stamp so they sort
+              // newest-first by name. Splitting the date out into a
+              // separate label keeps the slug readable as a name and
+              // surfaces the timestamp as metadata rather than
+              // line-noise.
+              let nameLabel = f.displayName;
+              let dateLabel = "";
+              if (source.entity === "reports") {
+                const m = f.displayName.match(/^(\d{4})-(\d{2})-(\d{2})(?:-(\d{2})(\d{2}))?-(.+)$/);
+                if (m) {
+                  const [, yyyy, mm, dd, hh, mi, slug] = m;
+                  nameLabel = slug;
+                  const monthShort = [
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+                  ][Math.max(0, Math.min(11, Number(mm) - 1))];
+                  const yearTail =
+                    new Date().getFullYear() === Number(yyyy) ? "" : `, ${yyyy}`;
+                  dateLabel = hh && mi
+                    ? `${monthShort} ${Number(dd)}${yearTail} · ${hh}:${mi}`
+                    : `${monthShort} ${Number(dd)}${yearTail}`;
+                }
+              }
+              return (
+                <li key={f.path}>
+                  <button
+                    type="button"
+                    className="entity-folder-item"
+                    onClick={() => {
+                      if (onOpenPath) void onOpenPath(f.path);
+                    }}
+                    title={f.description ? `${nameLabel} — ${f.description}` : `Open ${f.name}`}
+                  >
+                    <span className="entity-folder-name-row">
+                      <span className="entity-folder-name">{nameLabel}</span>
+                      {dateLabel && (
+                        <span className="entity-folder-date">{dateLabel}</span>
+                      )}
+                    </span>
+                    {f.description && (
+                      <span className="entity-folder-desc">{f.description}</span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       );
