@@ -1,0 +1,17 @@
+{
+  "version": "2026-04-27-001",
+  "bubbles": [
+    { "label": "Triage", "skill": "/triage" },
+    { "label": "Answer ticket", "skill": "/answer-ticket" }
+  ],
+  "files": [
+    { "path": "CLAUDE.md" },
+    { "path": "skills/triage.md" },
+    { "path": "skills/answer-ticket.md" },
+    { "path": "schemas/openit-tickets._schema.json" },
+    { "path": "schemas/openit-people._schema.json" },
+    { "path": "agents/openit-triage.template.json" },
+    { "path": "scripts/sync-resolve-conflict.mjs" },
+    { "path": "scripts/sync-push.mjs" }
+  ]
+}

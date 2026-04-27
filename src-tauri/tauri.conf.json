@@ -25,6 +25,14 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../scripts/openit-plugin/manifest.json": "openit-plugin/manifest.json",
+      "../scripts/openit-plugin/CLAUDE.md": "openit-plugin/CLAUDE.md",
+      "../scripts/openit-plugin/skills/*.md": "openit-plugin/skills/",
+      "../scripts/openit-plugin/schemas/*.json": "openit-plugin/schemas/",
+      "../scripts/openit-plugin/agents/*.json": "openit-plugin/agents/",
+      "../scripts/openit-plugin/scripts/*.mjs": "openit-plugin/scripts/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

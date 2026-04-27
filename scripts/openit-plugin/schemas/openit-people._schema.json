@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "2026-04-26",
+  "name": "openit-people",
+  "type": "datastore",
+  "isStructured": true,
+  "description": "Contacts directory. Anyone who files a ticket should land here so we can identify askers consistently across tickets and channels.",
+  "fields": [
+    {
+      "id": "displayName",
+      "label": "Name",
+      "type": "string",
+      "required": true,
+      "comment": "How the person is referred to. 'Alice Johnson', 'Bob from Marketing', etc."
+    },
+    {
+      "id": "email",
+      "label": "Email",
+      "type": "string",
+      "nullable": true,
+      "comment": "Primary email. Often the lookup key for matching ticket askers to people rows."
+    },
+    {
+      "id": "role",
+      "label": "Role / title",
+      "type": "string",
+      "nullable": true,
+      "comment": "Job title or functional role. 'Senior Engineer', 'External contractor', etc."
+    },
+    {
+      "id": "department",
+      "label": "Department",
+      "type": "string",
+      "nullable": true
+    },
+    {
+      "id": "channels",
+      "label": "Reachable on",
+      "type": "string[]",
+      "nullable": true,
+      "comment": "Identifiers for reaching this person on connected channels. Format: '<channel>:<id>'. E.g. ['slack:U01ABC', 'email:alice@x.com', 'teams:alice@org.com']. Pure-local installs typically have just the email."
+    },
+    {
+      "id": "notes",
+      "label": "Notes",
+      "type": "text",
+      "nullable": true,
+      "comment": "Admin-only context — e.g. 'works remotely on a personal laptop', 'on PTO until X'."
+    },
+    {
+      "id": "createdAt",
+      "label": "Added",
+      "type": "datetime",
+      "required": true
+    },
+    {
+      "id": "updatedAt",
+      "label": "Last update",
+      "type": "datetime",
+      "required": true
+    }
+  ]
+}
