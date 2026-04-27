@@ -176,16 +176,13 @@ export async function projectBootstrap(args: {
 /// Returns the URL clients hit (e.g. `http://127.0.0.1:54123`). If a
 /// server is already running, it's stopped first so calling this on
 /// project switch transparently moves the server to the new repo.
+///
+/// Note: `intake_stop` and `intake_url` Tauri commands are still
+/// registered on the Rust side for future use (Phase 3b settings,
+/// programmatic stop), but no JS caller uses them yet — wrappers
+/// will be added when there's a real consumer.
 export async function intakeStart(repo: string): Promise<string> {
   return invoke("intake_start", { repo });
-}
-
-export async function intakeStop(): Promise<void> {
-  return invoke("intake_stop");
-}
-
-export async function intakeUrl(): Promise<string | null> {
-  return invoke("intake_url");
 }
 
 export async function pinkfishListOrgs(args: {

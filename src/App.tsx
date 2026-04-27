@@ -289,11 +289,16 @@ function App() {
   // process exit — no manual stop needed there either.
   const intakeGenRef = useRef(0);
   useEffect(() => {
+    // Bump the generation counter unconditionally — including when
+    // repo transitions to null. Without this, a still-pending
+    // intakeStart from the previous repo could resolve after we set
+    // the URL to null and overwrite it with a stale value (its gen
+    // would still match because we didn't increment).
+    const myGen = ++intakeGenRef.current;
     if (!repo) {
       setIntakeServerUrl(null);
       return;
     }
-    const myGen = ++intakeGenRef.current;
     intakeStart(repo)
       .then((url) => {
         // Only commit the URL if no later effect has superseded us. A
