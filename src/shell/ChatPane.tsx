@@ -150,6 +150,13 @@ export function ChatPane({ cwd }: { cwd: string | null }) {
         ptyResize(SESSION_ID, term.cols, term.rows).catch((e) =>
           console.error("pty bridge error:", e),
         );
+        // Force xterm to repaint the visible buffer at the new width.
+        // Without this, lines that streamed in at the previous column
+        // count keep their original wrap points — so resizing the
+        // pane mid-stream leaves a half-broken display until the user
+        // hits Ctrl-L. New content wraps fine on its own; this only
+        // matters for already-rendered scrollback.
+        term.refresh(0, term.rows - 1);
       };
       window.addEventListener("resize", onResize);
       unlistens.push(() => window.removeEventListener("resize", onResize));

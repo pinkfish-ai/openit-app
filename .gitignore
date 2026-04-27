@@ -31,3 +31,8 @@ dist-ssr
 .env*.disabled
 .env*.bak
 .env*.bak.*
+
+# Ephemeral runtime state from the autonomous-dev /loop driver.
+# Machine-specific (session id, pid, start time); commits cause noise
+# and merge conflicts.
+.claude/scheduled_tasks.lock

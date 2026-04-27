@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { fsRead, fsReadBytes, fsList, reportOverviewRun } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
@@ -65,7 +66,7 @@ const ENTITY_FOLDER_EMPTY_COPY: Record<
   library:
     "No library files yet. Drop runbook PDFs, scripts, or any reference doc you reach for repeatedly — Claude can pull from these when answering tickets or building workflows.",
   reports:
-    "No reports yet. Click \"Generate overview\" above for an instant snapshot of ticket status, recent activity, top askers, and current escalations — or ask Claude in the chat (\"/report VPN tickets last 30 days\") for a custom report.",
+    "No reports yet. Click \"Overview\" above for an instant snapshot of ticket status, recent activity, top askers, and current escalations — or click \"Ask Claude\" to describe a custom report (\"VPN tickets last 30 days\", \"escalations by asker\").",
 };
 
 /// Anchor tag override for ReactMarkdown rendering. Three URL shapes
@@ -682,6 +683,7 @@ export function Viewer({
         return (
           <div className={`viewer-md ${flashClass}`} key={`md-${welcomeFlashKey ?? 0}`}>
             <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
               components={{ a: ExternalAnchor }}
               urlTransform={(url) =>
                 url.startsWith("openit://") ? url : defaultUrlTransform(url)
@@ -834,7 +836,7 @@ export function Viewer({
             <div className="summary-section">
               <h3>Instructions</h3>
               <div className="viewer-md">
-                <ReactMarkdown>{a.instructions}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{a.instructions}</ReactMarkdown>
               </div>
             </div>
           )}
@@ -1176,49 +1178,25 @@ export function Viewer({
     // entries route through onOpenPath so per-file viewers (agent /
     // workflow / file) take over on click.
     if (source.kind === "entity-folder") {
-      const isReports = source.entity === "reports";
-      const onGenerateOverview = async () => {
-        if (!repo || reportRunning) return;
-        setReportRunning(true);
-        setReportError(null);
-        try {
-          const relPath = await reportOverviewRun(repo);
-          // The script writes to disk; the watcher will refresh the
-          // explorer. Jump the viewer to the new file so the admin
-          // sees the result immediately rather than scrolling for it.
-          if (onOpenPath) void onOpenPath(`${repo}/${relPath}`);
-        } catch (e) {
-          setReportError(e instanceof Error ? e.message : String(e));
-        } finally {
-          setReportRunning(false);
-        }
-      };
-      const reportsHeader = isReports ? (
-        <div className="viewer-summary-actions">
-          <button
-            type="button"
-            className="viewer-edit-btn viewer-edit-btn-primary"
-            onClick={onGenerateOverview}
-            disabled={reportRunning || !repo}
-          >
-            {reportRunning ? "Generating…" : "Generate overview"}
-          </button>
-          {reportError && (
-            <span className="viewer-edit-error">{reportError}</span>
-          )}
-        </div>
-      ) : null;
+      // Action buttons for the reports/ view live up in the
+      // viewer-header (same row as the title, mirroring the
+      // "Add to Claude" affordance for conversation threads). The
+      // body is just the file list / empty-state copy.
       if (source.files.length === 0) {
         return (
           <div className="viewer-summary">
-            {reportsHeader}
             <p className="summary-desc">{ENTITY_FOLDER_EMPTY_COPY[source.entity]}</p>
+            {source.entity === "reports" && reportError && (
+              <p className="viewer-edit-error">{reportError}</p>
+            )}
           </div>
         );
       }
       return (
         <div className="viewer-summary">
-          {reportsHeader}
+          {source.entity === "reports" && reportError && (
+            <p className="viewer-edit-error">{reportError}</p>
+          )}
           <ul className="entity-folder-list">
             {source.files.map((f) => (
               <li key={f.path}>
@@ -1486,6 +1464,49 @@ export function Viewer({
           >
             Add to Claude
           </button>
+        )}
+        {source && source.kind === "entity-folder" && source.entity === "reports" && (
+          <>
+            <button
+              type="button"
+              className="viewer-add-btn"
+              onClick={async () => {
+                if (!repo || reportRunning) return;
+                setReportRunning(true);
+                setReportError(null);
+                try {
+                  const relPath = await reportOverviewRun(repo);
+                  if (onOpenPath) void onOpenPath(`${repo}/${relPath}`);
+                } catch (e) {
+                  setReportError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setReportRunning(false);
+                }
+              }}
+              disabled={reportRunning || !repo}
+              title="Generate an instant helpdesk overview report"
+            >
+              {reportRunning ? "Generating…" : "Overview"}
+            </button>
+            <button
+              type="button"
+              className="viewer-add-btn"
+              onClick={() => {
+                // Paste `/report ` into the Claude pane via the same
+                // bracketed-paste path the welcome doc's "Connect to
+                // Cloud" CTA uses. Trailing space puts the cursor in
+                // arg position so the admin types their question
+                // immediately.
+                const wrapped = `${BRACKETED_PASTE_OPEN}/report ${BRACKETED_PASTE_CLOSE}`;
+                writeToActiveSession(wrapped).catch((err) =>
+                  console.warn("[viewer] ask-claude paste failed:", err),
+                );
+              }}
+              title="Ask Claude for a custom report"
+            >
+              Ask Claude
+            </button>
+          </>
         )}
         {showFileTabs && (
           <div className="viewer-tabs" role="tablist">

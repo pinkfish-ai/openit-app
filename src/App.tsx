@@ -9,7 +9,8 @@ import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
 import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
 import { startAgentSync, stopAgentSync } from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
-import { syncSkillsToDisk, type Bubble as ManifestBubble } from "./lib/skillsSync";
+import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
+import { invoke } from "@tauri-apps/api/core";
 import { type Bubble as PromptBubble } from "./shell/PromptBubbles";
 import "./App.css";
 
@@ -36,25 +37,38 @@ function basename(p: string): string {
   return parts[parts.length - 1] ?? p;
 }
 
-/// Has the bundled plugin been synced into this project? Checks for the
-/// triage agent file as a sentinel — written by `syncSkillsToDisk` from
-/// the bundled `agents/openit-triage.template.json`. Used to decide
-/// whether to (re)run the bundle sync.
+/// Is the bundled plugin already synced at the *current* manifest version?
+/// Returns true when both (a) the triage-agent install sentinel exists
+/// (so we know a sync ran successfully at some point) AND (b) the
+/// version sentinel matches the bundled manifest's version (so we know
+/// the on-disk files reflect the current build, not an older one).
 ///
-/// Why this sentinel rather than `projectBootstrap.created`: bootstrap
-/// creates the dir before `git_ensure_repo` runs. If git init fails,
-/// the throw skips `stateSave` and `syncSkillsToDisk` — but the dir
-/// exists. On retry, `created: false`, and the old `freshBootstrap`
-/// heuristic would permanently skip the sync, leaving the user with an
-/// empty folder. Checking the sentinel file makes the sync idempotent
-/// and self-healing.
-async function bundledFilesAreOnDisk(repo: string): Promise<boolean> {
+/// Falsely returning true would skip syncing newly-added manifest files
+/// onto existing projects (which is exactly what happened when reports
+/// shipped — the script never reached `.claude/scripts/`). Falsely
+/// returning false re-runs the sync, which is idempotent on the .claude/
+/// scaffolding and a no-op commit on the rest, so it's the safer error.
+///
+/// Why two sentinels rather than one: the triage file lives outside
+/// .claude/ (user-editable). Deleting it as the version cue would
+/// destroy admin edits. The plugin-version sentinel inside .openit/ is
+/// owned exclusively by the sync.
+async function bundledPluginIsCurrent(repo: string): Promise<boolean> {
   const slug = basename(repo);
   try {
     await fsRead(`${repo}/agents/openit-triage-${slug}.json`);
-    return true;
   } catch {
     return false;
+  }
+  try {
+    const bundledManifestJson = await invoke<string>("skills_fetch_bundled_manifest");
+    const bundledVersion = (JSON.parse(bundledManifestJson) as { version?: string }).version;
+    if (!bundledVersion) return true; // no version field → can't tell, treat as current
+    const onDisk = await readSyncedPluginVersion(repo);
+    return onDisk === bundledVersion;
+  } catch (e) {
+    console.warn("[app] plugin-version probe failed:", e);
+    return true; // err on the side of not re-syncing
   }
 }
 
@@ -159,6 +173,17 @@ function App() {
           // Cloud-connected relaunch — skip onboarding and resume syncs.
           // We don't have orgName cached on relaunch — use the slug as
           // the user-facing label until something better is fetched.
+          // Re-run bootstrap so idempotent layout guards in project.rs
+          // (e.g. creating new top-level dirs added in later versions)
+          // can fire on existing projects without requiring a re-init.
+          // The Rust side gates first-run side effects (welcome doc,
+          // initial subdir creation) on `!already_existed`, so this is
+          // safe to call on every launch.
+          try {
+            await projectBootstrap({ orgName: creds.orgId || "default", orgId: creds.orgId });
+          } catch (e) {
+            console.warn("[app] cloud-relaunch bootstrap failed (non-fatal):", e);
+          }
           setBypassOnboarding(true);
           startCloudSyncs(creds, lastRepo, basename(lastRepo));
           finish();
@@ -217,6 +242,16 @@ function App() {
           // access to their existing data.
           let projectPath: string;
           if (lastRepo) {
+            // Re-run bootstrap so idempotent layout guards in project.rs
+            // (e.g. creating new top-level dirs like `reports/` that
+            // shipped after the project was first initialized) fire on
+            // existing projects. Rust gates first-run side effects on
+            // `!already_existed`, so this is safe to call.
+            try {
+              await projectBootstrap({ orgName: LOCAL_ORG_NAME, orgId: LOCAL_ORG_ID });
+            } catch (e) {
+              console.warn("[app] local-relaunch bootstrap failed (non-fatal):", e);
+            }
             projectPath = lastRepo;
           } else {
             const result = await projectBootstrap({
@@ -240,7 +275,7 @@ function App() {
           // to skills/agents/schemas survive across launches because the
           // sentinel exists. Plugin *upgrades* (newer bundle than what's
           // on disk) are a Phase 3b concern — versioning + diff prompt.
-          if (!(await bundledFilesAreOnDisk(projectPath))) {
+          if (!(await bundledPluginIsCurrent(projectPath))) {
             syncSkillsToDisk(projectPath, null)
               .then((manifest) => {
                 console.log("[app] bundled skill sync complete, bubbles:", manifest.bubbles);

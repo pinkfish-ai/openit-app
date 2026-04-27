@@ -27,15 +27,16 @@ function emit(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
-/// Format a Date as `YYYY-MM-DD-HHmm` in local time. Used for the
-/// filename prefix; reverse-alphabetical sort on filenames lands the
-/// newest report at the top of the explorer.
-function timestampFilename(d) {
+/// Format a Date as `YYYY-MM-DD` in local time. Used for the filename
+/// prefix; reverse-alphabetical sort on filenames puts the newest
+/// report at the top of the explorer. Day granularity is intentional:
+/// re-running "Overview" on the same day overwrites the existing file
+/// rather than accumulating one row in the explorer per click. Custom
+/// freeform reports written by /report still carry a finer timestamp
+/// + slug, so within-day iteration there is preserved.
+function dateFilename(d) {
   const pad = (n) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `-${pad(d.getHours())}${pad(d.getMinutes())}`
-  );
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /// Read every *.json directly inside dir (depth 1, skipping `_schema.json`
@@ -312,7 +313,7 @@ async function main() {
   const activity = activityWindow(tickets, 7, now);
   const body = renderReport({ now, tickets, peopleCount, activity });
 
-  const fname = `${timestampFilename(now)}-overview.md`;
+  const fname = `${dateFilename(now)}-overview.md`;
   const fullPath = path.join(REPORTS_DIR, fname);
   try {
     await mkdir(REPORTS_DIR, { recursive: true });

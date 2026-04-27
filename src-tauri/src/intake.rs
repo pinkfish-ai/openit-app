@@ -430,19 +430,18 @@ async fn chat_turn(
     // status marker — so the server controls sender + role + body.
     let _ = write_agent_turn(&repo, &ticket_id, &reply_body).await;
 
-    // Apply the agent's decision. Two valid outcomes:
-    //   Answered  → ticket status `open` (KB hit; conversation alive,
-    //               waiting for the asker's next message; no banner).
-    //   Escalated → ticket status `escalated` (KB miss; admin banner).
+    // Apply the agent's decision. Three valid outcomes:
+    //   Answered  → ticket → `open`     (KB hit; conversation alive)
+    //   Resolved  → ticket → `resolved` (asker confirmed; terminal)
+    //   Escalated → ticket → `escalated` (admin attention)
     // Either way the ticket exits `agent-responding`, so the activity
-    // banner is visible only during the ~3-5s claude -p window —
-    // never after the turn completes.
+    // banner is visible only during the ~3-5s claude -p window.
     //
-    // Note: `resolved` is intentionally NOT set by the agent. That
-    // status means the case is end-to-end done (asker's issue fixed,
-    // admin marks closed) and only an admin / explicit confirmation
-    // flow should set it. Treating each KB-hit answer as `resolved`
-    // would mislabel ongoing conversations as closed.
+    // `Resolved` is terminal but NOT permanent — `ensure_responding_stub`
+    // flips a resolved ticket back to `agent-responding` on the next
+    // asker turn, and that turn's outcome takes over (e.g. another
+    // "thanks!" → resolved again, or "wait it broke" → escalated).
+    // The agent makes the call each turn; the lifecycle is self-healing.
     //
     // The Clarifying variant is kept for backwards compatibility with
     // any in-flight legacy skill; treating it as Escalated is the safe
@@ -452,6 +451,9 @@ async fn chat_turn(
         DecidedStatus::Answered => {
             let _ = mark_status(&repo, &ticket_id, "open").await;
             "answered"
+        }
+        DecidedStatus::Resolved => {
+            let _ = mark_status(&repo, &ticket_id, "resolved").await;
         }
         DecidedStatus::Escalated | DecidedStatus::Clarifying => {
             let _ = mark_status(&repo, &ticket_id, "escalated").await;
@@ -1021,22 +1023,25 @@ fn build_chat_prompt(
          clobbered.\n\n\
          Your job: (1) read the ticket + conversation history for \
          context, (2) run `Bash node .claude/scripts/kb-search.mjs \
-         \"<query>\"` to search the local knowledge base — pass a \
-         compact query that captures the user's current question, \
-         (3) decide one of exactly two outcomes — `answered` (KB \
-         had a relevant article and you replied from it) or \
-         `escalated` (KB had no relevant match, or the question \
-         needs a human), (4) output your reply to the user, then \
-         (5) end with a status marker on its own line: \
-         `<<STATUS:answered>>` or `<<STATUS:escalated>>`.\n\n\
-         The marker reflects your *turn outcome*, not the case \
-         lifecycle. `answered` means you answered THIS turn — the \
-         server flips the ticket to `open` (conversation alive, no \
-         banner) and the asker may follow up. Multiple answered \
-         turns in a row is normal for ongoing back-and-forth. Only \
-         an admin (or an explicit confirmation flow) sets the \
-         terminal `resolved` status; do NOT emit `<<STATUS:resolved>>` \
-         even though it's accepted as a legacy alias.\n\n\
+         \"<query>\"` to search the local knowledge base when the \
+         user is asking a new question — pass a compact query that \
+         captures it, (3) decide one of exactly three outcomes — \
+         `answered` (KB had a relevant article and you replied from \
+         it; ticket → open), `escalated` (KB had no relevant match, \
+         or the question needs a human; ticket → escalated), or \
+         `resolved` (the asker has explicitly confirmed the case is \
+         done — \"thanks that worked\" / \"all good\" / \"works now\" \
+         — and a prior agent or admin turn provided the answer; \
+         ticket → resolved, terminal), (4) output your reply to the \
+         user, then (5) end with a status marker on its own line: \
+         `<<STATUS:answered>>`, `<<STATUS:escalated>>`, or \
+         `<<STATUS:resolved>>`.\n\n\
+         The marker reflects your *turn outcome*, not just the case \
+         lifecycle. Multiple `answered` turns in a row is normal for \
+         ongoing back-and-forth. Use `resolved` only when you're \
+         confident the asker is closing the loop — when in doubt, \
+         emit `answered`; the admin can always close manually, and \
+         the asker can reopen by sending another message.\n\n\
          CRITICAL: do NOT ask the user a follow-up question. There \
          is no \"clarifying\" outcome. If you can't answer from the \
          KB on the information you already have, escalate — the \
@@ -1489,17 +1494,17 @@ async fn ensure_responding_stub(
             .await
             .map_err(|e| format!("write ticket: {}", e))?;
     } else {
-        // Subsequent turn: flip status + bump updatedAt — UNLESS the
-        // ticket is in a terminal state (resolved / closed). The skill's
-        // idempotency rule says terminal-state follow-ups should remain
-        // a conversational moment, not silently reopen the case. The
-        // agent will still get the new asker turn in its prompt and can
-        // explicitly re-escalate via its STATUS marker if warranted.
-        let current = read_ticket_status(repo, ticket_id).await;
-        let terminal = matches!(current.as_deref(), Some("resolved") | Some("closed"));
-        if !terminal {
-            let _ = mark_status(repo, ticket_id, "agent-responding").await;
-        }
+        // Subsequent turn: always flip to `agent-responding` — even
+        // for terminal-state follow-ups (resolved / closed). The
+        // earlier "skip if terminal" policy left a resolved ticket
+        // pinned at `resolved` on a follow-up like "wait it broke
+        // again", so the admin's banner never fired. Now the lifecycle
+        // is self-healing: the agent reads the new asker turn, decides
+        // an outcome (`answered` / `resolved` / `escalated`), and the
+        // dispatcher above flips status accordingly. A "thanks again!"
+        // round-trips back to `resolved`; a regression report flips to
+        // `escalated`.
+        let _ = mark_status(repo, ticket_id, "agent-responding").await;
     }
 
     // Append the asker's turn for this message.
@@ -1579,17 +1584,24 @@ fn evict_idle_sessions(sessions: &mut HashMap<String, SessionData>) {
     }
 }
 
-/// The agent's per-turn outcome, parsed out of stdout. Note: this is
-/// the agent's *intent* for the turn, not the final ticket status.
-/// `Answered` maps to ticket status `open` (KB hit, conversation
-/// alive), `Escalated` maps to `escalated`. The `Clarifying` variant
-/// is kept only for backwards compatibility with any in-flight legacy
-/// skill — it is treated as Escalated so the banner clears and the
-/// admin gets visibility instead of leaving the ticket stuck.
+/// The agent's per-turn outcome, parsed out of stdout. Three valid
+/// outcomes:
+///   `Answered`  — KB hit, replied. Ticket → `open` (alive).
+///   `Resolved`  — asker confirmed case done. Ticket → `resolved`
+///                 (terminal; reopens automatically if the asker
+///                 sends another message).
+///   `Escalated` — KB miss / needs human. Ticket → `escalated`.
+///
+/// The `Clarifying` variant is kept only for backwards compatibility
+/// with any in-flight legacy skill — it is treated as Escalated so
+/// the banner clears and the admin gets visibility instead of
+/// leaving the ticket stuck.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DecidedStatus {
     /// KB hit — the agent answered. Ticket → `open`.
     Answered,
+    /// Asker confirmed the case is done. Ticket → `resolved` (terminal).
+    Resolved,
     /// KB miss / can't help — admin needs to respond. Ticket → `escalated`.
     Escalated,
     /// Legacy: agent asked for clarification. Treated as Escalated by
@@ -1598,15 +1610,14 @@ enum DecidedStatus {
 }
 
 /// Parse the agent's status marker out of its stdout. Contract:
-/// the marker is `<<STATUS:answered>>` (KB hit) or
-/// `<<STATUS:escalated>>` (KB miss) somewhere in the output
-/// (typically last line). `<<STATUS:resolved>>` is accepted as a
-/// legacy alias for `answered` since older skills used it; the
-/// dispatcher above maps both to ticket status `open`. Returns the
-/// body with ALL marker spans stripped, plus the status from the
-/// LAST marker (the agent's final decision wins). Missing or
-/// unrecognized marker → Escalated, so the admin always gets
-/// visibility on a malformed agent run.
+/// the marker is `<<STATUS:answered>>` (KB hit, ticket → open),
+/// `<<STATUS:resolved>>` (asker confirmed case done, ticket →
+/// resolved), or `<<STATUS:escalated>>` (KB miss, ticket →
+/// escalated) somewhere in the output (typically last line).
+/// Returns the body with ALL marker spans stripped, plus the
+/// status from the LAST marker (the agent's final decision wins).
+/// Missing or unrecognized marker → Escalated, so the admin always
+/// gets visibility on a malformed agent run.
 fn parse_status_marker(raw: &str) -> (String, DecidedStatus) {
     let spans = regex_lite_find_all(raw);
     if spans.is_empty() {
@@ -1645,11 +1656,8 @@ fn regex_lite_find_all(s: &str) -> Vec<(DecidedStatus, usize, usize)> {
         let close = after_open + rel_close;
         let value = s[after_open..close].trim().to_ascii_lowercase();
         let status = match value.as_str() {
-            // `answered` is the canonical KB-hit marker. `resolved`
-            // is the pre-rename alias kept for any unsynced skill on
-            // an older repo; both produce the same DecidedStatus and
-            // the dispatcher maps it to ticket status `open`.
-            "answered" | "resolved" => Some(DecidedStatus::Answered),
+            "answered" => Some(DecidedStatus::Answered),
+            "resolved" => Some(DecidedStatus::Resolved),
             "escalated" => Some(DecidedStatus::Escalated),
             "clarifying" => Some(DecidedStatus::Clarifying),
             _ => None,
@@ -2546,12 +2554,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_resolved_marker_maps_to_answered() {
-        // Older skills emit `resolved`; the parser accepts it as an
-        // alias so the dispatcher can still flip the ticket to `open`.
-        let raw = "Per our VPN guide, click Reset.\n\n<<STATUS:resolved>>";
-        let (_body, status) = parse_status_marker(raw);
-        assert_eq!(status, DecidedStatus::Answered);
+    fn parses_resolved_marker() {
+        // `resolved` is a first-class outcome — agent emits it when the
+        // asker has confirmed the case is done. The dispatcher flips
+        // the ticket to terminal `resolved`.
+        let raw = "Glad to hear it!\n\n<<STATUS:resolved>>";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Resolved);
+        assert_eq!(body, "Glad to hear it!");
     }
 
     #[test]
@@ -2615,5 +2625,46 @@ mod tests {
         // second. We can't deterministically assert <, but we can
         // assert it's no greater than now.
         assert!(ago <= now);
+    }
+
+    /// Regression: a follow-up asker turn on a `resolved` ticket must
+    /// flip status back to `agent-responding` so the indicator banner
+    /// fires and the agent can re-evaluate. Earlier behavior skipped
+    /// the flip for terminal states, leaving a "wait it broke again"
+    /// follow-up silently stuck at `resolved`.
+    #[tokio::test]
+    async fn ensure_responding_stub_reopens_resolved_ticket() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let repo = tmp.path();
+        let ticket_id = "test-2026-04-27T18-07-02Z-reopen";
+        let email = "asker@example.com";
+
+        // Seed a resolved ticket on disk.
+        let tickets_dir = repo.join("databases").join("tickets");
+        std::fs::create_dir_all(&tickets_dir).unwrap();
+        let ticket_path = tickets_dir.join(format!("{}.json", ticket_id));
+        let row = serde_json::json!({
+            "subject": "i cant login",
+            "description": "i cant login",
+            "asker": email,
+            "askerChannel": "chat",
+            "status": "resolved",
+            "priority": "normal",
+            "tags": [],
+            "createdAt": "2026-04-27T18:07:07Z",
+            "updatedAt": "2026-04-27T18:32:00Z",
+        });
+        std::fs::write(&ticket_path, serde_json::to_string_pretty(&row).unwrap()).unwrap();
+
+        // Asker sends a follow-up.
+        ensure_responding_stub(repo, ticket_id, email, "wait it broke again", &[])
+            .await
+            .expect("stub run");
+
+        // Status should now be `agent-responding` regardless of prior
+        // terminal state — the dispatcher will pick the final outcome
+        // after claude -p runs.
+        let status = read_ticket_status(repo, ticket_id).await;
+        assert_eq!(status.as_deref(), Some("agent-responding"));
     }
 }
