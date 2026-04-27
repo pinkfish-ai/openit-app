@@ -39,6 +39,14 @@ use uuid::Uuid;
 #[derive(Default)]
 pub struct IntakeState {
     inner: Mutex<Option<RunningServer>>,
+    // Serializes the entire start/stop lifecycle so a concurrent
+    // `intake_start` can't slip into the window between this call's
+    // stop_inner and its store. Without this, two concurrent calls
+    // can both bind a server, both spawn a task, and then race to
+    // store — whichever loses the store leaks its server task with
+    // no shutdown handle. tokio::sync::Mutex is async-aware and
+    // safe to hold across awaits (parking_lot::Mutex is not).
+    cmd_lock: tokio::sync::Mutex<()>,
 }
 
 struct RunningServer {
@@ -73,6 +81,10 @@ pub async fn intake_start(
     if !repo_path.is_dir() {
         return Err(format!("intake_start: not a directory: {}", repo));
     }
+
+    // Hold the command lock for the whole start sequence so a
+    // concurrent invocation can't slip between our stop and store.
+    let _cmd_guard = state.cmd_lock.lock().await;
 
     // Stop any existing server before starting a new one. Awaits the
     // join handle so the previous task fully exits before we bind.
@@ -117,6 +129,13 @@ pub async fn intake_start(
 
 #[tauri::command]
 pub async fn intake_stop(state: tauri::State<'_, IntakeState>) -> Result<(), String> {
+    // Same cmd_lock as intake_start so a stop arriving mid-start
+    // waits for the start to finish before tearing down. Otherwise
+    // a stop could complete on `state == None` (between start's
+    // stop_inner and store) and the start would still proceed to
+    // store its newly-bound server, leaving us "running" after the
+    // user requested stop.
+    let _cmd_guard = state.cmd_lock.lock().await;
     stop_inner(&state).await;
     Ok(())
 }
