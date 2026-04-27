@@ -124,6 +124,14 @@ async function loadState() {
     }
     delivery = {};
   }
+  // Discover any Slack tickets on disk that the ledger doesn't
+  // know about (ledger lost/corrupt, or this is a fresh listener
+  // boot against a project that already has Slack tickets from a
+  // previous run). Seed each with a null watermark — the loop
+  // below then snaps that to the latest admin turn so we don't
+  // re-blast history.
+  await seedDeliveryFromDisk();
+
   // Defensive watermark init: for any ticket in the delivery ledger
   // without a `last_delivered_msg_id`, scan its conversation
   // directory and snap the watermark to the latest admin turn so we
@@ -136,6 +144,45 @@ async function loadState() {
     }
   }
   await persistAll();
+}
+
+/// Walk databases/tickets/ for `askerChannel: "slack"` tickets that
+/// aren't already in the delivery ledger. For each, seed a delivery
+/// entry with the saved channel id. Called once at startup AFTER
+/// the ledger file has been loaded. Existing entries are left
+/// untouched (their watermarks are already correct).
+///
+/// This is the recovery path for: (a) ledger lost, (b) listener
+/// down for a while and the admin used the localhost UI to add
+/// new tickets, (c) first-time boot against a project that came
+/// in from cloud sync with pre-existing Slack tickets.
+async function seedDeliveryFromDisk() {
+  const ticketsDir = path.join(REPO, "databases", "tickets");
+  let names;
+  try {
+    names = await fs.readdir(ticketsDir);
+  } catch (err) {
+    if (err.code === "ENOENT") return; // no tickets dir yet
+    console.error(`[slack-listen] tickets dir scan failed: ${err.message}`);
+    return;
+  }
+  for (const name of names) {
+    if (!name.endsWith(".json") || name === "_schema.json") continue;
+    if (name.includes(".server.")) continue; // sync conflict shadow
+    const ticketId = name.replace(/\.json$/, "");
+    if (delivery[ticketId]) continue;
+    try {
+      const t = JSON.parse(await fs.readFile(path.join(ticketsDir, name), "utf8"));
+      if (t.askerChannel !== "slack") continue;
+      if (!t.slackChannelId) continue; // legacy slack ticket missing channel id
+      delivery[ticketId] = {
+        last_delivered_msg_id: null,
+        channel_id: t.slackChannelId,
+      };
+    } catch {
+      /* unreadable / not JSON — skip */
+    }
+  }
 }
 
 async function persistAll() {

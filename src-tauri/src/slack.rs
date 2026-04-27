@@ -33,7 +33,7 @@ use std::time::Duration;
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, Runtime};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command as TokioCommand};
+use tokio::process::Command as TokioCommand;
 use tokio::sync::{oneshot, Mutex as TokioMutex};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -269,7 +269,18 @@ pub struct HeartbeatPayload {
 
 #[derive(Default)]
 pub struct SlackSupervisorState {
-    inner: PMutex<Option<RunningListener>>,
+    /// `Arc` so the supervisor task spawned at start time can clear
+    /// us back to `None` when the listener exits — planned (via
+    /// `stop_tx`) or unexpected (child crash). Without this the
+    /// supervisor task would have no way to flip status; the
+    /// header pill would stay green after a crash.
+    inner: Arc<PMutex<Option<RunningListener>>>,
+    /// Captures the listener's exit status / last error line when
+    /// the child exits unexpectedly. Read by `slack_listener_status`
+    /// only when `inner` is None — so the FE can show "Slack:
+    /// stopped (reason)" rather than just "stopped". Cleared on the
+    /// next successful start.
+    last_exit_error: Arc<PMutex<Option<String>>>,
     /// Async-aware lock around the whole start/stop lifecycle so a
     /// concurrent `slack_listener_start` can't race with a `_stop`.
     /// Same shape `IntakeState` uses.
@@ -277,7 +288,6 @@ pub struct SlackSupervisorState {
 }
 
 struct RunningListener {
-    child: Child,
     workspace_id: String,
     workspace_name: String,
     bot_user_id: String,
@@ -287,10 +297,21 @@ struct RunningListener {
     /// the keychain hasn't been touched in this session).
     bot_token: String,
     last_heartbeat: Arc<PMutex<Option<HeartbeatPayload>>>,
+    /// Live error line from the listener's stderr (most recent
+    /// `[slack-listen]` diagnostic). Distinct from
+    /// `SlackSupervisorState.last_exit_error`, which only fills
+    /// when the process *exits*.
     last_error: Arc<PMutex<Option<String>>>,
-    /// Background task draining the listener's stderr. Aborted on
-    /// stop.
-    log_task: Option<JoinHandle<()>>,
+    /// Send `()` to ask the supervisor task to stop the child
+    /// gracefully (SIGTERM, 5s grace, SIGKILL). Taken (Some→None)
+    /// during stop so the second stop call is a no-op.
+    stop_tx: Option<oneshot::Sender<()>>,
+    /// Single task that owns the `Child` and its stderr stream:
+    /// drains heartbeat / error lines, observes either the stop
+    /// signal or an unexpected child exit, kills if needed, then
+    /// clears `state.inner` and writes `last_exit_error`. We await
+    /// it on stop so the cleanup is observable from the caller.
+    supervisor_task: Option<JoinHandle<()>>,
 }
 
 #[derive(Serialize)]
@@ -472,8 +493,18 @@ pub async fn slack_listener_start<R: Runtime>(
 
     let bundle_path = resolve_listener_bundle(&app, &repo_path)?;
 
-    let mut child = TokioCommand::new("node")
-        .arg(&bundle_path)
+    // Clear stale exit error from any prior crash before we
+    // attempt to come back up — otherwise a successful restart
+    // would still surface the old error in status.
+    *state.last_exit_error.lock() = None;
+
+    let mut allowed_domains_env = String::new();
+    if !cfg.allowed_domains.is_empty() {
+        allowed_domains_env = cfg.allowed_domains.join(",");
+    }
+
+    let mut cmd = TokioCommand::new("node");
+    cmd.arg(&bundle_path)
         .env("OPENIT_REPO", &repo)
         .env("OPENIT_INTAKE_URL", &intake_url)
         .env("OPENIT_SLACK_BOT_TOKEN", &bot_token)
@@ -483,7 +514,11 @@ pub async fn slack_listener_start<R: Runtime>(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    if !allowed_domains_env.is_empty() {
+        cmd.env("OPENIT_SLACK_ALLOWED_DOMAINS", &allowed_domains_env);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("spawn node: {} — {}", bundle_path.display(), e))?;
 
@@ -492,51 +527,21 @@ pub async fn slack_listener_start<R: Runtime>(
         .take()
         .ok_or("listener stderr unavailable after spawn")?;
 
-    // Wait for the listener to log "socket-mode connected" before
-    // returning success. Heartbeat / error parsing continues in the
-    // same task once we've moved past the ready signal.
     let last_heartbeat: Arc<PMutex<Option<HeartbeatPayload>>> = Arc::new(PMutex::new(None));
     let last_error: Arc<PMutex<Option<String>>> = Arc::new(PMutex::new(None));
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
+    let (stop_tx, stop_rx) = oneshot::channel::<()>();
 
-    let hb_handle = last_heartbeat.clone();
-    let err_handle = last_error.clone();
-    let log_task = tokio::spawn(async move {
-        let mut reader = BufReader::new(stderr).lines();
-        let mut ready_tx = Some(ready_tx);
-        while let Ok(Some(line)) = reader.next_line().await {
-            // Try heartbeat first — JSON line starting with `{`.
-            if line.trim_start().starts_with('{') {
-                if let Ok(parsed) = serde_json::from_str::<HeartbeatPayload>(&line) {
-                    *hb_handle.lock() = Some(parsed);
-                    continue;
-                }
-            }
-            // Ready signal: log line emitted exactly once on connect.
-            if line.contains("socket-mode connected") {
-                if let Some(tx) = ready_tx.take() {
-                    let _ = tx.send(Ok(()));
-                }
-                eprintln!("[slack] listener: {}", line);
-                continue;
-            }
-            // Anything else: surface as last_error if it looks like
-            // a listener-emitted log line (the listener prefixes its
-            // diagnostics with `[slack-listen]`); otherwise just
-            // forward to our stderr.
-            if line.contains("[slack-listen]") {
-                *err_handle.lock() = Some(line.clone());
-            }
-            eprintln!("[slack] listener: {}", line);
-        }
-        // Stream closed — child likely exited. If we never signaled
-        // ready, propagate that.
-        if let Some(tx) = ready_tx.take() {
-            let _ = tx.send(Err(
-                "listener exited before reporting ready (check stderr)".into()
-            ));
-        }
-    });
+    let supervisor_task = spawn_supervisor_task(
+        child,
+        stderr,
+        ready_tx,
+        stop_rx,
+        last_heartbeat.clone(),
+        last_error.clone(),
+        state.inner.clone(),
+        state.last_exit_error.clone(),
+    );
 
     let ready = match timeout(
         Duration::from_secs(LISTENER_READY_TIMEOUT_SECS),
@@ -546,22 +551,25 @@ pub async fn slack_listener_start<R: Runtime>(
     {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(msg))) => Err(msg),
-        Ok(Err(_)) => Err("listener log task dropped before ready".to_string()),
+        Ok(Err(_)) => Err("listener supervisor task dropped before ready".to_string()),
         Err(_) => Err(format!(
             "listener did not report ready within {}s",
             LISTENER_READY_TIMEOUT_SECS
         )),
     };
     if let Err(msg) = ready {
-        // Failed to come up — kill the child, drop the log task,
-        // surface the error.
-        log_task.abort();
-        let _ = child.kill().await;
+        // Failed to come up — supervisor task is still running but
+        // either child has exited or is hung. Abort the task; its
+        // Drop will kill the child via kill_on_drop.
+        supervisor_task.abort();
+        // Best-effort propagate the failure into last_exit_error so
+        // a subsequent status() call surfaces it without needing
+        // the FE to plumb the error string through.
+        *state.last_exit_error.lock() = Some(msg.clone());
         return Err(msg);
     }
 
     let running = RunningListener {
-        child,
         workspace_id: cfg.workspace_id,
         workspace_name: cfg.workspace_name,
         bot_user_id: cfg.bot_user_id,
@@ -569,10 +577,161 @@ pub async fn slack_listener_start<R: Runtime>(
         bot_token,
         last_heartbeat,
         last_error,
-        log_task: Some(log_task),
+        stop_tx: Some(stop_tx),
+        supervisor_task: Some(supervisor_task),
     };
     *state.inner.lock() = Some(running);
     Ok(())
+}
+
+/// One task per listener: owns the Child + stderr, drains heartbeat
+/// and error lines, observes either a stop signal or an unexpected
+/// child exit, ensures the child is dead, then clears
+/// `state.inner` and writes `last_exit_error` if appropriate.
+///
+/// Single owner = simpler than splitting into a "log task" and a
+/// "wait task". The select! between stderr line read, child wait,
+/// and the stop signal is the central state machine.
+#[allow(clippy::too_many_arguments)]
+fn spawn_supervisor_task(
+    mut child: tokio::process::Child,
+    stderr: tokio::process::ChildStderr,
+    ready_tx: oneshot::Sender<Result<(), String>>,
+    mut stop_rx: oneshot::Receiver<()>,
+    hb_handle: Arc<PMutex<Option<HeartbeatPayload>>>,
+    err_handle: Arc<PMutex<Option<String>>>,
+    inner_handle: Arc<PMutex<Option<RunningListener>>>,
+    exit_err_handle: Arc<PMutex<Option<String>>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stderr).lines();
+        let mut ready_tx = Some(ready_tx);
+
+        loop {
+            tokio::select! {
+                // Bias the stop signal so a flood of stderr lines
+                // can't starve it.
+                biased;
+
+                _ = &mut stop_rx => {
+                    #[cfg(unix)]
+                    {
+                        if let Some(pid) = child.id() {
+                            // SAFETY: pid from the live child we own.
+                            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM); }
+                        }
+                    }
+                    // Give the listener LISTENER_STOP_GRACE_SECS to
+                    // exit cleanly; if it's still running after, the
+                    // wait branch below will pick up the kill.
+                    let kill_after = tokio::time::sleep(
+                        Duration::from_secs(LISTENER_STOP_GRACE_SECS),
+                    );
+                    tokio::pin!(kill_after);
+                    // Continue the loop so we keep draining stderr
+                    // (heartbeats may still come through during
+                    // graceful shutdown). The grace timer is
+                    // checked in the next select! arm.
+                    tokio::select! {
+                        _ = &mut kill_after => {
+                            let _ = child.kill().await;
+                        }
+                        s = child.wait() => {
+                            handle_exit(s, &exit_err_handle);
+                            break;
+                        }
+                    }
+                    // After grace timeout, ensure exit observed.
+                    if let Ok(s) = child.wait().await {
+                        handle_exit(Ok(s), &exit_err_handle);
+                    }
+                    break;
+                }
+
+                line = reader.next_line() => {
+                    match line {
+                        Ok(Some(text)) => {
+                            process_stderr_line(
+                                &text,
+                                &hb_handle,
+                                &err_handle,
+                                &mut ready_tx,
+                            );
+                        }
+                        Ok(None) | Err(_) => {
+                            // Stream closed — child has exited or is
+                            // about to. Loop will pick it up via
+                            // child.wait().
+                        }
+                    }
+                }
+
+                exit = child.wait() => {
+                    handle_exit(exit, &exit_err_handle);
+                    if let Some(tx) = ready_tx.take() {
+                        let _ = tx.send(Err(
+                            "listener exited before reporting ready (check stderr)".into()
+                        ));
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Belt-and-suspenders kill in case any path above didn't
+        // observe the exit (e.g. select! fall-through after a
+        // closed stderr stream).
+        let _ = child.kill().await;
+
+        // Clear inner so status() flips to stopped. We don't take
+        // last_error/heartbeat with us — exit_err_handle is the
+        // separate channel for "last error after exit".
+        *inner_handle.lock() = None;
+    })
+}
+
+fn handle_exit(
+    res: std::io::Result<std::process::ExitStatus>,
+    exit_err_handle: &Arc<PMutex<Option<String>>>,
+) {
+    match res {
+        Ok(status) if !status.success() => {
+            *exit_err_handle.lock() = Some(format!("listener exited: {}", status));
+        }
+        Ok(_) => {
+            // Clean exit (likely a graceful stop) — no error to
+            // record. If `last_exit_error` was set previously,
+            // leave it alone; the next start clears it.
+        }
+        Err(err) => {
+            *exit_err_handle.lock() = Some(format!("wait on listener failed: {}", err));
+        }
+    }
+}
+
+fn process_stderr_line(
+    line: &str,
+    hb_handle: &Arc<PMutex<Option<HeartbeatPayload>>>,
+    err_handle: &Arc<PMutex<Option<String>>>,
+    ready_tx: &mut Option<oneshot::Sender<Result<(), String>>>,
+) {
+    if line.trim_start().starts_with('{') {
+        if let Ok(parsed) = serde_json::from_str::<HeartbeatPayload>(line) {
+            *hb_handle.lock() = Some(parsed);
+            return;
+        }
+    }
+    if line.contains("socket-mode connected") {
+        if let Some(tx) = ready_tx.take() {
+            let _ = tx.send(Ok(()));
+        }
+        eprintln!("[slack] listener: {}", line);
+        return;
+    }
+    if line.contains("[slack-listen]") {
+        *err_handle.lock() = Some(line.to_string());
+    }
+    eprintln!("[slack] listener: {}", line);
 }
 
 #[tauri::command]
@@ -585,40 +744,24 @@ pub async fn slack_listener_stop(
 }
 
 async fn stop_inner(state: &tauri::State<'_, SlackSupervisorState>) {
-    let mut running = match state.inner.lock().take() {
-        Some(r) => r,
-        None => return,
-    };
-    // SIGTERM (graceful) — listener drains its queue, flushes
-    // ledgers, disconnects. libc::kill is fine here — libc is a
-    // transitive Tauri dep, no new direct dependency needed.
-    #[cfg(unix)]
-    {
-        if let Some(pid) = running.child.id() {
-            // SAFETY: PID came from `child.id()` which is the live
-            // child we own; sending SIGTERM is a normal lifecycle
-            // operation. Return value ignored — best-effort.
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGTERM);
-            }
+    // Pull the stop signal + supervisor handle out under the
+    // lock, but DO NOT clear `state.inner` here — the supervisor
+    // task is the single source of truth for that. It clears
+    // inner once the child is observed to have exited, which
+    // makes "stopped" visible to `status()` only when it's
+    // actually true.
+    let (stop_tx, supervisor_task) = {
+        let mut guard = state.inner.lock();
+        match guard.as_mut() {
+            Some(r) => (r.stop_tx.take(), r.supervisor_task.take()),
+            None => return,
         }
+    };
+    if let Some(tx) = stop_tx {
+        let _ = tx.send(());
     }
-    #[cfg(not(unix))]
-    {
-        // Windows / others: no SIGTERM equivalent; fall straight
-        // through to kill below.
-    }
-    let _ = timeout(
-        Duration::from_secs(LISTENER_STOP_GRACE_SECS),
-        running.child.wait(),
-    )
-    .await;
-    // Whether the wait timed out or completed, ensure the process
-    // is gone. kill_on_drop also covers this if we just dropped
-    // `child`, but we want to await it to release the FDs.
-    let _ = running.child.kill().await;
-    if let Some(task) = running.log_task.take() {
-        task.abort();
+    if let Some(task) = supervisor_task {
+        let _ = task.await;
     }
 }
 
@@ -633,7 +776,10 @@ pub fn slack_listener_status(state: tauri::State<'_, SlackSupervisorState>) -> S
             bot_user_id: None,
             bot_name: None,
             last_heartbeat: None,
-            last_error: None,
+            // Surface the captured exit error so the FE can show
+            // "Slack: stopped (listener exited: signal 9)" instead
+            // of just "stopped". Cleared on next successful start.
+            last_error: state.last_exit_error.lock().clone(),
         },
         Some(r) => SlackStatus {
             running: true,
@@ -681,25 +827,35 @@ fn resolve_listener_bundle<R: Runtime>(
     app: &AppHandle<R>,
     repo: &Path,
 ) -> Result<PathBuf, String> {
-    // 1. Synced into the project by the plugin manifest.
+    // 1. Packaged with the .app — the canonical copy. Always
+    //    matches the running app version, so a stale plugin sync
+    //    (manifest hasn't pulled the newest bundle to the project
+    //    yet) doesn't end up running yesterday's listener against
+    //    today's intake server contract. Tauri's resolver returns
+    //    a path even when the file isn't present, so we still need
+    //    the .is_file() probe.
+    if let Ok(in_resources) = app
+        .path()
+        .resolve(LISTENER_RESOURCE_REL, BaseDirectory::Resource)
+    {
+        if in_resources.is_file() {
+            return Ok(in_resources);
+        }
+    }
+    // 2. Synced into the project by the plugin manifest. Used in
+    //    `cargo dev` (no .app to resolve out of) and as a fallback
+    //    if the resource lookup fails for some reason. A custom
+    //    local build at `npm run build:slack-listener` lands the
+    //    bundle into the source tree, which is what the plugin
+    //    manifest copies into projects.
     let in_repo = repo.join(LISTENER_REPO_REL);
     if in_repo.is_file() {
         return Ok(in_repo);
     }
-    // 2. Packaged with the app (.app/Contents/Resources/...).
-    let in_resources = app
-        .path()
-        .resolve(LISTENER_RESOURCE_REL, BaseDirectory::Resource)
-        .map_err(|e| format!("resolve listener resource: {}", e))?;
-    if in_resources.is_file() {
-        return Ok(in_resources);
-    }
     Err(format!(
-        "slack listener bundle not found in any known location \
-         (looked at {} and {}); run `npm run build:slack-listener` \
-         and re-sync the plugin",
-        in_repo.display(),
-        in_resources.display()
+        "slack listener bundle not found at app resources or in {}; \
+         run `npm run build:slack-listener` and re-sync the plugin",
+        in_repo.display()
     ))
 }
 

@@ -251,12 +251,19 @@ function App() {
   }, [repo, slackPollTick]);
 
   // Auto-start: when both repo and intakeServerUrl are known and a
-  // slack config exists, start the listener if it isn't already.
-  // Idempotent on the Rust side — repeat calls while running are
-  // no-ops, so this effect is safe to fire on repo / URL changes.
+  // slack config exists, start the listener — exactly ONCE per
+  // (repo, intakeUrl) pair. We deliberately do NOT re-fire when
+  // the supervisor flips back to stopped: a listener that crashes
+  // because of a bad token would thrash-restart every 5s. After
+  // an unexpected exit, the user opens the modal and clicks Start
+  // (the modal exposes the captured exit error so they can see
+  // why it died).
+  const slackAutoStartedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!repo || !intakeServerUrl || !slackConfig) return;
-    if (slackStatus?.running) return;
+    const key = `${repo}|${intakeServerUrl}`;
+    if (slackAutoStartedRef.current === key) return;
+    slackAutoStartedRef.current = key;
     let cancelled = false;
     (async () => {
       try {
@@ -277,7 +284,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [repo, intakeServerUrl, slackConfig, slackStatus?.running, slackOrgId]);
+  }, [repo, intakeServerUrl, slackConfig, slackOrgId]);
 
   useEffect(() => {
     // Stop the WebView from navigating to a dropped file when the drop
