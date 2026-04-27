@@ -116,8 +116,11 @@ function ensureSkillFrontmatter(skillName: string, content: string): string {
   if (content.startsWith("---")) return content;
   const nameMatch = content.match(/^name:\s*(.+?)$/m);
   const descMatch = content.match(/^description:\s*(.+?)$/m);
-  const skillTitle = nameMatch?.[1]?.trim() ?? skillName;
-  const description = descMatch?.[1]?.trim() ?? skillName;
+  // `||` not `??` — a `description:` line that's present but empty (or
+  // whitespace-only after trim) should still fall back to the skill
+  // name, not write an empty description into the frontmatter.
+  const skillTitle = nameMatch?.[1]?.trim() || skillName;
+  const description = descMatch?.[1]?.trim() || skillName;
   return `---\nname: ${skillTitle}\ndescription: ${description}\n---\n\n${content}`;
 }
 

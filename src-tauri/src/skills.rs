@@ -89,7 +89,11 @@ fn resolve_bundled_path<R: Runtime>(
     app: &AppHandle<R>,
     rel: &str,
 ) -> Result<PathBuf, String> {
-    let trimmed = rel.trim_start_matches('/');
+    // Strip leading separators of either flavor — the resource resolver
+    // anchors any result inside the bundle, but normalizing here closes
+    // the defense-in-depth gap on Windows where a `\foo` prefix would
+    // otherwise pass through unstripped.
+    let trimmed = rel.trim_start_matches(|c| c == '/' || c == '\\');
     let candidate = PathBuf::from(trimmed);
     if candidate.is_absolute()
         || candidate
