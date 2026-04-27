@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "2026-04-26",
+  "name": "openit-tickets",
+  "type": "datastore",
+  "isStructured": true,
+  "description": "IT support tickets. One row per case. Conversation turns live in the openit-conversations datastore, linked via ticketId.",
+  "fields": [
+    {
+      "id": "subject",
+      "label": "Subject",
+      "type": "string",
+      "required": true,
+      "comment": "Short summary of the question — used in lists and banners."
+    },
+    {
+      "id": "description",
+      "label": "Description",
+      "type": "text",
+      "required": true,
+      "comment": "Full text of what the user asked. Subsequent back-and-forth lives in openit-conversations, not here."
+    },
+    {
+      "id": "asker",
+      "label": "From",
+      "type": "string",
+      "required": true,
+      "comment": "Name or email. 'unknown' if the asker isn't identifiable."
+    },
+    {
+      "id": "askerChannel",
+      "label": "Channel",
+      "type": "enum",
+      "values": ["openit", "slack", "email", "web", "teams", "api"],
+      "default": "openit",
+      "comment": "How the question reached us. 'openit' = typed directly in OpenIT chat. Channel ingest options become available when cloud is connected."
+    },
+    {
+      "id": "status",
+      "label": "Status",
+      "type": "enum",
+      "values": ["incoming", "open", "answered", "resolved", "closed"],
+      "required": true,
+      "default": "incoming",
+      "comment": "incoming = newly arrived, not yet triaged. open = needs human attention. answered = agent or admin replied. resolved = user confirmed fix. closed = no further action expected."
+    },
+    {
+      "id": "priority",
+      "label": "Priority",
+      "type": "enum",
+      "values": ["low", "normal", "high", "urgent"],
+      "default": "normal"
+    },
+    {
+      "id": "assignee",
+      "label": "Assigned to",
+      "type": "string",
+      "nullable": true,
+      "comment": "Name or email of the admin handling this ticket. Null if unassigned."
+    },
+    {
+      "id": "tags",
+      "label": "Tags",
+      "type": "string[]",
+      "nullable": true,
+      "comment": "Free-form labels for grouping (e.g. 'vpn', 'access', 'onboarding')."
+    },
+    {
+      "id": "createdAt",
+      "label": "Created",
+      "type": "datetime",
+      "required": true,
+      "comment": "ISO-8601 UTC, e.g. 2026-04-27T09:14:02Z."
+    },
+    {
+      "id": "updatedAt",
+      "label": "Last update",
+      "type": "datetime",
+      "required": true
+    },
+    {
+      "id": "kbArticleRefs",
+      "label": "KB articles cited",
+      "type": "string[]",
+      "nullable": true,
+      "comment": "Filenames in knowledge-base/ used to answer this ticket. Helps the 'answer once' loop stay traceable."
+    },
+    {
+      "id": "notes",
+      "label": "Internal notes",
+      "type": "text",
+      "nullable": true,
+      "comment": "Admin-only notes not surfaced in the user-facing reply. E.g. 'declined to capture as KB — one-off issue specific to this user's machine.'"
+    }
+  ]
+}

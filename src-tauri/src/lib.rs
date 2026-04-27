@@ -90,6 +90,8 @@ pub fn run() {
             kb::entity_clear_dir,
             skills::skills_fetch_manifest,
             skills::skills_fetch_file,
+            skills::skills_fetch_bundled_manifest,
+            skills::skills_fetch_bundled_file,
             filestore::filestore_list_collections,
             filestore::datastore_list_collections,
             watcher::fs_watch_start,

@@ -1,5 +1,8 @@
 use reqwest::Client;
+use std::path::{Component, PathBuf};
 use std::time::Duration;
+use tauri::path::BaseDirectory;
+use tauri::{AppHandle, Manager, Runtime};
 
 /// Fetch the manifest from the openit-plugin directory at the environment root.
 /// Uses the app-api URL to determine the environment root.
@@ -57,6 +60,52 @@ pub async fn skills_fetch_file(app_api_url: String, skill_path: String) -> Resul
     resp.text()
         .await
         .map_err(|e| format!("Failed to read skill: {}", e))
+}
+
+/// Read the bundled manifest shipped inside the app resources.
+/// Used as the local-first source of truth (no network required).
+#[tauri::command]
+pub fn skills_fetch_bundled_manifest<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
+    let path = resolve_bundled_path(&app, "manifest.json")?;
+    std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read bundled manifest at {}: {}", path.display(), e))
+}
+
+/// Read a single file from the bundled openit-plugin resources.
+#[tauri::command]
+pub fn skills_fetch_bundled_file<R: Runtime>(
+    app: AppHandle<R>,
+    skill_path: String,
+) -> Result<String, String> {
+    let path = resolve_bundled_path(&app, &skill_path)?;
+    std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read bundled file at {}: {}", path.display(), e))
+}
+
+/// Resolve a path under the bundled `openit-plugin/` resource directory.
+/// Rejects absolute paths and `..` traversal so a malformed manifest entry
+/// can't read files outside the bundle.
+fn resolve_bundled_path<R: Runtime>(
+    app: &AppHandle<R>,
+    rel: &str,
+) -> Result<PathBuf, String> {
+    // Strip leading separators of either flavor — the resource resolver
+    // anchors any result inside the bundle, but normalizing here closes
+    // the defense-in-depth gap on Windows where a `\foo` prefix would
+    // otherwise pass through unstripped.
+    let trimmed = rel.trim_start_matches(|c| c == '/' || c == '\\');
+    let candidate = PathBuf::from(trimmed);
+    if candidate.is_absolute()
+        || candidate
+            .components()
+            .any(|c| matches!(c, Component::ParentDir))
+    {
+        return Err(format!("invalid bundled path: {}", rel));
+    }
+    let resource = format!("openit-plugin/{}", trimmed);
+    app.path()
+        .resolve(&resource, BaseDirectory::Resource)
+        .map_err(|e| format!("could not resolve bundled resource {}: {}", resource, e))
 }
 
 /// Extract environment root URL from app-api URL.
