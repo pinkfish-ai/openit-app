@@ -242,40 +242,57 @@ export function Shell({
           onSyncLine(line);
         };
         let status: "ok" | "error" = "ok";
-        let errorMsg: string | undefined;
+        // Result-file `error` becomes the script's `error` field verbatim.
+        // Keep it shaped as `{ code, message }` so callers can branch on
+        // a stable code instead of grepping the message.
+        let errorPayload: { code: string; message: string } | undefined;
 
-        try {
-          // Auto-commit any pending working-tree changes BEFORE pushing.
-          // After Claude's merge, disk has the merged content but git
-          // HEAD still has the pre-merge content, so `git status` reports
-          // a pending change. If the user picked remote, local now
-          // matches remote and the push reports `0 ok, 0 failed` — the
-          // user is left staring at "1 change to push" forever. Commit
-          // here so HEAD catches up. Same pattern handleCommit uses.
-          try {
-            const wsStatus = await gitStatusShort(repo);
-            if (wsStatus.length > 0) {
-              const unstaged = wsStatus.filter((f) => !f.staged).map((f) => f.path);
-              if (unstaged.length > 0) await gitStage(repo, unstaged);
-              const ts = new Date().toISOString();
-              await gitCommitStaged(repo, `sync: claude-resolve auto-commit @ ${ts}`);
-              onLine("▸ sync: auto-committed merged files");
-            }
-          } catch (e) {
-            console.warn("[shell] auto-commit before push failed:", e);
-          }
-
-          await pushAllEntities(repo, onLine);
-        } catch (e) {
+        // Local-only short-circuit: no Pinkfish creds → there's nothing to
+        // push. Write a structured `not_connected` result so sync-push.mjs
+        // exits with a clear code Claude can see.
+        const creds = await loadCreds().catch(() => null);
+        if (!creds) {
           status = "error";
-          errorMsg = String(e);
-          onLine(`✗ sync: push trigger failed: ${errorMsg}`);
+          errorPayload = {
+            code: "not_connected",
+            message:
+              "OpenIT isn't connected to Pinkfish — local edits stay on disk only. Connect via the header pill to enable cloud sync.",
+          };
+          onLine(`✗ sync: ${errorPayload.message}`);
+        } else {
+          try {
+            // Auto-commit any pending working-tree changes BEFORE pushing.
+            // After Claude's merge, disk has the merged content but git
+            // HEAD still has the pre-merge content, so `git status` reports
+            // a pending change. If the user picked remote, local now
+            // matches remote and the push reports `0 ok, 0 failed` — the
+            // user is left staring at "1 change to push" forever. Commit
+            // here so HEAD catches up. Same pattern handleCommit uses.
+            try {
+              const wsStatus = await gitStatusShort(repo);
+              if (wsStatus.length > 0) {
+                const unstaged = wsStatus.filter((f) => !f.staged).map((f) => f.path);
+                if (unstaged.length > 0) await gitStage(repo, unstaged);
+                const ts = new Date().toISOString();
+                await gitCommitStaged(repo, `sync: claude-resolve auto-commit @ ${ts}`);
+                onLine("▸ sync: auto-committed merged files");
+              }
+            } catch (e) {
+              console.warn("[shell] auto-commit before push failed:", e);
+            }
+
+            await pushAllEntities(repo, onLine);
+          } catch (e) {
+            status = "error";
+            errorPayload = { code: "push_failed", message: String(e) };
+            onLine(`✗ sync: push trigger failed: ${errorPayload.message}`);
+          }
         }
 
         // Always write the result file when we got this far — we
         // claimed ownership of the marker and a script may be polling.
         const payload = JSON.stringify(
-          { status, error: errorMsg, lines, finishedAt: new Date().toISOString() },
+          { status, error: errorPayload, lines, finishedAt: new Date().toISOString() },
           null,
           2,
         );

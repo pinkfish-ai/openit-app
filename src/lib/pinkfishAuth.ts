@@ -81,6 +81,15 @@ export function getToken(): PinkfishTokenState | null {
 }
 
 export async function loadCreds(): Promise<PinkfishCreds | null> {
+  // Local-only escape hatch: when VITE_DEV_LOCAL_ONLY is set, behave as
+  // if no creds existed regardless of what the keychain or env have.
+  // Lets a dev exercise the offline path without nuking real
+  // credentials. Centralized here so every caller (App.tsx startup,
+  // Shell.tsx push handler, sync engines, etc.) honors the flag — not
+  // just the bootstrap branch.
+  if (import.meta.env.VITE_DEV_LOCAL_ONLY === "true") {
+    return null;
+  }
   // In dev mode, check for env-provided creds first to avoid keychain prompts
   const envClientId = import.meta.env.VITE_DEV_CLIENT_ID;
   const envClientSecret = import.meta.env.VITE_DEV_CLIENT_SECRET;
