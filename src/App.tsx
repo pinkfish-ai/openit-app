@@ -380,11 +380,11 @@ function App() {
         <button
           className={`icon-btn ${connected ? "key-set" : ""}`}
           onClick={() => setBypassOnboarding(false)}
-          title={connected ? "Connected — click to update credentials" : "Connect Pinkfish"}
+          title={connected ? "Connected — click to update credentials" : "Connect to Cloud"}
         >
           {connected
-            ? `Pinkfish: ${orgName ?? "connected"}`
-            : "Connect Pinkfish"}
+            ? `Cloud: ${orgName ?? "connected"}`
+            : "Connect to Cloud"}
         </button>
       </header>
       <section className="app-pane">
@@ -394,6 +394,8 @@ function App() {
           syncLines={syncLines}
           onSyncLine={onSyncLine}
           bubbles={bubbles}
+          cloudConnected={connected}
+          onConnectRequest={() => setBypassOnboarding(false)}
         />
       </section>
     </main>

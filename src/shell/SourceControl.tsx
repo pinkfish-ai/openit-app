@@ -25,6 +25,12 @@ type Props = {
   /** Called whenever the count of uncommitted changes changes — used to
    *  drive the badge on the Sync tab label. */
   onChangeCount?: (n: number) => void;
+  /** Whether Pinkfish creds are loaded. Drives the Sync-to-Cloud button:
+   *  push when true, CTA-to-connect when false. */
+  cloudConnected: boolean;
+  /** Called when the user clicks Sync to Cloud while not connected.
+   *  App-level handler opens the OAuth flow. */
+  onConnectRequest: () => void;
 };
 
 function statusLabel(s: string): string {
@@ -98,7 +104,7 @@ function relativeTime(dateStr: string): string {
   return dateStr.split("T")[0];
 }
 
-export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange, onChangeCount }: Props) {
+export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange, onChangeCount, cloudConnected, onConnectRequest }: Props) {
   const [files, setFiles] = useState<GitFileStatus[]>([]);
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [commitMsg, setCommitMsg] = useState("");
@@ -177,6 +183,15 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
 
   const handleCommit = async () => {
     if (!repo) return;
+    // Local-only mode: clicking "Sync to Cloud" with no creds is a CTA,
+    // not a real sync. Hand off to the App-level connect flow. Any
+    // pending local commits stay pending — the user can either commit
+    // by editing files (auto-handled by the engine post-connect) or
+    // we'll wire an explicit local-commit button in Phase 3b.
+    if (!cloudConnected) {
+      onConnectRequest();
+      return;
+    }
     setCommitting(true);
     setError(null);
     try {
@@ -295,15 +310,19 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
           onClick={handleCommit}
           disabled={committing || generating}
           title={
-            files.length === 0
-              ? "Push to Pinkfish (catches silent content drift)"
-              : "Commit and push to Pinkfish"
+            !cloudConnected
+              ? "Connect to Cloud to enable sync"
+              : files.length === 0
+              ? "Sync to Cloud (catches silent content drift)"
+              : "Commit and sync to Cloud"
           }
         >
           {committing
             ? "…"
+            : !cloudConnected
+            ? "Sync to Cloud"
             : files.length === 0
-            ? "Sync to Pinkfish"
+            ? "Sync to Cloud"
             : "Commit"}
         </button>
       </div>

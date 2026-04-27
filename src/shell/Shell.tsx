@@ -53,11 +53,19 @@ export function Shell({
   syncLines,
   onSyncLine,
   bubbles,
+  cloudConnected,
+  onConnectRequest,
 }: {
   repo: string | null;
   syncLines: string[];
   onSyncLine: (line: string) => void;
   bubbles: Bubble[];
+  /** Whether Pinkfish creds are loaded. Drives the Sync-to-Cloud button:
+   *  push when true, CTA-to-connect when false. */
+  cloudConnected: boolean;
+  /** Called when the user wants to start the Pinkfish OAuth flow from
+   *  inside the Sync tab (no creds + clicked Sync to Cloud). */
+  onConnectRequest: () => void;
 }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
   const [source, setSource] = useState<ViewerSource>(null);
@@ -415,6 +423,8 @@ export function Shell({
                 onSyncLine={onSyncLine}
                 onFsChange={bumpFs}
                 onChangeCount={setChangeCount}
+                cloudConnected={cloudConnected}
+                onConnectRequest={onConnectRequest}
               />
             </div>
           </div>
