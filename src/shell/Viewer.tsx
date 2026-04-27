@@ -65,7 +65,7 @@ const ENTITY_FOLDER_EMPTY_COPY: Record<
   library:
     "No library files yet. Drop runbook PDFs, scripts, or any reference doc you reach for repeatedly — Claude can pull from these when answering tickets or building workflows.",
   reports:
-    "No reports yet. Click \"Generate overview\" above for an instant snapshot of ticket status, recent activity, top askers, and current escalations — or ask Claude in the chat (\"/report VPN tickets last 30 days\") for a custom report.",
+    "No reports yet. Click \"Overview\" above for an instant snapshot of ticket status, recent activity, top askers, and current escalations — or click \"Ask Claude\" to describe a custom report (\"VPN tickets last 30 days\", \"escalations by asker\").",
 };
 
 /// Anchor tag override for ReactMarkdown rendering. Three URL shapes
@@ -1193,15 +1193,33 @@ export function Viewer({
           setReportRunning(false);
         }
       };
+      const onAskClaude = () => {
+        // Paste `/report ` into the Claude pane via the same bracketed-
+        // paste path the welcome doc's "Connect to Cloud" CTA uses,
+        // letting the admin describe what they want without having to
+        // type the slash command. Trailing space puts the cursor in
+        // arg position.
+        const wrapped = `${BRACKETED_PASTE_OPEN}/report ${BRACKETED_PASTE_CLOSE}`;
+        writeToActiveSession(wrapped).catch((err) =>
+          console.warn("[viewer] ask-claude paste failed:", err),
+        );
+      };
       const reportsHeader = isReports ? (
         <div className="viewer-summary-actions">
           <button
             type="button"
-            className="viewer-edit-btn viewer-edit-btn-primary"
+            className="viewer-edit-btn viewer-edit-btn-secondary"
             onClick={onGenerateOverview}
             disabled={reportRunning || !repo}
           >
-            {reportRunning ? "Generating…" : "Generate overview"}
+            {reportRunning ? "Generating…" : "Overview"}
+          </button>
+          <button
+            type="button"
+            className="viewer-edit-btn viewer-edit-btn-secondary"
+            onClick={onAskClaude}
+          >
+            Ask Claude
           </button>
           {reportError && (
             <span className="viewer-edit-error">{reportError}</span>

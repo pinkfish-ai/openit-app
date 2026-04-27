@@ -13,9 +13,42 @@ export type Bubble = {
 };
 
 export type PluginManifest = {
+  version?: string;
   files: Array<{ path: string }>;
   bubbles?: Array<Bubble>;
 };
+
+/// Path of the on-disk version sentinel relative to repo root. Tracks the
+/// `manifest.version` of the most recent successful bundled-plugin sync
+/// so relaunches can tell when the bundle has rolled forward and
+/// re-sync is needed (without nuking user edits to non-plugin files).
+const PLUGIN_VERSION_SENTINEL = ".openit/plugin-version";
+
+/// Read the version of the last successful sync. Returns null when the
+/// sentinel is missing or unreadable — the caller treats that as
+/// "out-of-date" so a fresh sync runs on first launch under a new build.
+export async function readSyncedPluginVersion(repo: string): Promise<string | null> {
+  try {
+    const raw = await invoke<string>("fs_read", { path: `${repo}/${PLUGIN_VERSION_SENTINEL}` });
+    const trimmed = raw.trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeSyncedPluginVersion(repo: string, version: string): Promise<void> {
+  try {
+    await invoke("entity_write_file", {
+      repo,
+      subdir: ".openit",
+      filename: "plugin-version",
+      content: version,
+    });
+  } catch (err) {
+    console.warn("[skillsSync] failed to write plugin-version sentinel:", err);
+  }
+}
 
 /// Fetch the manifest. Tries cloud when creds are provided and falls back to
 /// the bundled copy. With no creds, reads bundled directly. Local-first means
@@ -200,6 +233,10 @@ export async function syncSkillsToDisk(
       } catch (err) {
         console.warn("[skillsSync] commit of bundled plugin failed:", err);
       }
+    }
+
+    if (manifest.version) {
+      await writeSyncedPluginVersion(repo, manifest.version);
     }
 
     onLog?.(`    ${fileCount} file(s), ${skillCount} skill(s), ${bubbleCount} bubble(s) — synced`);
