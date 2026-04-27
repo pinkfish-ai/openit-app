@@ -213,6 +213,100 @@ export async function intakeStart(repo: string): Promise<string> {
   return invoke("intake_start", { repo });
 }
 
+// ---------------------------------------------------------------------------
+// Slack — local listener supervisor (V1: DM-only, runs while OpenIT is open).
+// ---------------------------------------------------------------------------
+
+export type SlackConfig = {
+  workspace_id: string;
+  workspace_name: string;
+  bot_user_id: string;
+  bot_name: string;
+  connected_at: string;
+  allowed_domains: string[];
+};
+
+export type SlackConnectMeta = {
+  workspace_id: string;
+  workspace_name: string;
+  bot_user_id: string;
+  bot_name: string;
+  connected_at: string;
+};
+
+export type SlackHeartbeat = {
+  ts: string;
+  sessions: number;
+  open_tickets: number;
+  queue_depth: number;
+  workers: number;
+};
+
+export type SlackStatus = {
+  running: boolean;
+  workspace_id: string | null;
+  workspace_name: string | null;
+  bot_user_id: string | null;
+  bot_name: string | null;
+  last_heartbeat: SlackHeartbeat | null;
+  last_error: string | null;
+};
+
+export async function slackConnect(args: {
+  repo: string;
+  botToken: string;
+  appToken: string;
+  orgId: string;
+}): Promise<SlackConnectMeta> {
+  return invoke("slack_connect", {
+    repo: args.repo,
+    botToken: args.botToken,
+    appToken: args.appToken,
+    orgId: args.orgId,
+  });
+}
+
+export async function slackDisconnect(args: {
+  repo: string;
+  orgId: string;
+}): Promise<void> {
+  return invoke("slack_disconnect", { repo: args.repo, orgId: args.orgId });
+}
+
+export async function slackConfigRead(repo: string): Promise<SlackConfig | null> {
+  return invoke("slack_config_read", { repo });
+}
+
+export async function slackListenerStart(args: {
+  repo: string;
+  intakeUrl: string;
+  orgId: string;
+}): Promise<void> {
+  return invoke("slack_listener_start", {
+    repo: args.repo,
+    intakeUrl: args.intakeUrl,
+    orgId: args.orgId,
+  });
+}
+
+export async function slackListenerStop(): Promise<void> {
+  return invoke("slack_listener_stop");
+}
+
+export async function slackListenerStatus(): Promise<SlackStatus> {
+  return invoke("slack_listener_status");
+}
+
+export async function slackListenerSendIntro(args: {
+  targetEmail: string;
+  text: string;
+}): Promise<void> {
+  return invoke("slack_listener_send_intro", {
+    targetEmail: args.targetEmail,
+    text: args.text,
+  });
+}
+
 export async function pinkfishListOrgs(args: {
   accessToken: string;
   orgId: string;

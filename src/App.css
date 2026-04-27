@@ -105,6 +105,27 @@ body,
   letter-spacing: 0.05em;
 }
 
+/* Slack pill — three states share the base .intake-url-pill style. */
+.slack-pill-unset {
+  border-style: dashed;
+}
+
+.slack-pill-running .slack-pill-dot {
+  background: #1d7d3a;
+  box-shadow: 0 0 6px rgba(29, 125, 58, 0.45);
+}
+
+.slack-pill-stopped .slack-pill-dot {
+  background: #d49a00;
+  box-shadow: 0 0 6px rgba(212, 154, 0, 0.45);
+}
+
+.slack-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
 
 .app-repo {
   flex: 1;

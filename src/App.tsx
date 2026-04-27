@@ -2,7 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
-import { fsRead, intakeStart, projectBootstrap, stateLoad, stateSave } from "./lib/api";
+import { SlackConnectModal } from "./SlackConnectModal";
+import {
+  fsRead,
+  intakeStart,
+  projectBootstrap,
+  slackConfigRead,
+  slackListenerStart,
+  slackListenerStatus,
+  slackListenerStop,
+  stateLoad,
+  stateSave,
+  type SlackConfig,
+  type SlackStatus,
+} from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
@@ -123,6 +136,58 @@ function IntakeUrlPill({ url }: { url: string }) {
   );
 }
 
+/// Slack status pill in the header. Three visual states:
+///   - not configured  → "Connect Slack" (dotted)
+///   - configured + listener running → "Slack: @<bot> · Nses" green dot
+///   - configured + listener stopped/erroring → "Slack: @<bot>" amber dot
+/// Click always opens the connect/manage modal.
+function SlackPill({
+  config,
+  status,
+  onClick,
+}: {
+  config: SlackConfig | null;
+  status: SlackStatus | null;
+  onClick: () => void;
+}) {
+  if (!config) {
+    return (
+      <button
+        type="button"
+        className="intake-url-pill slack-pill slack-pill-unset"
+        onClick={onClick}
+        title="Set up the OpenIT Slack bot for this project"
+      >
+        <span className="intake-url-pill-label">Slack</span>
+        <span className="intake-url-pill-action">CONNECT</span>
+      </button>
+    );
+  }
+  const running = !!status?.running;
+  const sessions = status?.last_heartbeat?.sessions ?? 0;
+  return (
+    <button
+      type="button"
+      className={`intake-url-pill slack-pill ${
+        running ? "slack-pill-running" : "slack-pill-stopped"
+      }`}
+      onClick={onClick}
+      title={
+        running
+          ? `Slack listener running for @${config.bot_name}. Click to manage.`
+          : `Slack configured but listener not running. Click to start.`
+      }
+    >
+      <span className="slack-pill-dot" />
+      <span className="intake-url-pill-label">Slack</span>
+      <code className="intake-url-pill-value">
+        @{config.bot_name}
+        {running && ` · ${sessions}s`}
+      </code>
+    </button>
+  );
+}
+
 function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -133,6 +198,86 @@ function App() {
   const [bypassOnboarding, setBypassOnboarding] = useState(false);
   const [bubbles, setBubbles] = useState<PromptBubble[]>(DEFAULT_BUBBLES);
   const [intakeServerUrl, setIntakeServerUrl] = useState<string | null>(null);
+  const [slackConfig, setSlackConfig] = useState<SlackConfig | null>(null);
+  const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
+  const [slackModalOpen, setSlackModalOpen] = useState(false);
+  const [slackPollTick, setSlackPollTick] = useState(0); // bump to force a refresh
+
+  // Slack lifecycle:
+  //
+  //   1. On project open (repo set), read .openit/slack.json. If
+  //      present, auto-start the listener as soon as the intake
+  //      server URL is also known. Both are required because the
+  //      listener needs OPENIT_INTAKE_URL.
+  //   2. While a project is open, poll status every 5s so the
+  //      header pill flips between running/stopped without user
+  //      action. Cheap call — just reads supervisor state.
+  //   3. On project switch / null repo: stop the listener and clear
+  //      state. The supervisor's stop is idempotent (safe to call
+  //      when nothing's running), so no need to gate on
+  //      slackStatus?.running.
+  const slackOrgId = savedCreds?.orgId ?? "";
+  useEffect(() => {
+    if (!repo) {
+      setSlackConfig(null);
+      setSlackStatus(null);
+      // Best-effort: stop a listener that might still be pointed at
+      // the previous project. Errors are fine to ignore — if there
+      // was nothing running, stop is a no-op.
+      slackListenerStop().catch(() => {});
+      return;
+    }
+    let mounted = true;
+    slackConfigRead(repo)
+      .then((cfg) => {
+        if (!mounted) return;
+        setSlackConfig(cfg);
+      })
+      .catch((e) => {
+        console.warn("[app] slack config read failed:", e);
+      });
+    const refreshStatus = () =>
+      slackListenerStatus()
+        .then((s) => {
+          if (mounted) setSlackStatus(s);
+        })
+        .catch(() => {});
+    refreshStatus();
+    const id = setInterval(refreshStatus, 5_000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, [repo, slackPollTick]);
+
+  // Auto-start: when both repo and intakeServerUrl are known and a
+  // slack config exists, start the listener if it isn't already.
+  // Idempotent on the Rust side — repeat calls while running are
+  // no-ops, so this effect is safe to fire on repo / URL changes.
+  useEffect(() => {
+    if (!repo || !intakeServerUrl || !slackConfig) return;
+    if (slackStatus?.running) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await slackListenerStart({
+          repo,
+          intakeUrl: intakeServerUrl,
+          orgId: slackOrgId,
+        });
+        if (!cancelled) {
+          // Force a status refresh on the next tick so the pill
+          // shows running immediately.
+          setSlackPollTick((n) => n + 1);
+        }
+      } catch (e) {
+        console.warn("[app] slack listener auto-start failed:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, intakeServerUrl, slackConfig, slackStatus?.running, slackOrgId]);
 
   useEffect(() => {
     // Stop the WebView from navigating to a dropped file when the drop
@@ -406,6 +551,13 @@ function App() {
         <span className="app-tagline">get IT done</span>
         <div className="app-header-actions">
           {intakeServerUrl && <IntakeUrlPill url={intakeServerUrl} />}
+          {repo && intakeServerUrl && (
+            <SlackPill
+              config={slackConfig}
+              status={slackStatus}
+              onClick={() => setSlackModalOpen(true)}
+            />
+          )}
           <button
             className="icon-btn"
             onClick={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
@@ -436,6 +588,18 @@ function App() {
           intakeUrl={intakeServerUrl}
         />
       </section>
+      {slackModalOpen && repo && intakeServerUrl && (
+        <SlackConnectModal
+          repo={repo}
+          orgId={slackOrgId}
+          intakeUrl={intakeServerUrl}
+          initialConfig={slackConfig}
+          initialStatus={slackStatus}
+          adminEmail={null}
+          onClose={() => setSlackModalOpen(false)}
+          onChanged={() => setSlackPollTick((n) => n + 1)}
+        />
+      )}
     </main>
   );
 }
