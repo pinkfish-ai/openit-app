@@ -191,9 +191,15 @@ function activityWindow(tickets, days, now) {
 /// newlines split a row. Matters for free-form ticket fields
 /// (subject, asker) that flow straight from user input — a subject
 /// like "Outage | P1: VPN down" otherwise produces a row with the
-/// wrong column count and a visibly broken table.
+/// wrong column count and a visibly broken table. Backslashes are
+/// escaped first so a value already containing a literal `\|` (rare
+/// but possible) doesn't become `\\|`, which GFM reads as
+/// literal-backslash + structural-pipe and reintroduces the bug.
 function escapeTableCell(s) {
-  return String(s).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  return String(s)
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/\r?\n/g, " ");
 }
 
 function renderTable(headers, rows) {

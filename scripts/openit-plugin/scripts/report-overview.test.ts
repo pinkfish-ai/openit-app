@@ -190,6 +190,37 @@ describe("report-overview.mjs", () => {
     expect(entries.some((e) => e.endsWith("-overview.md"))).toBe(true);
   });
 
+  it("escapes backslash before pipe so pre-escaped pipes survive", async () => {
+    // A value already containing the literal sequence `\|` would
+    // become `\\|` if we only escaped pipes — GFM reads that as
+    // literal-backslash + structural-pipe and the row breaks anyway.
+    // Escaping `\` first turns each backslash into `\\`, so the
+    // subsequent `|` → `\|` pass leaves the structure intact.
+    await writeTicket("t-bs", {
+      subject: "backup\\|restore",
+      asker: "alice",
+      status: "escalated",
+      createdAt: new Date().toISOString(),
+    });
+
+    const md = await readReportFromResult((await runScript()).stdout);
+    // Each `\` → `\\`, each `|` → `\|`. Source is `backup\|restore`
+    // (8 chars), so the cell renders as `backup\\\|restore` (10 chars:
+    // 6 letters + `\` `\` `\` `|` + 7 more letters = b a c k u p \ \ \ | r e s t o r e).
+    expect(md).toContain("backup\\\\\\|restore");
+    const escalatedRow = md
+      .split("\n")
+      .find((l) => l.includes("backup"));
+    expect(escalatedRow).toBeDefined();
+    // Strip every escape sequence (`\\` and `\|`) before counting
+    // the remaining structural pipes — should still be exactly 4.
+    const stripped = (escalatedRow ?? "")
+      .replace(/\\\\/g, "")
+      .replace(/\\\|/g, "");
+    const structuralPipes = stripped.match(/\|/g) ?? [];
+    expect(structuralPipes.length).toBe(4);
+  });
+
   it("escapes pipe characters in free-form ticket fields", async () => {
     await writeTicket("t-1", {
       // Subject and asker both carry literal pipes that would
