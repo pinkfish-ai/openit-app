@@ -7,10 +7,13 @@ description: Handle a new support question. Log the ticket, check the knowledge 
 
 Invoked when the user sends a support question — *"my VPN is broken"*, *"how do I get access to the staging GCP project?"*, *"alice can't log in"*. Either via `/triage <question>` or implicitly (CLAUDE.md tells you to behave as the triage agent for incoming support questions). Also invoked by the **incoming-ticket banner** when a row already exists on disk with `status: "incoming"` (the localhost intake form, channel ingest, or any cold write).
 
-### Two invocation shapes
+### Three invocation shapes
 
 1. **Question-shape** — `/triage <question text>`. No ticket exists yet. Step 1 below creates one.
-2. **Existing-row-shape** — `/triage incoming ticket: <repo-relative path>`. The ticket file is already on disk with `status: "incoming"`. **Skip Step 1's row creation.** `Read` the file for subject/description/asker, log the asker's first conversation turn, then jump to Step 2 (KB search). Step 3 still updates the row's status — only this time it's `"incoming"` → `"answered"` or `"open"`, not `"open"` → `"answered"`.
+2. **Single existing-row-shape** — `/triage incoming ticket: <repo-relative path>`. The ticket file is already on disk with `status: "incoming"`. **Skip Step 1's row creation.** `Read` the file for subject/description/asker, log the asker's first conversation turn, then jump to Step 2 (KB search). Step 3 still updates the row's status — only this time it's `"incoming"` → `"answered"` or `"open"`, not `"open"` → `"answered"`.
+3. **Multi existing-row-shape** — `/triage N incoming tickets:` followed by a bulleted list of repo-relative paths (one per line, prefixed with `  - `). The incoming-ticket banner uses this shape when more than one row is queued. **Treat each path the same as shape 2** — read the file, log the asker turn, search KB, answer-or-escalate, update status. Process them sequentially; the user gets one summary at the end covering all of them.
+
+**Critical for shapes 2 and 3:** the rows already exist on disk. **Do NOT create new rows for those paths** — that would duplicate the tickets and mess up the audit trail. Only shape 1 (the user typed a free-form question) creates a new row.
 
 ## What to do
 
