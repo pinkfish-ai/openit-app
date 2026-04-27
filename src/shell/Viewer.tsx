@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { fsRead, fsReadBytes, fsList } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
@@ -434,7 +434,14 @@ export function Viewer({
           welcomeFlashKey && welcomeFlashKey > 0 ? "viewer-md-flash" : "";
         return (
           <div className={`viewer-md ${flashClass}`} key={`md-${welcomeFlashKey ?? 0}`}>
-            <ReactMarkdown components={{ a: ExternalAnchor }}>{rendered}</ReactMarkdown>
+            <ReactMarkdown
+              components={{ a: ExternalAnchor }}
+              urlTransform={(url) =>
+                url.startsWith("openit://") ? url : defaultUrlTransform(url)
+              }
+            >
+              {rendered}
+            </ReactMarkdown>
           </div>
         );
       }
