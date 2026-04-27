@@ -44,6 +44,15 @@ Crux: when no admin chat session is open (form submitted at 3am), how does the a
 
 **Precedent**: `claudeGenerateCommitMessage` already spawns `claude -p` for commit messages. Same pattern.
 
+### How the agent runs locally
+
+The chat backend reads `agents/triage.json` per turn:
+- `instructions` field → prepended to the prompt as the agent's persona / intent. Editable by the admin; changes take effect on next turn.
+- `selectedModel` → passed to `claude -p --model <id>`. Admin can switch sonnet/opus/haiku by editing the file.
+- The `intake-chat` skill carries the file-path + field-convention mechanics (where to write rows, what fields look like, etc.). Skill is plugin-managed, not user-edited.
+
+This split keeps `triage.json` short and editable while the skill handles the tedious mechanics.
+
 ### `triage_run` Tauri command (Rust)
 
 ```rust
