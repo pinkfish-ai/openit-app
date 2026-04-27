@@ -2626,16 +2626,6 @@ body,
   width: 100%;
 }
 
-/* Action row on top of the entity-folder view — currently only used
-   by reports/ for the "Generate overview" button. Sits above the
-   list / empty-state copy. */
-.viewer-summary-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
 /* Top-level entity folder list (agents/, workflows/, knowledge-base/,
    filestore/). Card-style rows mirror the databases-list / thread-card
    layout so the three list views feel like siblings. */

@@ -64,7 +64,7 @@ describe("report-overview.mjs", () => {
     const { stdout } = await runScript();
     const result = JSON.parse(stdout.trim());
     expect(result.ok).toBe(true);
-    expect(result.path).toMatch(/^reports\/\d{4}-\d{2}-\d{2}-\d{4}-overview\.md$/);
+    expect(result.path).toMatch(/^reports\/\d{4}-\d{2}-\d{2}-overview\.md$/);
 
     const md = await readFile(path.join(tmpDir, result.path), "utf8");
     expect(md).toContain("# Helpdesk overview");
@@ -188,6 +188,15 @@ describe("report-overview.mjs", () => {
     await runScript();
     const entries = await readdir(path.join(tmpDir, "reports"));
     expect(entries.some((e) => e.endsWith("-overview.md"))).toBe(true);
+  });
+
+  it("overwrites the same-day overview rather than accumulating files", async () => {
+    await writeTicket("t-1", { subject: "x", asker: "a", status: "open" });
+    await runScript();
+    await runScript();
+    const entries = await readdir(path.join(tmpDir, "reports"));
+    const overviews = entries.filter((e) => e.endsWith("-overview.md"));
+    expect(overviews.length).toBe(1);
   });
 
   it("escapes backslash before pipe so pre-escaped pipes survive", async () => {
