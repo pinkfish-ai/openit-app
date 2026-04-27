@@ -39,10 +39,11 @@ Show what you'd write. Iterate with the admin until they're happy. Be concise; l
 
 How the reply reaches the asker depends on `askerChannel` (look it up on the ticket file you read in step 1):
 
-- **`askerChannel: "chat"`** — the asker filed via the localhost OpenIT chat (the Intake link in the header). The chat UI polls `databases/conversations/<ticketId>/` for new turns and renders them automatically. **Writing the admin conversation turn in step 6 IS the reply delivery.** No copy/paste needed; the asker will see your message in their chat browser within a couple seconds. Do NOT tell the admin to manually email or Slack the asker for chat tickets — they're already wired up.
-- **`askerChannel: "slack" | "teams" | "email" | "web" | "api"`** — those channels don't have egress wired up in V1. After writing the conversation turn (step 6), tell the admin to manually send the reply to the asker via that channel and note it in the conversation log. (When cloud channel ingest+egress lands in a future phase, this becomes automatic too.)
+- **`askerChannel: "chat"`** — the asker filed via the localhost OpenIT chat (the Intake link in the header). The chat UI polls `databases/conversations/<ticketId>/` for new turns and renders them automatically. **Writing the admin conversation turn in step 6 IS the reply delivery.** No copy/paste needed; the asker will see your message in their chat browser within a couple seconds.
+- **`askerChannel: "slack"`** — the asker filed via the OpenIT Slack bot (DM). The local Slack listener polls the same `databases/conversations/<ticketId>/` directory and sends new admin turns back as a Slack DM to the asker. **Writing the conversation turn in step 6 IS the reply delivery here too** — within ~2 seconds the asker sees your reply in their Slack DM. Do NOT tell the admin to manually re-send via Slack; the listener handles it as long as OpenIT is running.
+- **`askerChannel: "teams" | "email" | "web" | "api"`** — those channels don't have egress wired up in V1. After writing the conversation turn (step 6), tell the admin to manually send the reply to the asker via that channel and note it in the conversation log. (When cloud channel ingest+egress lands in a future phase, this becomes automatic too.)
 
-Treat the chat case as the default unless the ticket clearly says otherwise.
+Treat the chat / slack cases as the default unless the ticket clearly says otherwise.
 
 ### 6. Update the ticket and log the conversation turn
 
@@ -76,14 +77,14 @@ This is the load-bearing step. **Skipping it costs the org the same answer being
 
 Brief summary. Adapt to the ticket's `askerChannel`:
 
-For a **chat** ticket (delivery already happened in step 6):
+For a **chat** or **slack** ticket (delivery already happened in step 6):
 ```
 Replied to ticket-XXX → status: open (waiting on asker's reply).
-Logged the admin reply as a conversation turn — the asker is seeing it in their chat browser now.
+Logged the admin reply as a conversation turn — the asker is seeing it in their chat browser / Slack DM now.
 Captured the answer as `knowledge-bases/default/how-to-reset-vpn-password.md`.
 ```
 
-For a **slack/teams/email/web/api** ticket (no egress yet):
+For a **teams/email/web/api** ticket (no egress yet):
 ```
 Drafted reply for ticket-XXX → status: open.
 Logged the admin reply as a conversation turn (audit trail).
