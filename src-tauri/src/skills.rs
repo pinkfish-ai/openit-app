@@ -89,6 +89,17 @@ fn resolve_bundled_path<R: Runtime>(
     app: &AppHandle<R>,
     rel: &str,
 ) -> Result<PathBuf, String> {
+    let resource = sanitize_bundled_relpath(rel)?;
+    app.path()
+        .resolve(&resource, BaseDirectory::Resource)
+        .map_err(|e| format!("could not resolve bundled resource {}: {}", resource, e))
+}
+
+/// Pure half of `resolve_bundled_path` — does the validation but not the
+/// AppHandle-bound resource lookup. Returns the namespaced resource path
+/// (`openit-plugin/<rel>`) on success, an error string on rejection.
+/// Extracted so it can be unit-tested without spinning up a Tauri app.
+fn sanitize_bundled_relpath(rel: &str) -> Result<String, String> {
     // Strip leading separators of either flavor — the resource resolver
     // anchors any result inside the bundle, but normalizing here closes
     // the defense-in-depth gap on Windows where a `\foo` prefix would
@@ -102,10 +113,97 @@ fn resolve_bundled_path<R: Runtime>(
     {
         return Err(format!("invalid bundled path: {}", rel));
     }
-    let resource = format!("openit-plugin/{}", trimmed);
-    app.path()
-        .resolve(&resource, BaseDirectory::Resource)
-        .map_err(|e| format!("could not resolve bundled resource {}: {}", resource, e))
+    Ok(format!("openit-plugin/{}", trimmed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_bundled_relpath;
+
+    #[test]
+    fn accepts_simple_relative_paths() {
+        assert_eq!(
+            sanitize_bundled_relpath("manifest.json").unwrap(),
+            "openit-plugin/manifest.json",
+        );
+        assert_eq!(
+            sanitize_bundled_relpath("skills/triage.md").unwrap(),
+            "openit-plugin/skills/triage.md",
+        );
+        assert_eq!(
+            sanitize_bundled_relpath("schemas/openit-tickets._schema.json").unwrap(),
+            "openit-plugin/schemas/openit-tickets._schema.json",
+        );
+    }
+
+    #[test]
+    fn strips_a_single_leading_slash() {
+        // Manifest entries shouldn't have one but if they do, behave the
+        // same as the unprefixed form (instead of treating it as an
+        // absolute path that must be rejected).
+        assert_eq!(
+            sanitize_bundled_relpath("/manifest.json").unwrap(),
+            "openit-plugin/manifest.json",
+        );
+    }
+
+    #[test]
+    fn rejects_parent_dir_traversal() {
+        assert!(sanitize_bundled_relpath("../etc/passwd").is_err());
+        assert!(sanitize_bundled_relpath("skills/../../../etc/passwd").is_err());
+        assert!(sanitize_bundled_relpath("a/../b").is_err());
+    }
+
+    #[test]
+    fn leading_slashes_normalize_to_relative() {
+        // Any leading slashes are stripped, and Tauri's resource resolver
+        // then anchors the result inside the bundle. So a path like
+        // `/etc/passwd` becomes `etc/passwd` and is read from
+        // `<bundle-resources>/openit-plugin/etc/passwd` — which doesn't
+        // exist. The actual escape we care about is `..` traversal, not
+        // a leading slash.
+        assert!(sanitize_bundled_relpath("/etc/passwd").is_ok());
+        assert!(sanitize_bundled_relpath("//etc/passwd").is_ok());
+    }
+
+    #[test]
+    fn windows_backslash_separators_also_stripped() {
+        // BugBot Low #25: defense-in-depth. On Windows, a `\foo` prefix
+        // would otherwise pass through unstripped. Verify the trim
+        // handles both flavors uniformly so future refactors that drop
+        // the `openit-plugin/` prefix don't expose the gap.
+        assert_eq!(
+            sanitize_bundled_relpath("\\manifest.json").unwrap(),
+            "openit-plugin/manifest.json",
+        );
+        assert_eq!(
+            sanitize_bundled_relpath("\\\\manifest.json").unwrap(),
+            "openit-plugin/manifest.json",
+        );
+        // Mixed leading separators get fully stripped.
+        assert_eq!(
+            sanitize_bundled_relpath("/\\/manifest.json").unwrap(),
+            "openit-plugin/manifest.json",
+        );
+    }
+
+    #[test]
+    fn rejects_dotdot_anywhere_in_path() {
+        // The substantive guarantee: no manifest entry can climb out of
+        // openit-plugin/. Validate by injecting `..` at every position.
+        assert!(sanitize_bundled_relpath("../foo").is_err());
+        assert!(sanitize_bundled_relpath("foo/..").is_err());
+        assert!(sanitize_bundled_relpath("foo/../bar").is_err());
+        assert!(sanitize_bundled_relpath("a/b/c/../../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn rejects_double_dot_in_middle() {
+        // "skills/..foo" is a regular filename and should pass; only a
+        // bare ".." path component is rejected.
+        assert!(sanitize_bundled_relpath("skills/..foo.md").is_ok());
+        assert!(sanitize_bundled_relpath("skills/..").is_err());
+    }
 }
 
 /// Extract environment root URL from app-api URL.

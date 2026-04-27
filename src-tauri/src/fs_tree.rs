@@ -171,18 +171,28 @@ mod tests {
     }
 
     #[test]
-    fn fs_list_keeps_dot_claude_but_hides_other_dot_dirs() {
+    fn fs_list_hides_all_top_level_dot_dirs() {
+        // `.claude` (plugin-managed skills/scripts), `.openit` (engine
+        // state), `.git` (vcs internals) — all of these are managed by
+        // OpenIT internals or external tools. Surfacing them in the
+        // explorer just clutters the tree without giving the user
+        // anything actionable. The implementation hides all top-level
+        // dotfiles/dotdirs uniformly; this test pins that behavior.
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join(".claude")).unwrap();
         fs::create_dir(dir.path().join(".claude/skills")).unwrap();
         fs::write(dir.path().join(".claude/skills/SKILL.md"), "x").unwrap();
         fs::create_dir(dir.path().join(".git")).unwrap();
         fs::write(dir.path().join(".git/HEAD"), "ref: x").unwrap();
+        fs::write(dir.path().join("README.md"), "y").unwrap();
 
         let nodes = fs_list(dir.path().to_string_lossy().to_string()).unwrap();
         let names: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
-        assert!(names.contains(&".claude"));
-        assert!(names.contains(&"SKILL.md"));
+        // Visible siblings still come through.
+        assert!(names.contains(&"README.md"));
+        // Top-level dotdirs and everything beneath them are hidden.
+        assert!(!names.contains(&".claude"));
+        assert!(!names.contains(&"SKILL.md"));
         assert!(!names.contains(&".git"));
         assert!(!names.contains(&"HEAD"));
     }

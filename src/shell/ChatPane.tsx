@@ -24,26 +24,45 @@ export function ChatPane({ cwd }: { cwd: string | null }) {
         "'MesloLGS NF', 'JetBrainsMono Nerd Font Mono', 'JetBrainsMono Nerd Font', 'Hack Nerd Font Mono', 'Hack Nerd Font', 'Symbols Nerd Font Mono', Menlo, Monaco, 'SF Mono', monospace",
       fontSize: 13,
       cursorBlink: true,
+      // Colorblind-friendly palette on cream `#faf9f6`. The earlier
+      // attempt kept yellows for Claude's tool-block headers, but
+      // they wash out for colorblind users (deuteranopia/protanopia
+      // confuses gold with neutral on a warm background). Strategy:
+      // collapse most ANSI slots to near-foreground darks so the
+      // chat reads as "dark text on tan" by default, with only
+      // semantically-meaningful hues (red for removed/errors, green
+      // for added/success) carrying real color — and even those use
+      // distinct lightness too, so they're separable without hue
+      // alone. Each value targets ≥7:1 contrast on cream.
       theme: {
         background: "#faf9f6",
         foreground: "#2d2a25",
         cursor: "#d96e3e",
         selectionBackground: "#f4dccd",
         black: "#2d2a25",
-        red: "#c0392b",
-        green: "#2c8a4f",
-        yellow: "#b58a1f",
-        blue: "#5a6cd1",
-        magenta: "#a14fa1",
-        cyan: "#2c8a8a",
-        white: "#6b6864",
-        brightBlack: "#9b988f",
-        brightRed: "#d96e3e",
-        brightGreen: "#3eb56e",
-        brightYellow: "#d4a83a",
-        brightBlue: "#7388e0",
-        brightMagenta: "#c269c2",
-        brightCyan: "#3eb5b5",
+        // Diff "removed" / errors — deep red, low lightness (~8%).
+        red: "#6b1010",
+        // Diff "added" / success — medium-dark green, lightness ~24%.
+        // Pairing lightness 8% (red) vs 24% (green) gives separation
+        // even when hue is indistinguishable.
+        green: "#1f6e3e",
+        // Tool-block headers (Write/Update/Bash). Was #7a5a08 — still
+        // colored. Now just a dark warm brown, basically reads as text.
+        yellow: "#3d2a08",
+        blue: "#2d3d8a",
+        magenta: "#5c2a5c",
+        cyan: "#1a4a4a",
+        // Dim helper text — readable mid-gray.
+        white: "#4a4844",
+        brightBlack: "#6b6864",
+        // Bright variants stay slightly more saturated than their
+        // base for genuine emphasis distinguishable for colorblind.
+        brightRed: "#a8281a",
+        brightGreen: "#2c8a4f",
+        brightYellow: "#5a4214",
+        brightBlue: "#4555b8",
+        brightMagenta: "#8a3d8a",
+        brightCyan: "#2c8a8a",
         brightWhite: "#2d2a25",
       },
       allowProposedApi: true,

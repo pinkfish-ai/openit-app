@@ -97,13 +97,7 @@ pub async fn intake_start(
         .local_addr()
         .map_err(|e| format!("local_addr failed: {}", e))?;
 
-    let server_state = ServerState {
-        repo: Arc::new(repo_path),
-    };
-    let app = Router::new()
-        .route("/", get(serve_form))
-        .route("/ticket", post(handle_post))
-        .with_state(server_state);
+    let app = build_router(repo_path);
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let handle = tokio::spawn(async move {
@@ -159,6 +153,18 @@ async fn stop_inner(state: &tauri::State<'_, IntakeState>) {
         }
         let _ = running.handle.await;
     }
+}
+
+/// Build the axum router for a given repo. Factored out of
+/// `intake_start` so the tests can drive the same routes through a
+/// real TCP listener without going through Tauri state.
+fn build_router(repo: PathBuf) -> Router {
+    Router::new()
+        .route("/", get(serve_form))
+        .route("/ticket", post(handle_post))
+        .with_state(ServerState {
+            repo: Arc::new(repo),
+        })
 }
 
 async fn serve_form() -> Html<&'static str> {
@@ -439,5 +445,208 @@ mod tests {
         assert_eq!(unix_to_ymdhms(1_777_281_242), (2026, 4, 27, 9, 14, 2));
         // 2024-02-29T12:00:00Z (leap day)
         assert_eq!(unix_to_ymdhms(1_709_208_000), (2024, 2, 29, 12, 0, 0));
+    }
+
+    /// Stand up the intake router on an OS-assigned port pointed at a
+    /// tempdir, return the base URL plus the tempdir handle. Caller
+    /// drops the handle when done; the spawned server stays around
+    /// (each test is short-lived so leaking is fine).
+    async fn spawn_test_server() -> (String, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = dir.path().to_path_buf();
+        let app = build_router(repo);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{}", addr), dir)
+    }
+
+    fn read_only_ticket_file(repo: &std::path::Path) -> serde_json::Value {
+        let dir = repo.join("databases").join(format!(
+            "openit-tickets-{}",
+            repo.file_name().unwrap().to_str().unwrap()
+        ));
+        let entries: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("read_dir {}: {}", dir.display(), e))
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+            .collect();
+        assert_eq!(entries.len(), 1, "expected exactly one ticket file");
+        let body = std::fs::read_to_string(&entries[0]).expect("read row");
+        serde_json::from_str(&body).expect("parse row")
+    }
+
+    #[tokio::test]
+    async fn get_root_serves_the_form() {
+        let (base, _dir) = spawn_test_server().await;
+        let resp = reqwest::get(&base).await.expect("GET /");
+        assert!(resp.status().is_success());
+        let body = resp.text().await.expect("body");
+        assert!(body.contains("<form"));
+        assert!(body.contains(r#"name="question""#));
+    }
+
+    #[tokio::test]
+    async fn post_ticket_writes_a_row_with_incoming_status() {
+        let (base, dir) = spawn_test_server().await;
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", &base)
+            .form(&[
+                ("name", "Alice"),
+                ("email", "alice@example.com"),
+                ("question", "VPN broken since this morning"),
+            ])
+            .send()
+            .await
+            .expect("post");
+        assert!(resp.status().is_success(), "status: {}", resp.status());
+
+        let row = read_only_ticket_file(dir.path());
+        assert_eq!(row["status"], "incoming");
+        assert_eq!(row["askerChannel"], "web");
+        assert_eq!(row["asker"], "alice@example.com");
+        assert_eq!(row["description"], "VPN broken since this morning");
+        assert_eq!(row["subject"], "VPN broken since this morning");
+        assert_eq!(row["priority"], "normal");
+        assert!(row["tags"].as_array().unwrap().is_empty());
+        assert!(row["createdAt"].as_str().unwrap().ends_with("Z"));
+        // createdAt and updatedAt should match on creation.
+        assert_eq!(row["createdAt"], row["updatedAt"]);
+    }
+
+    #[tokio::test]
+    async fn post_falls_back_to_name_then_unknown_when_email_missing() {
+        // Email empty → asker = name.
+        {
+            let (base, dir) = spawn_test_server().await;
+            reqwest::Client::new()
+                .post(format!("{}/ticket", base))
+                .header("Origin", &base)
+                .form(&[("name", "Bob"), ("email", ""), ("question", "x")])
+                .send()
+                .await
+                .expect("post");
+            let row = read_only_ticket_file(dir.path());
+            assert_eq!(row["asker"], "Bob");
+        }
+        // Both empty → asker = "unknown".
+        {
+            let (base, dir) = spawn_test_server().await;
+            reqwest::Client::new()
+                .post(format!("{}/ticket", base))
+                .header("Origin", &base)
+                .form(&[("name", ""), ("email", ""), ("question", "x")])
+                .send()
+                .await
+                .expect("post");
+            let row = read_only_ticket_file(dir.path());
+            assert_eq!(row["asker"], "unknown");
+        }
+    }
+
+    #[tokio::test]
+    async fn post_subject_is_first_line_only() {
+        let (base, dir) = spawn_test_server().await;
+        reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", &base)
+            .form(&[("question", "first line\nsecond line\nthird line")])
+            .send()
+            .await
+            .expect("post");
+        let row = read_only_ticket_file(dir.path());
+        assert_eq!(row["subject"], "first line");
+        // description preserves the full multi-line input.
+        assert_eq!(row["description"], "first line\nsecond line\nthird line");
+    }
+
+    #[tokio::test]
+    async fn post_rejects_empty_question() {
+        let (base, _dir) = spawn_test_server().await;
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", &base)
+            .form(&[("name", "Alice"), ("question", "   ")])
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn post_without_origin_header_is_rejected() {
+        // CSRF guard: a modern browser always sends Origin (or at
+        // minimum Referer) on a cross-origin POST. Missing both implies
+        // an attacker tool — reject with 403.
+        let (base, _dir) = spawn_test_server().await;
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .form(&[("question", "x")])
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn post_with_cross_origin_is_rejected() {
+        // The substantive CSRF protection: a malicious page at
+        // https://evil.com that has discovered the localhost port
+        // can fire a CORS-simple form POST. The Origin header on
+        // that request reveals the cross-origin host; reject.
+        let (base, _dir) = spawn_test_server().await;
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", "https://evil.com")
+            .form(&[("question", "x")])
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn post_with_localhost_origin_is_accepted() {
+        // The bind URL uses 127.0.0.1; some browsers normalize URLs to
+        // "localhost" when the user types that into the address bar.
+        // Both should work.
+        let (base, _dir) = spawn_test_server().await;
+        // base looks like http://127.0.0.1:<port> — substitute the
+        // host segment to test the localhost alias.
+        let port = base.rsplit(':').next().expect("port");
+        let localhost_origin = format!("http://localhost:{}", port);
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", localhost_origin)
+            .form(&[("question", "x")])
+            .send()
+            .await
+            .expect("post");
+        assert!(resp.status().is_success(), "status: {}", resp.status());
+    }
+
+    #[tokio::test]
+    async fn post_with_ipv6_loopback_origin_is_accepted() {
+        // Round-2 BugBot finding: an earlier version of the check
+        // matched url.host_str() against bare "::1", but for IPv6
+        // host_str returns the bracketed form. Using Url::host() with
+        // stdlib is_loopback covers both. Lock the IPv6 acceptance in.
+        let (base, _dir) = spawn_test_server().await;
+        let port = base.rsplit(':').next().expect("port");
+        let ipv6_origin = format!("http://[::1]:{}", port);
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", ipv6_origin)
+            .form(&[("question", "x")])
+            .send()
+            .await
+            .expect("post");
+        assert!(resp.status().is_success(), "status: {}", resp.status());
     }
 }
