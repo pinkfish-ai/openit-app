@@ -178,7 +178,15 @@ function App() {
         // bundled plugin, skip onboarding. The user can opt into Pinkfish
         // later via the header pill (which still routes through the
         // existing PinkfishOauthModal).
-        try {
+        //
+        // The `!creds` guard matters when `stale && creds`: we discarded
+        // the legacy `~/Documents/OpenIT/<orgId>/` lastRepo above, so the
+        // cloud-bootstrap branch's `!stale` check fails. Without this
+        // guard, a user with valid cloud creds + a stale repo path would
+        // silently land in local-only mode instead of seeing onboarding.
+        // Onboarding is the right surface for them — they reconnect and
+        // we bootstrap fresh into `~/OpenIT/<orgId>/`.
+        if (!creds) try {
           console.log("[app] local-only bootstrap");
           // If lastRepo is a cloud-keyed folder we can't sync without
           // creds, but the files are still readable. Prefer it over a
