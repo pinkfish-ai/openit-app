@@ -249,7 +249,9 @@ async fn slack_post_message(
         .await
         .map_err(|e| format!("Slack chat.postMessage parse failed: {}", e))?;
     if !body.ok {
-        return Err(body.error.unwrap_or_else(|| "chat.postMessage failed".into()));
+        return Err(body
+            .error
+            .unwrap_or_else(|| "chat.postMessage failed".into()));
     }
     Ok(())
 }
@@ -543,12 +545,7 @@ pub async fn slack_listener_start<R: Runtime>(
         state.last_exit_error.clone(),
     );
 
-    let ready = match timeout(
-        Duration::from_secs(LISTENER_READY_TIMEOUT_SECS),
-        ready_rx,
-    )
-    .await
-    {
+    let ready = match timeout(Duration::from_secs(LISTENER_READY_TIMEOUT_SECS), ready_rx).await {
         Ok(Ok(Ok(()))) => Ok(()),
         Ok(Ok(Err(msg))) => Err(msg),
         Ok(Err(_)) => Err("listener supervisor task dropped before ready".to_string()),
@@ -580,7 +577,37 @@ pub async fn slack_listener_start<R: Runtime>(
         stop_tx: Some(stop_tx),
         supervisor_task: Some(supervisor_task),
     };
+
+    // Tiny race window: between the supervisor task signaling ready
+    // and us reaching this line, the child could have exited (bad
+    // app token caught by Slack on the first websocket frame, OOM,
+    // process killed by external tool, etc.). The supervisor task
+    // would have observed the exit and tried to clear inner — which
+    // was None at the time, so the clear was a no-op. If we now
+    // store Some(...) without checking, status() returns running:
+    // true forever for a corpse.
+    //
+    // Detect this by checking is_finished() on the supervisor task
+    // immediately AFTER storing (we want the store visible first so
+    // any concurrent supervisor-task-tail-clear correctly clobbers
+    // it). If the task already finished, clear inner ourselves and
+    // return the captured exit error so the FE sees the failure
+    // synchronously instead of via the next status poll.
+    let already_dead = running
+        .supervisor_task
+        .as_ref()
+        .map(|t| t.is_finished())
+        .unwrap_or(true);
     *state.inner.lock() = Some(running);
+    if already_dead {
+        *state.inner.lock() = None;
+        let exit_err = state
+            .last_exit_error
+            .lock()
+            .clone()
+            .unwrap_or_else(|| "listener exited immediately after reporting ready".into());
+        return Err(exit_err);
+    }
     Ok(())
 }
 
@@ -823,10 +850,7 @@ pub async fn slack_listener_send_intro(
 // Bundle path resolution
 // ---------------------------------------------------------------------------
 
-fn resolve_listener_bundle<R: Runtime>(
-    app: &AppHandle<R>,
-    repo: &Path,
-) -> Result<PathBuf, String> {
+fn resolve_listener_bundle<R: Runtime>(app: &AppHandle<R>, repo: &Path) -> Result<PathBuf, String> {
     // 1. Packaged with the .app — the canonical copy. Always
     //    matches the running app version, so a stale plugin sync
     //    (manifest hasn't pulled the newest bundle to the project
@@ -871,10 +895,7 @@ fn now_iso() -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     let (y, mo, d, h, mi, s) = unix_to_ymdhms(secs);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, mo, d, h, mi, s
-    )
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, h, mi, s)
 }
 
 fn unix_to_ymdhms(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
@@ -893,8 +914,8 @@ fn unix_to_ymdhms(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
     let y = (yoe as i32) + (era as i32) * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d, h, mi, s)
 }
