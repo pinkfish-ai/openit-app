@@ -256,16 +256,23 @@ export async function resolvePathToSource(
   // entity-folder kind so the viewer can show a friendly empty-state
   // notice when nothing is inside yet.
   // Map the click target to the entity-folder `entity` key. The
-  // 2026-04-27 filestore split made the top-level dir `filestores/`
-  // (plural) with `library/` and `attachments/` inside. Library is
-  // the entity-folder surface; attachments has its own ticket-id
-  // grouping (handled separately, not as an entity-folder).
-  const entityFolderEntry: { entity: "agents" | "workflows" | "knowledge-base" | "library" } | null =
+  // 2026-04-27 splits:
+  //   filestores/   → `library/` (entity-folder surface)
+  //                  + `attachments/` (separate ticket-grouped view)
+  //   knowledge-bases/ → `default/` (built-in) + any `<custom>/`
+  //                     (user-created); both render via entity-folder
+  //                     with entity:"knowledge-base" + an explicit
+  //                     path so the title bar / re-resolver know
+  //                     which collection.
+  const kbCollectionMatch = rel.match(/^knowledge-bases\/([^/]+)$/);
+  const entityFolderEntry: {
+    entity: "agents" | "workflows" | "knowledge-base" | "library";
+  } | null =
     rel === "agents"
       ? { entity: "agents" }
       : rel === "workflows"
         ? { entity: "workflows" }
-        : rel === "knowledge-base"
+        : kbCollectionMatch
           ? { entity: "knowledge-base" }
           : rel === "filestores/library"
             ? { entity: "library" }
@@ -311,7 +318,7 @@ export async function resolvePathToSource(
               /* unparseable — keep filename-derived display name */
             }
           }
-        } else if (rel === "knowledge-base") {
+        } else if (entityFolderEntry.entity === "knowledge-base") {
           // Pull the first heading or first non-empty line as a
           // description preview. Markdown files are the common case;
           // for non-markdown files we fall back to just the name.
@@ -351,9 +358,19 @@ export async function resolvePathToSource(
       // Stable alphabetical order by display name so the layout doesn't
       // jump around when files are renamed in place.
       files.sort((a, b) => a.displayName.localeCompare(b.displayName));
-      return { kind: "entity-folder", entity: entityFolderEntry.entity, files };
+      return {
+        kind: "entity-folder",
+        entity: entityFolderEntry.entity,
+        path: rel,
+        files,
+      };
     } catch {
-      return { kind: "entity-folder", entity: entityFolderEntry.entity, files: [] };
+      return {
+        kind: "entity-folder",
+        entity: entityFolderEntry.entity,
+        path: rel,
+        files: [],
+      };
     }
   }
 
@@ -424,6 +441,209 @@ export async function resolvePathToSource(
       return { kind: "databases-list", collections };
     } catch {
       return { kind: "databases-list", collections: [] };
+    }
+  }
+
+  // `filestores/` parent → at-a-glance overview of every filestore
+  // collection in the project. `attachments` and `library` ship as
+  // built-ins with hand-crafted descriptions; any user-created folder
+  // under `filestores/` (e.g. an admin who runs `mkdir
+  // filestores/contracts`) is surfaced too with a generic blurb.
+  // Built-ins always render even when their dirs don't exist yet —
+  // the bootstrap creates them on next launch.
+  if (rel === "filestores") {
+    type Card = {
+      name: string;
+      path: string;
+      itemCount: number;
+      itemNoun: string;
+      description: string;
+      isBuiltin: boolean;
+    };
+    const builtinDescriptions: Record<string, { description: string; itemNoun: string }> = {
+      attachments: {
+        description:
+          "Per-ticket files uploaded from the chat intake or attached to admin replies. One subfolder per ticketId — files surface inline in the conversation thread.",
+        itemNoun: "ticket",
+      },
+      library: {
+        description:
+          "Curated reference docs admins keep handy — runbooks, scripts, recurring PDFs. Drag files in to add. Cloud-synced when connected.",
+        itemNoun: "file",
+      },
+    };
+
+    // Pre-seed both built-ins so the cards render even before the
+    // dirs are created on disk (fresh project, or pre-bootstrap
+    // state).
+    const cardsByName = new Map<string, Card>();
+    for (const [name, meta] of Object.entries(builtinDescriptions)) {
+      cardsByName.set(name, {
+        name,
+        path: `${path}/${name}`,
+        itemCount: 0,
+        itemNoun: meta.itemNoun,
+        description: meta.description,
+        isBuiltin: true,
+      });
+    }
+
+    // Walk the filestores dir and override / extend with what's
+    // actually on disk.
+    try {
+      const subdirs = await fsList(path);
+      const childPrefix = `${path}/`;
+      for (const sd of subdirs) {
+        if (!sd.is_dir) continue;
+        const tail = sd.path.startsWith(childPrefix) ? sd.path.slice(childPrefix.length) : "";
+        if (!tail || tail.includes("/")) continue;
+        const collName = sd.name;
+        const isAttachments = collName === "attachments";
+        const builtin = builtinDescriptions[collName];
+        // Count semantics differ: attachments is folder-of-folders
+        // (one subfolder per ticket), everything else counts direct
+        // files (skipping conflict shadows).
+        let itemCount = 0;
+        try {
+          const inner = await fsList(sd.path);
+          const innerPrefix = `${sd.path}/`;
+          for (const n of inner) {
+            const innerTail = n.path.startsWith(innerPrefix) ? n.path.slice(innerPrefix.length) : "";
+            if (!innerTail || innerTail.includes("/")) continue;
+            if (isAttachments) {
+              if (n.is_dir) itemCount += 1;
+            } else {
+              if (n.is_dir) continue;
+              if (n.name.includes(".server.")) continue;
+              itemCount += 1;
+            }
+          }
+        } catch {
+          /* unreadable subdir — leave count at 0 */
+        }
+        cardsByName.set(collName, {
+          name: collName,
+          path: sd.path,
+          itemCount,
+          itemNoun: builtin?.itemNoun ?? "file",
+          description:
+            builtin?.description ??
+            "User-created filestore. Files here cloud-sync as their own collection when you connect to Pinkfish.",
+          isBuiltin: !!builtin,
+        });
+      }
+    } catch {
+      /* filestores/ doesn't exist yet — built-ins still render */
+    }
+
+    // Built-ins first (alphabetical), user-created next (alphabetical).
+    const cards = Array.from(cardsByName.values()).sort((a, b) => {
+      if (a.isBuiltin !== b.isBuiltin) return a.isBuiltin ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return { kind: "filestores-list", collections: cards };
+  }
+
+  // `knowledge-bases/` parent → at-a-glance overview of every KB
+  // collection. `default` ships built-in (cloud-sync target in V1);
+  // any user-created folder under `knowledge-bases/` is surfaced
+  // alongside it with a generic blurb.
+  if (rel === "knowledge-bases") {
+    type Card = {
+      name: string;
+      path: string;
+      itemCount: number;
+      description: string;
+      isBuiltin: boolean;
+    };
+    const builtinDescriptions: Record<string, string> = {
+      default:
+        "Articles Claude reads when answering tickets and that the admin captures during /answer-ticket. Cloud-synced when connected.",
+    };
+    const cardsByName = new Map<string, Card>();
+    cardsByName.set("default", {
+      name: "default",
+      path: `${path}/default`,
+      itemCount: 0,
+      description: builtinDescriptions.default,
+      isBuiltin: true,
+    });
+    try {
+      const subdirs = await fsList(path);
+      const childPrefix = `${path}/`;
+      for (const sd of subdirs) {
+        if (!sd.is_dir) continue;
+        const tail = sd.path.startsWith(childPrefix) ? sd.path.slice(childPrefix.length) : "";
+        if (!tail || tail.includes("/")) continue;
+        let itemCount = 0;
+        try {
+          const inner = await fsList(sd.path);
+          const innerPrefix = `${sd.path}/`;
+          for (const n of inner) {
+            if (n.is_dir) continue;
+            const innerTail = n.path.startsWith(innerPrefix) ? n.path.slice(innerPrefix.length) : "";
+            if (!innerTail || innerTail.includes("/")) continue;
+            if (n.name.includes(".server.")) continue;
+            if (!/\.(md|markdown|txt)$/i.test(n.name)) continue;
+            itemCount += 1;
+          }
+        } catch {
+          /* unreadable subdir — leave count at 0 */
+        }
+        const builtin = builtinDescriptions[sd.name];
+        cardsByName.set(sd.name, {
+          name: sd.name,
+          path: sd.path,
+          itemCount,
+          description:
+            builtin ?? "User-created knowledge base. Each KB syncs as its own cloud collection when you connect.",
+          isBuiltin: !!builtin,
+        });
+      }
+    } catch {
+      /* knowledge-bases/ doesn't exist yet — built-in still renders */
+    }
+    const cards = Array.from(cardsByName.values()).sort((a, b) => {
+      if (a.isBuiltin !== b.isBuiltin) return a.isBuiltin ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return { kind: "knowledge-bases-list", collections: cards };
+  }
+
+  // `filestores/attachments/` → list of per-ticket subfolders with
+  // file counts, prefixed by an explanatory header (rendered in the
+  // viewer). Each ticket subfolder click jumps to the conversation
+  // thread — that's where attachments belong contextually, not in a
+  // standalone list.
+  if (rel === "filestores/attachments") {
+    try {
+      const subdirs = await fsList(path);
+      const tickets: { ticketId: string; path: string; fileCount: number }[] = [];
+      const childPrefix = `${path}/`;
+      for (const sd of subdirs) {
+        if (!sd.is_dir) continue;
+        const tail = sd.path.startsWith(childPrefix) ? sd.path.slice(childPrefix.length) : "";
+        if (!tail || tail.includes("/")) continue;
+        let fileCount = 0;
+        try {
+          const inner = await fsList(sd.path);
+          const innerPrefix = `${sd.path}/`;
+          for (const f of inner) {
+            if (f.is_dir) continue;
+            const innerTail = f.path.startsWith(innerPrefix) ? f.path.slice(innerPrefix.length) : "";
+            if (!innerTail || innerTail.includes("/")) continue;
+            fileCount += 1;
+          }
+        } catch {
+          /* unreadable subdir — leave count at 0 */
+        }
+        tickets.push({ ticketId: sd.name, path: sd.path, fileCount });
+      }
+      // Newest-first using the ticketId's leading ISO timestamp.
+      tickets.sort((a, b) => b.ticketId.localeCompare(a.ticketId));
+      return { kind: "attachments-folder", tickets };
+    } catch {
+      return { kind: "attachments-folder", tickets: [] };
     }
   }
 

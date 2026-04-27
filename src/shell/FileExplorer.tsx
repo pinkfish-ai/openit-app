@@ -128,7 +128,8 @@ function prettyName(
   }
   // Knowledge-base markdown articles — same logic as agents/workflows:
   // the .md is implementation noise; users think of them by title.
-  if (rel.match(/^knowledge-base\/[^/]+\.(md|markdown)$/)) {
+  // Matches files under any KB collection: `knowledge-bases/<col>/<name>.md`.
+  if (rel.match(/^knowledge-bases\/[^/]+\/[^/]+\.(md|markdown)$/)) {
     return name.replace(/\.(md|markdown)$/, "");
   }
   return name;
@@ -525,10 +526,11 @@ export function FileExplorer({
       return;
     }
 
-    // Default: drop into knowledge-base with file type filtering.
-    // Resolve a friendly name first so the kb-supported check sees
-    // the real extension (a Slack-id-shaped name has no extension and
-    // would be rejected as unsupported).
+    // Default: drop into the default knowledge base
+    // (`knowledge-bases/default/`) with file type filtering. Resolve
+    // a friendly name first so the kb-supported check sees the real
+    // extension (a Slack-id-shaped name has no extension and would
+    // be rejected as unsupported).
     const acceptedRecords: { file: File; filename: string }[] = [];
     const rejected: string[] = [];
     for (let i = 0; i < files.length; i += 1) {
@@ -568,7 +570,12 @@ export function FileExplorer({
       return next;
     });
 
-  const KB_PREFIX = "knowledge-base/";
+  // 2026-04-27 plural rename: KB articles live in
+  // `knowledge-bases/default/`. The delete affordance still scopes to
+  // the default collection (cloud-sync target); custom KBs are
+  // off-limits via this path until V1 wires their per-collection
+  // delete pipeline.
+  const KB_PREFIX = "knowledge-bases/default/";
   const isDeletable = (node: FileNode) => {
     if (node.is_dir || !repo) return false;
     return relPath(repo, node.path).startsWith(KB_PREFIX);
@@ -583,11 +590,49 @@ export function FileExplorer({
   };
 
   const allDirs = nodes.filter((n) => n.is_dir).map((n) => n.path);
+  // Split dirs by depth so the toggle can cycle through three states
+  // (all-collapsed → top-level-only → fully-expanded → all-collapsed).
+  // Top-level = repo-relative path has no '/' separator.
+  const repoPrefix = repo ? `${repo}/` : "";
+  const topLevelDirs = repo
+    ? allDirs.filter((p) => p.startsWith(repoPrefix) && !p.slice(repoPrefix.length).includes("/"))
+    : [];
+  const deeperDirs = allDirs.filter((p) => !topLevelDirs.includes(p));
   const allCollapsed = allDirs.length > 0 && allDirs.every((d) => collapsed.has(d));
+  const allExpanded = allDirs.length > 0 && collapsed.size === 0;
+  const topLevelOnly =
+    topLevelDirs.length > 0 &&
+    topLevelDirs.every((d) => !collapsed.has(d)) &&
+    deeperDirs.every((d) => collapsed.has(d));
+
+  // Cycle: all-collapsed → top-level-only → fully-expanded → back.
+  // From any other intermediate state we collapse to baseline so the
+  // user has a predictable next click.
   const toggleAll = () => {
-    if (allCollapsed) setCollapsed(new Set());
-    else setCollapsed(new Set(allDirs));
+    if (allCollapsed) {
+      // Open top-level dirs but keep deeper folders collapsed so the
+      // user sees the immediate structure without flooding the tree.
+      setCollapsed(new Set(deeperDirs));
+    } else if (topLevelOnly) {
+      // Drill all the way in.
+      setCollapsed(new Set());
+    } else {
+      // Either fully-expanded or some intermediate state → collapse
+      // everything to start the cycle over.
+      setCollapsed(new Set(allDirs));
+    }
   };
+  // Title hint reflects what the NEXT click will do.
+  const toggleTitle = allCollapsed
+    ? "Open top-level folders"
+    : topLevelOnly
+      ? "Expand all"
+      : "Collapse all";
+  const toggleGlyph = allCollapsed
+    ? "⊞"  // empty box → next click adds visible content
+    : allExpanded
+      ? "⊟"  // filled box → next click clears
+      : "⊡"; // half-state → next click pushes deeper or collapses
 
   return (
     <div
@@ -603,8 +648,8 @@ export function FileExplorer({
       onDrop={onDrop}
     >
       <div className="explorer-toolbar">
-        <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={allCollapsed ? "Expand all" : "Collapse all"}>
-          {allCollapsed ? "⊞" : "⊟"}
+        <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={toggleTitle}>
+          {toggleGlyph}
         </button>
         <button
           type="button"
@@ -672,12 +717,19 @@ export function FileExplorer({
                     rel.match(/^databases\/conversations\/[^/]+$/) ||
                     rel === "agents" ||
                     rel === "workflows" ||
-                    rel === "knowledge-base" ||
-                    // The 2026-04-27 split: `filestores/library/` is
-                    // the curated entity-folder view (replaces the
-                    // legacy flat `filestore/`). The parent
-                    // `filestores/` itself just expands; per-ticket
-                    // attachment folders are explored manually.
+                    // 2026-04-27 plural rename: knowledge-bases/<col>/
+                    // replaces the legacy flat knowledge-base/.
+                    //   - `knowledge-bases/`         → cards (default + custom)
+                    //   - `knowledge-bases/<name>/`  → entity-folder file list
+                    rel === "knowledge-bases" ||
+                    rel.match(/^knowledge-bases\/[^/]+$/) ||
+                    // 2026-04-27 filestore split:
+                    //   - `filestores/`             → two-card overview
+                    //   - `filestores/attachments/` → welcome stub +
+                    //                                 per-ticket subfolders
+                    //   - `filestores/library/`     → curated entity-folder
+                    rel === "filestores" ||
+                    rel === "filestores/attachments" ||
                     rel === "filestores/library"
                   ) {
                     onSelect(n.path);
@@ -762,7 +814,9 @@ export function FileExplorer({
                   type="button"
                   className="kb-conflict-link"
                   onClick={() =>
-                    onSelect(`${repo}/knowledge-base/${c.filename}`)
+                    // 2026-04-27 plural rename: KB conflicts surface
+                    // for the cloud-synced default collection.
+                    onSelect(`${repo}/knowledge-bases/default/${c.filename}`)
                   }
                 >
                   <code>{c.filename}</code>

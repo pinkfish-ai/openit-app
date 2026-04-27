@@ -263,7 +263,9 @@ export async function kbInit(repo: string): Promise<string> {
 }
 
 export async function kbListLocal(repo: string): Promise<KbLocalFile[]> {
-  return invoke("entity_list_local", { repo, subdir: "knowledge-base" });
+  // 2026-04-27 plural rename: KB articles live under
+  // `knowledge-bases/<collection>/`. Cloud-sync targets `default`.
+  return invoke("entity_list_local", { repo, subdir: "knowledge-bases/default" });
 }
 
 export async function kbDeleteFile(repo: string, filename: string): Promise<void> {

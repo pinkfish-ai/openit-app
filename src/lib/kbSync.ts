@@ -24,7 +24,7 @@ import {
 } from "./api";
 import { resolveProjectKb, type KbCollection } from "./kb";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
-import { kbAdapter, kbServerShadowFilename } from "./entities/kb";
+import { KB_SYNC_PREFIX, kbAdapter, kbServerShadowFilename } from "./entities/kb";
 import {
   canonicalFromShadow,
   classifyAsShadow,
@@ -104,14 +104,18 @@ export async function buildKbConflictPrompt(repo: string): Promise<string> {
     .map((f) => f.filename)
     .filter((n) => classifyAsShadow(n, siblings));
   const lines: string[] = [];
+  // 2026-04-27 plural rename: paths now sit under
+  // `knowledge-bases/default/`. Same conflict-resolve copy works,
+  // just refers to the new location so the agent's Read/Write/Edit
+  // ops land in the right place.
   for (const c of sync.conflicts) {
     const sh = kbServerShadowFilename(c.filename);
-    lines.push(`- knowledge-base/${c.filename} (yours) vs knowledge-base/${sh} (server)`);
+    lines.push(`- knowledge-bases/default/${c.filename} (yours) vs knowledge-bases/default/${sh} (server)`);
   }
   for (const sh of shadowNames) {
     if (sync.conflicts.some((c) => kbServerShadowFilename(c.filename) === sh)) continue;
     const base = kbBaseFromShadowFilename(sh);
-    lines.push(`- knowledge-base/${base} (yours) vs knowledge-base/${sh} (server)`);
+    lines.push(`- knowledge-bases/default/${base} (yours) vs knowledge-bases/default/${sh} (server)`);
   }
   if (lines.length === 0) return "";
   return `There are merge conflicts in the knowledge base. For each pair below, read both files, merge them intelligently into the main file (the one without ".server." in the name), then delete the .server. shadow file(s).
@@ -251,7 +255,10 @@ export function stopKbSync() {
     stopPoll = null;
   }
   update({ phase: "idle", collection: null, conflicts: [], lastError: null });
-  clearConflictsForPrefix("kb");
+  // Must use the same prefix the adapter registers conflicts under
+  // (`knowledge-bases/default` post-2026-04-27 rename) — otherwise
+  // stale KB conflicts would persist in the aggregated banner.
+  clearConflictsForPrefix(KB_SYNC_PREFIX);
 }
 
 /// Run a single pull (e.g. immediately before a push). Public wrapper.
@@ -288,7 +295,10 @@ export async function pushAllToKb(args: {
   collection: KbCollection;
   onLine?: (msg: string) => void;
 }): Promise<{ pushed: number; failed: number }> {
-  return withRepoLock(args.repo, "kb", () => pushAllToKbInner(args));
+  // Must match the kbAdapter's prefix so push and pull share the
+  // same `${prefix}:${repo}` lock. With drift, the 60s pull poller
+  // could race the push and corrupt the manifest / fetch order.
+  return withRepoLock(args.repo, KB_SYNC_PREFIX, () => pushAllToKbInner(args));
 }
 
 async function pushAllToKbInner(args: {
@@ -312,13 +322,14 @@ async function pushAllToKbInner(args: {
   const persisted = await kbStateLoad(repo);
 
   // Use git status (content hash) instead of mtime to decide what to push.
-  // Files that git reports as modified/untracked under knowledge-base/ are
-  // the ones that actually changed since the last commit.
+  // Files that git reports as modified/untracked under
+  // `knowledge-bases/default/` are the ones that actually changed since
+  // the last commit. (Custom KBs aren't part of cloud sync in V1.)
   const gitFiles = await gitStatusShort(repo).catch(() => []);
   const dirtyPaths = new Set(
     gitFiles
-      .filter((g) => g.path.startsWith("knowledge-base/"))
-      .map((g) => g.path.replace(/^knowledge-base\//, "")),
+      .filter((g) => g.path.startsWith("knowledge-bases/default/"))
+      .map((g) => g.path.replace(/^knowledge-bases\/default\//, "")),
   );
 
   // Sibling-aware shadow exclusion — a legitimate `nginx.server.conf`
@@ -397,7 +408,7 @@ async function pushAllToKbInner(args: {
 
   if (pushedNames.size > 0) {
     const ts = new Date().toISOString();
-    const paths = Array.from(pushedNames).map((n) => `knowledge-base/${n}`);
+    const paths = Array.from(pushedNames).map((n) => `knowledge-bases/default/${n}`);
     await commitTouched(repo, paths, `sync: deployed @ ${ts}`);
   }
   return { pushed, failed };
