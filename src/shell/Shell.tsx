@@ -37,6 +37,8 @@ import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
 import { Viewer, type ViewerSource } from "./Viewer";
+import { SkillCanvas } from "../SkillCanvas";
+import type { SkillCanvasState as SkillCanvasStateType } from "../lib/skillCanvas";
 import { resolvePathToSource } from "./entityRouting";
 
 const DEFAULT_SIZES = [18, 42, 40];
@@ -59,6 +61,9 @@ export function Shell({
   cloudConnected,
   onConnectRequest,
   intakeUrl,
+  skillCanvasState,
+  skillCanvasOrgId,
+  onSkillCanvasClosed,
 }: {
   repo: string | null;
   syncLines: string[];
@@ -74,6 +79,17 @@ export function Shell({
    *  into `{{INTAKE_URL}}` placeholders in markdown content (e.g. the
    *  welcome doc). */
   intakeUrl: string | null;
+  /** Active Skill Canvas state, if any. When non-null AND active, the
+   *  center pane swaps from Viewer to SkillCanvas. App.tsx watches the
+   *  state file under .openit/skill-state/<skill>.json and passes the
+   *  current value here. */
+  skillCanvasState: SkillCanvasStateType | null;
+  /** Pinkfish orgId (or "" for local-only) — needed by skill-canvas
+   *  actions that touch keychain (e.g. Slack token storage). */
+  skillCanvasOrgId: string;
+  /** Called when the canvas's dismiss button flips active=false; used to
+   *  let App.tsx clear the watched state. */
+  onSkillCanvasClosed: () => void;
 }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
   const [source, setSource] = useState<ViewerSource>(null);
@@ -622,17 +638,27 @@ export function Shell({
         </Panel>
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[1]} minSize={20}>
-          <Viewer
-            source={source}
-            repo={repo ?? ""}
-            fsTick={fsTick}
-            intakeUrl={intakeUrl}
-            welcomeFlashKey={welcomeFlashKey}
-            onOpenPath={async (path) => {
-              const resolved = await resolvePathToSource(path, repo);
-              setSource(resolved);
-            }}
-          />
+          {skillCanvasState && skillCanvasState.active && repo && intakeUrl ? (
+            <SkillCanvas
+              repo={repo}
+              orgId={skillCanvasOrgId}
+              intakeUrl={intakeUrl}
+              state={skillCanvasState}
+              onClosed={onSkillCanvasClosed}
+            />
+          ) : (
+            <Viewer
+              source={source}
+              repo={repo ?? ""}
+              fsTick={fsTick}
+              intakeUrl={intakeUrl}
+              welcomeFlashKey={welcomeFlashKey}
+              onOpenPath={async (path) => {
+                const resolved = await resolvePathToSource(path, repo);
+                setSource(resolved);
+              }}
+            />
+          )}
         </Panel>
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[2]} minSize={25}>

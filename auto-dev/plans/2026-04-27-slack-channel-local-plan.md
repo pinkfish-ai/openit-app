@@ -356,6 +356,53 @@ Three slim phases, each independently testable.
 
 ---
 
+## Operational properties
+
+These are surfaced to admins in `connect-slack.md`'s FAQ section
+(`scripts/openit-plugin/skills/connect-slack.md`) and reproduced
+here as engineering reference. Keep both copies in sync if the
+behavior changes.
+
+### Quit / restart behavior
+
+- **Cmd+Q (clean quit):** intake server + Slack listener both
+  stopped via Tauri's drop machinery. Tokens stay in Keychain;
+  `.openit/slack.json` and the JSON ledgers stay on disk. Next
+  launch auto-restarts the listener — no setup re-do.
+- **Force-quit / kill -9 / system crash:** Tokio's `kill_on_drop`
+  doesn't fire because the parent dies before drop runs. The Node
+  listener gets orphaned (parented to launchd). Next OpenIT launch
+  spawns a *second* listener — both connect to the same Slack app
+  via the same bot token, and Socket Mode load-balances events
+  across them, so half the DMs each get processed (broken).
+  Recovery: `pkill -f slack-listen.bundle.cjs` before reopening.
+  Documented limitation; future fix would be either parent-PID
+  watching in the listener (no PDEATHSIG on macOS, would need
+  polling) or pre-spawn cleanup in `slack_listener_start`.
+
+### Network requirements
+
+- **No static IP, no port forwarding, no inbound firewall holes.**
+  Socket Mode is outbound-only — the listener opens a websocket to
+  Slack and never accepts inbound connections.
+- **Network changes are transparent.** DHCP reassignment, WiFi
+  switch, VPN connect — the listener's websocket reconnects via
+  the Slack SDK's built-in retry. No user action.
+- **Local intake URL is `127.0.0.1:<random-port>`.** Port changes
+  every OpenIT launch (OS-assigned via `bind 127.0.0.1:0`); the
+  Tauri supervisor passes the current URL to the listener every
+  time it spawns it, so the listener always has the correct port.
+  The user never sees the port unless they click the Intake pill.
+
+### Multi-project
+
+Each `~/OpenIT/<orgId>/` project has its own `.openit/slack.json`
+and Keychain slots scoped per `orgId`. Two projects on the same
+machine can connect to two different Slack workspaces with two
+separate Slack apps. The supervisor only ever runs one listener
+at a time though — opening a different project stops the previous
+project's listener and starts the new one.
+
 ## Why this shape (vs. alternatives I considered)
 
 - **Why not put the listener in Rust?** `@slack/socket-mode` is the official, battle-tested SDK; the Rust Slack ecosystem is patchier. The Node script also keeps the same dev pattern as `sync-push.mjs` — and an admin in a terminal without the OpenIT app could still run the bundle directly. Bundling addresses the dependency objection.
