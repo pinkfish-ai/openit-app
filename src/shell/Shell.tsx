@@ -152,7 +152,26 @@ export function Shell({
     stateLoad().then(setState).catch(console.error);
   }, []);
 
-  // Auto-open _welcome.md on first load
+  // Auto-open _welcome.md on first load — and re-open on demand
+  // when the App-header "Getting Started" button dispatches the
+  // `openit:open-welcome` custom event. Listening for the event here
+  // (rather than plumbing a callback through props) keeps the
+  // viewer-state ownership inside Shell.
+  useEffect(() => {
+    if (!repo) return;
+    const openWelcome = () => {
+      const welcomePath = `${repo}/_welcome.md`;
+      resolvePathToSource(welcomePath, repo)
+        .then(setSource)
+        .catch((e) => console.error("[shell] welcome resolution failed:", e));
+    };
+    window.addEventListener("openit:open-welcome", openWelcome);
+    return () => {
+      window.removeEventListener("openit:open-welcome", openWelcome);
+    };
+  }, [repo]);
+
+  // First-load auto-open of welcome (only when nothing else is loaded yet).
   useEffect(() => {
     if (repo && !source) {
       const welcomePath = `${repo}/_welcome.md`;
