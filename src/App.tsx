@@ -159,6 +159,17 @@ function App() {
           // Cloud-connected relaunch — skip onboarding and resume syncs.
           // We don't have orgName cached on relaunch — use the slug as
           // the user-facing label until something better is fetched.
+          // Re-run bootstrap so idempotent layout guards in project.rs
+          // (e.g. creating new top-level dirs added in later versions)
+          // can fire on existing projects without requiring a re-init.
+          // The Rust side gates first-run side effects (welcome doc,
+          // initial subdir creation) on `!already_existed`, so this is
+          // safe to call on every launch.
+          try {
+            await projectBootstrap({ orgName: creds.orgId || "default", orgId: creds.orgId });
+          } catch (e) {
+            console.warn("[app] cloud-relaunch bootstrap failed (non-fatal):", e);
+          }
           setBypassOnboarding(true);
           startCloudSyncs(creds, lastRepo, basename(lastRepo));
           finish();
@@ -217,6 +228,16 @@ function App() {
           // access to their existing data.
           let projectPath: string;
           if (lastRepo) {
+            // Re-run bootstrap so idempotent layout guards in project.rs
+            // (e.g. creating new top-level dirs like `reports/` that
+            // shipped after the project was first initialized) fire on
+            // existing projects. Rust gates first-run side effects on
+            // `!already_existed`, so this is safe to call.
+            try {
+              await projectBootstrap({ orgName: LOCAL_ORG_NAME, orgId: LOCAL_ORG_ID });
+            } catch (e) {
+              console.warn("[app] local-relaunch bootstrap failed (non-fatal):", e);
+            }
             projectPath = lastRepo;
           } else {
             const result = await projectBootstrap({
