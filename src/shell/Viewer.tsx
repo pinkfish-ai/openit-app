@@ -1166,11 +1166,6 @@ export function Viewer({
                       {c.itemCount} {c.name === "conversations" ? "thread" : "row"}{c.itemCount === 1 ? "" : "s"}
                     </span>
                   </div>
-                  <div className="databases-list-meta">
-                    <span className="databases-list-tag">
-                      {c.hasSchema ? "schema" : "schema-less"}
-                    </span>
-                  </div>
                 </button>
               </li>
             ))}
