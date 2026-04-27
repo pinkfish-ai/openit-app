@@ -67,6 +67,29 @@ struct RunningServer {
 // HTTP server state — shared across handlers.
 // ---------------------------------------------------------------------------
 
+/// Where this chat session originated. Stamped onto the ticket on
+/// first turn (via `ensure_responding_stub`) and retained on
+/// `SessionData` so subsequent turns keep provenance. Default = Chat
+/// (the localhost web intake), which preserves backward compatibility
+/// with the browser client that doesn't know about transports.
+///
+/// Add new variants here as new transports come online; the server
+/// stamps `askerChannel` from the variant name and writes any
+/// transport-specific fields onto the ticket once.
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum TransportMeta {
+    #[default]
+    Chat,
+    Slack {
+        workspace_id: String,
+        /// The DM channel id (starts with `D…`). Used by the listener
+        /// for outbound replies.
+        channel_id: String,
+        user_id: String,
+    },
+}
+
 /// One chat session — held in-memory by the server. Lost on restart;
 /// disk under `databases/conversations/<ticketId>/` is canonical for
 /// the actual conversation. The session map is just a fast-path so
@@ -83,6 +106,12 @@ struct SessionData {
     /// chat_turn / chat_poll touching this session. Used by the LRU
     /// eviction in `evict_idle_sessions` to bound memory growth.
     last_seen_unix: u64,
+    /// Transport this session arrived on. Fed into
+    /// `ensure_responding_stub` on every turn so first-turn ticket
+    /// stubs get the right `askerChannel` + transport-specific
+    /// fields without a follow-up Edit (which would race the stub
+    /// writer).
+    transport: TransportMeta,
 }
 
 /// Sessions idle longer than this are dropped from the in-memory map.
@@ -229,6 +258,26 @@ async fn serve_chat() -> Html<&'static str> {
 #[derive(Deserialize)]
 struct ChatStartReq {
     email: String,
+    /// Optional. When omitted, the session is treated as the default
+    /// localhost web chat (`TransportMeta::Chat`) — preserves the
+    /// existing browser client's payload exactly. Non-web transports
+    /// (e.g. the Slack listener) populate this so the ticket stub
+    /// gets the right `askerChannel` + provenance fields on first
+    /// turn.
+    #[serde(default)]
+    transport: Option<TransportMeta>,
+    /// Optional. When set, the server reuses an existing on-disk
+    /// ticket id instead of generating a new one. Used by transports
+    /// that persist their session map across restarts (Slack
+    /// listener) so a listener restart doesn't fork an in-progress
+    /// conversation into a second ticket.
+    ///
+    /// Validation: the ticket file must exist AND its `asker` field
+    /// must equal the request's `email`. Any mismatch returns 400 —
+    /// the caller is expected to drop its stale mapping and retry
+    /// without `resume_ticket_id`.
+    #[serde(default)]
+    resume_ticket_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -250,12 +299,21 @@ async fn chat_start(
         return (StatusCode::BAD_REQUEST, "a valid email is required").into_response();
     }
 
-    let session_id = Uuid::new_v4().to_string();
-    // Pre-allocate ticket id at session start. The skill uses it on
-    // first commit; if the session never commits a ticket, the id is
-    // simply unused. Format mirrors the rest of the system: ISO
+    // Resolve ticket_id: reuse a previously-allocated one if the
+    // caller supplied a valid `resume_ticket_id`, otherwise mint a
+    // fresh one. Format mirrors the rest of the system: ISO
     // timestamp + 4-char random suffix, filesystem-safe.
-    let ticket_id = generate_ticket_id();
+    let ticket_id = match req.resume_ticket_id.as_deref() {
+        Some(id) => match validate_resume_ticket_id(&state.repo, id, email).await {
+            Ok(()) => id.to_string(),
+            Err(msg) => {
+                return (StatusCode::BAD_REQUEST, msg).into_response();
+            }
+        },
+        None => generate_ticket_id(),
+    };
+
+    let session_id = Uuid::new_v4().to_string();
 
     let mut sessions = state.sessions.lock().await;
     evict_idle_sessions(&mut sessions);
@@ -266,6 +324,7 @@ async fn chat_start(
             email: email.to_string(),
             history: Vec::new(),
             last_seen_unix: unix_now_secs(),
+            transport: req.transport.unwrap_or_default(),
         },
     );
 
@@ -274,6 +333,45 @@ async fn chat_start(
         ticket_id,
     })
     .into_response()
+}
+
+/// Validate a caller-supplied `resume_ticket_id`: the ticket file
+/// must exist and its `asker` field must match the request's email.
+/// Anything else → error string suitable for a 400 response body.
+async fn validate_resume_ticket_id(
+    repo: &Path,
+    ticket_id: &str,
+    email: &str,
+) -> Result<(), String> {
+    // Cheap path-traversal guard. Ticket ids are server-generated
+    // tokens (`generate_ticket_id`) — slashes, parent traversals,
+    // null bytes are all bugs in the caller.
+    if ticket_id.is_empty()
+        || ticket_id.contains('/')
+        || ticket_id.contains('\\')
+        || ticket_id.contains("..")
+        || ticket_id.contains('\0')
+    {
+        return Err("resume_ticket_id is malformed".to_string());
+    }
+    let path = repo
+        .join("databases")
+        .join("tickets")
+        .join(format!("{}.json", ticket_id));
+    let raw = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|_| "resume_ticket_id does not match an existing ticket".to_string())?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|_| "resume_ticket_id is unreadable".to_string())?;
+    let existing = parsed
+        .get("asker")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if existing != email {
+        return Err("resume_ticket_id belongs to a different asker".to_string());
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +421,7 @@ async fn chat_turn(
     // released before we spawn `claude -p` (which can take seconds).
     // Also bump `last_seen_unix` so the LRU eviction doesn't drop an
     // active session.
-    let (ticket_id, email, history_before, repo) = {
+    let (ticket_id, email, history_before, repo, transport) = {
         let mut sessions = state.sessions.lock().await;
         let Some(session) = sessions.get_mut(&req.session_id) else {
             return (StatusCode::NOT_FOUND, "unknown session").into_response();
@@ -334,6 +432,7 @@ async fn chat_turn(
             session.email.clone(),
             session.history.clone(),
             state.repo.clone(),
+            session.transport.clone(),
         )
     };
 
@@ -363,7 +462,15 @@ async fn chat_turn(
             }
         })
         .collect();
-    let _ = ensure_responding_stub(&repo, &ticket_id, &email, trimmed, &valid_attachments).await;
+    let _ = ensure_responding_stub(
+        &repo,
+        &ticket_id,
+        &email,
+        trimmed,
+        &valid_attachments,
+        &transport,
+    )
+    .await;
 
     // Append the user's message to the in-memory history before
     // invoking the agent so the prompt contains it.
@@ -1175,6 +1282,7 @@ async fn ensure_responding_stub(
     email: &str,
     user_message: &str,
     attachments: &[String],
+    transport: &TransportMeta,
 ) -> Result<(), String> {
     let now = now_iso();
     let ticket_path = repo
@@ -1182,20 +1290,48 @@ async fn ensure_responding_stub(
         .join("tickets")
         .join(format!("{}.json", ticket_id));
 
-    // First turn: write the ticket fresh.
+    // First turn: write the ticket fresh. The transport stamp lands
+    // here once and never changes — subsequent turns hit the `else`
+    // branch below and only flip status, leaving `askerChannel` and
+    // any transport-specific fields untouched.
     if !ticket_path.exists() {
         let subject = first_line_truncated(user_message, 80);
-        let row = serde_json::json!({
+        let asker_channel = match transport {
+            TransportMeta::Chat => "chat",
+            TransportMeta::Slack { .. } => "slack",
+        };
+        let mut row = serde_json::json!({
             "subject": subject,
             "description": user_message,
             "asker": email,
-            "askerChannel": "chat",
+            "askerChannel": asker_channel,
             "status": "agent-responding",
             "priority": "normal",
             "tags": [],
             "createdAt": now,
             "updatedAt": now,
         });
+        if let TransportMeta::Slack {
+            workspace_id,
+            channel_id,
+            user_id,
+        } = transport
+        {
+            if let Some(obj) = row.as_object_mut() {
+                obj.insert(
+                    "slackWorkspaceId".to_string(),
+                    serde_json::Value::String(workspace_id.clone()),
+                );
+                obj.insert(
+                    "slackChannelId".to_string(),
+                    serde_json::Value::String(channel_id.clone()),
+                );
+                obj.insert(
+                    "slackUserId".to_string(),
+                    serde_json::Value::String(user_id.clone()),
+                );
+            }
+        }
         let json =
             serde_json::to_string_pretty(&row).map_err(|e| format!("serialize ticket: {}", e))?;
         if let Some(parent) = ticket_path.parent() {
