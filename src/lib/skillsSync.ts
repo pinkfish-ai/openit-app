@@ -66,7 +66,7 @@ export async function fetchSkillFile(
 ///   - `agents/<name>.template.json`        → `agents/<name-stripped>-<slug>.json` (with `{{slug}}` subst)
 ///   - `scripts/<file>`                     → `.claude/scripts/<file>`
 ///   - anything else                        → preserve original layout
-function routeFile(
+export function routeFile(
   filePath: string,
   slug: string,
 ): { subdir: string; filename: string; substituteSlug: boolean } | null {
