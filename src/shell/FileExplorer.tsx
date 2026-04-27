@@ -590,11 +590,49 @@ export function FileExplorer({
   };
 
   const allDirs = nodes.filter((n) => n.is_dir).map((n) => n.path);
+  // Split dirs by depth so the toggle can cycle through three states
+  // (all-collapsed → top-level-only → fully-expanded → all-collapsed).
+  // Top-level = repo-relative path has no '/' separator.
+  const repoPrefix = repo ? `${repo}/` : "";
+  const topLevelDirs = repo
+    ? allDirs.filter((p) => p.startsWith(repoPrefix) && !p.slice(repoPrefix.length).includes("/"))
+    : [];
+  const deeperDirs = allDirs.filter((p) => !topLevelDirs.includes(p));
   const allCollapsed = allDirs.length > 0 && allDirs.every((d) => collapsed.has(d));
+  const allExpanded = allDirs.length > 0 && collapsed.size === 0;
+  const topLevelOnly =
+    topLevelDirs.length > 0 &&
+    topLevelDirs.every((d) => !collapsed.has(d)) &&
+    deeperDirs.every((d) => collapsed.has(d));
+
+  // Cycle: all-collapsed → top-level-only → fully-expanded → back.
+  // From any other intermediate state we collapse to baseline so the
+  // user has a predictable next click.
   const toggleAll = () => {
-    if (allCollapsed) setCollapsed(new Set());
-    else setCollapsed(new Set(allDirs));
+    if (allCollapsed) {
+      // Open top-level dirs but keep deeper folders collapsed so the
+      // user sees the immediate structure without flooding the tree.
+      setCollapsed(new Set(deeperDirs));
+    } else if (topLevelOnly) {
+      // Drill all the way in.
+      setCollapsed(new Set());
+    } else {
+      // Either fully-expanded or some intermediate state → collapse
+      // everything to start the cycle over.
+      setCollapsed(new Set(allDirs));
+    }
   };
+  // Title hint reflects what the NEXT click will do.
+  const toggleTitle = allCollapsed
+    ? "Open top-level folders"
+    : topLevelOnly
+      ? "Expand all"
+      : "Collapse all";
+  const toggleGlyph = allCollapsed
+    ? "⊞"  // empty box → next click adds visible content
+    : allExpanded
+      ? "⊟"  // filled box → next click clears
+      : "⊡"; // half-state → next click pushes deeper or collapses
 
   return (
     <div
@@ -610,8 +648,8 @@ export function FileExplorer({
       onDrop={onDrop}
     >
       <div className="explorer-toolbar">
-        <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={allCollapsed ? "Expand all" : "Collapse all"}>
-          {allCollapsed ? "⊞" : "⊟"}
+        <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={toggleTitle}>
+          {toggleGlyph}
         </button>
         <button
           type="button"
