@@ -1,9 +1,43 @@
+use std::ffi::OsStr;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use crate::git_ops;
+
+/// Find a free destination filename in `dir` for a migration. If
+/// `<name>` doesn't exist returns it; otherwise tries
+/// `<name>.legacy`, `<name>.legacy.2`, … until a free slot is found.
+/// Falls back to a timestamp-suffixed name after 99 attempts (a
+/// pathological case where the user's project has a hundred
+/// duplicates) — better than overwriting silently. The earlier
+/// single-`.legacy` policy could lose data on a re-run when the
+/// user had already accepted a previous `.legacy` rename.
+fn unique_legacy_dest(dir: &Path, name: &OsStr) -> PathBuf {
+    let direct = dir.join(name);
+    if !direct.exists() {
+        return direct;
+    }
+    let base = name.to_string_lossy().into_owned();
+    let first = format!("{}.legacy", base);
+    let candidate = dir.join(&first);
+    if !candidate.exists() {
+        return candidate;
+    }
+    for n in 2..100u32 {
+        let next = format!("{}.legacy.{}", base, n);
+        let candidate = dir.join(&next);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    dir.join(format!("{}.legacy.{}", base, ms))
+}
 
 #[derive(Serialize)]
 pub struct BootstrapResult {
@@ -112,12 +146,7 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
             for entry in entries.flatten() {
                 let from = entry.path();
                 let name = entry.file_name();
-                let mut to = library_dir.join(&name);
-                if to.exists() {
-                    let mut alt_name = name.to_string_lossy().into_owned();
-                    alt_name.push_str(".legacy");
-                    to = library_dir.join(alt_name);
-                }
+                let to = unique_legacy_dest(&library_dir, &name);
                 let _ = fs::rename(&from, &to);
             }
         }
@@ -130,7 +159,8 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     // Same one-time migration for the knowledge-base split. Articles
     // sitting at the legacy flat `knowledge-base/<file>.md` location
     // move into `knowledge-bases/default/<file>.md`. Same collision
-    // semantics as filestore (`<name>.legacy` suffix on duplicates).
+    // semantics as filestore (`.legacy` / `.legacy.2` / `.legacy.3`
+    // suffix until we find a free slot).
     let legacy_kb = path.join("knowledge-base");
     if legacy_kb.is_dir() {
         let default_kb = path.join("knowledge-bases").join("default");
@@ -138,12 +168,7 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
             for entry in entries.flatten() {
                 let from = entry.path();
                 let name = entry.file_name();
-                let mut to = default_kb.join(&name);
-                if to.exists() {
-                    let mut alt_name = name.to_string_lossy().into_owned();
-                    alt_name.push_str(".legacy");
-                    to = default_kb.join(alt_name);
-                }
+                let to = unique_legacy_dest(&default_kb, &name);
                 let _ = fs::rename(&from, &to);
             }
         }

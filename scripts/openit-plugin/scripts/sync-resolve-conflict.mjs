@@ -3,7 +3,7 @@
 //
 // Usage:
 //   node .claude/scripts/sync-resolve-conflict.mjs \
-//        --prefix <kb|filestore|datastore|agent|workflow> \
+//        --prefix <knowledge-bases/default|filestores/library|datastore|agent|workflow> \
 //        --key <manifestKey>
 //
 // What it does:
@@ -53,9 +53,20 @@ import process from "node:process";
 /// sync if either side ever changes.
 const FORCE_PUSH_MTIME_SENTINEL = 1;
 
+// Prefix → manifest file. Adapter prefixes drive the engine's
+// `${prefix}:${repo}` lock and conflict registry, so when an adapter
+// renames its prefix this table has to grow a matching entry —
+// otherwise the "Resolve in Claude" flow can't clear the conflict
+// banner. Both the legacy short names (`kb`, `filestore`) and the
+// post-2026-04-27 plural-with-default forms are accepted: the
+// callers were updated to emit the new strings, but in-flight clients
+// (older project repos, scripted invocations from a saved transcript)
+// may still send the old ones.
 const PREFIX_TO_FILE = {
   kb: ".openit/kb-state.json",
+  "knowledge-bases/default": ".openit/kb-state.json",
   filestore: ".openit/fs-state.json",
+  "filestores/library": ".openit/fs-state.json",
   datastore: ".openit/datastore-state.json",
   agent: ".openit/agent-state.json",
   workflow: ".openit/workflow-state.json",

@@ -522,8 +522,10 @@ export function Viewer({
         const n = source.collections.length;
         return `Databases — ${n} collection${n === 1 ? "" : "s"}`;
       }
-      case "filestores-list":
-        return "Filestores — attachments + library";
+      case "filestores-list": {
+        const n = source.collections.length;
+        return `Filestores — ${n} collection${n === 1 ? "" : "s"}`;
+      }
       case "attachments-folder": {
         const n = source.tickets.length;
         return `Attachments — ${n} ticket${n === 1 ? "" : "s"}`;
