@@ -62,23 +62,34 @@ body,
   font-size: 13px;
 }
 
-/* Localhost ticket-intake URL pill. Click to copy. Temporary home in
-   the header until Phase 3b's settings panel lands. */
+/* Localhost ticket-intake URL pill. Two affordances:
+   - Main URL chip → opens the form in the user's browser
+   - Small "copy" chip → copies the URL to clipboard
+   Temporary home in the header until Phase 3b's settings panel lands. */
 .intake-url-pill {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  margin-left: auto;
+  overflow: hidden;
+  background: transparent;
+}
+
+.intake-url-pill-open {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  border: 0;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
   cursor: pointer;
-  margin-left: auto;
+  font: inherit;
 }
 
-.intake-url-pill:hover {
+.intake-url-pill-open:hover {
   background: rgba(0, 0, 0, 0.04);
 }
 
@@ -95,11 +106,24 @@ body,
   padding: 0;
 }
 
-.intake-url-pill-status {
+.intake-url-pill-copy {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
   color: var(--text-faint);
+  cursor: pointer;
+  font: inherit;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+.intake-url-pill-copy:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--text);
 }
 
 /* When the intake pill is present, it claims the auto-margin so the

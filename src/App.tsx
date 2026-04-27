@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
 import { fsRead, intakeStart, projectBootstrap, stateLoad, stateSave } from "./lib/api";
@@ -87,32 +88,50 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, orgName: string): v
   );
 }
 
-/// Small pill in the header showing the localhost intake URL. Click to
-/// copy. Surfaced here as a temporary home until the Phase 3b settings
+/// Small pill in the header showing the localhost intake URL. Click
+/// opens the form in the user's default browser; a small copy
+/// affordance next to the URL still lets them grab the URL to share
+/// (e.g. paste into Slack for a coworker on the same machine).
+/// Surfaced here as a temporary home until the Phase 3b settings
 /// panel lands — that's where the URL + the LAN-toggle will live
 /// long-term, per the local-first plan.
 function IntakeUrlPill({ url }: { url: string }) {
   const [copied, setCopied] = useState(false);
+  const onOpen = () => {
+    openUrl(url).catch((e) => console.warn("[app] openUrl failed:", e));
+  };
   const onCopy = async () => {
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch (e) {
-      console.warn("[app] clipboard write failed:", e);
+    } catch (err) {
+      console.warn("[app] clipboard write failed:", err);
     }
   };
+  // Outer span (not a button) so we can host two buttons inside without
+  // nesting interactive elements. The URL chip is the open-in-browser
+  // affordance; the small copy chip on the right is a separate button.
   return (
-    <button
-      type="button"
-      className="intake-url-pill"
-      onClick={onCopy}
-      title="Click to copy. Share with someone on this machine to file a ticket via web form."
-    >
-      <span className="intake-url-pill-label">Intake</span>
-      <code className="intake-url-pill-value">{url.replace(/^https?:\/\//, "")}</code>
-      <span className="intake-url-pill-status">{copied ? "copied" : "copy"}</span>
-    </button>
+    <span className="intake-url-pill">
+      <button
+        type="button"
+        className="intake-url-pill-open"
+        onClick={onOpen}
+        title="Open the intake form in your browser"
+      >
+        <span className="intake-url-pill-label">Intake</span>
+        <code className="intake-url-pill-value">{url.replace(/^https?:\/\//, "")}</code>
+      </button>
+      <button
+        type="button"
+        className="intake-url-pill-copy"
+        onClick={onCopy}
+        title="Copy URL to clipboard"
+      >
+        {copied ? "copied" : "copy"}
+      </button>
+    </span>
   );
 }
 
