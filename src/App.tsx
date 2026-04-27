@@ -589,7 +589,23 @@ function App() {
           repo={repo}
           syncLines={syncLines}
           onSyncLine={onSyncLine}
-          bubbles={bubbles}
+          // Prepend a Connect Slack bubble when this project hasn't
+          // been wired to Slack yet — gives the admin a one-click
+          // entry point to /connect-slack instead of having to know
+          // the slash-command name. Drops out the moment a config
+          // exists; once connected, the Slack pill in the header is
+          // the canonical surface.
+          bubbles={
+            repo && intakeServerUrl && !slackConfig
+              ? [
+                  {
+                    label: "Connect Slack",
+                    prompt: "/connect-slack",
+                  },
+                  ...bubbles,
+                ]
+              : bubbles
+          }
           cloudConnected={connected}
           onConnectRequest={() => setBypassOnboarding(false)}
           intakeUrl={intakeServerUrl}
