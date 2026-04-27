@@ -12,9 +12,19 @@ use std::process::Command;
 
 use serde_json::Value;
 
+/// `async` + `spawn_blocking` mirrors `claude::claude_generate_commit_message`:
+/// Tauri runs sync command bodies on the main thread, so the duration
+/// of `node …` would freeze the renderer (busy spinner, button stuck
+/// on "Generating…"). Wrapping the spawn keeps the UI responsive.
 #[tauri::command]
 pub async fn report_overview_run(repo: String) -> Result<String, String> {
-    let script = Path::new(&repo)
+    tauri::async_runtime::spawn_blocking(move || run_overview_blocking(&repo))
+        .await
+        .map_err(|e| format!("background task failed: {}", e))?
+}
+
+fn run_overview_blocking(repo: &str) -> Result<String, String> {
+    let script = Path::new(repo)
         .join(".claude")
         .join("scripts")
         .join("report-overview.mjs");
@@ -27,7 +37,7 @@ pub async fn report_overview_run(repo: String) -> Result<String, String> {
 
     let output = Command::new("node")
         .arg(&script)
-        .current_dir(&repo)
+        .current_dir(repo)
         .output()
         .map_err(|e| format!("failed to spawn node: {}", e))?;
 

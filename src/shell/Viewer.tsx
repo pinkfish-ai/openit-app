@@ -274,6 +274,11 @@ export function Viewer({
     setReplyError(null);
     setReplyAttachments([]);
     setReplyDragOver(false);
+    // Reset the Generate-overview button alongside the other view-
+    // specific state so a stale failure message doesn't follow the
+    // user when they navigate away from reports/ and back.
+    setReportRunning(false);
+    setReportError(null);
   }, [source]);
   useEffect(() => {
     // Fetch the admin's git email once and cache it so the composer
