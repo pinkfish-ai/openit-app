@@ -1,52 +1,59 @@
-// Localhost ticket-intake HTTP server. Phase 5 of the local-first plan.
+// Localhost chat-intake HTTP server.
 //
-// A coworker on the same machine (or LAN, once the toggle ships in
-// Phase 3b) can hit the URL surfaced in the OpenIT header, fill out a
-// short form, and file a support ticket. The POST handler writes a
-// row JSON with `status: "incoming"` directly into the project's
-// `databases/openit-tickets-<slug>/` dir; the existing fs watcher
-// notices the new file and the IncomingTicketBanner (Phase 4) fires.
+// A coworker on the same machine (or LAN, when the Phase 3b toggle
+// ships) opens the URL surfaced in the OpenIT header and chats with
+// an AI agent. The agent — driven by `agents/triage.json` and the
+// `intake-chat` skill — gathers the question, searches the local
+// knowledge base, and either answers inline (KB hit) or escalates to
+// the admin (KB miss → status flips to `escalated`, admin sees the
+// banner).
 //
-// Bind: 127.0.0.1 with an OS-assigned port (port 0). The OS-assigned
-// port avoids collisions when two OpenIT instances run on the same
-// machine. The URL changes per launch — that's fine for V1; we can
-// add a stable port later if it becomes a real complaint.
+// Bind: 127.0.0.1 with an OS-assigned port (port 0). New port per
+// launch. Default off LAN — the toggle is Phase 3b territory.
 //
-// Lifecycle: started on project open from the frontend, stopped on
-// project switch / app close. Shared state holds at most one running
-// server at a time; `intake_start` swaps the previous instance.
+// Lifecycle: started on project open, stopped on project switch /
+// app close. `intake_start` swaps the previous instance under a
+// command lock to prevent races.
 //
-// Default off LAN: 127.0.0.1 only. The "Allow LAN access" toggle that
-// switches the bind to 0.0.0.0 is deferred to Phase 3b's settings UI.
+// Per-turn agent: each user message spawns a fresh `claude -p`
+// subprocess with cwd = repo, model from `agents/triage.json`, and
+// the conversation history + ticket id passed in the prompt. The
+// skill writes ticket / conversation / people files directly via
+// Claude's Read/Write/Edit tools.
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Form, Router,
+    Json, Router,
 };
 use parking_lot::Mutex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::process::Command as TokioCommand;
+use tokio::sync::{oneshot, Mutex as TokioMutex};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+
+// ---------------------------------------------------------------------------
+// Tauri state — wraps the running server.
+// ---------------------------------------------------------------------------
 
 #[derive(Default)]
 pub struct IntakeState {
     inner: Mutex<Option<RunningServer>>,
     // Serializes the entire start/stop lifecycle so a concurrent
-    // `intake_start` can't slip into the window between this call's
-    // stop_inner and its store. Without this, two concurrent calls
-    // can both bind a server, both spawn a task, and then race to
-    // store — whichever loses the store leaks its server task with
-    // no shutdown handle. tokio::sync::Mutex is async-aware and
-    // safe to hold across awaits (parking_lot::Mutex is not).
-    cmd_lock: tokio::sync::Mutex<()>,
+    // `intake_start` can't slip between this call's stop_inner and its
+    // store. tokio::sync::Mutex is async-aware (parking_lot::Mutex is
+    // not — can't hold across awaits).
+    cmd_lock: TokioMutex<()>,
 }
 
 struct RunningServer {
@@ -55,23 +62,61 @@ struct RunningServer {
     handle: JoinHandle<()>,
 }
 
+// ---------------------------------------------------------------------------
+// HTTP server state — shared across handlers.
+// ---------------------------------------------------------------------------
+
+/// One chat session — held in-memory by the server. Lost on restart;
+/// disk under `databases/conversations/<ticketId>/` is canonical for
+/// the actual conversation. The session map is just a fast-path so
+/// each turn doesn't re-read disk for context.
+#[derive(Clone)]
+struct SessionData {
+    ticket_id: String,
+    /// Email captured from the gate form before chat starts. Always
+    /// present (validated at /chat/start). Passed to the agent on
+    /// every turn so it doesn't have to ask.
+    email: String,
+    history: Vec<ChatMessage>,
+    /// Unix-seconds wall-clock timestamp of the last chat_start /
+    /// chat_turn / chat_poll touching this session. Used by the LRU
+    /// eviction in `evict_idle_sessions` to bound memory growth.
+    last_seen_unix: u64,
+}
+
+/// Sessions idle longer than this are dropped from the in-memory map.
+/// Picked to be longer than a typical helpdesk back-and-forth (so an
+/// admin reply hours later still hits a live session) but short enough
+/// that abandoned tabs don't accumulate forever. Disk state survives
+/// eviction — a /chat/start with a never-expiring email simply makes
+/// a new session id.
+const SESSION_IDLE_TTL_SECS: u64 = 60 * 60 * 6; // 6 hours
+/// Hard cap. Even within TTL, if more than this many sessions exist
+/// we drop the oldest. Defends against burst traffic from a hostile
+/// localhost client repeatedly hitting /chat/start.
+const SESSION_MAX_ENTRIES: usize = 256;
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ChatMessage {
+    /// "user" or "assistant" — matches Claude's role naming.
+    role: String,
+    content: String,
+    timestamp: String,
+}
+
 #[derive(Clone)]
 struct ServerState {
     repo: Arc<PathBuf>,
+    sessions: Arc<TokioMutex<HashMap<String, SessionData>>>,
 }
 
-#[derive(Deserialize)]
-struct TicketForm {
-    name: Option<String>,
-    email: Option<String>,
-    question: String,
-}
+// ---------------------------------------------------------------------------
+// Tauri commands — start / stop / read URL.
+// ---------------------------------------------------------------------------
 
-/// Start the intake server bound to a fresh OS-assigned localhost port,
-/// scoped to `repo`. If a server is already running, stop it first
-/// (simulating project switch).
-///
-/// Returns the URL clients should use (e.g. `http://127.0.0.1:54123`).
+/// Start the intake server bound to a fresh OS-assigned localhost
+/// port, scoped to `repo`. Returns the base URL (e.g.
+/// `http://127.0.0.1:54123`).
 #[tauri::command]
 pub async fn intake_start(
     state: tauri::State<'_, IntakeState>,
@@ -82,12 +127,7 @@ pub async fn intake_start(
         return Err(format!("intake_start: not a directory: {}", repo));
     }
 
-    // Hold the command lock for the whole start sequence so a
-    // concurrent invocation can't slip between our stop and store.
     let _cmd_guard = state.cmd_lock.lock().await;
-
-    // Stop any existing server before starting a new one. Awaits the
-    // join handle so the previous task fully exits before we bind.
     stop_inner(&state).await;
 
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -123,12 +163,6 @@ pub async fn intake_start(
 
 #[tauri::command]
 pub async fn intake_stop(state: tauri::State<'_, IntakeState>) -> Result<(), String> {
-    // Same cmd_lock as intake_start so a stop arriving mid-start
-    // waits for the start to finish before tearing down. Otherwise
-    // a stop could complete on `state == None` (between start's
-    // stop_inner and store) and the start would still proceed to
-    // store its newly-bound server, leaving us "running" after the
-    // user requested stop.
     let _cmd_guard = state.cmd_lock.lock().await;
     stop_inner(&state).await;
     Ok(())
@@ -141,8 +175,6 @@ pub fn intake_url(state: tauri::State<'_, IntakeState>) -> Option<String> {
 }
 
 async fn stop_inner(state: &tauri::State<'_, IntakeState>) {
-    // Pull the running server out of the lock before awaiting — holding
-    // a parking_lot mutex across `.await` would deadlock the runtime.
     let running = {
         let mut guard = state.inner.lock();
         guard.take()
@@ -155,171 +187,665 @@ async fn stop_inner(state: &tauri::State<'_, IntakeState>) {
     }
 }
 
-/// Build the axum router for a given repo. Factored out of
-/// `intake_start` so the tests can drive the same routes through a
-/// real TCP listener without going through Tauri state.
+// ---------------------------------------------------------------------------
+// Router — chat routes only. Form path was dropped: chat IS the intake.
+// ---------------------------------------------------------------------------
+
 fn build_router(repo: PathBuf) -> Router {
+    let state = ServerState {
+        repo: Arc::new(repo),
+        sessions: Arc::new(TokioMutex::new(HashMap::new())),
+    };
     Router::new()
-        .route("/", get(serve_form))
-        .route("/ticket", post(handle_post))
-        .with_state(ServerState {
-            repo: Arc::new(repo),
-        })
+        .route("/", get(serve_chat))
+        .route("/chat", get(serve_chat))
+        .route("/chat/start", post(chat_start))
+        .route("/chat/turn", post(chat_turn))
+        .route("/chat/poll", get(chat_poll))
+        .with_state(state)
 }
 
-async fn serve_form() -> Html<&'static str> {
-    Html(FORM_HTML)
+async fn serve_chat() -> Html<&'static str> {
+    Html(CHAT_HTML)
 }
 
-async fn handle_post(
+// ---------------------------------------------------------------------------
+// /chat/start — allocate session + ticketId.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ChatStartReq {
+    email: String,
+}
+
+#[derive(Serialize)]
+struct ChatStartResp {
+    session_id: String,
+    ticket_id: String,
+}
+
+async fn chat_start(
     State(state): State<ServerState>,
     headers: HeaderMap,
-    Form(form): Form<TicketForm>,
+    Json(req): Json<ChatStartReq>,
 ) -> Response {
-    // CSRF: the form is served on http://127.0.0.1:<port> and the only
-    // legitimate caller is that same origin. A malicious cross-origin
-    // site that discovers the port can fire a CORS-simple POST without
-    // preflight; reject it by requiring Origin's host to be a localhost
-    // alias. We don't pin the port — it's OS-assigned per launch — and
-    // the host-only check is enough to defeat the attacker scenario
-    // because any attacker origin lives at a different hostname.
     if !origin_is_localhost(&headers) {
-        return (StatusCode::FORBIDDEN, "cross-origin requests are not allowed")
-            .into_response();
+        return (StatusCode::FORBIDDEN, "cross-origin not allowed").into_response();
+    }
+    let email = req.email.trim();
+    if email.is_empty() || !email.contains('@') {
+        return (StatusCode::BAD_REQUEST, "a valid email is required").into_response();
     }
 
-    let trimmed_question = form.question.trim();
-    if trimmed_question.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "question is required",
+    let session_id = Uuid::new_v4().to_string();
+    // Pre-allocate ticket id at session start. The skill uses it on
+    // first commit; if the session never commits a ticket, the id is
+    // simply unused. Format mirrors the rest of the system: ISO
+    // timestamp + 4-char random suffix, filesystem-safe.
+    let ticket_id = generate_ticket_id();
+
+    let mut sessions = state.sessions.lock().await;
+    evict_idle_sessions(&mut sessions);
+    sessions.insert(
+        session_id.clone(),
+        SessionData {
+            ticket_id: ticket_id.clone(),
+            email: email.to_string(),
+            history: Vec::new(),
+            last_seen_unix: unix_now_secs(),
+        },
+    );
+
+    Json(ChatStartResp {
+        session_id,
+        ticket_id,
+    })
+    .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// /chat/turn — per-turn agent invocation via `claude -p`.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ChatTurnReq {
+    session_id: String,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct ChatTurnResp {
+    reply: String,
+    /// Current ticket status read from disk after the turn (or
+    /// "no-ticket" if the agent hasn't committed one yet for this
+    /// session). Drives the chat UI's "agent escalated" / "agent is
+    /// still gathering" state.
+    status: String,
+    /// ISO-8601 timestamp the client should use as `since` for
+    /// subsequent /chat/poll calls.
+    polled_at: String,
+}
+
+async fn chat_turn(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Json(req): Json<ChatTurnReq>,
+) -> Response {
+    if !origin_is_localhost(&headers) {
+        return (StatusCode::FORBIDDEN, "cross-origin not allowed").into_response();
+    }
+    let trimmed = req.message.trim();
+    if trimmed.is_empty() {
+        return (StatusCode::BAD_REQUEST, "message is required").into_response();
+    }
+
+    // Snapshot the session for this turn. Done with the lock held;
+    // released before we spawn `claude -p` (which can take seconds).
+    // Also bump `last_seen_unix` so the LRU eviction doesn't drop an
+    // active session.
+    let (ticket_id, email, history_before, repo) = {
+        let mut sessions = state.sessions.lock().await;
+        let Some(session) = sessions.get_mut(&req.session_id) else {
+            return (StatusCode::NOT_FOUND, "unknown session").into_response();
+        };
+        session.last_seen_unix = unix_now_secs();
+        (
+            session.ticket_id.clone(),
+            session.email.clone(),
+            session.history.clone(),
+            state.repo.clone(),
         )
-            .into_response();
-    }
-
-    // Email is required. Server-side check mirrors the form's HTML5
-    // `required` + `type="email"` so a curl/script bypass still gets
-    // the same answer the browser would.
-    let email = form
-        .email
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty() && s.contains('@'));
-    let Some(email) = email else {
-        return (StatusCode::BAD_REQUEST, "a valid email is required")
-            .into_response();
     };
 
-    // Asker label = email (always present after validation above).
-    let asker = email.clone();
+    // Mark the ticket `agent-responding` so the OpenIT admin's
+    // activity banner fires immediately (before claude -p has had
+    // a chance to write anything). On the first turn the ticket
+    // file may not exist yet — write a minimal stub with the
+    // user's message as the description. The skill will fill in
+    // any remaining fields when it writes the full row.
+    let _ = ensure_responding_stub(&repo, &ticket_id, &email, trimmed).await;
 
-    // Subject = first line of the question, capped at 80 chars.
-    let subject = first_line_truncated(trimmed_question, 80);
+    // Append the user's message to the in-memory history before
+    // invoking the agent so the prompt contains it.
+    let user_msg = ChatMessage {
+        role: "user".to_string(),
+        content: trimmed.to_string(),
+        timestamp: now_iso(),
+    };
+    let mut history = history_before;
+    history.push(user_msg);
 
-    let now = chrono_iso8601_now();
-    // Ticket id = ISO timestamp + short random suffix. Filesystem-safe
-    // (colons replaced with dashes) and datetime-readable. Lex-sortable
-    // ascending = oldest-first; the explorer reverses these for the
-    // tickets/conversations dirs so the user sees newest-first.
-    // Format: `2026-04-27T04-42-05Z-x9q1`. Doubles as the conversation
-    // subfolder name so all turns for a thread live together.
-    let rand4: String = Uuid::new_v4()
-        .simple()
-        .to_string()
-        .chars()
-        .take(4)
-        .collect();
-    let id = format!("{}-{}", now.replace(':', "-"), rand4);
+    // Read the agent's persona + selected model from agents/triage.json.
+    let (agent_instructions, model) = load_triage_agent(&repo).await;
 
-    let row = serde_json::json!({
-        "subject": subject,
-        "description": trimmed_question,
-        "asker": asker,
-        "askerChannel": "web",
-        "status": "incoming",
-        "priority": "normal",
-        "tags": [],
-        "createdAt": now,
-        "updatedAt": now,
-    });
+    // Build the prompt and run claude -p. This is the slow part
+    // (~3-5s per turn). The skill is auto-loaded by Claude based on
+    // the cwd's .claude/skills/ directory.
+    let prompt = build_chat_prompt(&agent_instructions, &history, &ticket_id, &email);
+    let reply_result = spawn_claude_chat(&repo, &model, &prompt).await;
 
-    // Tickets land in `databases/tickets/`. Slug-free dir names match
-    // the bundled-schema convention and stay stable across local/cloud
-    // modes (the cloud sync engine maps to `tickets-<orgId>` at push
-    // time).
-    let tickets_dir = state.repo.join("databases").join("tickets");
-    if let Err(e) = tokio::fs::create_dir_all(&tickets_dir).await {
-        eprintln!("[intake] mkdir {} failed: {}", tickets_dir.display(), e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "could not create ticket directory")
-            .into_response();
-    }
-
-    let path = tickets_dir.join(format!("{}.json", id));
-    let json = match serde_json::to_string_pretty(&row) {
-        Ok(s) => s,
+    let reply = match reply_result {
+        Ok(out) => out,
         Err(e) => {
-            eprintln!("[intake] serialize failed: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "could not serialize ticket")
+            eprintln!("[intake/chat] claude -p failed: {}", e);
+            // Best-effort: if we marked the ticket agent-responding,
+            // flip it back to escalated so the admin notices something
+            // went wrong rather than the ticket being stuck pretending
+            // to type.
+            let _ = mark_status(&repo, &ticket_id, "escalated").await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("agent error: {}", e),
+            )
                 .into_response();
         }
     };
-    if let Err(e) = tokio::fs::write(&path, json).await {
-        eprintln!("[intake] write {} failed: {}", path.display(), e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "could not write ticket file")
-            .into_response();
-    }
 
-    // Write the asker's first conversation turn into the thread
-    // subfolder. Doing this here (not in triage) means the chat-thread
-    // viewer is correct from the moment the form is submitted — no
-    // dependency on the LLM running before the asker turn exists.
-    if let Err(e) = write_first_conversation_turn(
-        &state.repo,
-        &id,
-        &asker,
-        trimmed_question,
-        &now,
-    )
-    .await
-    {
-        eprintln!("[intake] first turn write failed (non-fatal): {}", e);
-    }
+    // Parse the agent's status marker out of stdout. Contract: the
+    // agent's last non-empty line is `<<STATUS:resolved>>` /
+    // `<<STATUS:escalated>>` / `<<STATUS:clarifying>>`. Server strips
+    // the marker before writing the reply turn, and uses it as the
+    // authoritative status decision (no more agent free-Edit'ing the
+    // ticket status field, which raced against `ensure_responding_stub`
+    // and the post-turn safety net). Missing marker → escalated, so
+    // a malformed agent run still surfaces to the admin.
+    let (reply_body, decided_status) = parse_status_marker(&reply);
 
-    // Also create a people row idempotently. Email is required (checked
-    // above), so this always runs.
+    // Persist the assistant reply to the in-memory history.
     {
-        if let Err(e) = ensure_people_row(
-            &state.repo,
-            &email,
-            form.name.as_deref().unwrap_or("").trim(),
-            &now,
-        )
-        .await
-        {
-            eprintln!("[intake] people row write failed (non-fatal): {}", e);
+        let mut sessions = state.sessions.lock().await;
+        if let Some(session) = sessions.get_mut(&req.session_id) {
+            session.history = history;
+            session.history.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: reply_body.clone(),
+                timestamp: now_iso(),
+            });
         }
     }
 
-    Html(success_page(&id)).into_response()
+    // Write the agent's reply turn to disk deterministically. The
+    // skill is told not to write conversation turns — only emit the
+    // status marker — so the server controls sender + role + body.
+    let _ = write_agent_turn(&repo, &ticket_id, &reply_body).await;
+
+    // Apply the agent's decision. `Clarifying` is a no-op: the ticket
+    // is already at `agent-responding` (set by ensure_responding_stub
+    // at the top of this turn) and we want it to stay there until a
+    // future turn decides resolved/escalated.
+    match decided_status {
+        DecidedStatus::Resolved => {
+            let _ = mark_status(&repo, &ticket_id, "resolved").await;
+        }
+        DecidedStatus::Escalated => {
+            let _ = mark_status(&repo, &ticket_id, "escalated").await;
+        }
+        DecidedStatus::Clarifying => {}
+    }
+
+    // Read status from disk for the response payload.
+    let status = read_ticket_status(&repo, &ticket_id)
+        .await
+        .unwrap_or_else(|| "no-ticket".to_string());
+
+    // The polled_at returned to the client must be just before the
+    // turns we wrote, so the next /chat/poll's `since` filter doesn't
+    // skip same-second turns. With second-precision ISO timestamps
+    // and a `<` filter, returning a timestamp < (asker_turn_ts,
+    // agent_turn_ts) keeps both visible to subsequent polls (the
+    // client's seenTurnKeys de-dupes anything already rendered).
+    let polled_at = iso_one_second_ago();
+
+    Json(ChatTurnResp {
+        reply: reply_body,
+        status,
+        polled_at,
+    })
+    .into_response()
 }
 
-/// Write the asker's opening message into
-/// `databases/conversations/<ticketId>/msg-<unix-ms>-<rand>.json`.
-/// Done at intake time (not triage time) so the chat-thread viewer
-/// always has the asker's first turn — no dependency on Claude
-/// running before the user opens the thread.
-async fn write_first_conversation_turn(
-    repo: &std::path::Path,
-    ticket_id: &str,
-    sender: &str,
-    body: &str,
-    now: &str,
-) -> Result<(), String> {
-    let dir = repo.join("databases").join("conversations").join(ticket_id);
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|e| format!("mkdir conversations/<id>: {}", e))?;
+// ---------------------------------------------------------------------------
+// /chat/poll — return any new turns from disk since `since`.
+// Used by the chat UI to surface admin replies after the agent
+// escalates.
+// ---------------------------------------------------------------------------
 
+#[derive(Deserialize)]
+struct ChatPollQuery {
+    session_id: String,
+    since: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ChatPollResp {
+    turns: Vec<PolledTurn>,
+    polled_at: String,
+    status: String,
+}
+
+#[derive(Serialize)]
+struct PolledTurn {
+    role: String,
+    sender: String,
+    body: String,
+    timestamp: String,
+}
+
+async fn chat_poll(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+    Query(q): Query<ChatPollQuery>,
+) -> Response {
+    if !origin_is_localhost(&headers) {
+        return (StatusCode::FORBIDDEN, "cross-origin not allowed").into_response();
+    }
+    let ticket_id = {
+        let mut sessions = state.sessions.lock().await;
+        match sessions.get_mut(&q.session_id) {
+            Some(s) => {
+                s.last_seen_unix = unix_now_secs();
+                s.ticket_id.clone()
+            }
+            None => return (StatusCode::NOT_FOUND, "unknown session").into_response(),
+        }
+    };
+
+    let since = q.since.unwrap_or_default();
+    let dir = state
+        .repo
+        .join("databases")
+        .join("conversations")
+        .join(&ticket_id);
+
+    let mut turns = Vec::new();
+    if let Ok(mut entries) = tokio::fs::read_dir(&dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            // Skip conflict shadows (cloud-mode artifact).
+            if path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|n| n.contains(".server."))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let Ok(raw) = tokio::fs::read_to_string(&path).await else {
+                continue;
+            };
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                continue;
+            };
+            let timestamp = parsed
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            // Strict `<` (not `<=`) so same-second turns aren't dropped.
+            // Timestamps are ISO with second precision, and an admin
+            // reply written in the same wall-clock second as the agent
+            // reply must still be visible. Client de-dupes via the
+            // (timestamp, role, body) key in `seenTurnKeys`.
+            if !since.is_empty() && timestamp < since {
+                continue;
+            }
+            turns.push(PolledTurn {
+                role: parsed
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("agent")
+                    .to_string(),
+                sender: parsed
+                    .get("sender")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                body: parsed
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                timestamp,
+            });
+        }
+    }
+    turns.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+    let status = read_ticket_status(&state.repo, &ticket_id)
+        .await
+        .unwrap_or_else(|| "no-ticket".to_string());
+
+    Json(ChatPollResp {
+        turns,
+        polled_at: now_iso(),
+        status,
+    })
+    .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Helpers — agent invocation, ticket file operations.
+// ---------------------------------------------------------------------------
+
+/// Read `agents/triage.json` for the persona instructions + selected
+/// model. Falls back to safe defaults if the file is missing or
+/// malformed (rare — the bundled-skills sync writes it on first run).
+async fn load_triage_agent(repo: &Path) -> (String, String) {
+    let path = repo.join("agents").join("triage.json");
+    let raw = match tokio::fs::read_to_string(&path).await {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                "You are a helpdesk triage agent.".to_string(),
+                "sonnet".to_string(),
+            )
+        }
+    };
+    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                "You are a helpdesk triage agent.".to_string(),
+                "sonnet".to_string(),
+            )
+        }
+    };
+    let instructions = parsed
+        .get("instructions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("You are a helpdesk triage agent.")
+        .to_string();
+    let model = parsed
+        .get("selectedModel")
+        .and_then(|v| v.as_str())
+        .unwrap_or("sonnet")
+        .to_string();
+    (instructions, model)
+}
+
+/// Compose the prompt for `claude -p`. Format: agent persona, then
+/// the operational context (ticket id, asker email, skill hint),
+/// then the conversation history rendered as USER/ASSISTANT lines.
+fn build_chat_prompt(
+    persona: &str,
+    history: &[ChatMessage],
+    ticket_id: &str,
+    asker_email: &str,
+) -> String {
+    let mut prompt = String::new();
+    prompt.push_str(persona);
+    prompt.push_str("\n\n");
+    prompt.push_str(
+        "Operational context: You are running inside a chat-intake \
+         turn. Use the `intake-chat` skill at `.claude/skills/intake-chat/SKILL.md` \
+         for the file paths and field conventions. Use \
+         `Bash node .claude/scripts/kb-search.mjs \"<query>\"` to find \
+         relevant knowledge-base articles.\n\n",
+    );
+    prompt.push_str(&format!(
+        "The asker's email is `{}` — captured in the gate form before \
+         this chat started. You already have it; do NOT ask the user \
+         for it again. Use this email as the `asker` and `sender` \
+         field on the ticket and on conversation turns from the \
+         asker, and as the key for the people row.\n\n",
+        asker_email
+    ));
+    prompt.push_str(&format!(
+        "The ticket id for this conversation is `{}`. Always use this \
+         exact id when writing the ticket file at \
+         `databases/tickets/<ticketId>.json`, the conversation \
+         subfolder at `databases/conversations/<ticketId>/`, and as the \
+         `ticketId` field on every conversation row. Do NOT create a \
+         second ticket id for this session.\n\n",
+        ticket_id
+    ));
+    prompt.push_str("Conversation so far:\n");
+    for msg in history {
+        let label = if msg.role == "user" {
+            "USER"
+        } else {
+            "ASSISTANT"
+        };
+        prompt.push_str(&format!("{}: {}\n", label, msg.content));
+    }
+    prompt.push_str(
+        "\nIMPORTANT: Do NOT write any conversation turn files (no \
+         msg-*.json under databases/conversations/). The server \
+         already wrote the asker's turn before invoking you, and the \
+         server will write your agent reply turn after you finish \
+         using your stdout as the body. If you write a turn yourself \
+         it WILL appear duplicated in the admin UI.\n\n\
+         Also do NOT Edit the ticket's `status` field — the server \
+         sets it based on the marker you emit (see below), so an \
+         agent-side Edit will race against the server and may be \
+         clobbered.\n\n\
+         Your job: (1) read the ticket + conversation history for \
+         context, (2) run kb-search if the message warrants it, (3) \
+         decide one of `resolved` (confident answer, KB hit), \
+         `escalated` (KB miss or needs a human), or `clarifying` \
+         (you're asking the user for more info before deciding), \
+         (4) output your reply to the user, then (5) end with a \
+         status marker on its own line: `<<STATUS:resolved>>`, \
+         `<<STATUS:escalated>>`, or `<<STATUS:clarifying>>`.\n\n\
+         The reply is what the user sees in the chat — conversational, \
+         no file paths, no status narration, no meta-commentary. The \
+         server strips the marker line before writing the turn. \
+         Missing or malformed marker → defaults to escalated, so the \
+         admin still sees the ticket.",
+    );
+    prompt
+}
+
+/// Spawn `claude -p` with the prompt on stdin. Returns the trimmed
+/// stdout as the agent's reply. Stderr is captured but not surfaced
+/// to the user (logged for forensics).
+///
+/// Resolves the `claude` binary via `which` because Tauri-spawned
+/// subprocesses don't always inherit the user's full shell PATH —
+/// dev mode and .app launches may only see `/usr/bin:/bin`. Same
+/// pattern as `claude_generate_commit_message`.
+async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<String, String> {
+    let claude_path = which::which("claude")
+        .map_err(|_| "Claude CLI not found on PATH. Install claude (see https://docs.anthropic.com/claude/docs/claude-code) and ensure it's reachable from this app.".to_string())?;
+    // `--permission-mode bypassPermissions` so the headless run can
+    // Write/Edit ticket+conversation files and Bash the kb-search
+    // script without prompting. Safe in this context — scope is the
+    // user's own repo, the skill is OpenIT-bundled, and the only
+    // shell command is the local kb-search.mjs.
+    // `kill_on_drop(true)` so a timeout (or any early-return below)
+    // reaps the subprocess instead of leaving an orphaned `claude`
+    // running with the user's prompt.
+    let mut child = TokioCommand::new(&claude_path)
+        .arg("-p")
+        .arg("--output-format")
+        .arg("text")
+        .arg("--permission-mode")
+        .arg("bypassPermissions")
+        .arg("--model")
+        .arg(model)
+        .current_dir(repo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("spawn claude: {}", e))?;
+
+    {
+        let stdin = child.stdin.as_mut().ok_or("no stdin handle")?;
+        stdin
+            .write_all(prompt.as_bytes())
+            .await
+            .map_err(|e| format!("write stdin: {}", e))?;
+        stdin.flush().await.ok();
+    }
+
+    // Bound the subprocess lifetime. A hung `claude` (model stall,
+    // network blip, stuck stdin) would otherwise pin the ticket at
+    // `agent-responding` forever and tie up the request indefinitely.
+    // 90s covers a long-but-normal agent turn (KB read + reasoning);
+    // anything past that the admin should handle, and the caller
+    // surfaces the timeout as an escalation so the user isn't blocked.
+    const CLAUDE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+    let output = match tokio::time::timeout(CLAUDE_TIMEOUT, child.wait_with_output()).await {
+        Ok(Ok(out)) => out,
+        Ok(Err(e)) => return Err(format!("wait claude: {}", e)),
+        Err(_) => {
+            return Err(format!(
+                "claude -p timed out after {}s",
+                CLAUDE_TIMEOUT.as_secs()
+            ));
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "claude exited {} — stderr: {}",
+            output.status, stderr
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return Err("claude returned empty output".to_string());
+    }
+    Ok(stdout)
+}
+
+/// Read `databases/tickets/<ticket_id>.json` and return the `status`
+/// field. Returns None if the file doesn't exist (agent hasn't
+/// committed a ticket yet) or can't be parsed.
+async fn read_ticket_status(repo: &Path, ticket_id: &str) -> Option<String> {
+    let path = repo
+        .join("databases")
+        .join("tickets")
+        .join(format!("{}.json", ticket_id));
+    let raw = tokio::fs::read_to_string(&path).await.ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    parsed
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Set the ticket's status field. Used to flip to `agent-responding`
+/// before invoking claude -p (so the activity banner shows) and to
+/// flip back to `escalated` if claude errors out. No-op if the ticket
+/// file doesn't exist yet.
+async fn mark_status(repo: &Path, ticket_id: &str, status: &str) -> Result<(), String> {
+    let path = repo
+        .join("databases")
+        .join("tickets")
+        .join(format!("{}.json", ticket_id));
+    let raw = match tokio::fs::read_to_string(&path).await {
+        Ok(s) => s,
+        Err(_) => return Ok(()), // ticket doesn't exist yet — fine
+    };
+    let mut parsed: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("parse ticket: {}", e))?;
+    if let Some(obj) = parsed.as_object_mut() {
+        obj.insert(
+            "status".to_string(),
+            serde_json::Value::String(status.to_string()),
+        );
+        obj.insert(
+            "updatedAt".to_string(),
+            serde_json::Value::String(now_iso()),
+        );
+    }
+    let json =
+        serde_json::to_string_pretty(&parsed).map_err(|e| format!("serialize ticket: {}", e))?;
+    tokio::fs::write(&path, json)
+        .await
+        .map_err(|e| format!("write ticket: {}", e))?;
+    Ok(())
+}
+
+/// Ensure the ticket + asker turn + people row exist, marked
+/// `agent-responding`. Same writes the old form-intake handler did,
+/// reused for every chat turn so the admin sees activity from the
+/// moment the user hits Send. Idempotent: on subsequent turns the
+/// ticket already exists, so we only flip status + append a new
+/// asker turn, and update the ticket's `updatedAt` field.
+async fn ensure_responding_stub(
+    repo: &Path,
+    ticket_id: &str,
+    email: &str,
+    user_message: &str,
+) -> Result<(), String> {
+    let now = now_iso();
+    let ticket_path = repo
+        .join("databases")
+        .join("tickets")
+        .join(format!("{}.json", ticket_id));
+
+    // First turn: write the ticket fresh.
+    if !ticket_path.exists() {
+        let subject = first_line_truncated(user_message, 80);
+        let row = serde_json::json!({
+            "subject": subject,
+            "description": user_message,
+            "asker": email,
+            "askerChannel": "chat",
+            "status": "agent-responding",
+            "priority": "normal",
+            "tags": [],
+            "createdAt": now,
+            "updatedAt": now,
+        });
+        let json =
+            serde_json::to_string_pretty(&row).map_err(|e| format!("serialize ticket: {}", e))?;
+        if let Some(parent) = ticket_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| format!("mkdir tickets: {}", e))?;
+        }
+        tokio::fs::write(&ticket_path, json)
+            .await
+            .map_err(|e| format!("write ticket: {}", e))?;
+    } else {
+        // Subsequent turn: flip status + bump updatedAt — UNLESS the
+        // ticket is in a terminal state (resolved / closed). The skill's
+        // idempotency rule says terminal-state follow-ups should remain
+        // a conversational moment, not silently reopen the case. The
+        // agent will still get the new asker turn in its prompt and can
+        // explicitly re-escalate via its STATUS marker if warranted.
+        let current = read_ticket_status(repo, ticket_id).await;
+        let terminal = matches!(current.as_deref(), Some("resolved") | Some("closed"));
+        if !terminal {
+            let _ = mark_status(repo, ticket_id, "agent-responding").await;
+        }
+    }
+
+    // Append the asker's turn for this message.
+    let conv_dir = repo.join("databases").join("conversations").join(ticket_id);
+    tokio::fs::create_dir_all(&conv_dir)
+        .await
+        .map_err(|e| format!("mkdir conv: {}", e))?;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -331,35 +857,199 @@ async fn write_first_conversation_turn(
         .take(4)
         .collect();
     let msg_id = format!("msg-{}-{}", now_ms, rand4);
-
-    let row = serde_json::json!({
+    let msg = serde_json::json!({
         "id": msg_id,
         "ticketId": ticket_id,
         "role": "asker",
-        "sender": sender,
+        "sender": email,
         "timestamp": now,
-        "body": body,
+        "body": user_message,
     });
-    let json = serde_json::to_string_pretty(&row)
-        .map_err(|e| format!("serialize first turn: {}", e))?;
-    let path = dir.join(format!("{}.json", msg_id));
-    tokio::fs::write(&path, json)
+    let msg_json =
+        serde_json::to_string_pretty(&msg).map_err(|e| format!("serialize asker turn: {}", e))?;
+    let msg_path = conv_dir.join(format!("{}.json", msg_id));
+    tokio::fs::write(&msg_path, msg_json)
         .await
-        .map_err(|e| format!("write first turn: {}", e))?;
+        .map_err(|e| format!("write asker turn: {}", e))?;
+
+    // Idempotent people row.
+    let _ = ensure_people_row(repo, email, &now).await;
     Ok(())
 }
 
-/// Create `databases/people/<sanitized-email>.json` if one doesn't
-/// already exist. Sanitization: lowercase + replace anything outside
-/// `[a-z0-9.-]` with `_`. Idempotent — repeat tickets from the same
-/// email don't create duplicate rows. Returns the path written or
-/// None when a row with that email was already on disk.
-async fn ensure_people_row(
-    repo: &std::path::Path,
-    email: &str,
-    name: &str,
-    now: &str,
-) -> Result<(), String> {
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Drop sessions older than `SESSION_IDLE_TTL_SECS`, then trim back
+/// to `SESSION_MAX_ENTRIES` by oldest-first if we're still over the
+/// cap. Called from /chat/start under the sessions lock.
+fn evict_idle_sessions(sessions: &mut HashMap<String, SessionData>) {
+    let now = unix_now_secs();
+    sessions.retain(|_, s| now.saturating_sub(s.last_seen_unix) < SESSION_IDLE_TTL_SECS);
+    if sessions.len() <= SESSION_MAX_ENTRIES {
+        return;
+    }
+    // Sort entries by last_seen ascending and drop the oldest.
+    let mut by_age: Vec<(String, u64)> = sessions
+        .iter()
+        .map(|(k, v)| (k.clone(), v.last_seen_unix))
+        .collect();
+    by_age.sort_by_key(|(_, ls)| *ls);
+    let drop_count = sessions.len() - SESSION_MAX_ENTRIES;
+    for (k, _) in by_age.into_iter().take(drop_count) {
+        sessions.remove(&k);
+    }
+}
+
+/// The agent's per-turn status decision, parsed out of stdout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DecidedStatus {
+    /// KB hit — the agent answered confidently.
+    Resolved,
+    /// KB miss / can't help — admin needs to respond.
+    Escalated,
+    /// Agent asked for more info; ticket stays at agent-responding.
+    Clarifying,
+}
+
+/// Parse the agent's status marker out of its stdout. Contract:
+/// the marker is `<<STATUS:resolved>>` / `<<STATUS:escalated>>` /
+/// `<<STATUS:clarifying>>` somewhere in the output (typically last
+/// line). Returns the body with ALL marker spans stripped, plus the
+/// status from the LAST marker (the agent's final decision wins).
+/// Missing or unrecognized marker → Escalated, so the admin always
+/// gets visibility on a malformed agent run.
+fn parse_status_marker(raw: &str) -> (String, DecidedStatus) {
+    let spans = regex_lite_find_all(raw);
+    if spans.is_empty() {
+        return (raw.trim().to_string(), DecidedStatus::Escalated);
+    }
+    // Stitch together the body with each marker span removed.
+    let mut body = String::with_capacity(raw.len());
+    let mut cursor = 0usize;
+    for (_, start, end) in &spans {
+        body.push_str(&raw[cursor..*start]);
+        cursor = *end;
+    }
+    body.push_str(&raw[cursor..]);
+    let final_status = spans
+        .last()
+        .map(|(s, _, _)| *s)
+        .unwrap_or(DecidedStatus::Escalated);
+    (body.trim().to_string(), final_status)
+}
+
+/// Tiny hand-rolled scanner for `<<STATUS:xxx>>` so we don't pull in
+/// the `regex` crate just for this. Returns (status, start, end) for
+/// every recognized marker in `s`, in order. Tolerates surrounding
+/// whitespace inside the marker (e.g. `<<STATUS: resolved >>`).
+fn regex_lite_find_all(s: &str) -> Vec<(DecidedStatus, usize, usize)> {
+    let needle_open = "<<STATUS:";
+    let needle_close = ">>";
+    let mut found: Vec<(DecidedStatus, usize, usize)> = Vec::new();
+    let mut search_from = 0;
+    while let Some(rel_open) = s[search_from..].find(needle_open) {
+        let open = search_from + rel_open;
+        let after_open = open + needle_open.len();
+        let Some(rel_close) = s[after_open..].find(needle_close) else {
+            break;
+        };
+        let close = after_open + rel_close;
+        let value = s[after_open..close].trim().to_ascii_lowercase();
+        let status = match value.as_str() {
+            "resolved" => Some(DecidedStatus::Resolved),
+            "escalated" => Some(DecidedStatus::Escalated),
+            "clarifying" => Some(DecidedStatus::Clarifying),
+            _ => None,
+        };
+        if let Some(st) = status {
+            // Consume a trailing newline so the stripped body doesn't
+            // leave a dangling blank line.
+            let mut end = close + needle_close.len();
+            if s.as_bytes().get(end) == Some(&b'\n') {
+                end += 1;
+            }
+            // And consume a leading newline so we don't leave a blank
+            // line where the marker was.
+            let mut start = open;
+            if start > 0 && s.as_bytes()[start - 1] == b'\n' {
+                start -= 1;
+            }
+            found.push((st, start, end));
+        }
+        search_from = close + needle_close.len();
+    }
+    found
+}
+
+/// ISO-8601 UTC timestamp ~1 second before now, used as the polled_at
+/// returned to the chat client so subsequent /chat/poll's `since`
+/// filter doesn't drop turns whose timestamp is the same wall-clock
+/// second as the response. Client de-dupes via seenTurnKeys.
+fn iso_one_second_ago() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().saturating_sub(1))
+        .unwrap_or(0);
+    let (y, mo, d, h, mi, s) = unix_to_ymdhms(secs as i64);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, h, mi, s)
+}
+
+/// Write the agent's reply turn to
+/// `databases/conversations/<ticket_id>/msg-*.json`. Sender is
+/// hardcoded to `triage` so the admin sees a stable label instead
+/// of whatever the agent decides to call itself.
+async fn write_agent_turn(repo: &Path, ticket_id: &str, body: &str) -> Result<(), String> {
+    let conv_dir = repo.join("databases").join("conversations").join(ticket_id);
+    tokio::fs::create_dir_all(&conv_dir)
+        .await
+        .map_err(|e| format!("mkdir conv: {}", e))?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let rand4: String = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(4)
+        .collect();
+    let msg_id = format!("msg-{}-{}", now_ms, rand4);
+    let msg = serde_json::json!({
+        "id": msg_id,
+        "ticketId": ticket_id,
+        "role": "agent",
+        "sender": "triage",
+        "timestamp": now_iso(),
+        "body": body,
+    });
+    let msg_json =
+        serde_json::to_string_pretty(&msg).map_err(|e| format!("serialize agent turn: {}", e))?;
+    let msg_path = conv_dir.join(format!("{}.json", msg_id));
+    tokio::fs::write(&msg_path, msg_json)
+        .await
+        .map_err(|e| format!("write agent turn: {}", e))?;
+    Ok(())
+}
+
+fn first_line_truncated(s: &str, max: usize) -> String {
+    let line = s.lines().next().unwrap_or(s).trim();
+    if line.chars().count() <= max {
+        line.to_string()
+    } else {
+        let mut out: String = line.chars().take(max - 1).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// Idempotent people row at `databases/people/<sanitized-email>.json`.
+/// Skips if a row with the same key already exists.
+async fn ensure_people_row(repo: &std::path::Path, email: &str, now: &str) -> Result<(), String> {
     let people_dir = repo.join("databases").join("people");
     tokio::fs::create_dir_all(&people_dir)
         .await
@@ -370,31 +1060,21 @@ async fn ensure_people_row(
     if tokio::fs::try_exists(&path).await.unwrap_or(false) {
         return Ok(());
     }
-
-    let display_name = if name.is_empty() {
-        email.to_string()
-    } else {
-        name.to_string()
-    };
     let row = serde_json::json!({
-        "displayName": display_name,
+        "displayName": email,
         "email": email,
-        "channels": [format!("web:{}", email)],
+        "channels": [format!("chat:{}", email)],
         "createdAt": now,
         "updatedAt": now,
     });
-    let json = serde_json::to_string_pretty(&row)
-        .map_err(|e| format!("serialize people row: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(&row).map_err(|e| format!("serialize people row: {}", e))?;
     tokio::fs::write(&path, json)
         .await
         .map_err(|e| format!("write people row: {}", e))?;
     Ok(())
 }
 
-/// Convert an email to a filesystem-safe filename. `Alice@Example.com`
-/// → `alice_example.com`. Doesn't preserve uniqueness across all
-/// possible emails (e.g. `a@b.c` and `a_b.c` collide), but for the
-/// realistic email shape it's stable and readable.
 fn sanitize_email_key(email: &str) -> String {
     email
         .to_lowercase()
@@ -409,21 +1089,10 @@ fn sanitize_email_key(email: &str) -> String {
         .collect()
 }
 
-/// Validate the Origin (or, as a fallback, Referer) header against a
-/// localhost-host allowlist. Returns true iff the request looks
-/// same-origin to the OpenIT-bound localhost server.
-///
-/// Both headers are sent by modern browsers on POST. Origin is the
-/// preferred CSRF signal — present on cross-origin POSTs and form
-/// submissions alike. We accept either `127.0.0.1`, `localhost`, or
-/// `[::1]` as a host (browsers may rewrite between them depending on
-/// how the user typed the URL). Port intentionally not checked — the
-/// intake port is OS-assigned and rotates per launch.
-///
-/// If neither header is present, reject. A modern browser always
-/// includes one on a cross-origin POST; absence implies either an
-/// attacker tool (curl, etc.) or an unusual client where we'd rather
-/// be conservative than permissive.
+// ---------------------------------------------------------------------------
+// Origin / CSRF check — same approach as the dropped form route.
+// ---------------------------------------------------------------------------
+
 fn origin_is_localhost(headers: &HeaderMap) -> bool {
     let candidate = headers
         .get("origin")
@@ -433,11 +1102,6 @@ fn origin_is_localhost(headers: &HeaderMap) -> bool {
     let Ok(url) = reqwest::Url::parse(s) else {
         return false;
     };
-    // Use Url::host() — returns a typed Host<&str> enum, which lets us
-    // delegate loopback detection to the stdlib's `is_loopback` instead
-    // of guessing whether `host_str()` returns IPv6 with or without
-    // brackets (it returns "[::1]" — the bracketed form). Stdlib
-    // `is_loopback` covers 127.0.0.0/8 and ::1 correctly.
     match url.host() {
         Some(url::Host::Domain(d)) => d == "localhost",
         Some(url::Host::Ipv4(addr)) => addr.is_loopback(),
@@ -446,48 +1110,49 @@ fn origin_is_localhost(headers: &HeaderMap) -> bool {
     }
 }
 
-fn first_line_truncated(s: &str, max: usize) -> String {
-    let line = s.lines().next().unwrap_or(s).trim();
-    if line.chars().count() <= max {
-        line.to_string()
-    } else {
-        let mut out: String = line.chars().take(max - 1).collect();
-        out.push('…');
-        out
-    }
+// ---------------------------------------------------------------------------
+// Misc helpers — id + timestamp.
+// ---------------------------------------------------------------------------
+
+/// Generate a ticket id matching the system convention:
+/// `<isoTimestamp-with-dashes>-<rand4>`. Filesystem-safe, lex-sortable,
+/// datetime-readable.
+fn generate_ticket_id() -> String {
+    let rand4: String = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(4)
+        .collect();
+    format!("{}-{}", now_iso().replace(':', "-"), rand4)
 }
 
-/// Minimal RFC-3339 "now" without pulling in chrono. Tauri builds already
-/// rely on system time being correct; format `YYYY-MM-DDTHH:MM:SSZ` (no
-/// sub-second precision, UTC).
-fn chrono_iso8601_now() -> String {
+/// Minimal RFC-3339 "now" without pulling chrono. Same algorithm as
+/// the prior implementation; ported here so the chat path is
+/// self-contained.
+fn now_iso() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    // Days from 1970-01-01 to compute Y-M-D using the proleptic
-    // Gregorian calendar. Hand-rolled — small, no deps. Good enough
-    // for ticket timestamps; anything that needs more precision uses
-    // its own clock.
     let (y, mo, d, h, mi, s) = unix_to_ymdhms(secs);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, mo, d, h, mi, s
-    )
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, h, mi, s)
 }
 
 fn unix_to_ymdhms(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
-    let days = secs.div_euclid(86_400) as i64;
+    let days = secs.div_euclid(86_400);
     let mut s_of_day = secs.rem_euclid(86_400) as u32;
     let h = s_of_day / 3600;
     s_of_day %= 3600;
     let mi = s_of_day / 60;
     let s = s_of_day % 60;
-    // Convert days since 1970-01-01 (epoch) to civil date using
-    // Howard Hinnant's algorithm.
     let z = days + 719_468;
-    let era = if z >= 0 { z / 146_097 } else { (z - 146_096) / 146_097 };
+    let era = if z >= 0 {
+        z / 146_097
+    } else {
+        (z - 146_096) / 146_097
+    };
     let doe = (z - era * 146_097) as u32;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let y = yoe as i64 + era * 400;
@@ -499,59 +1164,362 @@ fn unix_to_ymdhms(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
     (y as i32, mo, d, h, mi, s)
 }
 
-fn success_page(id: &str) -> String {
-    format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>Ticket filed — OpenIT</title>{styles}</head><body><main><h1>Thanks — your ticket is in</h1><p>Reference: <code>{id}</code></p><p>The IT team will follow up. You can close this tab.</p></main></body></html>"#,
-        styles = STYLES,
-        id = id
-    )
-}
+// ---------------------------------------------------------------------------
+// Chat UI — single-page HTML. Plain-old DOM + fetch; no framework.
+// ---------------------------------------------------------------------------
 
-const STYLES: &str = r#"<style>
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f7; color: #1d1d1f; margin: 0; padding: 40px 20px; }
-main { max-width: 480px; margin: 0 auto; background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); }
-h1 { font-size: 22px; margin: 0 0 16px; }
-label { display: block; margin: 16px 0 6px; font-size: 13px; font-weight: 500; color: #444; }
-input, textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #d2d2d7; border-radius: 8px; font-size: 14px; font-family: inherit; }
-textarea { min-height: 140px; resize: vertical; }
-button { margin-top: 20px; padding: 10px 20px; background: #1f4d2c; color: white; border: 0; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; }
-button:hover { background: #143620; }
-.hint { color: #666; font-size: 12px; margin: 8px 0 16px; }
-code { background: #f0f0f0; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-</style>"#;
-
-const FORM_HTML: &str = r#"<!doctype html>
+const CHAT_HTML: &str = r#"<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>File an IT ticket — OpenIT</title>
+<title>OpenIT — Help Desk</title>
 <style>
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f7; color: #1d1d1f; margin: 0; padding: 40px 20px; }
-main { max-width: 480px; margin: 0 auto; background: white; padding: 32px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); }
-h1 { font-size: 22px; margin: 0 0 16px; }
-.hint { color: #666; font-size: 12px; margin: 0 0 20px; }
-label { display: block; margin: 14px 0 6px; font-size: 13px; font-weight: 500; color: #444; }
-input, textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #d2d2d7; border-radius: 8px; font-size: 14px; font-family: inherit; }
-textarea { min-height: 140px; resize: vertical; }
-button { margin-top: 20px; padding: 10px 20px; background: #1f4d2c; color: white; border: 0; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; }
-button:hover { background: #143620; }
+.gate {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+.gate form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  max-width: 420px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.gate h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.gate p { margin: 0; color: var(--text-muted); font-size: 13px; }
+.gate label {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.gate input[type=email] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.gate button {
+  margin-top: 8px;
+}
+.gate-error {
+  color: #c0392b;
+  font-size: 12px;
+  margin: 0;
+}
+/* Make the HTML `hidden` attribute win against display:flex on
+   chat/form/banner — those have explicit display rules in the main
+   stylesheet that would otherwise override the user agent's hidden
+   { display: none } default. */
+[hidden] { display: none !important; }
+</style>
+<style>
+:root {
+  --bg: #faf9f6;
+  --surface: #ffffff;
+  --surface-soft: #f4f1eb;
+  --border: #e6e1d6;
+  --text: #2d2a25;
+  --text-muted: #6b6864;
+  --text-faint: #9b988f;
+  --accent: #1f4d2c;
+  --accent-soft: #e8f5ec;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+header {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+header h1 { margin: 0; font-size: 16px; font-weight: 600; }
+header p { margin: 4px 0 0; color: var(--text-muted); font-size: 12px; }
+#chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.bubble {
+  max-width: 75%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.bubble.user {
+  align-self: flex-end;
+  background: var(--accent-soft);
+  border: 1px solid #82c39a;
+  border-top-right-radius: 2px;
+}
+.bubble.assistant, .bubble.admin {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top-left-radius: 2px;
+}
+.bubble .meta {
+  display: block;
+  font-size: 10px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+.typing {
+  align-self: flex-start;
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 12px;
+  padding: 4px 14px;
+}
+form {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+input[type=text] {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+}
+button {
+  padding: 10px 18px;
+  background: var(--accent);
+  color: white;
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.status-banner {
+  padding: 8px 20px;
+  font-size: 12px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid #82c39a;
+  color: #1f4d2c;
+}
+.status-banner.escalated {
+  background: #fff4e0;
+  border-color: #f0c66a;
+  color: #5c3d00;
+}
+.status-banner:empty { display: none; }
 </style>
 </head>
 <body>
-<main>
-<h1>File an IT ticket</h1>
-<p class="hint">Your question goes straight to the IT admin running OpenIT on this machine. They'll follow up.</p>
-<form method="post" action="/ticket">
-<label for="name">Your name</label>
-<input id="name" name="name" type="text" autocomplete="name">
-<label for="email">Email</label>
-<input id="email" name="email" type="email" autocomplete="email" required>
-<label for="question">What's going on?</label>
-<textarea id="question" name="question" required placeholder="Describe the problem. Include error messages, screenshots-text, what you've already tried."></textarea>
-<button type="submit">File ticket</button>
+<header>
+  <h1>OpenIT — Help Desk</h1>
+  <p>Describe your issue. The agent will try to help, or escalate to a human.</p>
+</header>
+
+<!-- Gate: collect email before starting the chat. Hidden once the
+     session is created. -->
+<div class="gate" id="gate">
+  <form id="gateForm">
+    <h2>Before we start</h2>
+    <p>What's your email? The IT admin uses this to follow up if your question needs a human.</p>
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" autocomplete="email" placeholder="you@company.com" required>
+    <p class="gate-error" id="gateError"></p>
+    <button type="submit">Start chat</button>
+  </form>
+</div>
+
+<!-- Chat surface — hidden until the gate is satisfied. -->
+<div class="status-banner" id="banner" hidden></div>
+<div id="chat" hidden></div>
+<form id="form" hidden>
+  <input id="msg" type="text" placeholder="Type your message…" autocomplete="off" required>
+  <button type="submit" id="send">Send</button>
 </form>
-</main>
+<script>
+let sessionId = null;
+let ticketId = null;
+let userEmail = null;
+let lastSeen = '';
+let pollTimer = null;
+const seenTurnKeys = new Set();
+const chat = document.getElementById('chat');
+const form = document.getElementById('form');
+const input = document.getElementById('msg');
+const sendBtn = document.getElementById('send');
+const banner = document.getElementById('banner');
+const gate = document.getElementById('gate');
+const gateForm = document.getElementById('gateForm');
+const emailInput = document.getElementById('email');
+const gateError = document.getElementById('gateError');
+
+function bubble(role, body, sender) {
+  const el = document.createElement('div');
+  el.className = 'bubble ' + role;
+  if (sender) {
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = sender;
+    el.appendChild(meta);
+  }
+  el.appendChild(document.createTextNode(body));
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function typing() {
+  const el = document.createElement('div');
+  el.className = 'typing';
+  el.id = 'typing';
+  el.textContent = 'Agent is typing…';
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+}
+function untype() {
+  const el = document.getElementById('typing');
+  if (el) el.remove();
+}
+
+function setBanner(status) {
+  if (status === 'escalated') {
+    banner.textContent = 'Your question has been escalated to a human admin. They\'ll reply here when ready.';
+    banner.classList.add('escalated');
+  } else if (status === 'resolved') {
+    banner.textContent = 'The agent answered your question. Reply if you need anything else.';
+    banner.classList.remove('escalated');
+  } else {
+    banner.textContent = '';
+    banner.classList.remove('escalated');
+  }
+}
+
+async function start(email) {
+  const r = await fetch('/chat/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!r.ok) {
+    const txt = await r.text();
+    throw new Error(txt || 'failed to start session');
+  }
+  const j = await r.json();
+  sessionId = j.session_id;
+  ticketId = j.ticket_id;
+  userEmail = email;
+  // Hide the gate, show the chat surface.
+  gate.hidden = true;
+  chat.hidden = false;
+  form.hidden = false;
+  banner.hidden = false;
+  input.focus();
+  startPolling();
+}
+
+async function poll() {
+  if (!sessionId) return;
+  try {
+    const params = new URLSearchParams({ session_id: sessionId });
+    if (lastSeen) params.set('since', lastSeen);
+    const r = await fetch('/chat/poll?' + params.toString());
+    if (!r.ok) return;
+    const j = await r.json();
+    for (const t of j.turns) {
+      const key = t.timestamp + '|' + t.role + '|' + t.body;
+      if (seenTurnKeys.has(key)) continue;
+      seenTurnKeys.add(key);
+      // Only render admin / agent turns we haven't seen via the
+      // direct /chat/turn response. Asker turns we already echoed
+      // when the user typed.
+      if (t.role === 'admin') bubble('admin', t.body, t.sender || 'admin');
+      lastSeen = t.timestamp;
+    }
+    if (j.status) setBanner(j.status);
+  } catch (e) { /* swallow — next tick will retry */ }
+}
+
+function startPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(poll, 1000);
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (!text || !sessionId) return;
+  bubble('user', text);
+  input.value = '';
+  sendBtn.disabled = true;
+  typing();
+  try {
+    const r = await fetch('/chat/turn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, message: text }),
+    });
+    untype();
+    if (!r.ok) {
+      const txt = await r.text();
+      bubble('assistant', '⚠ Agent error: ' + txt);
+      return;
+    }
+    const j = await r.json();
+    bubble('assistant', j.reply);
+    lastSeen = j.polled_at || lastSeen;
+    setBanner(j.status);
+  } catch (err) {
+    untype();
+    bubble('assistant', '⚠ Network error: ' + err.message);
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+});
+
+gateForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  gateError.textContent = '';
+  const email = emailInput.value.trim();
+  if (!email || !email.includes('@')) {
+    gateError.textContent = 'Please enter a valid email address.';
+    return;
+  }
+  try {
+    await start(email);
+  } catch (err) {
+    gateError.textContent = err.message || 'Could not start chat session.';
+  }
+});
+</script>
 </body>
 </html>"#;
 
@@ -560,274 +1528,71 @@ mod tests {
     use super::*;
 
     #[test]
-    fn first_line_truncated_short() {
-        assert_eq!(first_line_truncated("hi", 80), "hi");
+    fn parses_resolved_marker() {
+        let raw = "Per our VPN guide, click Reset.\n\n<<STATUS:resolved>>";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Resolved);
+        assert_eq!(body, "Per our VPN guide, click Reset.");
     }
 
     #[test]
-    fn first_line_truncated_long_capped() {
-        let long = "x".repeat(100);
-        let out = first_line_truncated(&long, 10);
-        assert_eq!(out.chars().count(), 10);
-        assert!(out.ends_with('…'));
+    fn parses_escalated_marker() {
+        let raw = "I don't have an answer yet.\n<<STATUS:escalated>>\n";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Escalated);
+        assert_eq!(body, "I don't have an answer yet.");
     }
 
     #[test]
-    fn first_line_takes_only_first_line() {
-        assert_eq!(first_line_truncated("first\nsecond", 80), "first");
+    fn parses_clarifying_marker() {
+        let raw = "Which system do you mean?\n\n<<STATUS:clarifying>>";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Clarifying);
+        assert_eq!(body, "Which system do you mean?");
     }
 
     #[test]
-    fn unix_to_ymdhms_known_dates() {
-        // 1970-01-01T00:00:00Z
-        assert_eq!(unix_to_ymdhms(0), (1970, 1, 1, 0, 0, 0));
-        // 2000-01-01T00:00:00Z
-        assert_eq!(unix_to_ymdhms(946_684_800), (2000, 1, 1, 0, 0, 0));
-        // 2026-04-27T09:14:02Z
-        assert_eq!(unix_to_ymdhms(1_777_281_242), (2026, 4, 27, 9, 14, 2));
-        // 2024-02-29T12:00:00Z (leap day)
-        assert_eq!(unix_to_ymdhms(1_709_208_000), (2024, 2, 29, 12, 0, 0));
+    fn missing_marker_defaults_to_escalated() {
+        let raw = "Some reply with no marker.";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Escalated);
+        assert_eq!(body, "Some reply with no marker.");
     }
 
-    /// Stand up the intake router on an OS-assigned port pointed at a
-    /// tempdir, return the base URL plus the tempdir handle. Caller
-    /// drops the handle when done; the spawned server stays around
-    /// (each test is short-lived so leaking is fine).
-    async fn spawn_test_server() -> (String, tempfile::TempDir) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let repo = dir.path().to_path_buf();
-        let app = build_router(repo);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let addr = listener.local_addr().expect("local_addr");
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
-        (format!("http://{}", addr), dir)
+    #[test]
+    fn unknown_marker_value_defaults_to_escalated() {
+        let raw = "reply\n<<STATUS:bogus>>";
+        let (_body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Escalated);
     }
 
-    fn read_only_ticket_file(repo: &std::path::Path) -> serde_json::Value {
-        // Tickets land in `databases/tickets/` post-rename (slug-free).
-        let dir = repo.join("databases").join("tickets");
-        let entries: Vec<_> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("read_dir {}: {}", dir.display(), e))
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
-            .collect();
-        assert_eq!(entries.len(), 1, "expected exactly one ticket file");
-        let body = std::fs::read_to_string(&entries[0]).expect("read row");
-        serde_json::from_str(&body).expect("parse row")
+    #[test]
+    fn last_marker_wins_when_multiple_present() {
+        // The agent might mention an earlier status inline; the final
+        // marker is the authoritative decision.
+        let raw = "I considered <<STATUS:clarifying>> but actually:\n\nHere's the answer.\n<<STATUS:resolved>>";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Resolved);
+        assert!(body.contains("Here's the answer"));
+        // Both markers stripped.
+        assert!(!body.contains("<<STATUS:"));
     }
 
-    #[tokio::test]
-    async fn get_root_serves_the_form() {
-        let (base, _dir) = spawn_test_server().await;
-        let resp = reqwest::get(&base).await.expect("GET /");
-        assert!(resp.status().is_success());
-        let body = resp.text().await.expect("body");
-        assert!(body.contains("<form"));
-        assert!(body.contains(r#"name="question""#));
+    #[test]
+    fn marker_with_surrounding_whitespace() {
+        let raw = "answer\n<<STATUS: resolved >>";
+        let (_body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Resolved);
     }
 
-    #[tokio::test]
-    async fn post_ticket_writes_a_row_with_incoming_status() {
-        let (base, dir) = spawn_test_server().await;
-        let resp = reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .header("Origin", &base)
-            .form(&[
-                ("name", "Alice"),
-                ("email", "alice@example.com"),
-                ("question", "VPN broken since this morning"),
-            ])
-            .send()
-            .await
-            .expect("post");
-        assert!(resp.status().is_success(), "status: {}", resp.status());
-
-        let row = read_only_ticket_file(dir.path());
-        assert_eq!(row["status"], "incoming");
-        assert_eq!(row["askerChannel"], "web");
-        assert_eq!(row["asker"], "alice@example.com");
-        assert_eq!(row["description"], "VPN broken since this morning");
-        assert_eq!(row["subject"], "VPN broken since this morning");
-        assert_eq!(row["priority"], "normal");
-        assert!(row["tags"].as_array().unwrap().is_empty());
-        assert!(row["createdAt"].as_str().unwrap().ends_with("Z"));
-        // createdAt and updatedAt should match on creation.
-        assert_eq!(row["createdAt"], row["updatedAt"]);
-    }
-
-    #[tokio::test]
-    async fn post_rejects_when_email_missing() {
-        let (base, _dir) = spawn_test_server().await;
-        let resp = reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .header("Origin", &base)
-            .form(&[("name", "Bob"), ("question", "x")])
-            .send()
-            .await
-            .expect("post");
-        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn post_rejects_when_email_lacks_at_sign() {
-        let (base, _dir) = spawn_test_server().await;
-        let resp = reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .header("Origin", &base)
-            .form(&[("name", "Bob"), ("email", "not-an-email"), ("question", "x")])
-            .send()
-            .await
-            .expect("post");
-        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn post_subject_is_first_line_only() {
-        let (base, dir) = spawn_test_server().await;
-        reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .header("Origin", &base)
-            .form(&[
-                ("email", "u@x.com"),
-                ("question", "first line\nsecond line\nthird line"),
-            ])
-            .send()
-            .await
-            .expect("post");
-        let row = read_only_ticket_file(dir.path());
-        assert_eq!(row["subject"], "first line");
-        // description preserves the full multi-line input.
-        assert_eq!(row["description"], "first line\nsecond line\nthird line");
-    }
-
-    #[tokio::test]
-    async fn post_writes_asker_first_turn_into_thread_subfolder() {
-        // Intake writes the asker's opening message at submission time,
-        // not at triage time. Without this, a user clicking into the
-        // conversation thread before Claude triages would see an empty
-        // chat or just the agent reply (the bug that prompted this
-        // change).
-        let (base, dir) = spawn_test_server().await;
-        let resp = reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .header("Origin", &base)
-            .form(&[("email", "alice@example.com"), ("question", "vpn broken")])
-            .send()
-            .await
-            .expect("post");
-        assert!(resp.status().is_success(), "status: {}", resp.status());
-
-        // Locate the thread subfolder (named after the ticket id).
-        let conv_root = dir.path().join("databases").join("conversations");
-        let threads: Vec<_> = std::fs::read_dir(&conv_root)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-            .map(|e| e.path())
-            .collect();
-        assert_eq!(threads.len(), 1, "expected exactly one thread subfolder");
-
-        let msgs: Vec<_> = std::fs::read_dir(&threads[0])
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
-            .collect();
-        assert_eq!(msgs.len(), 1, "expected exactly one msg file (the asker turn)");
-
-        let body = std::fs::read_to_string(&msgs[0]).unwrap();
-        let msg: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(msg["role"], "asker");
-        assert_eq!(msg["sender"], "alice@example.com");
-        assert_eq!(msg["body"], "vpn broken");
-    }
-
-    #[tokio::test]
-    async fn post_rejects_empty_question() {
-        let (base, _dir) = spawn_test_server().await;
-        let resp = reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .header("Origin", &base)
-            .form(&[("name", "Alice"), ("question", "   ")])
-            .send()
-            .await
-            .expect("post");
-        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn post_without_origin_header_is_rejected() {
-        // CSRF guard: a modern browser always sends Origin (or at
-        // minimum Referer) on a cross-origin POST. Missing both implies
-        // an attacker tool — reject with 403.
-        let (base, _dir) = spawn_test_server().await;
-        let resp = reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .form(&[("email", "u@x.com"), ("question", "x")])
-            .send()
-            .await
-            .expect("post");
-        assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn post_with_cross_origin_is_rejected() {
-        // The substantive CSRF protection: a malicious page at
-        // https://evil.com that has discovered the localhost port
-        // can fire a CORS-simple form POST. The Origin header on
-        // that request reveals the cross-origin host; reject.
-        let (base, _dir) = spawn_test_server().await;
-        let resp = reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .header("Origin", "https://evil.com")
-            .form(&[("email", "u@x.com"), ("question", "x")])
-            .send()
-            .await
-            .expect("post");
-        assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn post_with_localhost_origin_is_accepted() {
-        // The bind URL uses 127.0.0.1; some browsers normalize URLs to
-        // "localhost" when the user types that into the address bar.
-        // Both should work.
-        let (base, _dir) = spawn_test_server().await;
-        // base looks like http://127.0.0.1:<port> — substitute the
-        // host segment to test the localhost alias.
-        let port = base.rsplit(':').next().expect("port");
-        let localhost_origin = format!("http://localhost:{}", port);
-        let resp = reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .header("Origin", localhost_origin)
-            .form(&[("email", "u@x.com"), ("question", "x")])
-            .send()
-            .await
-            .expect("post");
-        assert!(resp.status().is_success(), "status: {}", resp.status());
-    }
-
-    #[tokio::test]
-    async fn post_with_ipv6_loopback_origin_is_accepted() {
-        // Round-2 BugBot finding: an earlier version of the check
-        // matched url.host_str() against bare "::1", but for IPv6
-        // host_str returns the bracketed form. Using Url::host() with
-        // stdlib is_loopback covers both. Lock the IPv6 acceptance in.
-        let (base, _dir) = spawn_test_server().await;
-        let port = base.rsplit(':').next().expect("port");
-        let ipv6_origin = format!("http://[::1]:{}", port);
-        let resp = reqwest::Client::new()
-            .post(format!("{}/ticket", base))
-            .header("Origin", ipv6_origin)
-            .form(&[("email", "u@x.com"), ("question", "x")])
-            .send()
-            .await
-            .expect("post");
-        assert!(resp.status().is_success(), "status: {}", resp.status());
+    #[test]
+    fn iso_one_second_ago_is_lt_now() {
+        let ago = iso_one_second_ago();
+        let now = now_iso();
+        // Lexicographic compare on ISO-8601 second-precision strings is
+        // strictly less for any pair not within the same wall-clock
+        // second. We can't deterministically assert <, but we can
+        // assert it's no greater than now.
+        assert!(ago <= now);
     }
 }

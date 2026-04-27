@@ -81,19 +81,13 @@ pub async fn datastore_list_collections(
 /// Extract environment root URL from app-api URL.
 /// e.g., "https://app-api.dev20.pinkfish.dev/..." -> "https://dev20.pinkfish.dev"
 fn extract_env_root(app_api_url: &str) -> Result<String, String> {
-    let url = reqwest::Url::parse(app_api_url)
-        .map_err(|e| format!("Invalid app-api URL: {}", e))?;
+    let url =
+        reqwest::Url::parse(app_api_url).map_err(|e| format!("Invalid app-api URL: {}", e))?;
 
-    let host = url
-        .host_str()
-        .ok_or_else(|| "No host in URL".to_string())?;
+    let host = url.host_str().ok_or_else(|| "No host in URL".to_string())?;
 
     // Replace "app-api." prefix if present
-    let env_host = if host.starts_with("app-api.") {
-        &host[8..] // Skip "app-api."
-    } else {
-        host
-    };
+    let env_host = host.strip_prefix("app-api.").unwrap_or(host);
 
     Ok(format!("{}://{}", url.scheme(), env_host))
 }

@@ -57,7 +57,10 @@ fn safe_kb_path(repo: &str, filename: &str) -> Result<PathBuf, String> {
         return Err("filename is empty".into());
     }
     if filename.contains('/') || filename.contains('\\') {
-        return Err(format!("filename must not contain path separators: {}", filename));
+        return Err(format!(
+            "filename must not contain path separators: {}",
+            filename
+        ));
     }
     let as_path = Path::new(filename);
     if as_path.is_absolute() || as_path.components().count() != 1 {
@@ -389,10 +392,22 @@ fn is_kb_supported(filename: &str) -> bool {
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    matches!(ext.as_str(),
-        "pdf" | "txt" | "md" | "markdown" | "json" | "csv" |
-        "docx" | "xlsx" | "pptx" |
-        "jpg" | "jpeg" | "png" | "gif" | "webp"
+    matches!(
+        ext.as_str(),
+        "pdf"
+            | "txt"
+            | "md"
+            | "markdown"
+            | "json"
+            | "csv"
+            | "docx"
+            | "xlsx"
+            | "pptx"
+            | "jpg"
+            | "jpeg"
+            | "png"
+            | "gif"
+            | "webp"
     )
 }
 
@@ -400,10 +415,12 @@ fn is_kb_supported(filename: &str) -> bool {
 #[tauri::command]
 pub fn kb_supported_extensions() -> Vec<String> {
     vec![
-        "pdf", "txt", "md", "markdown", "json", "csv",
-        "docx", "xlsx", "pptx",
-        "jpg", "jpeg", "png", "gif", "webp",
-    ].into_iter().map(String::from).collect()
+        "pdf", "txt", "md", "markdown", "json", "csv", "docx", "xlsx", "pptx", "jpg", "jpeg",
+        "png", "gif", "webp",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -422,7 +439,10 @@ fn safe_fs_path(repo: &str, filename: &str) -> Result<PathBuf, String> {
         return Err("filename is empty".into());
     }
     if filename.contains('/') || filename.contains('\\') {
-        return Err(format!("filename must not contain path separators: {}", filename));
+        return Err(format!(
+            "filename must not contain path separators: {}",
+            filename
+        ));
     }
     let as_path = Path::new(filename);
     if as_path.is_absolute() || as_path.components().count() != 1 {
@@ -456,7 +476,11 @@ pub fn fs_store_write_file(repo: String, filename: String, content: String) -> R
 }
 
 #[tauri::command]
-pub fn fs_store_write_file_bytes(repo: String, filename: String, bytes: Vec<u8>) -> Result<(), String> {
+pub fn fs_store_write_file_bytes(
+    repo: String,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
     let dir = fs_dir(&repo);
     ensure_dir(&dir)?;
     let path = dir.join(&filename);
@@ -590,7 +614,10 @@ fn validate_state_name(name: &str) -> Result<(), String> {
     if name.contains('/') || name.contains('\\') || name.starts_with('.') {
         return Err(format!("invalid state name: {}", name));
     }
-    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(format!("invalid state name: {}", name));
     }
     Ok(())
@@ -677,7 +704,12 @@ pub fn entity_list_local(repo: String, subdir: String) -> Result<Vec<KbLocalFile
 /// Write a string (typically JSON) to `<repo>/<subdir>/<filename>`.
 /// Creates the subdirectory if it doesn't exist.
 #[tauri::command]
-pub fn entity_write_file(repo: String, subdir: String, filename: String, content: String) -> Result<(), String> {
+pub fn entity_write_file(
+    repo: String,
+    subdir: String,
+    filename: String,
+    content: String,
+) -> Result<(), String> {
     let dir = Path::new(&repo).join(&subdir);
     ensure_dir(&dir)?;
     let path = dir.join(&filename);
@@ -699,7 +731,10 @@ pub fn entity_delete_file(repo: String, subdir: String, filename: String) -> Res
     if let Some(parent) = path.parent() {
         if let Ok(parent_canon) = fs::canonicalize(parent) {
             if !parent_canon.starts_with(&repo_canon) {
-                return Err(format!("refusing to delete path outside repo: {}/{}", subdir, filename));
+                return Err(format!(
+                    "refusing to delete path outside repo: {}/{}",
+                    subdir, filename
+                ));
             }
         } else {
             // Parent doesn't exist → nothing to delete.

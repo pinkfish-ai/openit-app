@@ -64,7 +64,9 @@ pub fn fs_list(root: String) -> Result<Vec<FileNode>, String> {
     // and `databases/conversations/` so the user sees newest-first
     // there (ticket / thread names start with an ISO timestamp prefix,
     // so descending name = descending time).
-    nodes.sort_by(|a, b| descending_for_threads_key(&a.path).cmp(&descending_for_threads_key(&b.path)));
+    nodes.sort_by(|a, b| {
+        descending_for_threads_key(&a.path).cmp(&descending_for_threads_key(&b.path))
+    });
     Ok(nodes)
 }
 
@@ -87,9 +89,7 @@ fn descending_for_threads_key(path: &str) -> String {
                 .unwrap_or((after, ""));
             let inverted: String = child
                 .chars()
-                .map(|c| {
-                    char::from_u32(0x10_FFFF - (c as u32)).unwrap_or('\u{10FFFF}')
-                })
+                .map(|c| char::from_u32(0x10_FFFF - (c as u32)).unwrap_or('\u{10FFFF}'))
                 .collect();
             let mut key = String::with_capacity(path.len() + 8);
             key.push_str(&path[..prefix_end]);

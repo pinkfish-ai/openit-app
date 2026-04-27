@@ -1,7 +1,7 @@
-// Tests for the incoming-ticket scanner. The scanner walks
+// Tests for the escalated-ticket scanner. The scanner walks
 // `databases/tickets/` under the repo, reads each row JSON, and
-// returns the rows with `status === "incoming"`. It backs the
-// IncomingTicketBanner — wrong filtering means the banner spams or
+// returns the rows with `status === "escalated"`. It backs the
+// EscalatedTicketBanner — wrong filtering means the banner spams or
 // silently misses tickets.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +12,7 @@ vi.mock("./api", () => ({
 }));
 
 import { fsList, fsRead, type FileNode } from "./api";
-import { scanIncomingTickets } from "./incomingTickets";
+import { scanEscalatedTickets } from "./escalatedTickets";
 
 const mockedFsList = vi.mocked(fsList);
 const mockedFsRead = vi.mocked(fsRead);
@@ -26,7 +26,7 @@ function file(name: string, path: string): FileNode {
   return { name, path, is_dir: false };
 }
 
-describe("scanIncomingTickets", () => {
+describe("scanEscalatedTickets", () => {
   it("returns the rows whose status is incoming", async () => {
     const repo = "/r";
     mockedFsList.mockResolvedValueOnce([
@@ -35,11 +35,11 @@ describe("scanIncomingTickets", () => {
     ]);
     mockedFsRead
       .mockResolvedValueOnce(
-        JSON.stringify({ status: "incoming", subject: "VPN", asker: "alice" }),
+        JSON.stringify({ status: "escalated", subject: "VPN", asker: "alice" }),
       )
       .mockResolvedValueOnce(JSON.stringify({ status: "open", subject: "other" }));
 
-    const result = await scanIncomingTickets(repo);
+    const result = await scanEscalatedTickets(repo);
     expect(result).toEqual([
       {
         path: "/r/databases/tickets/a.json",
@@ -58,10 +58,10 @@ describe("scanIncomingTickets", () => {
       file("a.json", "/r/databases/tickets/a.json"),
     ]);
     mockedFsRead.mockResolvedValueOnce(
-      JSON.stringify({ status: "incoming", subject: "ok" }),
+      JSON.stringify({ status: "escalated", subject: "ok" }),
     );
 
-    const result = await scanIncomingTickets(repo);
+    const result = await scanEscalatedTickets(repo);
     expect(result).toHaveLength(1);
     // fsRead must only have been called for a.json — not the schema or shadow.
     expect(mockedFsRead).toHaveBeenCalledTimes(1);
@@ -70,7 +70,7 @@ describe("scanIncomingTickets", () => {
 
   it("returns empty when databases/tickets/ does not exist", async () => {
     mockedFsList.mockRejectedValueOnce(new Error("ENOENT"));
-    const result = await scanIncomingTickets("/r");
+    const result = await scanEscalatedTickets("/r");
     expect(result).toEqual([]);
   });
 
@@ -82,9 +82,9 @@ describe("scanIncomingTickets", () => {
     ]);
     mockedFsRead
       .mockResolvedValueOnce("{not valid json")
-      .mockResolvedValueOnce(JSON.stringify({ status: "incoming", subject: "ok" }));
+      .mockResolvedValueOnce(JSON.stringify({ status: "escalated", subject: "ok" }));
 
-    const result = await scanIncomingTickets(repo);
+    const result = await scanEscalatedTickets(repo);
     expect(result.map((t) => t.subject)).toEqual(["ok"]);
   });
 
@@ -93,9 +93,9 @@ describe("scanIncomingTickets", () => {
     mockedFsList.mockResolvedValueOnce([
       file("a.json", "/r/databases/tickets/a.json"),
     ]);
-    mockedFsRead.mockResolvedValueOnce(JSON.stringify({ status: "incoming" }));
+    mockedFsRead.mockResolvedValueOnce(JSON.stringify({ status: "escalated" }));
 
-    const result = await scanIncomingTickets(repo);
+    const result = await scanEscalatedTickets(repo);
     expect(result[0]).toMatchObject({ subject: "", asker: "" });
   });
 
@@ -106,10 +106,10 @@ describe("scanIncomingTickets", () => {
       file("a.json", "/r/databases/tickets/a.json"),
     ]);
     mockedFsRead
-      .mockResolvedValueOnce(JSON.stringify({ status: "incoming", subject: "Z" }))
-      .mockResolvedValueOnce(JSON.stringify({ status: "incoming", subject: "A" }));
+      .mockResolvedValueOnce(JSON.stringify({ status: "escalated", subject: "Z" }))
+      .mockResolvedValueOnce(JSON.stringify({ status: "escalated", subject: "A" }));
 
-    const result = await scanIncomingTickets(repo);
+    const result = await scanEscalatedTickets(repo);
     expect(result.map((t) => t.subject)).toEqual(["A", "Z"]);
   });
 });

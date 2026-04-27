@@ -1,16 +1,17 @@
 {
-  "version": "2026-04-27-004",
+  "version": "2026-04-27-005",
   "bubbles": [
-    { "label": "Triage", "skill": "/triage" },
     { "label": "Answer ticket", "skill": "/answer-ticket" }
   ],
   "files": [
     { "path": "CLAUDE.md" },
+    { "path": "skills/intake-chat.md" },
     { "path": "skills/triage.md" },
     { "path": "skills/answer-ticket.md" },
     { "path": "schemas/tickets._schema.json" },
     { "path": "schemas/people._schema.json" },
     { "path": "agents/triage.template.json" },
+    { "path": "scripts/kb-search.mjs" },
     { "path": "scripts/sync-resolve-conflict.mjs" },
     { "path": "scripts/sync-push.mjs" }
   ]
