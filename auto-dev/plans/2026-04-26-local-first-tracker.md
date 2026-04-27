@@ -10,49 +10,151 @@
 
 | | |
 |---|---|
-| **Current phase** | Pre-Phase 1 — open questions outstanding |
-| **Open questions resolved** | 0 / 7 |
+| **Current phase** | Pre-Phase 1 — ready to start |
+| **Open questions resolved** | **7 / 7** ✅ |
 | **PRs landed** | — |
 | **PRs in flight** | #19 (general improvements, awaiting BugBot), #23 (the plans) |
+| **Phase plan changes from Q&A** | Phase 2 = author schemas (not snapshot); conversations as **unstructured datastore** (not markdown files); **workflows DROPPED from V1** (V2 backlog); Phase 6 = surface schema-conflict choice on existing Pinkfish orgs |
 
 ---
 
-## Open questions (must resolve before Phase 1)
+## Open questions — RESOLVED
 
-These block specific phases — answer them before that phase starts. Each links to the impl-plan gotcha that triggered the question.
+All seven answered (combination of user direction + repo research). Implications baked into the phase plans below.
 
-- [ ] **Q1. Schema snapshot.** Can we run a real connect against a Pinkfish org and capture the `case-management` + `contacts` template schemas verbatim? If not, do we need source access to `/platform`?
-  - *Blocks:* Phase 2.
-  - *Why it matters:* the bundled local schemas MUST match Pinkfish's field IDs / labels exactly, otherwise round-trip on cloud-connect breaks silently.
-  - *Notes:*
+- [x] **Q1. Schema snapshot? — No, we DESIGN schemas.** Local is the default, so we get to define our own shapes. Pinkfish datastores accept arbitrary schemas at sync time (as long as a schema doc is provided + data conforms). User flagged: ditch the current `case-management` + `contacts` shapes; redesign for real-world ticket / people use; add a separate **conversations** store for ticket follow-ups.
+  - *Implication:* Phase 2 changes substantially. **No snapshotting from Pinkfish.** We author `_schema.json` files locally as the source of truth and push them to Pinkfish on connect. See the new "Schema design" section below.
+  - *Conversations gap:* a ticket has many follow-up messages; needs its own store. Proposed: markdown files in `conversations/<ticket-id>.md` (append-only thread). Files-on-disk friendly, append-friendly, grep-friendly. Ticket row carries a `conversationFile` reference. Detailed below.
 
-- [ ] **Q2. Pinkfish runtime accepts arbitrary instructions?** When we push a triage agent to Pinkfish, does the runtime accept any instructions text, or are there schema requirements (must mention specific tools, specific format, etc.)?
-  - *Blocks:* Phase 1, Phase 6.
-  - *Why it matters:* the same agent JSON needs to run on both Claude-in-OpenIT (which has Read/Write/Edit) and Pinkfish runtime (which has gateway tools). If the runtime requires specific tool names in the instructions, the dual-runtime story breaks.
-  - *Notes:*
+- [x] **Q2. Agent runtime accepts what? — System prompt + skills (which inject MCP tools).** Confirmed via `platform/agents/nodeclaude.go:411-486`: the runtime concatenates `agent.Instructions` with preamble, chat history, file list, etc., into the system prompts for Claude. Skills with the `mcp` tag inject tool lists; non-MCP skills inject prose. **MCP tools are the cloud-only piece.** Local mode: Claude in OpenIT reads the agent JSON, treats `instructions` as system prompt, uses its built-in tools (Read/Write/Edit/Bash). No MCPs locally — that's the "Connect to Cloud" upgrade.
+  - *Implication:* dual-runtime story is clean. Instructions describe **intent** in plain language; each runtime uses what it has. CLAUDE.md is the local-runtime adapter (*"the tickets datastore lives at `databases/openit-tickets-<slug>/`; create rows with `Write`"*). Cloud runtime adapts via the MCP `datastore-structured` server.
+  - *Optional future:* even local agents could call MCPs via the gateway as a paid feature. User leaning toward "MCPs are part of cloud package" — clean pricing line.
 
-- [ ] **Q3. Workflow JSON shape.** What's the exact JSON shape `pinkfish-sidekick` accepts for workflows authored locally and pushed?
-  - *Blocks:* Phase 6, the `capture-workflow` skill's example.
-  - *Why it matters:* the skill's example workflow JSON has to match the runtime's actual acceptance criteria, otherwise pushed workflows fail server-side validation.
-  - *Notes:*
+- [x] **Q3. Workflow JSON shape — answered for V2.** Confirmed via `platform/entities/entities.go:1119` (`Step` struct): each step has `prompt` + optional JS `code` + `agentId` + `skillIds` (MCP tools). **User decision: workflows are NOT V1.** V1 focus is ticket responses + management. Capturing admin actions as workflows comes after the basic loop works. Phase 6.5 (local workflow runner) — **deferred to V2**. The `capture-workflow` skill — **deferred to V2** (we're not asking the admin to build workflows yet).
+  - *Implication:* simpler V1. Phase 1 drops the `capture-workflow` skill rewrite (the skill stays gone for V1; its concept is preserved in the V2 backlog). Phase 6's mirror-up doesn't have to handle workflows. Phase 6.5 deletion saves ~3 days.
 
-- [ ] **Q4. Connect modal — long-term?** Is the existing OAuth modal phased out in favor of a programmatic connect (settings panel)? If yes, Phase 3 shouldn't lean on it.
-  - *Blocks:* Phase 3.
-  - *Notes:*
+- [x] **Q4. Connect modal long-term? — Phased out.** Becomes the "Connect to Cloud" option in settings. Phase 3 doesn't lean on the existing modal.
 
-- [ ] **Q5. Pricing model commitment.** Is "free local + paid cloud" the actual go-to-market plan? Or paid-from-day-1 with a free trial?
-  - *Blocks:* Phase 3 (UX framing) — strictly speaking, not the engineering. But it shapes the messaging and the project-picker experience.
-  - *Notes:*
+- [x] **Q5. Pricing? — Free local. Pay for cloud + MCPs.** Confirmed.
 
-- [ ] **Q6. Tauri resource bundling.** Does the build pipeline already do `bundle.resources` anywhere? If not, Phase 2 includes the config setup.
-  - *Blocks:* Phase 2.
-  - *Quick check:* `grep -r "bundle.resources\|tauri-bundle\|resourceDir" tauri.conf.json src-tauri/`
-  - *Notes:*
+- [x] **Q6. Tauri resource bundling — does the pipeline use it? — NO.** Verified: `tauri.conf.json` has no `bundle.resources` entry; no `resolve_resource` / `app_resource_dir` calls in `src-tauri/src/`. **Phase 2 sets it up from scratch.** Tauri docs: add `bundle.resources` array to `tauri.conf.json`, access via `app.path().resolve("plugin/", BaseDirectory::Resource)?` from Rust commands.
 
-- [ ] **Q7. Network audit — what fires by default today?** Any telemetry, error reporting, analytics, plugin manifest fetches, etc. that fire on startup with no creds?
-  - *Blocks:* Phase 3 (the privacy claim depends on this audit).
-  - *Quick check:* `grep -rn "fetch\|axios\|invoke.*http\|reqwest::Client" src/ src-tauri/src/ | grep -v test`
-  - *Notes:*
+- [x] **Q7. Network audit — clean in no-creds mode.** Verified via grep:
+  - **Rust-side `reqwest::Client`** uses: `pinkfish.rs` (auth — fires only on user-initiated connect), `skills.rs` (plugin manifest — `syncSkillsToDisk` is gated on creds), `kb.rs` (collection ops — only inside `pullEntity` chains gated on creds).
+  - **TS-side `fetch`** all goes through `makeSkillsFetch` (cred-gated) or the engine adapters (cred-gated).
+  - **No telemetry, no analytics, no error-reporting calls.** No `sentry`, `mixpanel`, `posthog`, `segment` references in `src/` or `src-tauri/`.
+  - *Conclusion:* in no-creds mode, **zero outbound network calls** from OpenIT itself. The privacy claim holds. Phase 3's only job is to gate `start*Sync` + `syncSkillsToDisk` on `cloudConnected`. The bundled-plugin work in Phase 2 removes the only would-be-leaky default (manifest fetch).
+
+---
+
+## Schema design (Q1 follow-on)
+
+We get to define these. Three datastore collections (clean shapes, not snapshots) + one unstructured store.
+
+### `openit-tickets`
+
+Each row = one IT case (the lifecycle of a question).
+
+```jsonc
+{
+  "schemaVersion": "2026-04-26",
+  "fields": [
+    { "id": "subject",         "label": "Subject",          "type": "string" },
+    { "id": "description",     "label": "Description",      "type": "text"   },
+    { "id": "asker",           "label": "From (email/name)","type": "string" },
+    { "id": "askerChannel",    "label": "Channel",          "type": "enum",   "values": ["openit", "slack", "email", "web", "teams"] },
+    { "id": "status",          "label": "Status",           "type": "enum",   "values": ["incoming", "open", "answered", "resolved", "closed"] },
+    { "id": "priority",        "label": "Priority",         "type": "enum",   "values": ["low", "normal", "high", "urgent"] },
+    { "id": "assignee",        "label": "Assigned to",      "type": "string", "nullable": true },
+    { "id": "tags",            "label": "Tags",             "type": "string[]", "nullable": true },
+    { "id": "createdAt",       "label": "Created",          "type": "datetime" },
+    { "id": "updatedAt",       "label": "Last update",      "type": "datetime" },
+    { "id": "conversationFile","label": "Conversation log", "type": "string", "nullable": true,
+      "comment": "relative path to a markdown file under conversations/" },
+    { "id": "kbArticleRefs",   "label": "KB articles cited","type": "string[]", "nullable": true,
+      "comment": "filenames in knowledge-base/ used to answer this ticket" }
+  ]
+}
+```
+
+Plain English IDs (`subject`, `email`, `status`) instead of opaque `f_1` / `f_2`. Pinkfish datastores accept this — confirmed via user input. CLAUDE.md teaches Claude these names directly; no schema-translation layer.
+
+### `openit-people`
+
+Contacts directory. Anyone who files a ticket lands here so we know who's asking.
+
+```jsonc
+{
+  "schemaVersion": "2026-04-26",
+  "fields": [
+    { "id": "displayName", "label": "Name",         "type": "string" },
+    { "id": "email",       "label": "Email",        "type": "string" },
+    { "id": "role",        "label": "Role / title", "type": "string", "nullable": true },
+    { "id": "department",  "label": "Department",   "type": "string", "nullable": true },
+    { "id": "channels",    "label": "Reachable on", "type": "string[]", "nullable": true,
+      "comment": "e.g. ['slack:U01ABC', 'email:alice@x.com']" },
+    { "id": "notes",       "label": "Notes",        "type": "text", "nullable": true },
+    { "id": "createdAt",   "label": "Added",        "type": "datetime" },
+    { "id": "updatedAt",   "label": "Last update",  "type": "datetime" }
+  ]
+}
+```
+
+### Conversations — `openit-conversations` (UNSTRUCTURED datastore)
+
+User's call: one document per message turn, in an **unstructured** datastore. Confirmed via `entities.Collection.IsStructured` — the datastore type supports both modes, and `isStructured: false` means key-value JSON blobs with no schema enforcement. Perfect fit: each turn is small, schema-flexible, and cloud sync uses the existing engine machinery instead of inventing a filestore-as-conversation-log convention.
+
+**Local storage:** `databases/openit-conversations-<slug>/<message-id>.json` — one file per turn.
+
+```jsonc
+// databases/openit-conversations-my-helpdesk/msg-1777234500000-abc4.json
+{
+  "id":         "msg-1777234500000-abc4",
+  "ticketId":   "ticket-1777234492000-x9q1",
+  "role":       "asker",          // asker | agent | admin | system
+  "sender":     "alice@example.com",
+  "timestamp":  "2026-04-27T09:14:02Z",
+  "body":       "My VPN is broken since this morning. Already tried restarting."
+}
+```
+
+**Conventional fields, no enforcement.** We document the convention (above), Claude follows it, but the datastore itself doesn't validate. Adding a field later (e.g., `attachments`, `editedFromMessageId`) needs no schema migration.
+
+**Cloud-side:** synced to an unstructured Pinkfish datastore. The collection's `isStructured: false` flag lives on the collection definition; mirror-up sets it.
+
+### Reading a thread
+
+Locally:
+
+1. List `databases/openit-conversations-<slug>/`.
+2. Read each, filter by `ticketId === <target-ticket-id>`.
+3. Sort by `timestamp`.
+
+Cheap on small/medium volumes. For a thread of, say, 20 messages, this reads 20 small JSON files — milliseconds. For a busy org with thousands of total messages across many tickets, listing the dir is still fine; we read only the files matching the target `ticketId`. (Optimization V2: a `_index.json` keyed by ticketId, written on append. Skip until needed.)
+
+Cloud-side: Pinkfish memory API supports natural-language queries on unstructured datastores (`/memory/bquery`). *"Get all messages where ticketId = X, sorted by timestamp ascending."* The triage agent on cloud uses that.
+
+### Why one-doc-per-turn over a single conversation file
+
+- **Append correctness:** writing a new file is atomic. Appending to a single shared file races (two processes appending could corrupt or lose lines).
+- **Conflict resolution per-message:** if Alice's reply syncs from email at the same time the admin types one in OpenIT, the conflict-resolution flow we already built handles two new files cleanly. A merged-content conflict on a single growing file is much messier.
+- **Cloud-side query symmetry:** Pinkfish's unstructured datastore is naturally per-document; matches our local shape.
+- **Per-turn audit trail:** each message has its own `versionDate` / `versionBy` (when synced), so editing a message after the fact is tracked separately from the others.
+
+### `openit-kb-articles` (the knowledge base)
+
+Already markdown files in `knowledge-base/<filename>.md`. No schema needed; existing layout works. Frontmatter is optional (description, tags, lastUpdated).
+
+### Why this redesign matters
+
+- **Plain-language field IDs** mean CLAUDE.md instructions read naturally. No `f_2` translation step in the agent's instructions.
+- **Conversations as files** keeps the round-trip simple (filestore upload, no schema worries on push).
+- **No coupling to Pinkfish's case-management template** — we don't have to worry about template drift breaking us.
+- **Field semantics are explicit** (e.g. `status` enum values are documented).
+
+Tradeoff: existing Pinkfish orgs that had `case-management` collections might already have rows with `f_1` / `f_2` field IDs from the legacy template. On first connect, we either (a) push our schema as authoritative and migrate any existing rows, or (b) leave the old shape alone if a `case-management`-shaped collection already exists. **Decision deferred** to Phase 6's connect-flow design.
+
+---
 
 ---
 
@@ -74,9 +176,7 @@ These block specific phases — answer them before that phase starts. Each links
   - [ ] Remove `gateway_invoke datastore-structured create_item`; replace with *"Write a row JSON file."*
   - [ ] Remove `gateway_invoke knowledge-base ask`; replace with *"Glob + Read on `knowledge-base/`."*
   - [ ] Keep gateway calls only for the third-party-action steps (e.g., *"send the reply via Slack"* — Pro-tier).
-- [ ] Rewrite `scripts/openit-plugin/skills/capture-workflow.md`:
-  - [ ] Same rewrite for own-data ops in the skill's reasoning steps.
-  - [ ] Workflow JSON example: confirm shape against Q3 before locking in.
+- [ ] ~~Rewrite `scripts/openit-plugin/skills/capture-workflow.md`~~ — **deferred to V2.** V1 doesn't ship workflow capture.
 - [ ] New skill: `scripts/openit-plugin/skills/triage.md`:
   - [ ] Body: *"Read `agents/openit-triage-<slug>.json` for instructions; run them on the user's input."*
   - [ ] Slash command: `/triage <question>`.
@@ -110,36 +210,39 @@ These block specific phases — answer them before that phase starts. Each links
 
 ### Tasks
 
-- [ ] **Schema capture (Q1):**
-  - [ ] Run a fresh connect against a dev Pinkfish org.
-  - [ ] Capture the `case-management` template's schema (full JSON).
-  - [ ] Capture the `contacts` template's schema.
-  - [ ] Save to `scripts/openit-plugin/schemas/openit-tickets._schema.json` and `scripts/openit-plugin/schemas/openit-people._schema.json`.
-  - [ ] Add `schemaVersion` field at the top of each (e.g., `"schemaVersion": "2026-04-26"`).
+- [ ] **Author schemas locally** (Q1 resolved — we design, don't snapshot):
+  - [ ] Write `scripts/openit-plugin/schemas/openit-tickets._schema.json` per the "Schema design" section above.
+  - [ ] Write `scripts/openit-plugin/schemas/openit-people._schema.json` per same.
+  - [ ] Add `schemaVersion` field on each (`"2026-04-26"`).
+  - [ ] No conversations schema — they're filestore-shaped markdown, no `_schema.json`.
 - [ ] **Bundled triage agent template:**
-  - [ ] `scripts/openit-plugin/agents/openit-triage.template.json` — the agent JSON with `<slug>` placeholders.
+  - [ ] `scripts/openit-plugin/agents/openit-triage.template.json` — name / description / instructions / selectedModel.
+  - [ ] Instructions written tool-agnostically (intent-only). CLAUDE.md handles local-runtime mapping.
+  - [ ] Use `{{slug}}` placeholder for the project slug (substituted at install time).
 - [ ] **Plugin manifest update:**
-  - [ ] Add `schemas/openit-tickets._schema.json`, `schemas/openit-people._schema.json`, `agents/openit-triage.template.json` to manifest's `files`.
+  - [ ] Add the two `_schema.json` files + agent template to `files`.
   - [ ] Bump version to `2026-04-26-004`.
-- [ ] **Tauri bundling:**
-  - [ ] `tauri.conf.json` → `bundle.resources` includes `scripts/openit-plugin/`.
-  - [ ] Verify Tauri build copies the resources into the binary.
+- [ ] **Tauri bundling (Q6 — set up from scratch):**
+  - [ ] `tauri.conf.json`: add `bundle.resources: ["../scripts/openit-plugin/**/*"]` (or equivalent glob).
+  - [ ] Verify Tauri build copies the resources into the bundle.
+  - [ ] Confirm dev mode also exposes the resources (tauri-plugin can read from `BaseDirectory::Resource`).
 - [ ] **Rust: bundled-manifest command:**
-  - [ ] New command `skills_fetch_bundled_manifest()` in `src-tauri/src/skills.rs` reading from Tauri resource dir.
-  - [ ] Returns the manifest JSON string.
+  - [ ] `skills_fetch_bundled_manifest()` in `src-tauri/src/skills.rs`. Resolves resource dir via `app.path().resolve("openit-plugin/manifest.json", BaseDirectory::Resource)?`. Reads + returns JSON.
+  - [ ] `skills_fetch_bundled_file(path)` companion for individual files.
 - [ ] **TS: bundled fallback:**
-  - [ ] `src/lib/skillsSync.ts` `fetchSkillsManifest`: try cloud first; on failure / no creds, fall back to bundled.
-  - [ ] `fetchSkillFile`: same fallback for individual files.
+  - [ ] `src/lib/skillsSync.ts` `fetchSkillsManifest`: try cloud first when creds exist; on failure / no creds, fall back to bundled.
+  - [ ] `fetchSkillFile`: same fallback per file.
 - [ ] **Routing for new file types:**
-  - [ ] `syncSkillsToDisk`: route `schemas/<col>._schema.json` → `databases/<col>-<slug>/_schema.json`. Path-traversal validation as we did for scripts.
-  - [ ] Route `agents/openit-triage.template.json` → `agents/openit-triage-<slug>.json` with `<slug>` substituted.
+  - [ ] `syncSkillsToDisk`: route `schemas/<col>._schema.json` → `databases/<col>-<slug>/_schema.json`. Reuse the basename-validation pattern from PR #19's script-routing fix.
+  - [ ] Route `agents/openit-triage.template.json` → `agents/openit-triage-<slug>.json` with `{{slug}}` substituted.
 - [ ] **Bootstrap scaffold (`src-tauri/src/project.rs`):**
-  - [ ] On first run, after dirs are created, leave the schema/agent/KB writes to `syncSkillsToDisk` (don't double-write).
-  - [ ] Write a starter `knowledge-base/welcome.md` (could come from the bundle too).
+  - [ ] First-run: create dirs (already does this), then let `syncSkillsToDisk` (TS-side, on first project open) write the schema / agent / starter KB. No Rust-side template strings.
+  - [ ] Starter `knowledge-base/welcome.md` comes from the bundle.
+  - [ ] Empty `conversations/` directory (sibling to `knowledge-base/`).
 - [ ] **Manual verification:**
   - [ ] Kill network; reload OpenIT; plugin loads from bundle.
-  - [ ] Fresh project: `_schema.json` files appear in `databases/openit-tickets-<slug>/` etc.
-  - [ ] Schema match: deep-compare the bundled schema against what Pinkfish creates from `case-management` template. Must be identical.
+  - [ ] Fresh project: `_schema.json` files appear at `databases/openit-tickets-<slug>/_schema.json` etc.; `agents/openit-triage-<slug>.json` exists; `conversations/` exists; `knowledge-base/welcome.md` exists.
+  - [ ] No outbound network calls (network monitor / Wireshark).
 
 ### Gotchas to verify
 
@@ -312,10 +415,11 @@ These block specific phases — answer them before that phase starts. Each links
   - [ ] Step 3: kick `start*Sync` for all entities.
 - [ ] **`mirrorUp(repo)` — the heavy lift:**
   - [ ] **KB:** ensure `openit-<slug>` collection exists on Pinkfish; create if not. Push every local markdown file.
-  - [ ] **Filestore:** ensure `openit-docs-<slug>` collection exists; create if not. Push every local file.
-  - [ ] **Datastore (people, tickets, custom):** for each `databases/<collection>/`, ensure the collection exists on Pinkfish (push schema if creating). Push every row.
-  - [ ] **Agents:** for each local agent JSON without an `id`, POST `/service/useragents`. Record the server-issued `id` back into the JSON.
-  - [ ] **Workflows:** for each local workflow JSON without an `id`, POST. Record back.
+  - [ ] **Filestore:** ensure `openit-docs-<slug>` collection exists; create if not. Push every local file. **Conversations** (`conversations/*.md`) also push to filestore — one blob per conversation.
+  - [ ] **Datastore (people, tickets, any custom):** for each `databases/<collection>/`, ensure the collection exists on Pinkfish; if creating, **push our locally-authored `_schema.json` as the schema** (Pinkfish accepts arbitrary schemas). Push every row.
+  - [ ] **Existing-collection schema reconciliation:** if a Pinkfish org already has `openit-tickets` with the legacy `case-management` shape (e.g., `f_1`/`f_2` field IDs), **don't auto-migrate**. Surface to the user: *"Pinkfish has an older-shape `openit-tickets` collection. Keep it (and use the legacy schema locally) / Replace it (push our schema, migrate rows) / Cancel."* Phase-6 V1 = surface the choice, default = Cancel + show the schemas side-by-side.
+  - [ ] **Agents:** for each local agent JSON without an `id`, POST `/service/useragents`. Record the server-issued `id` back into the JSON. Note: agent's `selectedModel` field metadata-only locally; cloud runtime enforces.
+  - [ ] ~~**Workflows:**~~ — V2. No `workflows/` dir contents to push in V1.
 - [ ] **Mirror-up uses the engine's push paths with override:**
   - [ ] Set `pulled_at_mtime_ms = 0` for every manifest entry → engine sees everything as local-changed → push fires.
 - [ ] **Schema reconciliation:**
@@ -351,9 +455,9 @@ These block specific phases — answer them before that phase starts. Each links
 
 ---
 
-## Phase 7+ — Optional / deferred
+## Phase 7+ — Deferred (V2)
 
-These are punt-until-someone-complains. Track here so they don't get lost.
+Track here so it doesn't get lost. Workflows are the big V2 item — V1 ships without them.
 
 ### Phase 7a — Local KB-ask V2 (lexical scoring)
 
@@ -371,11 +475,18 @@ These are punt-until-someone-complains. Track here so they don't get lost.
 - [ ] Detect schema-version mismatch on connect.
 - [ ] Migrate local rows to match remote schema (or vice versa).
 - [ ] Surface unresolvable conflicts to the user.
+- [ ] Specifically: handle the legacy `case-management`-shape collisions (existing Pinkfish orgs that have `f_1`/`f_2` field IDs).
 
-### Phase 7d — Workflow runner script
+### Phase 7d — Workflows (V2)
 
-- [ ] `node .claude/scripts/run-workflow.mjs --workflow X --ticket Y` — walks workflow JSON inline, calls Claude as needed.
-- [ ] Only if Claude-as-runtime turns out to be unreliable.
+The whole workflow story moves here. Three sub-pieces, all V2:
+
+- [ ] `capture-workflow` skill — turn admin-handled action-shaped tickets into workflow JSON. Match the Pinkfish `Step` shape (`prompt` + optional JS `code` + `agentId` + `skillIds`). Confirmed via `platform/entities/entities.go:1119`.
+- [ ] `run-workflow.mjs` local runner — walks the steps, executes JS via `vm.runInNewContext`, stubs MCP calls (cloud unlocks them). Returns `{ ok, completed_steps, errors, outputs }`.
+- [ ] Triage-agent auto-routing — when an incoming ticket matches a workflow trigger, invoke the workflow instead of escalating.
+- [ ] CLAUDE.md gets a workflow section explaining the local-stub-vs-cloud-real distinction.
+
+V1 explicitly does NOT include any of this. Admins answer tickets manually; KB articles capture answers. Workflows enter the picture once the basic loop is proven and admins start asking for "this is the same thing every week, can we automate it?"
 
 ### Notes
 
