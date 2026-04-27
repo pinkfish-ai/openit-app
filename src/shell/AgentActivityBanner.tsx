@@ -3,7 +3,7 @@
 // subprocess is currently composing a reply for that ticket. Gives
 // the admin real-time visibility into what the agent is working on.
 //
-// Auto-clears when the agent finishes (status flips to answered /
+// Auto-clears when the agent finishes (status flips to resolved /
 // escalated / something else). Not dismissable — it's a transient
 // status indicator, not a notification.
 //

@@ -353,6 +353,13 @@ async fn chat_turn(
         }
     }
 
+    // Write the agent's reply turn to disk deterministically. The
+    // skill is told not to write conversation turns — only the
+    // ticket status — so the server controls sender + role + the
+    // turn shape, eliminating duplicate-asker-turn and wrong-sender
+    // bugs from agent free-styling.
+    let _ = write_agent_turn(&repo, &ticket_id, &reply).await;
+
     // Safety net: if the agent finished but didn't update status off
     // `agent-responding`, force-flip to `escalated` so the admin's
     // activity banner clears and the ticket lands in their queue.
@@ -569,12 +576,20 @@ fn build_chat_prompt(
         prompt.push_str(&format!("{}: {}\n", label, msg.content));
     }
     prompt.push_str(
-        "\nWrite your reply to the user. Your reply text is what the \
-         user sees in the chat — keep it conversational and don't \
-         include implementation notes, file paths, or status \
-         narration. Make any necessary file writes (ticket, \
-         conversation turn, people row) using your tools, then end \
-         your output with the reply text on its own.",
+        "\nIMPORTANT: Do NOT write any conversation turn files (no \
+         msg-*.json under databases/conversations/). The server \
+         already wrote the asker's turn before invoking you, and the \
+         server will write your agent reply turn after you finish \
+         using your stdout as the body. If you write a turn yourself \
+         it WILL appear duplicated in the admin UI.\n\n\
+         Your job: (1) read the ticket + conversation history for \
+         context, (2) run kb-search if the message warrants it, (3) \
+         Edit the ticket's `status` field to either `resolved` (KB \
+         hit) or `escalated` (KB miss / needs human) and bump \
+         `updatedAt`, (4) output your reply to the user as the LAST \
+         thing on stdout. The reply is what the user sees in the \
+         chat — keep it conversational, no file paths, no status \
+         narration, no meta-commentary.",
     );
     prompt
 }
@@ -769,6 +784,46 @@ async fn ensure_responding_stub(
 
     // Idempotent people row.
     let _ = ensure_people_row(repo, email, &now).await;
+    Ok(())
+}
+
+/// Write the agent's reply turn to
+/// `databases/conversations/<ticket_id>/msg-*.json`. Sender is
+/// hardcoded to `triage` so the admin sees a stable label instead
+/// of whatever the agent decides to call itself.
+async fn write_agent_turn(repo: &PathBuf, ticket_id: &str, body: &str) -> Result<(), String> {
+    let conv_dir = repo
+        .join("databases")
+        .join("conversations")
+        .join(ticket_id);
+    tokio::fs::create_dir_all(&conv_dir)
+        .await
+        .map_err(|e| format!("mkdir conv: {}", e))?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let rand4: String = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(4)
+        .collect();
+    let msg_id = format!("msg-{}-{}", now_ms, rand4);
+    let msg = serde_json::json!({
+        "id": msg_id,
+        "ticketId": ticket_id,
+        "role": "agent",
+        "sender": "triage",
+        "timestamp": now_iso(),
+        "body": body,
+    });
+    let msg_json = serde_json::to_string_pretty(&msg)
+        .map_err(|e| format!("serialize agent turn: {}", e))?;
+    let msg_path = conv_dir.join(format!("{}.json", msg_id));
+    tokio::fs::write(&msg_path, msg_json)
+        .await
+        .map_err(|e| format!("write agent turn: {}", e))?;
     Ok(())
 }
 
@@ -1152,7 +1207,7 @@ function setBanner(status) {
   if (status === 'escalated') {
     banner.textContent = 'Your question has been escalated to a human admin. They\'ll reply here when ready.';
     banner.classList.add('escalated');
-  } else if (status === 'answered') {
+  } else if (status === 'resolved') {
     banner.textContent = 'The agent answered your question. Reply if you need anything else.';
     banner.classList.remove('escalated');
   } else {
@@ -1208,7 +1263,7 @@ async function poll() {
 
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(poll, 3000);
+  pollTimer = setInterval(poll, 1000);
 }
 
 form.addEventListener('submit', async (e) => {

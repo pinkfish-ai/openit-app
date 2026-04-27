@@ -38,10 +38,10 @@
       "id": "status",
       "label": "Status",
       "type": "enum",
-      "values": ["incoming", "agent-responding", "answered", "escalated", "resolved", "closed"],
+      "values": ["incoming", "agent-responding", "escalated", "resolved", "closed"],
       "required": true,
       "default": "incoming",
-      "comment": "incoming = just landed, agent hasn't run (transient). agent-responding = claude -p subprocess running; admin sees an activity banner. answered = agent KB hit + replied. escalated = agent gave up; escalated banner fires. resolved = admin completed. closed = no further action."
+      "comment": "incoming = just landed, agent hasn't run (transient). agent-responding = claude -p subprocess running; admin sees an activity banner. resolved = answered (either by agent KB hit or by admin completing). escalated = agent gave up; escalated banner fires. closed = no further action."
     },
     {
       "id": "priority",

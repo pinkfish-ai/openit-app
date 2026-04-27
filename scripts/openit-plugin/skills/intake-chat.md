@@ -1,6 +1,6 @@
 ---
 name: intake-chat
-description: Per-turn helpdesk responder for the localhost chat intake. Reads the conversation context, searches the knowledge base, and writes either an answer (KB hit → status `answered`) or an escalation reply (KB miss → status `escalated`). The ticket, asker turn, and people row are pre-written by the server before this skill runs.
+description: Per-turn helpdesk responder for the localhost chat intake. Reads the conversation context, searches the knowledge base, and writes either an answer (KB hit → status `resolved`) or an escalation reply (KB miss → status `escalated`). The ticket, asker turn, and people row are pre-written by the server before this skill runs.
 ---
 
 ## Context
@@ -22,7 +22,7 @@ The intake server (Rust) has already done these writes before invoking you, on e
 - **Asker turn** at `databases/conversations/<ticketId>/msg-<unix-ms>-<rand>.json` — for the user's most recent message.
 - **People row** at `databases/people/<sanitized-email>.json` — idempotent.
 
-**Do not re-write any of these.** Your job is the model-driven part.
+The server will ALSO write your agent reply turn after you finish, taking your stdout as the body and hardcoding `sender: "triage"`. **Do not write any msg-*.json files yourself** — they'll appear duplicated in the admin UI. Your only file write is the ticket status `Edit`.
 
 ## Your steps
 
@@ -45,40 +45,23 @@ Output:
 
 If the top match has `score > 0.5`, `Read` it and judge whether it actually answers the user's question. (Score alone isn't enough — word overlap can score high without being relevant.)
 
-Re-search on every substantive user turn. If a follow-up gives you new info ("oh it's only the VPN, not email"), the new search may hit where the prior didn't — which means the ticket can transition from `escalated` back to `answered`.
+Re-search on every substantive user turn. If a follow-up gives you new info ("oh it's only the VPN, not email"), the new search may hit where the prior didn't — which means the ticket can transition from `escalated` back to `resolved`.
 
-### 3. Write your reply turn + update ticket status
+### 3. Update ticket status
 
-Either branch ends with two writes: the agent reply turn + a ticket status update.
+**Do NOT write any conversation turn files.** The server already wrote the asker turn before invoking you, and it will write your agent reply turn from your stdout after you finish. Writing a turn yourself causes duplicates in the admin UI.
 
-**3a. KB has a confident answer**
+Your only file write is `Edit`-ing the ticket at `databases/tickets/<ticketId>.json`:
 
-- Append a turn at `databases/conversations/<ticketId>/msg-<unix-ms>-<rand>.json`:
-  ```json
-  {
-    "id": "msg-<unix-ms>-<rand>",
-    "ticketId": "<ticketId>",
-    "role": "agent",
-    "sender": "triage",
-    "timestamp": "<now>",
-    "body": "<your reply text>"
-  }
-  ```
-- `Edit` the ticket: set `status: "answered"`, append the cited filename(s) to `kbArticleRefs`, set `updatedAt` to now.
-- Reply text leads with the answer; cite the article casually ("Per our VPN guide, you can…").
+**3a. KB has a confident answer** — `status: "answered"`, append cited filename(s) to `kbArticleRefs`, bump `updatedAt`. Your reply text leads with the answer and cites the article casually ("Per our VPN guide, you can…").
 
-**3b. KB has no confident answer — escalate**
+**3b. KB has no confident answer — escalate** — `status: "escalated"`, bump `updatedAt`. Your reply text: *"Thanks — I don't have a definitive answer yet. I've escalated this to the team; someone will follow up here when they're ready."* (Adjust to the situation.)
 
-- Append the agent turn the same way. Body: *"Thanks — I don't have a definitive answer yet. I've escalated this to the team; someone will follow up here when they're ready."* (Adjust to the situation.)
-- `Edit` the ticket: set `status: "escalated"`, set `updatedAt` to now.
-
-**3c. Conversational holding turn (mid-clarification)**
-
-If the user's message is too vague to KB-search or you need one more piece of info ("can you tell me which system?"), reply with the clarifying question and **leave the ticket as `agent-responding`** by editing it explicitly back to that status. Don't escalate yet — you're still working on it.
+**3c. Conversational holding turn (mid-clarification)** — if the user's message is too vague to KB-search or you need one more piece of info ("can you tell me which system?"), reply with the clarifying question and leave the ticket as `agent-responding` (Edit it explicitly back to that status so `updatedAt` bumps). Don't escalate yet — you're still working on it.
 
 ### 4. End your output with the reply text
 
-The last thing in your stdout becomes the user's chat bubble. Don't narrate the file writes ("I've updated the ticket…") — just the conversational reply.
+The last thing in your stdout becomes the user's chat bubble (the server reads stdout and writes it as the agent turn with sender `triage`). Don't narrate the file writes — just the conversational reply.
 
 ## Conversation conventions
 
