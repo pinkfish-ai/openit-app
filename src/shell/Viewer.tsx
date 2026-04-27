@@ -204,6 +204,17 @@ export function Viewer({
   // Rules of Hooks: hook count differed between "no source" and "with
   // source" renders, surfacing as a blank-screen render error.
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+
+  // Filter for the conversations-list view. `all` shows every thread;
+  // the others narrow by ticket status. Persists across click+reopen
+  // of the conversations folder within the same session, but resets
+  // when the project (repo) changes — the filter is per-project, not
+  // global.
+  const [conversationsFilter, setConversationsFilter] =
+    useState<"all" | "open" | "resolved" | "escalated">("all");
+  useEffect(() => {
+    setConversationsFilter("all");
+  }, [repo]);
   // Reset on source change so a new click clears the previous override.
   useEffect(() => setRowOverride(null), [source]);
 
@@ -662,35 +673,95 @@ export function Viewer({
           </div>
         );
       }
+      // Counts per status drive the badges on the filter buttons. We
+      // walk threads once for both the counts and the filtered list to
+      // keep the render tight on big projects.
+      const counts: Record<"all" | "open" | "resolved" | "escalated", number> = {
+        all: source.threads.length,
+        open: 0,
+        resolved: 0,
+        escalated: 0,
+      };
+      for (const t of source.threads) {
+        if (t.status === "open" || t.status === "agent-responding") {
+          // Group `agent-responding` (transient processing) under `open`
+          // so a tiny burst of in-flight tickets doesn't surface its
+          // own column. The dedicated activity banner already covers
+          // the in-flight case visually.
+          counts.open += 1;
+        } else if (t.status === "resolved" || t.status === "closed") {
+          counts.resolved += 1;
+        } else if (t.status === "escalated") {
+          counts.escalated += 1;
+        }
+      }
+      const matchesFilter = (status: string) => {
+        if (conversationsFilter === "all") return true;
+        if (conversationsFilter === "open") {
+          return status === "open" || status === "agent-responding";
+        }
+        if (conversationsFilter === "resolved") {
+          return status === "resolved" || status === "closed";
+        }
+        if (conversationsFilter === "escalated") {
+          return status === "escalated";
+        }
+        return true;
+      };
+      const visibleThreads = source.threads.filter((t) => matchesFilter(t.status || ""));
+      const filterButton = (key: "all" | "open" | "resolved" | "escalated", label: string) => (
+        <button
+          key={key}
+          type="button"
+          className={`conv-filter-btn${conversationsFilter === key ? " conv-filter-btn-active" : ""}`}
+          onClick={() => setConversationsFilter(key)}
+          aria-pressed={conversationsFilter === key}
+        >
+          {label}
+          <span className="conv-filter-count">{counts[key]}</span>
+        </button>
+      );
       return (
-        <div className="viewer-thread-list">
-          {source.threads.map((t) => (
-            <button
-              key={t.ticketId}
-              type="button"
-              className={`thread-card thread-card-status-${t.status || "unknown"}`}
-              onClick={() => {
-                if (onOpenPath) {
-                  void onOpenPath(`${repo}/databases/conversations/${t.ticketId}`);
-                }
-              }}
-              title={`Open conversation for ${t.ticketId}`}
-            >
-              <div className="thread-card-row">
-                <span className="thread-card-subject">{t.subject || "(no subject)"}</span>
-                {t.status && <span className="thread-card-status">{t.status}</span>}
-              </div>
-              <div className="thread-card-meta">
-                {t.asker && <span className="thread-card-asker">{t.asker}</span>}
-                <span className="thread-card-count">
-                  {t.turnCount} message{t.turnCount === 1 ? "" : "s"}
-                </span>
-                {t.lastTurnAt && (
-                  <span className="thread-card-time">{t.lastTurnAt}</span>
-                )}
-              </div>
-            </button>
-          ))}
+        <div className="viewer-summary viewer-conversations">
+          <div className="conv-filter-bar" role="tablist">
+            {filterButton("all", "All")}
+            {filterButton("open", "Open")}
+            {filterButton("resolved", "Resolved")}
+            {filterButton("escalated", "Escalated")}
+          </div>
+          {visibleThreads.length === 0 ? (
+            <p className="summary-desc">No threads match this filter.</p>
+          ) : (
+            <div className="viewer-thread-list">
+              {visibleThreads.map((t) => (
+                <button
+                  key={t.ticketId}
+                  type="button"
+                  className={`thread-card thread-card-status-${t.status || "unknown"}`}
+                  onClick={() => {
+                    if (onOpenPath) {
+                      void onOpenPath(`${repo}/databases/conversations/${t.ticketId}`);
+                    }
+                  }}
+                  title={`Open conversation for ${t.ticketId}`}
+                >
+                  <div className="thread-card-row">
+                    <span className="thread-card-subject">{t.subject || "(no subject)"}</span>
+                    {t.status && <span className="thread-card-status">{t.status}</span>}
+                  </div>
+                  <div className="thread-card-meta">
+                    {t.asker && <span className="thread-card-asker">{t.asker}</span>}
+                    <span className="thread-card-count">
+                      {t.turnCount} message{t.turnCount === 1 ? "" : "s"}
+                    </span>
+                    {t.lastTurnAt && (
+                      <span className="thread-card-time">{t.lastTurnAt}</span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       );
     }

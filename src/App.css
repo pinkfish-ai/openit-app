@@ -2383,6 +2383,64 @@ body,
   background: var(--warn-bg, rgba(255, 170, 50, 0.15));
 }
 
+/* Conversations-list filter bar — subtle pill buttons with a count
+   badge on the right. Active button is filled, inactive is borderless
+   and reads as a quiet text option until hovered. */
+.viewer-conversations {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conv-filter-bar {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.conv-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+
+.conv-filter-btn:hover {
+  color: var(--text);
+  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
+}
+
+.conv-filter-btn-active {
+  color: var(--text);
+  background: var(--card-bg, #fafafa);
+  border-color: var(--border, #ddd);
+}
+
+.conv-filter-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--tag-bg, rgba(0, 0, 0, 0.05));
+  border-radius: 999px;
+  padding: 0 6px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.conv-filter-btn-active .conv-filter-count {
+  background: var(--tag-bg-active, rgba(0, 0, 0, 0.08));
+  color: var(--text);
+}
+
 .summary-table th,
 .summary-table td {
   border: 1px solid var(--border);

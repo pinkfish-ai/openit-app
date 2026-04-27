@@ -416,6 +416,14 @@ async fn chat_turn(
         }
     }
 
+    // Auto-commit everything this turn touched so the admin's Versions
+    // panel doesn't show server-driven activity (asker turns, ticket
+    // status flips, agent reply, people-row upserts) as if they were
+    // unstaged human edits. Same pattern the cloud sync engines use —
+    // the panel ends up reflecting only deliberate admin work
+    // (manual file edits, KB article authoring, etc.).
+    let _ = auto_commit_chat_turn(&repo, &ticket_id, &email).await;
+
     // Read status from disk for the response payload.
     let status = read_ticket_status(&repo, &ticket_id)
         .await
@@ -1083,6 +1091,43 @@ async fn write_agent_turn(repo: &Path, ticket_id: &str, body: &str) -> Result<()
         .await
         .map_err(|e| format!("write agent turn: {}", e))?;
     Ok(())
+}
+
+/// Stage and commit the per-turn intake writes (ticket file,
+/// conversation thread, people row) so they don't surface as
+/// uncommitted noise in the admin's Versions panel. Errors are
+/// non-fatal — the writes already landed on disk; a missed commit
+/// just means the next chat turn (or a manual commit) will sweep
+/// them up.
+///
+/// `git_commit_paths` is a sync function that shells out to `git`,
+/// so we run it on the blocking pool. The cost is negligible
+/// compared to the ~3-5s claude-p turn it follows.
+async fn auto_commit_chat_turn(repo: &Path, ticket_id: &str, email: &str) {
+    let repo_str = repo.to_string_lossy().into_owned();
+    let people_key = sanitize_email_key(email);
+    // Pass the conversation directory rather than each individual
+    // msg-*.json file: `git add -- <dir>` picks up the asker's turn
+    // AND the agent's reply written later in the same handler. If the
+    // ticket or people row didn't change (e.g. terminal-state
+    // follow-up that skipped mark_status), `git diff --cached` will
+    // simply find no changes for them and the commit shrinks to
+    // whatever did move.
+    let paths = vec![
+        format!("databases/tickets/{}.json", ticket_id),
+        format!("databases/conversations/{}", ticket_id),
+        format!("databases/people/{}.json", people_key),
+    ];
+    let message = format!("intake: chat turn for ticket {}", ticket_id);
+    match tokio::task::spawn_blocking(move || {
+        crate::git_ops::git_commit_paths(repo_str, paths, message)
+    })
+    .await
+    {
+        Err(join_err) => eprintln!("[intake/chat] auto_commit join error: {}", join_err),
+        Ok(Err(commit_err)) => eprintln!("[intake/chat] auto_commit failed: {}", commit_err),
+        Ok(Ok(_)) => {}
+    }
 }
 
 fn first_line_truncated(s: &str, max: usize) -> String {
