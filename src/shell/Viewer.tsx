@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { fsRead, fsReadBytes, fsList } from "../lib/api";
+import { fsRead, fsReadBytes, fsList, reportOverviewRun } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
@@ -26,25 +26,36 @@ export type { ViewerSource };
 
 /// Title labels for the entity-folder view. Capital case for the title
 /// bar; the explorer rows use the lowercase folder names directly.
-const ENTITY_FOLDER_LABELS: Record<"agents" | "workflows" | "knowledge-base" | "library", string> = {
+const ENTITY_FOLDER_LABELS: Record<
+  "agents" | "workflows" | "knowledge-base" | "library" | "reports",
+  string
+> = {
   agents: "Agents",
   workflows: "Workflows",
   "knowledge-base": "Knowledge base",
   library: "Library",
+  reports: "Reports",
 };
 
 /// Singular noun for the count pill in the title — "3 agents", "1 file".
-const ENTITY_FOLDER_NOUN: Record<"agents" | "workflows" | "knowledge-base" | "library", string> = {
+const ENTITY_FOLDER_NOUN: Record<
+  "agents" | "workflows" | "knowledge-base" | "library" | "reports",
+  string
+> = {
   agents: "agent",
   workflows: "workflow",
   "knowledge-base": "article",
   library: "file",
+  reports: "report",
 };
 
 /// Friendly empty-state copy per top-level entity folder, mirroring the
 /// conversations-list notice. Each message says what lives here, why it
 /// is empty, and the natural way to populate it.
-const ENTITY_FOLDER_EMPTY_COPY: Record<"agents" | "workflows" | "knowledge-base" | "library", string> = {
+const ENTITY_FOLDER_EMPTY_COPY: Record<
+  "agents" | "workflows" | "knowledge-base" | "library" | "reports",
+  string
+> = {
   agents:
     "No agents yet. Agents are reusable Claude prompts (triage, onboarding, audits) that drive the workflows in this project. Ask Claude in the chat — \"draft an agent that triages tickets by urgency\" — and it will scaffold one here.",
   workflows:
@@ -53,6 +64,8 @@ const ENTITY_FOLDER_EMPTY_COPY: Record<"agents" | "workflows" | "knowledge-base"
     "No knowledge-base articles yet. This is where runbooks and reference docs live — Claude reads them when answering tickets. Drop in markdown files, or ask Claude to draft one (\"write a runbook for resetting a Slack workspace owner\").",
   library:
     "No library files yet. Drop runbook PDFs, scripts, or any reference doc you reach for repeatedly — Claude can pull from these when answering tickets or building workflows.",
+  reports:
+    "No reports yet. Click \"Generate overview\" above for an instant snapshot of ticket status, recent activity, top askers, and current escalations — or ask Claude in the chat (\"/report VPN tickets last 30 days\") for a custom report.",
 };
 
 /// Anchor tag override for ReactMarkdown rendering. Three URL shapes
@@ -249,12 +262,23 @@ export function Viewer({
     { path: string; filename: string }[]
   >([]);
   const [replyDragOver, setReplyDragOver] = useState(false);
+  // "Generate overview" button state on the reports/ entity-folder
+  // view. Run kicks off the local script via the Tauri command and,
+  // on success, jumps the viewer to the freshly-written file. fsTick
+  // wakes the explorer so the new file appears in the tree.
+  const [reportRunning, setReportRunning] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
   useEffect(() => {
     setReplyText("");
     setReplySending(false);
     setReplyError(null);
     setReplyAttachments([]);
     setReplyDragOver(false);
+    // Reset the Generate-overview button alongside the other view-
+    // specific state so a stale failure message doesn't follow the
+    // user when they navigate away from reports/ and back.
+    setReportRunning(false);
+    setReportError(null);
   }, [source]);
   useEffect(() => {
     // Fetch the admin's git email once and cache it so the composer
@@ -1152,15 +1176,49 @@ export function Viewer({
     // entries route through onOpenPath so per-file viewers (agent /
     // workflow / file) take over on click.
     if (source.kind === "entity-folder") {
+      const isReports = source.entity === "reports";
+      const onGenerateOverview = async () => {
+        if (!repo || reportRunning) return;
+        setReportRunning(true);
+        setReportError(null);
+        try {
+          const relPath = await reportOverviewRun(repo);
+          // The script writes to disk; the watcher will refresh the
+          // explorer. Jump the viewer to the new file so the admin
+          // sees the result immediately rather than scrolling for it.
+          if (onOpenPath) void onOpenPath(`${repo}/${relPath}`);
+        } catch (e) {
+          setReportError(e instanceof Error ? e.message : String(e));
+        } finally {
+          setReportRunning(false);
+        }
+      };
+      const reportsHeader = isReports ? (
+        <div className="viewer-summary-actions">
+          <button
+            type="button"
+            className="viewer-edit-btn viewer-edit-btn-primary"
+            onClick={onGenerateOverview}
+            disabled={reportRunning || !repo}
+          >
+            {reportRunning ? "Generating…" : "Generate overview"}
+          </button>
+          {reportError && (
+            <span className="viewer-edit-error">{reportError}</span>
+          )}
+        </div>
+      ) : null;
       if (source.files.length === 0) {
         return (
           <div className="viewer-summary">
+            {reportsHeader}
             <p className="summary-desc">{ENTITY_FOLDER_EMPTY_COPY[source.entity]}</p>
           </div>
         );
       }
       return (
         <div className="viewer-summary">
+          {reportsHeader}
           <ul className="entity-folder-list">
             {source.files.map((f) => (
               <li key={f.path}>

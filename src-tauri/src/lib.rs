@@ -9,6 +9,7 @@ mod keychain;
 mod pinkfish;
 mod project;
 mod pty;
+mod reports;
 mod skills;
 mod state;
 mod watcher;
@@ -71,6 +72,7 @@ pub fn run() {
             pinkfish::pinkfish_list_connections,
             pinkfish::pinkfish_mcp_call,
             project::project_bootstrap,
+            reports::report_overview_run,
             kb::kb_init,
             kb::kb_delete_file,
             kb::kb_read_file,

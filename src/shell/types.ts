@@ -63,7 +63,9 @@ export type ViewerSource =
       // `knowledge-bases/<name>/` (default + user-created); the
       // operational `filestores/attachments/` collection has its own
       // ticketid-grouped renderer and isn't part of this set.
-      entity: "agents" | "workflows" | "knowledge-base" | "library";
+      // `reports` carries on-demand generated markdown reports —
+      // sorted newest-first by filename instead of alphabetically.
+      entity: "agents" | "workflows" | "knowledge-base" | "library" | "reports";
       // Repo-relative path the resolver matched. For non-KB entities
       // it equals the entity name; for KB it carries the specific
       // collection (e.g. `knowledge-bases/default` or
