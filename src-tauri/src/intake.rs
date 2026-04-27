@@ -748,10 +748,7 @@ fn sanitize_attachment_filename(name: &str) -> String {
     }
     // Take the basename — drops any leading path the browser might
     // have leaked (some Linux file managers send full paths).
-    let base = trimmed
-        .rsplit(|c: char| c == '/' || c == '\\')
-        .next()
-        .unwrap_or(trimmed);
+    let base = trimmed.rsplit(['/', '\\']).next().unwrap_or(trimmed);
     let cleaned: String = base
         .chars()
         .map(|c| {
