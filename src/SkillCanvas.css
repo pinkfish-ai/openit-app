@@ -1,0 +1,260 @@
+/* Skill Canvas — primary interactive surface in the center pane.
+   Replaces the Viewer when a skill state file is active. */
+
+.skill-canvas {
+  height: 100%;
+  overflow: auto;
+  padding: 28px 36px 56px;
+  background: #fff;
+  color: #1a1a1f;
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* --- Header --- */
+
+.skill-canvas-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #ebebef;
+}
+
+.skill-canvas-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #15151c;
+}
+
+.skill-canvas-subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #6b6b78;
+}
+
+.skill-canvas-dismiss {
+  background: transparent;
+  border: 0;
+  font-size: 22px;
+  line-height: 1;
+  color: #888;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.skill-canvas-dismiss:hover {
+  background: #f4f4f6;
+  color: #222;
+}
+
+/* --- Steps --- */
+
+.skill-canvas-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skill-step {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  align-items: start;
+  transition: background-color 120ms ease;
+}
+
+.skill-step-active-row {
+  background: #f6f7ff;
+  border: 1px solid #d8dcff;
+  padding: 14px 12px;
+}
+
+.skill-step-completed .skill-step-title {
+  color: #6b6b78;
+  text-decoration: line-through;
+  text-decoration-color: #c8c8cf;
+  text-decoration-thickness: 1px;
+}
+
+.skill-step-pending .skill-step-title {
+  color: #8a8a93;
+}
+
+.skill-step-checkbox {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid #c8c8cf;
+  background: #fff;
+  color: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-top: 1px;
+  transition: all 120ms ease;
+}
+
+.skill-step-checkbox:hover {
+  border-color: #2c2d72;
+}
+
+.skill-step-completed .skill-step-checkbox {
+  background: #1d7d3a;
+  border-color: #1d7d3a;
+  color: #fff;
+}
+
+.skill-step-active .skill-step-checkbox {
+  border-color: #2c2d72;
+  color: #2c2d72;
+}
+
+.skill-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.skill-step-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #15151c;
+}
+
+.skill-step-text {
+  margin: 0;
+  color: #4d4d57;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.skill-step-action {
+  margin-top: 8px;
+  padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  width: 100%;
+}
+
+/* --- Action components --- */
+
+.skill-action-primary {
+  background: #2c2d72;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 16px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.skill-action-primary:hover:not(:disabled) {
+  background: #3b3d8c;
+}
+
+.skill-action-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.skill-action-secondary {
+  background: #fff;
+  color: #2c2d72;
+  border: 1px solid #2c2d72;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.skill-action-secondary:hover:not(:disabled) {
+  background: #f0f1ff;
+}
+
+.skill-action-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: #4d4d57;
+  width: 100%;
+  max-width: 380px;
+}
+
+.skill-action-field input {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+  font-size: 12px;
+}
+
+.skill-action-token-input,
+.skill-action-verify-dm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 420px;
+}
+
+.skill-action-error {
+  margin: 0;
+  color: #b3261e;
+  font-size: 12px;
+}
+
+.skill-action-success {
+  margin: 0;
+  color: #1d7d3a;
+  font-size: 12px;
+}
+
+.skill-action-unknown {
+  font-style: italic;
+  color: #8a8a93;
+}
+
+/* --- Freeform / FAQ --- */
+
+.skill-canvas-freeform {
+  margin-top: 16px;
+  padding-top: 18px;
+  border-top: 1px solid #ebebef;
+  color: #4d4d57;
+  font-size: 13px;
+}
+
+.skill-canvas-freeform-p {
+  margin: 0 0 10px;
+}
+
+.skill-canvas-freeform code {
+  background: #f4f4f6;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+}

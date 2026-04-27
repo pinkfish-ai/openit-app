@@ -11,6 +11,7 @@ mod pinkfish;
 mod project;
 mod pty;
 mod reports;
+mod skill_canvas;
 mod skills;
 mod slack;
 mod state;
@@ -110,6 +111,9 @@ pub fn run() {
             intake::intake_stop,
             intake::intake_url,
             agent_trace::agent_trace_latest,
+            skill_canvas::skill_state_read,
+            skill_canvas::skill_state_write,
+            skill_canvas::skill_state_clear,
             slack::slack_connect,
             slack::slack_disconnect,
             slack::slack_config_read,
