@@ -1270,6 +1270,62 @@ export function Viewer({
     if (source.kind === "conversation-thread") {
       const turns = source.turns;
       const ticketId = source.ticketId;
+
+      /// Write a single admin turn to disk + bump the ticket back to
+      /// `open`. Shared between the textarea Send path and the
+      /// drag-drop path so a dropped file always shows up as a real
+      /// thread message (not just a chip on the composer that the
+      /// admin still has to click Send on). Caller has already
+      /// validated body / attachments are non-empty.
+      const writeAdminTurn = async (
+        body: string,
+        attachments: string[],
+      ): Promise<void> => {
+        if (!repo) return;
+        const { entityWriteFile, fsRead } = await import("../lib/api");
+        const nowMs = Date.now();
+        const rand = Math.random().toString(36).slice(2, 6);
+        const msgId = `msg-${nowMs}-${rand}`;
+        const isoNow = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+        const sender = adminEmail ?? "admin";
+        const payload: Record<string, unknown> = {
+          id: msgId,
+          ticketId,
+          role: "admin",
+          sender,
+          timestamp: isoNow,
+          body,
+        };
+        if (attachments.length > 0) payload.attachments = attachments;
+        await entityWriteFile(
+          repo,
+          `databases/conversations/${ticketId}`,
+          `${msgId}.json`,
+          JSON.stringify(payload, null, 2),
+        );
+        // Bumping the ticket back to `open` (it might be at
+        // escalated / resolved / closed). Best-effort: missing
+        // ticket file is logged but the reply itself stays.
+        try {
+          const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
+          const raw = await fsRead(ticketPath);
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          parsed.status = "open";
+          parsed.updatedAt = isoNow;
+          if (typeof parsed.assignee !== "string" || !parsed.assignee) {
+            parsed.assignee = sender;
+          }
+          await entityWriteFile(
+            repo,
+            "databases/tickets",
+            `${ticketId}.json`,
+            JSON.stringify(parsed, null, 2),
+          );
+        } catch (e) {
+          console.warn("[viewer] reply: ticket update skipped:", e);
+        }
+      };
+
       const sendReply = async () => {
         const trimmed = replyText.trim();
         // Allow attachment-only replies (admin drops a screenshot
@@ -1280,56 +1336,12 @@ export function Viewer({
         setReplySending(true);
         setReplyError(null);
         try {
-          const { entityWriteFile } = await import("../lib/api");
-          const nowMs = Date.now();
-          const rand = Math.random().toString(36).slice(2, 6);
-          const msgId = `msg-${nowMs}-${rand}`;
-          const isoNow = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-          const sender = adminEmail ?? "admin";
-          const payload: Record<string, unknown> = {
-            id: msgId,
-            ticketId,
-            role: "admin",
-            sender,
-            timestamp: isoNow,
-            body: trimmed || "(attachment)",
-          };
-          if (replyAttachments.length > 0) {
-            payload.attachments = replyAttachments.map((a) => a.path);
-          }
-          await entityWriteFile(
-            repo,
-            `databases/conversations/${ticketId}`,
-            `${msgId}.json`,
-            JSON.stringify(payload, null, 2),
+          await writeAdminTurn(
+            trimmed || "(attachment)",
+            replyAttachments.map((a) => a.path),
           );
           setReplyText("");
           setReplyAttachments([]);
-          // Bumping the ticket back to `open` (it might be at
-          // escalated / resolved / closed). Done as a best-effort
-          // optimistic write — the auto-commit driver picks both
-          // files up. If reading the ticket fails (e.g. file
-          // missing), skip without surfacing a hard error since the
-          // reply itself succeeded.
-          try {
-            const { fsRead } = await import("../lib/api");
-            const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
-            const raw = await fsRead(ticketPath);
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
-            parsed.status = "open";
-            parsed.updatedAt = isoNow;
-            if (typeof parsed.assignee !== "string" || !parsed.assignee) {
-              parsed.assignee = sender;
-            }
-            await entityWriteFile(
-              repo,
-              "databases/tickets",
-              `${ticketId}.json`,
-              JSON.stringify(parsed, null, 2),
-            );
-          } catch (e) {
-            console.warn("[viewer] reply: ticket update skipped:", e);
-          }
         } catch (err) {
           setReplyError(`Send failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
@@ -1400,8 +1412,28 @@ export function Viewer({
                   console.error(`[admin-reply] failed to attach ${filename}:`, err);
                 }
               }
-              if (newAttachments.length > 0) {
-                setReplyAttachments((prev) => [...prev, ...newAttachments]);
+              if (newAttachments.length === 0) return;
+              // Post the dropped files as a standalone admin turn so
+              // they show up in the thread immediately. The admin can
+              // still type follow-up text and click Send for a separate
+              // turn afterwards. If the textarea has unsent text, we
+              // bundle it with this drop instead of leaving it stuck
+              // in the composer waiting for a manual Send.
+              const trimmed = replyText.trim();
+              setReplySending(true);
+              setReplyError(null);
+              try {
+                await writeAdminTurn(
+                  trimmed || "(attachment)",
+                  newAttachments.map((a) => a.path),
+                );
+                setReplyText("");
+              } catch (err) {
+                setReplyError(
+                  `Drop failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              } finally {
+                setReplySending(false);
               }
             }}
           >
