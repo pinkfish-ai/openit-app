@@ -228,14 +228,14 @@ describe("syncEngine.pullEntity", () => {
       remote: [
         {
           manifestKey: "intro",
-          workingTreePath: "knowledge-base/intro.md",
+          workingTreePath: "knowledge-bases/default/intro.md",
           updatedAt: REMOTE_NEW_VERSION,
         },
       ],
       local: [
         {
           manifestKey: "intro",
-          workingTreePath: "knowledge-base/intro.md",
+          workingTreePath: "knowledge-bases/default/intro.md",
           // mtime hasn't moved past TRACKED_MTIME → user hasn't touched it.
           mtime_ms: TRACKED_MTIME,
           isShadow: false,
@@ -255,7 +255,7 @@ describe("syncEngine.pullEntity", () => {
     // Auto-commit fired with the canonical path (no shadows).
     expect(gitCommitPaths).toHaveBeenCalledTimes(1);
     const [, paths] = vi.mocked(gitCommitPaths).mock.calls[0];
-    expect(paths).toEqual(["knowledge-base/intro.md"]);
+    expect(paths).toEqual(["knowledge-bases/default/intro.md"]);
   });
 
   it("bootstrap-adoption: file on disk, not in manifest → seed manifest, do NOT rewrite or commit", async () => {

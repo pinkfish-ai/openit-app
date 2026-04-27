@@ -776,7 +776,9 @@ export function FileExplorer({
                   type="button"
                   className="kb-conflict-link"
                   onClick={() =>
-                    onSelect(`${repo}/knowledge-base/${c.filename}`)
+                    // 2026-04-27 plural rename: KB conflicts surface
+                    // for the cloud-synced default collection.
+                    onSelect(`${repo}/knowledge-bases/default/${c.filename}`)
                   }
                 >
                   <code>{c.filename}</code>

@@ -54,7 +54,7 @@ fn ensure_dir(p: &Path) -> Result<(), String> {
     fs::create_dir_all(p).map_err(|e| e.to_string())
 }
 
-/// Resolve a `<repo>/knowledge-base/<filename>` path and assert it stays
+/// Resolve a `<repo>/knowledge-bases/default/<filename>` path and assert it stays
 /// inside the KB directory. Guards against `..` segments, absolute paths, or
 /// nested separators sneaking in via server responses or future drag sources.
 /// `filename` must be a single path component (no directory parts).
@@ -108,7 +108,7 @@ pub fn kb_write_file(repo: String, filename: String, content: String) -> Result<
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
-/// Write raw bytes to `<repo>/knowledge-base/<filename>`. Used by the
+/// Write raw bytes to `<repo>/knowledge-bases/default/<filename>`. Used by the
 /// drag-from-desktop handler so binary files (PDFs, images) round-trip
 /// correctly.
 #[tauri::command]
@@ -236,7 +236,7 @@ pub struct KbUploadResult {
     pub mime_type: Option<String>,
 }
 
-/// Multipart upload of a file from `<repo>/knowledge-base/<filename>` to
+/// Multipart upload of a file from `<repo>/knowledge-bases/default/<filename>` to
 /// the Pinkfish skills file storage endpoint. Returns the parsed response
 /// (id, filename, etc.) on success. Works for any file type, including
 /// binary — we stream the file bytes directly rather than going through
@@ -356,7 +356,7 @@ fn mime_for(filename: &str) -> String {
     .to_string()
 }
 
-/// Fetch a download URL and save the body into `<repo>/knowledge-base/<filename>`.
+/// Fetch a download URL and save the body into `<repo>/knowledge-bases/default/<filename>`.
 /// Used by the puller to materialize remote KB files locally.
 #[tauri::command]
 pub async fn kb_download_to_local(
@@ -818,7 +818,10 @@ mod tests {
     #[test]
     fn safe_kb_path_accepts_plain_filename() {
         let p = safe_kb_path("/tmp/repo", "notes.md").unwrap();
-        assert!(p.ends_with("knowledge-base/notes.md"));
+        // 2026-04-27 plural rename: paths now sit under
+        // `knowledge-bases/default/` (not the legacy flat
+        // `knowledge-base/`).
+        assert!(p.ends_with("knowledge-bases/default/notes.md"));
     }
 
     #[test]
