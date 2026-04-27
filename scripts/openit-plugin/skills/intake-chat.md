@@ -1,122 +1,109 @@
 ---
 name: intake-chat
-description: One-shot helpdesk responder for the localhost chat intake. Each turn the agent gathers more context if needed, searches the knowledge base, and either answers (KB hit) or escalates (KB miss) — writing the ticket, conversation turn, and people row directly.
+description: Per-turn helpdesk responder for the localhost chat intake. Reads the conversation context, searches the knowledge base, and writes either an answer (KB hit → status `answered`) or an escalation reply (KB miss → status `escalated`). The ticket, asker turn, and people row are pre-written by the server before this skill runs.
 ---
 
-## When to use
+## Context
 
-This skill runs inside a `claude -p` subprocess spawned by OpenIT's chat-intake server. **Each chat turn is one invocation** — but the chat is a long-lived surface, not just first-touch. The user can keep messaging after their initial question, follow up with new info, ask clarifying questions, or react to the agent's reply.
+This skill runs inside a `claude -p` subprocess spawned by OpenIT's chat-intake server, once per chat turn. The chat is a long-lived surface — the user can keep messaging after their initial question, follow up with new info, ask a different question entirely, or react to your reply.
 
-You'll see:
+The prompt you receive includes:
 
-- The `agents/triage.json` instructions (the agent persona) prepended to your prompt
-- The conversation history so far
-- The user's new message
-- The **ticket id** for this conversation (one per session — **never create additional tickets**, all turns go on the same ticket)
+- The persona block from `agents/triage.json`.
+- An **operational context block** with the asker's email and the ticket id for this conversation.
+- The conversation history so far (one ticket per session — never create a second).
+- The user's new message.
 
-You write your reply as your final message; the server returns it to the user's chat tab. You also write any necessary files (ticket, conversation turn, people row) using `Write` / `Edit`.
+## What's already done
 
-### Always re-read disk state for prior turns
+The intake server (Rust) has already done these writes before invoking you, on every turn:
 
-The server passes the in-memory conversation in your prompt, but treat `databases/conversations/<ticketId>/` as the source of truth. If the in-memory history feels incomplete (e.g., server restarted), `Glob` the thread folder, `Read` each msg, sort by timestamp. The disk state is canonical.
+- **Ticket file** at `databases/tickets/<ticketId>.json` — created on first turn (subject, description, asker, askerChannel, priority, tags, createdAt, updatedAt). On every subsequent turn, status is flipped back to `agent-responding` so the admin's activity banner fires.
+- **Asker turn** at `databases/conversations/<ticketId>/msg-<unix-ms>-<rand>.json` — for the user's most recent message.
+- **People row** at `databases/people/<sanitized-email>.json` — idempotent.
 
-### Re-search the KB on each substantive user turn
+**Do not re-write any of these.** Your job is the model-driven part.
 
-Don't assume the first KB miss is final. If the user follows up with new info ("oh, it's only the VPN, not email"), re-run `kb-search.mjs` with the updated query. If the new search hits and the prior status was `escalated`, **transition to `answered`** by editing the ticket and writing your new agent turn. The state can move forward AND backward as the conversation evolves.
+## Your steps
 
-If the user asks a NEW question mid-conversation (different topic), don't create a separate ticket — append it as another turn on the same ticket. Search the KB for that question. Status reflects the most recent unresolved one. If one question is answered and another is escalated, the ticket is `escalated` overall; the admin's review will see both questions in the thread.
+### 1. Read context
 
-## What to do, in order
+- `Read` the ticket at `databases/tickets/<ticketId>.json`.
+- `Glob "databases/conversations/<ticketId>/msg-*.json"`, `Read` each, sort by timestamp. This is the canonical conversation thread (the in-memory history in your prompt is correct but disk is the source of truth).
 
-One conversation = one ticket. Every turn from this user appends to the same ticket's thread (`databases/conversations/<ticketId>/`). The ticket's status reflects the **current overall state**:
-
-- All questions answered confidently → `answered`
-- Any question pending human attention → `escalated`
-- User confirmed the issue is resolved → `resolved`
-- Small talk / meta messages (no actual ticketable content) → don't write any files; just reply
-
-### 1. Decide whether this turn warrants writes
-
-If the message is small-talk ("hi", "what's this for?", "are you a bot?"), reply briefly and write nothing. The ticket may not even exist yet — that's fine, leave it.
-
-Otherwise, the message has support content. Continue.
-
-### 2. Email is already known
-
-The user gave their email through a gate form before the chat opened — you'll find it in the operational context block at the top of the prompt. **Don't ask for it again.** Use it as the `asker`/`sender` field on writes, and as the key for the people row.
-
-If somehow the email is missing from the prompt (rare — the gate enforces it), ask once and end your turn.
-
-The actual issue is whatever the user types. If their first message is just "hi" or seems incomplete, ask one short clarifying question. Otherwise proceed to step 3.
-
-### 3. Search the knowledge base
-
-Run:
+### 2. Search the knowledge base
 
 ```bash
-node .claude/scripts/kb-search.mjs "<the user's question>"
+node .claude/scripts/kb-search.mjs "<query summarizing the user's current question>"
 ```
 
-It prints one JSON line:
+Output:
 
 ```json
-{ "matches": [
-    { "path": "knowledge-base/foo.md", "score": 0.83, "snippet": "..." },
-    ...
-] }
+{ "matches": [{ "path": "knowledge-base/foo.md", "score": 0.83, "snippet": "..." }, …] }
 ```
 
-If the top match has `score > 0.5`, `Read` that article and check whether it actually answers the user's question. (Score alone isn't enough — common-word overlap can score high without being relevant.) If yes → step 4a. Otherwise → step 4b.
+If the top match has `score > 0.5`, `Read` it and judge whether it actually answers the user's question. (Score alone isn't enough — word overlap can score high without being relevant.)
 
-### 4a. KB has a confident answer
+Re-search on every substantive user turn. If a follow-up gives you new info ("oh it's only the VPN, not email"), the new search may hit where the prior didn't — which means the ticket can transition from `escalated` back to `answered`.
 
-- Write a clear, concise reply to the user. Lead with the answer.
-- `Write` the ticket at `databases/tickets/<ticketId>.json` with `status: "answered"`, `kbArticleRefs: ["<path>"]`, and the schema fields filled in.
-- Write the asker's turn at `databases/conversations/<ticketId>/msg-<unix-ms>-<rand>.json`.
-- Write your own reply turn next to it (`role: "agent"`, `sender: "triage"`).
-- Ensure a `databases/people/<sanitized-email>.json` row exists (idempotent: skip if present).
-- End your message with the reply text — that's what the user sees.
+### 3. Write your reply turn + update ticket status
 
-### 4b. KB has no confident answer — escalate
+Either branch ends with two writes: the agent reply turn + a ticket status update.
 
-- Reply: *"Thanks — I don't have a definitive answer yet. I've logged this for the team and someone will follow up by email."*
-- `Write` the ticket with `status: "escalated"`.
-- Write asker turn + agent turn (your reply) into `databases/conversations/<ticketId>/`.
-- Write the people row (idempotent).
+**3a. KB has a confident answer**
 
-### 5. End your message with the reply text
+- Append a turn at `databases/conversations/<ticketId>/msg-<unix-ms>-<rand>.json`:
+  ```json
+  {
+    "id": "msg-<unix-ms>-<rand>",
+    "ticketId": "<ticketId>",
+    "role": "agent",
+    "sender": "triage",
+    "timestamp": "<now>",
+    "body": "<your reply text>"
+  }
+  ```
+- `Edit` the ticket: set `status: "answered"`, append the cited filename(s) to `kbArticleRefs`, set `updatedAt` to now.
+- Reply text leads with the answer; cite the article casually ("Per our VPN guide, you can…").
 
-Your final message in the subprocess output IS what the user sees. Don't include implementation notes, file paths, or "I've written the ticket" meta-commentary in the reply. Just the response.
+**3b. KB has no confident answer — escalate**
 
-## Schemas
+- Append the agent turn the same way. Body: *"Thanks — I don't have a definitive answer yet. I've escalated this to the team; someone will follow up here when they're ready."* (Adjust to the situation.)
+- `Edit` the ticket: set `status: "escalated"`, set `updatedAt` to now.
 
-Read `databases/tickets/_schema.json` and `databases/people/_schema.json` for the exact field IDs. Plain-language names: `subject`, `description`, `asker`, `email`, `displayName`, etc.
+**3c. Conversational holding turn (mid-clarification)**
 
-Conversation turns are unstructured — use this convention:
+If the user's message is too vague to KB-search or you need one more piece of info ("can you tell me which system?"), reply with the clarifying question and **leave the ticket as `agent-responding`** by editing it explicitly back to that status. Don't escalate yet — you're still working on it.
+
+### 4. End your output with the reply text
+
+The last thing in your stdout becomes the user's chat bubble. Don't narrate the file writes ("I've updated the ticket…") — just the conversational reply.
+
+## Conversation conventions
+
+Conversation turns are unstructured rows under `databases/conversations/<ticketId>/`. Field shape:
 
 ```json
 {
   "id":         "msg-<unix-ms>-<4-char-rand>",
-  "ticketId":   "<the pre-allocated ticket id>",
+  "ticketId":   "<ticketId>",
   "role":       "asker" | "agent" | "admin",
-  "sender":     "<email or 'triage' or admin name>",
-  "timestamp":  "<ISO-8601 UTC, e.g. 2026-04-27T09:14:02Z>",
-  "body":       "<the message text>"
+  "sender":     "<email for asker, 'triage' for agent, admin's name for admin>",
+  "timestamp":  "<ISO-8601 UTC e.g. 2026-04-27T09:14:02Z>",
+  "body":       "<message text>"
 }
 ```
 
+Generate timestamps as `date -u '+%Y-%m-%dT%H:%M:%SZ'` via Bash if you don't have one handy.
+
 ## Idempotency
 
-If the ticket file already exists at `databases/tickets/<ticketId>.json` with a status of `answered`, `escalated`, `resolved`, or `closed` — **don't rewrite it**. Just write your new conversation turn and reply normally. This prevents accidental status downgrades when the user keeps chatting after a resolution.
-
-## Subject + description
-
-- `subject`: first line of the user's first message, capped at ~80 chars.
-- `description`: the full first message body. (You'll have access to the full conversation later via the `databases/conversations/<ticketId>/` files if a human reviews.)
+If the ticket is already in a terminal state (`resolved` or `closed`) and the user sends a follow-up, treat it as a new conversational moment within the same ticket — log your reply turn, but don't write the ticket back to `agent-responding`. They've reopened the conversation but not necessarily reopened the case. Use judgment; if it's clearly a new escalation, set status back to `escalated`.
 
 ## Rules
 
 - **Never invent answers.** If the KB doesn't know, escalate.
-- **Email is required** before committing the ticket. If the user hasn't given one, ask for it.
+- **Sender for agent turns**: always `"triage"`. (Future: per-agent customization; for now hardcode.)
+- **One ticket per session.** All turns from this user attach to the same `ticketId`. Even if they ask a new question mid-conversation, append it as another asker → agent exchange on the same ticket.
 - **Use ISO-8601 UTC timestamps** with the `Z` suffix.
-- **Sender for agent turns**: `"triage"`. For asker turns: the user's email.

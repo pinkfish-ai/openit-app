@@ -296,12 +296,13 @@ async fn chat_turn(
         )
     };
 
-    // If a ticket file already exists for this session, mark it
-    // `agent-responding` so the OpenIT admin's activity banner shows
-    // "Agent is responding to <subject>...". The ticket file may not
-    // exist yet (first turn / small talk) — in that case there's
-    // nothing to flip.
-    let _ = mark_agent_responding(&repo, &ticket_id).await;
+    // Mark the ticket `agent-responding` so the OpenIT admin's
+    // activity banner fires immediately (before claude -p has had
+    // a chance to write anything). On the first turn the ticket
+    // file may not exist yet — write a minimal stub with the
+    // user's message as the description. The skill will fill in
+    // any remaining fields when it writes the full row.
+    let _ = ensure_responding_stub(&repo, &ticket_id, &email, trimmed).await;
 
     // Append the user's message to the in-memory history before
     // invoking the agent so the prompt contains it.
@@ -668,8 +669,147 @@ async fn mark_status(repo: &PathBuf, ticket_id: &str, status: &str) -> Result<()
     Ok(())
 }
 
-async fn mark_agent_responding(repo: &PathBuf, ticket_id: &str) -> Result<(), String> {
-    mark_status(repo, ticket_id, "agent-responding").await
+/// Ensure the ticket + asker turn + people row exist, marked
+/// `agent-responding`. Same writes the old form-intake handler did,
+/// reused for every chat turn so the admin sees activity from the
+/// moment the user hits Send. Idempotent: on subsequent turns the
+/// ticket already exists, so we only flip status + append a new
+/// asker turn, and update the ticket's `updatedAt` field.
+async fn ensure_responding_stub(
+    repo: &PathBuf,
+    ticket_id: &str,
+    email: &str,
+    user_message: &str,
+) -> Result<(), String> {
+    let now = now_iso();
+    let ticket_path = repo
+        .join("databases")
+        .join("tickets")
+        .join(format!("{}.json", ticket_id));
+
+    // First turn: write the ticket fresh.
+    if !ticket_path.exists() {
+        let subject = first_line_truncated(user_message, 80);
+        let row = serde_json::json!({
+            "subject": subject,
+            "description": user_message,
+            "asker": email,
+            "askerChannel": "chat",
+            "status": "agent-responding",
+            "priority": "normal",
+            "tags": [],
+            "createdAt": now,
+            "updatedAt": now,
+        });
+        let json = serde_json::to_string_pretty(&row)
+            .map_err(|e| format!("serialize ticket: {}", e))?;
+        if let Some(parent) = ticket_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| format!("mkdir tickets: {}", e))?;
+        }
+        tokio::fs::write(&ticket_path, json)
+            .await
+            .map_err(|e| format!("write ticket: {}", e))?;
+    } else {
+        // Subsequent turn: just flip status + bump updatedAt.
+        let _ = mark_status(repo, ticket_id, "agent-responding").await;
+    }
+
+    // Append the asker's turn for this message.
+    let conv_dir = repo
+        .join("databases")
+        .join("conversations")
+        .join(ticket_id);
+    tokio::fs::create_dir_all(&conv_dir)
+        .await
+        .map_err(|e| format!("mkdir conv: {}", e))?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let rand4: String = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(4)
+        .collect();
+    let msg_id = format!("msg-{}-{}", now_ms, rand4);
+    let msg = serde_json::json!({
+        "id": msg_id,
+        "ticketId": ticket_id,
+        "role": "asker",
+        "sender": email,
+        "timestamp": now,
+        "body": user_message,
+    });
+    let msg_json = serde_json::to_string_pretty(&msg)
+        .map_err(|e| format!("serialize asker turn: {}", e))?;
+    let msg_path = conv_dir.join(format!("{}.json", msg_id));
+    tokio::fs::write(&msg_path, msg_json)
+        .await
+        .map_err(|e| format!("write asker turn: {}", e))?;
+
+    // Idempotent people row.
+    let _ = ensure_people_row(repo, email, &now).await;
+    Ok(())
+}
+
+fn first_line_truncated(s: &str, max: usize) -> String {
+    let line = s.lines().next().unwrap_or(s).trim();
+    if line.chars().count() <= max {
+        line.to_string()
+    } else {
+        let mut out: String = line.chars().take(max - 1).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// Idempotent people row at `databases/people/<sanitized-email>.json`.
+/// Skips if a row with the same key already exists.
+async fn ensure_people_row(
+    repo: &std::path::Path,
+    email: &str,
+    now: &str,
+) -> Result<(), String> {
+    let people_dir = repo.join("databases").join("people");
+    tokio::fs::create_dir_all(&people_dir)
+        .await
+        .map_err(|e| format!("mkdir people: {}", e))?;
+
+    let key = sanitize_email_key(email);
+    let path = people_dir.join(format!("{}.json", key));
+    if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+        return Ok(());
+    }
+    let row = serde_json::json!({
+        "displayName": email,
+        "email": email,
+        "channels": [format!("chat:{}", email)],
+        "createdAt": now,
+        "updatedAt": now,
+    });
+    let json = serde_json::to_string_pretty(&row)
+        .map_err(|e| format!("serialize people row: {}", e))?;
+    tokio::fs::write(&path, json)
+        .await
+        .map_err(|e| format!("write people row: {}", e))?;
+    Ok(())
+}
+
+fn sanitize_email_key(email: &str) -> String {
+    email
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -801,6 +941,11 @@ const CHAT_HTML: &str = r#"<!doctype html>
   font-size: 12px;
   margin: 0;
 }
+/* Make the HTML `hidden` attribute win against display:flex on
+   chat/form/banner — those have explicit display rules in the main
+   stylesheet that would otherwise override the user agent's hidden
+   { display: none } default. */
+[hidden] { display: none !important; }
 </style>
 <style>
 :root {
