@@ -463,8 +463,13 @@ export function FileExplorer({
       // user-facing surface, and clicking a ticket card opens the
       // thread directly. Showing both `tickets` and `conversations`
       // in the explorer was confusing — same data, two entry points.
+      // The "show system files" toggle re-reveals them for admins
+      // who want to inspect the underlying msg-*.json data.
       const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : "";
-      if (rel === "databases/conversations" || rel.startsWith("databases/conversations/")) {
+      if (
+        !showSystemFiles &&
+        (rel === "databases/conversations" || rel.startsWith("databases/conversations/"))
+      ) {
         return false;
       }
       for (const c of collapsed) {
