@@ -1246,15 +1246,12 @@ export function Viewer({
                     title={`Open ${f.name}`}
                   >
                     {isReport ? (
-                      <>
-                        <span className="entity-folder-name-row">
-                          <span className="entity-folder-name">{titleText}</span>
-                          {dateLabel && (
-                            <span className="entity-folder-date">{dateLabel}</span>
-                          )}
-                        </span>
-                        <span className="entity-folder-meta">{slug}</span>
-                      </>
+                      <span className="entity-folder-name-row">
+                        <span className="entity-folder-name">{titleText}</span>
+                        {dateLabel && (
+                          <span className="entity-folder-date">{dateLabel}</span>
+                        )}
+                      </span>
                     ) : (
                       <>
                         <span className="entity-folder-name">{titleText}</span>

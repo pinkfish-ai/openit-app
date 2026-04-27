@@ -2683,6 +2683,15 @@ body,
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
+}
+
+/* Push the date to the far right of the row so the title and the
+   timestamp don't crowd each other on short titles. The flex auto
+   margin is the cleanest way to right-align without forcing a fixed
+   column layout. */
+.entity-folder-name-row .entity-folder-date {
+  margin-left: auto;
 }
 
 .entity-folder-name {
