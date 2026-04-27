@@ -1,9 +1,9 @@
 {
-  "schemaVersion": "2026-04-26",
-  "name": "openit-tickets",
+  "schemaVersion": "2026-04-27",
+  "name": "tickets",
   "type": "datastore",
   "isStructured": true,
-  "description": "IT support tickets. One row per case. Conversation turns live in the openit-conversations datastore, linked via ticketId.",
+  "description": "IT support tickets. One row per case. Conversation turns live in the conversations datastore, linked via ticketId (the ticketId is also the subfolder name under databases/conversations/).",
   "fields": [
     {
       "id": "subject",
@@ -30,18 +30,18 @@
       "id": "askerChannel",
       "label": "Channel",
       "type": "enum",
-      "values": ["openit", "slack", "email", "web", "teams", "api"],
-      "default": "openit",
-      "comment": "How the question reached us. 'openit' = typed directly in OpenIT chat. Channel ingest options become available when cloud is connected."
+      "values": ["chat", "slack", "email", "web", "teams", "api"],
+      "default": "chat",
+      "comment": "How the question reached us. 'chat' = the localhost chat-intake form. Other channels available when cloud is connected (channel ingest)."
     },
     {
       "id": "status",
       "label": "Status",
       "type": "enum",
-      "values": ["incoming", "open", "answered", "resolved", "closed"],
+      "values": ["incoming", "agent-responding", "answered", "escalated", "resolved", "closed"],
       "required": true,
       "default": "incoming",
-      "comment": "incoming = newly arrived, not yet triaged. open = needs human attention. answered = agent or admin replied. resolved = user confirmed fix. closed = no further action expected."
+      "comment": "incoming = just landed, agent hasn't run (transient). agent-responding = claude -p subprocess running; admin sees an activity banner. answered = agent KB hit + replied. escalated = agent gave up; escalated banner fires. resolved = admin completed. closed = no further action."
     },
     {
       "id": "priority",
