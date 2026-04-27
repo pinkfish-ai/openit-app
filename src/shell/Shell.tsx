@@ -27,6 +27,7 @@ import {
 import { pullDatastoresOnce } from "../lib/datastoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
+import { startAutoCommitDriver, stopAutoCommitDriver } from "../lib/autoCommitDriver";
 import { ChatPane } from "./ChatPane";
 import { ConflictBanner } from "./ConflictBanner";
 import { FileExplorer } from "./FileExplorer";
@@ -420,6 +421,12 @@ export function Shell({
           );
           if (hit) void runPushFromMarker();
         });
+        // Start the auto-commit driver alongside the watcher so any
+        // write to `databases/{tickets,conversations,people}/` lands
+        // in a commit regardless of who wrote it (chat-intake server,
+        // admin Claude via /answer-ticket, manual edits). See the
+        // module header for scope rationale.
+        await startAutoCommitDriver(repo);
       } catch (e) {
         console.warn("[shell] fs watcher failed to start:", e);
       }
@@ -427,6 +434,7 @@ export function Shell({
 
     return () => {
       unlisten?.();
+      void stopAutoCommitDriver();
       fsWatchStop().catch(() => {});
     };
   }, [repo, bumpFs, onSyncLine]);
@@ -483,7 +491,7 @@ export function Shell({
                 className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
                 onClick={() => setLeftTab("source-control")}
               >
-                Deploy
+                Sync
                 {changeCount > 0 && (
                   <span className="left-tab-badge" aria-label={`${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`}>
                     {changeCount}

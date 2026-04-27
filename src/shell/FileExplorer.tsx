@@ -134,6 +134,43 @@ function prettyName(
   return name;
 }
 
+/// Recover a friendlier filename for a dropped file. Most drops from
+/// Finder give us the real filename in `File.name`. Drops from a web
+/// app (Slack, Google Drive, etc.) often hand the browser an opaque
+/// CDN id instead — `T06KC1QJMSP-U07KXMWSZR7-1a3826e7787f-…` is the
+/// pattern Slack uses. When the file's own name looks like one of
+/// those opaque ids AND the drag includes a `text/uri-list` (the
+/// public link), prefer the URL's basename — that's almost always
+/// the real filename. Fall back to the original `File.name` if we
+/// can't do better.
+function friendlyDroppedFilename(fileName: string, urlHint?: string): string {
+  // Detect the Slack-style id (workspace + user + hash) and the
+  // generic "long string of hex/uppercase/dashes with no extension"
+  // pattern. If the name has a normal extension and isn't pathological,
+  // keep it.
+  const looksLikeSlackId = /^T[A-Z0-9]+-U[A-Z0-9]+/.test(fileName);
+  const hasExtension = /\.[A-Za-z0-9]{1,8}$/.test(fileName);
+  const looksOpaque = looksLikeSlackId || (!hasExtension && fileName.length > 32 && /^[A-Za-z0-9_-]+$/.test(fileName));
+  if (!looksOpaque) return fileName;
+
+  if (urlHint) {
+    try {
+      const url = new URL(urlHint);
+      const segments = url.pathname.split("/").filter(Boolean);
+      const last = segments[segments.length - 1];
+      if (last) {
+        const decoded = decodeURIComponent(last);
+        // Sanity-check: the URL basename should look like a real
+        // filename (have an extension, not be itself opaque).
+        if (/\.[A-Za-z0-9]{1,8}$/.test(decoded)) return decoded;
+      }
+    } catch {
+      /* not a parsable URL — fall through */
+    }
+  }
+  return fileName;
+}
+
 function fileColorClass(
   n: FileNode,
   repo: string,
@@ -436,46 +473,71 @@ export function FileExplorer({
     const files = Array.from(e.dataTransfer.files ?? []);
     if (files.length === 0) return;
 
+    // Pull URL-list out of the drag payload so we can recover original
+    // filenames for web-app drags (Slack / Drive / etc.) where the
+    // browser-exposed `File.name` is an opaque CDN id like
+    // `T06KC1QJMSP-U07KXMWSZR7-1a3826e7787f-…`. The url-list typically
+    // carries the public link whose path basename is the human name.
+    const dragUrls: string[] = [];
+    const uriList = e.dataTransfer.getData("text/uri-list");
+    if (uriList) {
+      for (const line of uriList.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) dragUrls.push(trimmed);
+      }
+    }
+    if (dragUrls.length === 0) {
+      const text = e.dataTransfer.getData("text/plain");
+      if (text && /^https?:\/\//.test(text.trim())) dragUrls.push(text.trim());
+    }
+
     // Determine which directory was the drop target
     const targetRel = targetPath ? relPath(repo, targetPath) : null;
     const isFilestoreTarget = targetRel?.startsWith("filestore") ?? false;
 
     if (isFilestoreTarget) {
       // Drop into filestore — no file type restriction
-      for (const f of files) {
+      for (let i = 0; i < files.length; i += 1) {
+        const f = files[i];
+        const filename = friendlyDroppedFilename(f.name, dragUrls[i]);
         try {
           const buf = await f.arrayBuffer();
           const { fsStoreWriteFileBytes } = await import("../lib/api");
-          await fsStoreWriteFileBytes(repo, f.name, buf);
+          await fsStoreWriteFileBytes(repo, filename, buf);
         } catch (err) {
-          console.error(`failed to import ${f.name} to filestore:`, err);
+          console.error(`failed to import ${filename} to filestore:`, err);
         }
       }
       reload();
       return;
     }
 
-    // Default: drop into knowledge-base with file type filtering
-    const accepted: File[] = [];
+    // Default: drop into knowledge-base with file type filtering.
+    // Resolve a friendly name first so the kb-supported check sees
+    // the real extension (a Slack-id-shaped name has no extension and
+    // would be rejected as unsupported).
+    const acceptedRecords: { file: File; filename: string }[] = [];
     const rejected: string[] = [];
-    for (const f of files) {
-      if (isKbSupported(f.name)) {
-        accepted.push(f);
+    for (let i = 0; i < files.length; i += 1) {
+      const f = files[i];
+      const filename = friendlyDroppedFilename(f.name, dragUrls[i]);
+      if (isKbSupported(filename)) {
+        acceptedRecords.push({ file: f, filename });
       } else {
-        rejected.push(f.name);
+        rejected.push(filename);
       }
     }
     if (rejected.length > 0) setRejectedFiles(rejected);
 
-    for (const f of accepted) {
+    for (const { file: f, filename } of acceptedRecords) {
       try {
         const buf = await f.arrayBuffer();
-        await kbWriteFileBytes(repo, f.name, buf);
+        await kbWriteFileBytes(repo, filename, buf);
       } catch (err) {
-        console.error(`failed to import ${f.name}:`, err);
+        console.error(`failed to import ${filename}:`, err);
       }
     }
-    if (accepted.length > 0) reload();
+    if (acceptedRecords.length > 0) reload();
   };
 
   if (!repo) {

@@ -125,7 +125,7 @@ function ExternalAnchor({
   );
 }
 
-type ViewMode = "rendered" | "raw" | "table";
+type ViewMode = "rendered" | "raw" | "table" | "edit";
 
 function isMarkdown(path: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(path);
@@ -215,6 +215,21 @@ export function Viewer({
   useEffect(() => {
     setConversationsFilter("all");
   }, [repo]);
+
+  // Edit-mode state for the markdown viewer. `editDraft` is the
+  // textarea value (decoupled from `content` so unsaved edits don't
+  // race with disk re-reads). `editSaving` shows a brief saving
+  // indicator on the Save button. Both reset whenever the source
+  // changes — opening a different file mid-edit discards the draft
+  // (matches what most code editors do without an explicit prompt).
+  const [editDraft, setEditDraft] = useState<string>("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  useEffect(() => {
+    setEditDraft("");
+    setEditSaving(false);
+    setEditError(null);
+  }, [source]);
   // Reset on source change so a new click clears the previous override.
   useEffect(() => setRowOverride(null), [source]);
 
@@ -478,6 +493,67 @@ export function Viewer({
       }
       if (isOfficeDoc(source.path)) {
         return <OfficeViewer filename={source.path} />;
+      }
+      if (mode === "edit" && isMarkdown(source.path)) {
+        const filePath = source.path;
+        const onSave = async () => {
+          if (!repo || !filePath.startsWith(`${repo}/`)) {
+            setEditError("Cannot save: file is outside the project folder.");
+            return;
+          }
+          const rel = filePath.slice(repo.length + 1);
+          const lastSlash = rel.lastIndexOf("/");
+          const subdir = lastSlash >= 0 ? rel.slice(0, lastSlash) : "";
+          const filename = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
+          setEditSaving(true);
+          setEditError(null);
+          try {
+            const { entityWriteFile } = await import("../lib/api");
+            await entityWriteFile(repo, subdir, filename, editDraft);
+            setContent(editDraft);
+            setMode("rendered");
+          } catch (err) {
+            setEditError(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+          } finally {
+            setEditSaving(false);
+          }
+        };
+        const onCancel = () => {
+          setEditDraft(content);
+          setEditError(null);
+          setMode("rendered");
+        };
+        const isDirty = editDraft !== content;
+        return (
+          <div className="viewer-edit">
+            <textarea
+              className="viewer-edit-textarea"
+              value={editDraft}
+              onChange={(e) => setEditDraft(e.target.value)}
+              spellCheck={false}
+              autoFocus
+            />
+            <div className="viewer-edit-footer">
+              {editError && <span className="viewer-edit-error">{editError}</span>}
+              <button
+                type="button"
+                className="viewer-edit-btn viewer-edit-btn-secondary"
+                onClick={onCancel}
+                disabled={editSaving}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="viewer-edit-btn viewer-edit-btn-primary"
+                onClick={onSave}
+                disabled={editSaving || !isDirty}
+              >
+                {editSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        );
       }
       if (mode === "rendered" && isMarkdown(source.path)) {
         // Substitute live template tokens before rendering. {{INTAKE_URL}}
@@ -906,6 +982,25 @@ export function Viewer({
   return (
     <div className="viewer">
       <div className="viewer-header">
+        {source && source.kind === "conversation-thread" && onOpenPath && (
+          <button
+            type="button"
+            className="viewer-back-btn"
+            onClick={() => {
+              // Navigate back to the parent conversations list. The
+              // filter pill state lives in this Viewer instance and
+              // is preserved across the round-trip — clicking back
+              // lands on the same `Open` / `All` / `Resolved` /
+              // `Escalated` selection the user had before opening
+              // the thread.
+              void onOpenPath(`${repo}/databases/conversations`);
+            }}
+            title="Back to conversations"
+            aria-label="Back to conversations"
+          >
+            ←
+          </button>
+        )}
         <span className="viewer-title">{title}</span>
         {source && source.kind === "conversation-thread" && (
           <button
@@ -939,6 +1034,21 @@ export function Viewer({
               onClick={() => setMode("raw")}
             >
               Raw
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "edit"}
+              className={`viewer-tab ${mode === "edit" ? "active" : ""}`}
+              onClick={() => {
+                // Seed the draft with the current content the first
+                // time edit mode is entered, but don't clobber an
+                // in-progress draft on a re-click of Edit.
+                if (mode !== "edit") setEditDraft(content);
+                setEditError(null);
+                setMode("edit");
+              }}
+            >
+              Edit
             </button>
           </div>
         )}

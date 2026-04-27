@@ -928,6 +928,105 @@ body,
   border-color: var(--border);
 }
 
+/* Back-arrow button on the conversation-thread view — returns to
+   the parent conversations-list with the previously-selected filter
+   intact. Sits flush left in the viewer header, ahead of the title. */
+.viewer-back-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 14px;
+  line-height: 1;
+  margin-right: 4px;
+  cursor: pointer;
+}
+
+.viewer-back-btn:hover {
+  background: var(--surface-soft);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+/* Markdown edit mode — full-pane textarea with a footer of action
+   buttons. Monospace font + tab-friendly so it reads as "edit raw
+   markdown" rather than a rich text field. */
+.viewer-edit {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.viewer-edit-textarea {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle, #eee);
+  padding: 16px 20px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface, #fff);
+  resize: none;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.viewer-edit-textarea:focus {
+  outline: none;
+}
+
+.viewer-edit-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-soft, #f7f7f7);
+}
+
+.viewer-edit-error {
+  flex: 1;
+  font-size: 12px;
+  color: var(--warn-text, #a85b00);
+}
+
+.viewer-edit-btn {
+  border-radius: 5px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: -apple-system, sans-serif;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.viewer-edit-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.viewer-edit-btn-secondary {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.viewer-edit-btn-secondary:hover:not(:disabled) {
+  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
+  color: var(--text);
+}
+
+.viewer-edit-btn-primary {
+  background: var(--accent, #c43e3e);
+  color: white;
+}
+
+.viewer-edit-btn-primary:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
 /* Conversation thread: chat-style bubbles for messages under
    databases/conversations/<ticketId>/. Asker turns left-aligned;
    agent/admin turns right-aligned. */
