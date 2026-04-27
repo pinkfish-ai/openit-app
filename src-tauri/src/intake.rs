@@ -624,7 +624,11 @@ fn build_chat_prompt(
     ));
     prompt.push_str("Conversation so far:\n");
     for msg in history {
-        let label = if msg.role == "user" { "USER" } else { "ASSISTANT" };
+        let label = if msg.role == "user" {
+            "USER"
+        } else {
+            "ASSISTANT"
+        };
         prompt.push_str(&format!("{}: {}\n", label, msg.content));
     }
     prompt.push_str(
@@ -663,11 +667,7 @@ fn build_chat_prompt(
 /// subprocesses don't always inherit the user's full shell PATH —
 /// dev mode and .app launches may only see `/usr/bin:/bin`. Same
 /// pattern as `claude_generate_commit_message`.
-async fn spawn_claude_chat(
-    repo: &PathBuf,
-    model: &str,
-    prompt: &str,
-) -> Result<String, String> {
+async fn spawn_claude_chat(repo: &PathBuf, model: &str, prompt: &str) -> Result<String, String> {
     let claude_path = which::which("claude")
         .map_err(|_| "Claude CLI not found on PATH. Install claude (see https://docs.anthropic.com/claude/docs/claude-code) and ensure it's reachable from this app.".to_string())?;
     // `--permission-mode bypassPermissions` so the headless run can
@@ -751,11 +751,17 @@ async fn mark_status(repo: &PathBuf, ticket_id: &str, status: &str) -> Result<()
     let mut parsed: serde_json::Value =
         serde_json::from_str(&raw).map_err(|e| format!("parse ticket: {}", e))?;
     if let Some(obj) = parsed.as_object_mut() {
-        obj.insert("status".to_string(), serde_json::Value::String(status.to_string()));
-        obj.insert("updatedAt".to_string(), serde_json::Value::String(now_iso()));
+        obj.insert(
+            "status".to_string(),
+            serde_json::Value::String(status.to_string()),
+        );
+        obj.insert(
+            "updatedAt".to_string(),
+            serde_json::Value::String(now_iso()),
+        );
     }
-    let json = serde_json::to_string_pretty(&parsed)
-        .map_err(|e| format!("serialize ticket: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(&parsed).map_err(|e| format!("serialize ticket: {}", e))?;
     tokio::fs::write(&path, json)
         .await
         .map_err(|e| format!("write ticket: {}", e))?;
@@ -794,8 +800,8 @@ async fn ensure_responding_stub(
             "createdAt": now,
             "updatedAt": now,
         });
-        let json = serde_json::to_string_pretty(&row)
-            .map_err(|e| format!("serialize ticket: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(&row).map_err(|e| format!("serialize ticket: {}", e))?;
         if let Some(parent) = ticket_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -819,10 +825,7 @@ async fn ensure_responding_stub(
     }
 
     // Append the asker's turn for this message.
-    let conv_dir = repo
-        .join("databases")
-        .join("conversations")
-        .join(ticket_id);
+    let conv_dir = repo.join("databases").join("conversations").join(ticket_id);
     tokio::fs::create_dir_all(&conv_dir)
         .await
         .map_err(|e| format!("mkdir conv: {}", e))?;
@@ -845,8 +848,8 @@ async fn ensure_responding_stub(
         "timestamp": now,
         "body": user_message,
     });
-    let msg_json = serde_json::to_string_pretty(&msg)
-        .map_err(|e| format!("serialize asker turn: {}", e))?;
+    let msg_json =
+        serde_json::to_string_pretty(&msg).map_err(|e| format!("serialize asker turn: {}", e))?;
     let msg_path = conv_dir.join(format!("{}.json", msg_id));
     tokio::fs::write(&msg_path, msg_json)
         .await
@@ -976,10 +979,7 @@ fn iso_one_second_ago() -> String {
 /// hardcoded to `triage` so the admin sees a stable label instead
 /// of whatever the agent decides to call itself.
 async fn write_agent_turn(repo: &PathBuf, ticket_id: &str, body: &str) -> Result<(), String> {
-    let conv_dir = repo
-        .join("databases")
-        .join("conversations")
-        .join(ticket_id);
+    let conv_dir = repo.join("databases").join("conversations").join(ticket_id);
     tokio::fs::create_dir_all(&conv_dir)
         .await
         .map_err(|e| format!("mkdir conv: {}", e))?;
@@ -1002,8 +1002,8 @@ async fn write_agent_turn(repo: &PathBuf, ticket_id: &str, body: &str) -> Result
         "timestamp": now_iso(),
         "body": body,
     });
-    let msg_json = serde_json::to_string_pretty(&msg)
-        .map_err(|e| format!("serialize agent turn: {}", e))?;
+    let msg_json =
+        serde_json::to_string_pretty(&msg).map_err(|e| format!("serialize agent turn: {}", e))?;
     let msg_path = conv_dir.join(format!("{}.json", msg_id));
     tokio::fs::write(&msg_path, msg_json)
         .await
@@ -1024,11 +1024,7 @@ fn first_line_truncated(s: &str, max: usize) -> String {
 
 /// Idempotent people row at `databases/people/<sanitized-email>.json`.
 /// Skips if a row with the same key already exists.
-async fn ensure_people_row(
-    repo: &std::path::Path,
-    email: &str,
-    now: &str,
-) -> Result<(), String> {
+async fn ensure_people_row(repo: &std::path::Path, email: &str, now: &str) -> Result<(), String> {
     let people_dir = repo.join("databases").join("people");
     tokio::fs::create_dir_all(&people_dir)
         .await
@@ -1046,8 +1042,8 @@ async fn ensure_people_row(
         "createdAt": now,
         "updatedAt": now,
     });
-    let json = serde_json::to_string_pretty(&row)
-        .map_err(|e| format!("serialize people row: {}", e))?;
+    let json =
+        serde_json::to_string_pretty(&row).map_err(|e| format!("serialize people row: {}", e))?;
     tokio::fs::write(&path, json)
         .await
         .map_err(|e| format!("write people row: {}", e))?;
@@ -1116,10 +1112,7 @@ fn now_iso() -> String {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     let (y, mo, d, h, mi, s) = unix_to_ymdhms(secs);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, mo, d, h, mi, s
-    )
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, h, mi, s)
 }
 
 fn unix_to_ymdhms(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
@@ -1130,7 +1123,11 @@ fn unix_to_ymdhms(secs: i64) -> (i32, u32, u32, u32, u32, u32) {
     let mi = s_of_day / 60;
     let s = s_of_day % 60;
     let z = days + 719_468;
-    let era = if z >= 0 { z / 146_097 } else { (z - 146_096) / 146_097 };
+    let era = if z >= 0 {
+        z / 146_097
+    } else {
+        (z - 146_096) / 146_097
+    };
     let doe = (z - era * 146_097) as u32;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
     let y = yoe as i64 + era * 400;

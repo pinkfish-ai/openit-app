@@ -85,4 +85,3 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
         created: !already_existed,
     })
 }
-

@@ -102,10 +102,7 @@ pub fn git_ensure_repo(repo: String) -> Result<(), String> {
         return Ok(());
     }
 
-    let output = run_git(
-        &repo,
-        &["init", "-b", "main"],
-    )?;
+    let output = run_git(&repo, &["init", "-b", "main"])?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }
@@ -202,10 +199,7 @@ pub fn git_add_and_commit(repo: String, message: String) -> Result<bool, String>
         return Err(String::from_utf8_lossy(&add.stderr).into_owned());
     }
 
-    let commit = run_git(
-        &repo,
-        &["commit", "-m", message.as_str()],
-    )?;
+    let commit = run_git(&repo, &["commit", "-m", message.as_str()])?;
     if !commit.status.success() {
         let stderr = String::from_utf8_lossy(&commit.stderr);
         // Nothing to commit after add can happen with only ignored files.
@@ -277,11 +271,19 @@ pub fn git_status_short(repo: String) -> Result<Vec<GitFileStatus>, String> {
             continue;
         }
         if x == '?' && y == '?' {
-            out.push(GitFileStatus { path, status: "?".to_string(), staged: false });
+            out.push(GitFileStatus {
+                path,
+                status: "?".to_string(),
+                staged: false,
+            });
             continue;
         }
         if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
-            out.push(GitFileStatus { path, status: "UU".to_string(), staged: false });
+            out.push(GitFileStatus {
+                path,
+                status: "UU".to_string(),
+                staged: false,
+            });
             continue;
         }
 
@@ -294,7 +296,11 @@ pub fn git_status_short(repo: String) -> Result<Vec<GitFileStatus>, String> {
                 'C' => "A",
                 _ => "M",
             };
-            out.push(GitFileStatus { path: path.clone(), status: st.to_string(), staged: true });
+            out.push(GitFileStatus {
+                path: path.clone(),
+                status: st.to_string(),
+                staged: true,
+            });
         }
 
         if y != ' ' {
@@ -303,7 +309,11 @@ pub fn git_status_short(repo: String) -> Result<Vec<GitFileStatus>, String> {
                 'D' => "D",
                 _ => "M",
             };
-            out.push(GitFileStatus { path: path.clone(), status: st.to_string(), staged: false });
+            out.push(GitFileStatus {
+                path: path.clone(),
+                status: st.to_string(),
+                staged: false,
+            });
         }
     }
     Ok(out)
@@ -532,7 +542,8 @@ mod tests {
         fs::write(dir.path().join("Q1 plan \"draft\".md"), "x").unwrap();
         let rows = git_status_short(p.clone()).unwrap();
         assert!(
-            rows.iter().any(|r| r.path == "Q1 plan \"draft\".md" && r.status == "?"),
+            rows.iter()
+                .any(|r| r.path == "Q1 plan \"draft\".md" && r.status == "?"),
             "expected to see the quoted-name file as untracked: {:?}",
             rows
         );

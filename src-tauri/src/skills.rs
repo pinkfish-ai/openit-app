@@ -10,7 +10,10 @@ use tauri::{AppHandle, Manager, Runtime};
 pub async fn skills_fetch_manifest(app_api_url: String) -> Result<String, String> {
     // Extract the environment from app_api_url (e.g., "https://app-api.dev20.pinkfish.dev/..." -> "https://dev20.pinkfish.dev")
     let env_root = extract_env_root(&app_api_url)?;
-    let manifest_url = format!("{}/openit-plugin/manifest.json", env_root.trim_end_matches('/'));
+    let manifest_url = format!(
+        "{}/openit-plugin/manifest.json",
+        env_root.trim_end_matches('/')
+    );
 
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
@@ -24,7 +27,10 @@ pub async fn skills_fetch_manifest(app_api_url: String) -> Result<String, String
         .map_err(|e| format!("Failed to fetch manifest: {}", e))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Manifest fetch failed with status: {}", resp.status()));
+        return Err(format!(
+            "Manifest fetch failed with status: {}",
+            resp.status()
+        ));
     }
 
     resp.text()
@@ -67,8 +73,13 @@ pub async fn skills_fetch_file(app_api_url: String, skill_path: String) -> Resul
 #[tauri::command]
 pub fn skills_fetch_bundled_manifest<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
     let path = resolve_bundled_path(&app, "manifest.json")?;
-    std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read bundled manifest at {}: {}", path.display(), e))
+    std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "Failed to read bundled manifest at {}: {}",
+            path.display(),
+            e
+        )
+    })
 }
 
 /// Read a single file from the bundled openit-plugin resources.
@@ -85,10 +96,7 @@ pub fn skills_fetch_bundled_file<R: Runtime>(
 /// Resolve a path under the bundled `openit-plugin/` resource directory.
 /// Rejects absolute paths and `..` traversal so a malformed manifest entry
 /// can't read files outside the bundle.
-fn resolve_bundled_path<R: Runtime>(
-    app: &AppHandle<R>,
-    rel: &str,
-) -> Result<PathBuf, String> {
+fn resolve_bundled_path<R: Runtime>(app: &AppHandle<R>, rel: &str) -> Result<PathBuf, String> {
     let resource = sanitize_bundled_relpath(rel)?;
     app.path()
         .resolve(&resource, BaseDirectory::Resource)
@@ -209,11 +217,10 @@ mod tests {
 /// Extract environment root URL from app-api URL.
 /// e.g., "https://app-api.dev20.pinkfish.dev/..." -> "https://dev20.pinkfish.dev"
 fn extract_env_root(app_api_url: &str) -> Result<String, String> {
-    let url = reqwest::Url::parse(app_api_url)
-        .map_err(|e| format!("Invalid app-api URL: {}", e))?;
+    let url =
+        reqwest::Url::parse(app_api_url).map_err(|e| format!("Invalid app-api URL: {}", e))?;
 
-    let host = url.host_str()
-        .ok_or_else(|| "No host in URL".to_string())?;
+    let host = url.host_str().ok_or_else(|| "No host in URL".to_string())?;
 
     // Replace "app-api." prefix if present
     let env_host = if host.starts_with("app-api.") {
@@ -222,9 +229,5 @@ fn extract_env_root(app_api_url: &str) -> Result<String, String> {
         host
     };
 
-    Ok(format!(
-        "{}://{}",
-        url.scheme(),
-        env_host
-    ))
+    Ok(format!("{}://{}", url.scheme(), env_host))
 }

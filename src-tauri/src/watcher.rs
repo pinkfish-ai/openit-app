@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher, Event, EventKind};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime, State};
@@ -67,9 +67,7 @@ pub fn fs_watch_start<R: Runtime>(
     let mut watcher = notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
         if let Ok(event) = res {
             match event.kind {
-                EventKind::Create(_)
-                | EventKind::Modify(_)
-                | EventKind::Remove(_) => {
+                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => {
                     let mut buf = buffer_for_handler.lock();
                     for p in &event.paths {
                         // Skip .git directory changes — too noisy

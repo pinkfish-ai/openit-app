@@ -57,8 +57,7 @@ pub async fn claude_generate_commit_message(repo: String) -> Result<String, Stri
 }
 
 fn generate_commit_message_blocking(repo: &str) -> Result<String, String> {
-    let claude = which::which("claude")
-        .map_err(|_| "Claude CLI not found on PATH".to_string())?;
+    let claude = which::which("claude").map_err(|_| "Claude CLI not found on PATH".to_string())?;
 
     let diff_out = run_git(repo, &["diff", "--cached"])?;
     if !diff_out.status.success() {
@@ -72,12 +71,7 @@ fn generate_commit_message_blocking(repo: &str) -> Result<String, String> {
 
     let log_out = run_git(
         repo,
-        &[
-            "log",
-            "-n",
-            &RECENT_LOG_COUNT.to_string(),
-            "--format=%s",
-        ],
+        &["log", "-n", &RECENT_LOG_COUNT.to_string(), "--format=%s"],
     )?;
     let recent = String::from_utf8_lossy(&log_out.stdout)
         .lines()
