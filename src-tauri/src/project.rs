@@ -38,9 +38,10 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
              triages it against your knowledge base and either answers them \
              directly or escalates to you.\n\n\
              ## Try it in 30 seconds\n\n\
-             [**Open the intake page**]({{INTAKE_URL}}) and ask a question — \
-             *\"I can't log in\"*, *\"how do I reset my VPN\"*, anything. The agent \
-             will answer or flag it for you.\n";
+             Open the intake page and ask a question to test it — \
+             *\"I can't log in\"*, *\"how do I reset my VPN\"*, anything. The \
+             agent will answer or flag it for you.\n\n\
+             [**Open the intake page**]({{INTAKE_URL}})\n";
         let welcome = welcome.to_string();
         fs::write(path.join("_welcome.md"), welcome)
             .map_err(|e| format!("could not write README: {}", e))?;
