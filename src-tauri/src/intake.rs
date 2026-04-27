@@ -1119,12 +1119,19 @@ async fn spawn_claude_chat(
         .map_err(|e| format!("spawn claude: {}", e))?;
 
     {
-        let stdin = child.stdin.as_mut().ok_or("no stdin handle")?;
+        let mut stdin = child.stdin.take().ok_or("no stdin handle")?;
         stdin
             .write_all(prompt.as_bytes())
             .await
             .map_err(|e| format!("write stdin: {}", e))?;
         stdin.flush().await.ok();
+        // Drop `stdin` here (end of scope) so claude sees EOF and
+        // proceeds. Without this, `claude -p` blocks reading stdin
+        // forever and `child.wait()` deadlocks against
+        // `parse_stream_json` for the full 90s timeout window —
+        // every chat turn would fail. The previous implementation
+        // used `wait_with_output()` which closes stdin implicitly;
+        // the manual `child.wait()` path doesn't.
     }
 
     let stdout = child.stdout.take().ok_or("no stdout handle")?;
@@ -1143,9 +1150,13 @@ async fn spawn_claude_chat(
     let wait_task = child.wait();
 
     // Drive all three (stdout parse, stderr collect, child wait) as
-    // a single bounded future. tokio::join! aborts the timeout on
-    // any one of them returning, so claude crashing mid-stream still
-    // surfaces the partial events we managed to parse.
+    // a single bounded future. `tokio::join!` waits for ALL three to
+    // finish before returning — but in the normal case that's exactly
+    // what we want: claude exits, its stdout/stderr pipes close, both
+    // readers drain to EOF, child.wait() reaps the process, and we
+    // get a complete trace. The 90s `tokio::time::timeout` is the
+    // only escape hatch for a hung subprocess (since `kill_on_drop`
+    // reaps it on timeout, the pipe-readers will drop too).
     let combined = async move {
         let (parse_result, stderr_text, wait_result) =
             tokio::join!(stream_task, stderr_task, wait_task);
@@ -1327,13 +1338,23 @@ async fn parse_stream_json<R: tokio::io::AsyncRead + Unpin>(
                 if let Some(blocks) = content {
                     for block in blocks {
                         if block.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
+                            // Keep only `tool_use_id` so the UI can
+                            // pair the result back to its tool_use
+                            // event. The full `content` payload (file
+                            // bodies, KB articles, grep matches) is
+                            // intentionally dropped — including it
+                            // here would balloon trace files into MB.
+                            let tool_use_id = block
+                                .get("tool_use_id")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
                             events.push(TraceEvent {
                                 ts: now_iso(),
                                 kind: "tool_result".to_string(),
                                 tool: None,
                                 verb: None,
-                                raw: Some(block.clone()),
-                                text: None,
+                                raw: None,
+                                text: tool_use_id,
                             });
                         }
                     }
