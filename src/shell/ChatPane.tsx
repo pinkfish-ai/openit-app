@@ -39,27 +39,36 @@ export function ChatPane({ cwd }: { cwd: string | null }) {
         foreground: "#2d2a25",
         cursor: "#d96e3e",
         selectionBackground: "#f4dccd",
-        black: "#2d2a25",
+        // black + brightBlack collapsed to the cream bg so any
+        // ANSI-bg-black banner (Claude Code's header chrome) doesn't
+        // render as a dark slab on the otherwise-light theme. Side
+        // effect: ANSI fg-black text becomes invisible — but Claude
+        // Code rarely uses fg-black-on-default-bg, and when it does
+        // it falls back to `foreground` anyway since the term default
+        // dominates.
+        black: "#faf9f6",
         // Diff "removed" / errors — deep red, low lightness (~8%).
         red: "#6b1010",
         // Diff "added" / success — medium-dark green, lightness ~24%.
         // Pairing lightness 8% (red) vs 24% (green) gives separation
         // even when hue is indistinguishable.
         green: "#1f6e3e",
-        // Tool-block headers (Write/Update/Bash). Was #7a5a08 — still
-        // colored. Now just a dark warm brown, basically reads as text.
-        yellow: "#3d2a08",
+        // Tool-block headers + "thinking" status text. Mid-gray (#666)
+        // reads on both the cream default bg and any residual dark bg
+        // — the prior dark-brown-on-cream had too little contrast on
+        // the dark Claude Code banner.
+        yellow: "#666666",
         blue: "#2d3d8a",
         magenta: "#5c2a5c",
         cyan: "#1a4a4a",
         // Dim helper text — readable mid-gray.
         white: "#4a4844",
-        brightBlack: "#6b6864",
+        brightBlack: "#faf9f6",
         // Bright variants stay slightly more saturated than their
         // base for genuine emphasis distinguishable for colorblind.
         brightRed: "#a8281a",
         brightGreen: "#2c8a4f",
-        brightYellow: "#5a4214",
+        brightYellow: "#666666",
         brightBlue: "#4555b8",
         brightMagenta: "#8a3d8a",
         brightCyan: "#2c8a8a",

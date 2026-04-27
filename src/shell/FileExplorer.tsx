@@ -86,6 +86,12 @@ function prettyName(
     const stripped = name.replace(/^openit-/, "").replace(/-\d+$/, "");
     if (stripped) return stripped;
   }
+  // Agent + workflow files: `agents/<name>.json` → just `<name>`. The
+  // .json extension is implementation noise; the user thinks of these
+  // as named entities, not files.
+  if (rel.match(/^(agents|workflows)\/[^/]+\.json$/)) {
+    return name.replace(/\.json$/, "");
+  }
   // Row file: databases/<col>/<key>.json
   const rowMatch = rel.match(/^databases\/([^/]+)\/([^/]+)\.json$/);
   if (rowMatch && rowMatch[2] !== "_schema" && !name.includes(".server.")) {

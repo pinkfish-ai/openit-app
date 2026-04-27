@@ -15,9 +15,11 @@ import { writeToActiveSession } from "./activeSession";
 export function EscalatedTicketBanner({
   repo,
   fsTick,
+  onOpenPath,
 }: {
   repo: string | null;
   fsTick: number;
+  onOpenPath?: (path: string) => void;
 }) {
   const [tickets, setTickets] = useState<TicketSummary[]>([]);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
@@ -74,6 +76,18 @@ export function EscalatedTicketBanner({
       const prompt = lines.join("\n");
       const wrapped = `\x1b[200~${prompt}\x1b[201~`;
       await writeToActiveSession(wrapped);
+
+      // Also pop the conversation view open in the center panel so
+      // the admin can read the thread alongside Claude's draft.
+      // Ticket id == conversation folder name (relPath is the ticket
+      // file's relative path, e.g. databases/tickets/<id>.json).
+      if (onOpenPath && repo) {
+        const ticketFile = first.relPath.split("/").pop() || "";
+        const ticketId = ticketFile.replace(/\.json$/, "");
+        if (ticketId) {
+          onOpenPath(`${repo}/databases/conversations/${ticketId}`);
+        }
+      }
     } catch (e) {
       console.error("[escalated-banner] paste-to-Claude failed:", e);
     } finally {

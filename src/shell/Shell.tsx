@@ -412,7 +412,14 @@ export function Shell({
     <div className="shell">
       <ConflictBanner />
       <AgentActivityBanner repo={repo} fsTick={fsTick} />
-      <EscalatedTicketBanner repo={repo} fsTick={fsTick} />
+      <EscalatedTicketBanner
+        repo={repo}
+        fsTick={fsTick}
+        onOpenPath={async (path) => {
+          const resolved = await resolvePathToSource(path, repo);
+          setSource(resolved);
+        }}
+      />
       <PanelGroup
         direction="horizontal"
         autoSaveId="openit-shell"
