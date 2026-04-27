@@ -1,6 +1,8 @@
 # OpenIT — local-first IT helpdesk
 
-This project folder is a **local IT helpdesk you own.** Tickets, knowledge base, agents, and contacts all live as files on disk. By default OpenIT runs entirely locally — no cloud, no sign-up. If the user has connected this project to Pinkfish (their cloud account), additional capabilities turn on (channel ingest, third-party integrations via MCP, multi-device sync, semantic KB search). The "When cloud is connected" section near the bottom covers those.
+This project is the user's IT helpdesk. They are the admin — they own and run it. Tickets, knowledge base, agents, and contacts all live as plain files on disk in this folder. OpenIT runs entirely locally by default; if the user has connected the project to Pinkfish (their cloud account), the "When cloud is connected" section near the bottom describes the additional capabilities that turn on (channel ingest, third-party integrations via MCP, multi-device sync, semantic KB search).
+
+You're Claude, helping the admin run this helpdesk. Most of what they'll ask you to do is read, edit, or create files in this folder.
 
 ## Directory layout
 
@@ -22,22 +24,21 @@ Everything is on disk. Default to the built-in tools:
 
 - **Read** — open a file. Lists with `Glob`. Search content with `Grep`.
 - **Write** — create a new file (e.g., new ticket, new KB article).
-- **Edit** — update an existing file (e.g., set a ticket's status to `answered`, append a turn to a conversation).
+- **Edit** — update an existing file (e.g., set a ticket's status to `resolved`, append a turn to a conversation).
 - **Bash** — list directories, count files, run scripts the project provides.
 
 You don't need to call any gateway / network tool to read or write tickets, KB articles, agent configs, or contact records. Those are just files. Reach for the gateway only when the user is asking you to do something involving a connected third-party system (Slack, Okta, GitHub, GCP) — and even then, only when cloud is connected.
 
 ## The triage agent
 
-This project has a triage agent at `agents/triage.json`. When the user sends what looks like a support question (someone needs help with an IT thing), behave as the triage agent: read its `instructions` field and follow it.
+The triage agent's persona lives at `agents/triage.json` (`name`, `selectedModel`, `instructions`). It's invoked by the `ai-intake` skill — see Skills below — once per turn the chat-intake server runs. Edit the `instructions` field there to tweak how the agent talks to end users; that's the source of truth for the agent's voice.
 
-The agent's instructions describe the **intent** of each step (record the asker, log the ticket, search the KB, answer or escalate, capture the answer as a KB article on resolve). Map intent to mechanism using this CLAUDE.md and the data layout above:
+You don't normally run the triage flow yourself — `ai-intake` does. But if the admin asks you ad-hoc questions about ticket / conversation / people data, the file conventions you'd use are:
 
-- *"Record the asker as a person"* → look up `databases/people/` for an existing row matching the asker's email; if none, `Write` a new row. Read `databases/people/_schema.json` for field IDs (`displayName`, `email`, `role`, `department`, `channels`, etc.). Idempotent — skip the write if a row with that email already exists.
-- *"Create a ticket"* → `Write` a new file at `databases/tickets/ticket-<timestamp>-<short-rand>.json`. Read `databases/tickets/_schema.json` for field IDs (they're plain language: `subject`, `description`, `asker`, `status`, etc.). Set `status: "incoming"` for newly-arrived tickets, `"open"` once you've decided the ticket needs human attention, `"answered"` once it's been resolved.
-- *"Search the KB"* → `Glob "knowledge-base/*.md"` + `Read` the most relevant files. Filename + headings are usually enough cue. Be willing to read 3–5 articles if the question's topic matches multiple.
-- *"Log a conversation turn"* → `Write` to `databases/conversations/<ticketId>/msg-<timestamp>-<short-rand>.json`. The subfolder is the `ticketId` — one folder per ticket thread, one file per turn. Required fields: `id`, `ticketId`, `role` (asker / agent / admin / system), `sender`, `timestamp`, `body`. Create the subfolder on first turn.
-- *"Reply to the user"* → write your reply text into a conversation turn (`role: "agent"`) AND surface it in the chat for the admin to copy/paste to the user (until cloud channel ingest does that automatically).
+- **Ticket** → `databases/tickets/ticket-<id>.json`. Status enum: `incoming` → `agent-responding` (chat is live, agent composing) → `resolved` (answered) or `escalated` (needs admin). `closed` for fully done. `databases/tickets/_schema.json` has the full field list in plain-language labels.
+- **Person** → `databases/people/<sanitized-email>.json`. Idempotent — skip the write if a row with that email already exists. Schema next door.
+- **Conversation turn** → `databases/conversations/<ticketId>/msg-<unix-ms>-<rand>.json`. Subfolder name = `ticketId`. Fields: `id`, `ticketId`, `role` (`asker` / `agent` / `admin`), `sender`, `timestamp` (ISO-8601 UTC), `body`.
+- **KB lookup** → `Glob "knowledge-base/*.md"` then `Read` the most relevant. Filename + headings usually enough cue.
 
 ## How to talk to me about changes
 
@@ -69,14 +70,15 @@ Show the change. Auto-apply when confident. Ask only when there's a real choice 
 
 ## Skills
 
-Slash-invoke each (e.g., `/triage what does the user want?`).
+Naming convention: skills prefixed with **`ai-`** are agent-facing — auto-loaded by `claude -p` subprocesses, not invoked by humans. Unprefixed skills are admin-facing — slash-invoked by the OpenIT user in the desktop Claude pane (e.g. `/answer-ticket <ticket-path>`).
 
-| Skill | Use when |
-|---|---|
-| `triage` | The user sends a support question. Logs the ticket, searches KB, answers or escalates. The triage agent's behavior, surfaced as a callable. |
-| `answer-ticket` | The user (or the escalated-ticket banner) hands you tickets needing a human reply. Walks the response loop and captures the answer as a KB article — "answer once". |
-| `resolve-sync-conflict` | The conflict banner hands you sync conflicts (cloud mode only). Per-conflict merge + resolve-script call + optional push. |
-| `deploy` | Push current local state to Pinkfish. Cloud-connected only. |
+| Skill | Audience | Use when |
+|---|---|---|
+| `ai-intake` | Agent (claude -p) | Auto-loaded per chat-intake turn. The user opens the localhost chat URL, asks a question; the server invokes this skill to KB-search and decide answer-vs-escalate. Not normally invoked by hand. |
+| `answer-ticket` | Admin (desktop) | The user (or the escalated-ticket banner) hands you tickets needing a human reply. Walks the response loop and captures the answer as a KB article — "answer once". |
+| `connect-to-cloud` | Admin (desktop) | The user wants to connect this project to Pinkfish (cloud companion) — for public intake URL, channel ingest, multi-device sync, always-on agents. Conversational walkthrough: one step at a time, confirm, advance. |
+| `resolve-sync-conflict` | Admin (desktop) | The conflict banner hands you sync conflicts (cloud mode only). Per-conflict merge + resolve-script call + optional push. |
+| `deploy` | Admin (desktop) | Push current local state to Pinkfish. Cloud-connected only. |
 
 ## Scripts
 

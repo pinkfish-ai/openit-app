@@ -32,8 +32,8 @@ describe("routeFile", () => {
 
   describe("skills/", () => {
     it("expands name to .claude/skills/<name>/SKILL.md", () => {
-      expect(routeFile("skills/triage.md", slug)).toEqual({
-        subdir: ".claude/skills/triage",
+      expect(routeFile("skills/ai-intake.md", slug)).toEqual({
+        subdir: ".claude/skills/ai-intake",
         filename: "SKILL.md",
         substituteSlug: false,
       });

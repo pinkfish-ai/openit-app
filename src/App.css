@@ -1035,6 +1035,18 @@ body,
   line-height: 1.6;
 }
 
+/* Brief yellow flash when the user clicks "Getting Started" while the
+   welcome doc is already showing — gives feedback that the click did
+   something. Keyed re-mount in Viewer.tsx makes the animation re-fire
+   on each click. */
+@keyframes viewer-md-flash {
+  0%   { background: #fff4c2; }
+  100% { background: transparent; }
+}
+.viewer-md-flash {
+  animation: viewer-md-flash 0.6s ease-out;
+}
+
 .viewer-md h1,
 .viewer-md h2,
 .viewer-md h3,
@@ -1066,6 +1078,64 @@ body,
 
 .viewer-md a:hover {
   text-decoration: underline;
+}
+
+/* Prominent CTA-style link: anchors whose only child is a `<strong>`
+   element render as a button-like pill. Convention: use `[**text**](url)`
+   in markdown when you want the link to read as an action, not a
+   reference. The welcome doc's "Open the intake page" link uses this. */
+.viewer-md a:has(> strong:only-child) {
+  display: inline-block;
+  background: var(--accent);
+  color: white;
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin: 4px 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: transform 0.05s ease, box-shadow 0.15s ease;
+}
+.viewer-md a:has(> strong:only-child):hover {
+  text-decoration: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.viewer-md a:has(> strong:only-child):active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
+}
+.viewer-md a:has(> strong:only-child) strong {
+  font-weight: 600;
+}
+
+/* When the CTA-style link sits alone in its own paragraph, center it.
+   Reads as a discrete action rather than awkwardly inline next to body
+   text. Triggered automatically by markdown of the form `[**text**](url)`
+   on its own line. */
+.viewer-md p:has(> a:only-child > strong:only-child) {
+  text-align: center;
+  margin: 1.2em 0;
+}
+
+/* Secondary CTA: links using the internal openit-skill mechanism
+   (slash-command triggers) render as a ghost button — accent-bordered,
+   no fill — so they don't compete visually with primary external CTAs
+   that drive the user out of the app. The welcome doc's "Connect to
+   Cloud" link uses this; it's a follow-on action, not the headline.
+   Targets the `data-openit-skill` attribute set by Viewer's
+   ExternalAnchor when it sees an `openit://skill/<name>` href. */
+.viewer-md a[data-openit-skill]:has(> strong:only-child) {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  box-shadow: none;
+}
+.viewer-md a[data-openit-skill]:has(> strong:only-child):hover {
+  background: var(--accent-soft);
+  box-shadow: none;
+}
+.viewer-md a[data-openit-skill]:has(> strong:only-child):active {
+  background: var(--accent-soft);
+  box-shadow: none;
 }
 
 .viewer-md code {

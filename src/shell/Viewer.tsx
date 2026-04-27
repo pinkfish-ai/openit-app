@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { fsRead, fsReadBytes, fsList } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
@@ -10,9 +11,88 @@ import { PdfViewer } from "./viewers/PdfViewer";
 import { SpreadsheetViewer } from "./viewers/SpreadsheetViewer";
 import { OfficeViewer } from "./viewers/OfficeViewer";
 import { writeToActiveSession } from "./activeSession";
+
+/// Pasting a slash command into the active Claude PTY uses bracketed-
+/// paste sequences so the terminal treats it as a single atomic input,
+/// not as the user typing key-by-key. Same pattern as the
+/// EscalatedTicketBanner.
+const BRACKETED_PASTE_OPEN = "\x1b[200~";
+const BRACKETED_PASTE_CLOSE = "\x1b[201~";
 import type { ViewerSource } from "./types";
 
 export type { ViewerSource };
+
+/// Anchor tag override for ReactMarkdown rendering. Three URL shapes
+/// are routed:
+///
+/// - `openit://skill/<name>` → pastes `/<name>` into the active Claude
+///   PTY, kicking off that skill conversationally. Used by the welcome
+///   doc's "Connect to Cloud" CTA. Future: support args via query
+///   string.
+/// - `http(s)://...` → opens in the user's default browser via Tauri's
+///   `openUrl` plugin so the in-app webview isn't replaced by the
+///   linked page.
+/// - Anything else → renders as a normal `<a>` (in-page anchors,
+///   `mailto:`, etc.).
+function ExternalAnchor({
+  href,
+  children,
+  ...rest
+}: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+  if (href && href.startsWith("openit://skill/")) {
+    const skillName = href.slice("openit://skill/".length).split("?")[0];
+    // Use href="#" rather than the openit:// URL — the Tauri webview
+    // tries to navigate the whole shell when it sees a real custom
+    // scheme, which reloads the app. Stash the skill name on a
+    // data attribute so the CSS selector can still target this kind
+    // of link for the secondary-button styling.
+    return (
+      <a
+        href="#"
+        data-openit-skill={skillName}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const cmd = `/${skillName}`;
+          const wrapped = `${BRACKETED_PASTE_OPEN}${cmd}${BRACKETED_PASTE_CLOSE}`;
+          console.log("[viewer] pasting skill into Claude:", cmd);
+          writeToActiveSession(wrapped)
+            .then((ok) => {
+              if (!ok) {
+                alert(
+                  "Couldn't reach Claude — make sure Claude is running in the right-hand pane, then click again.",
+                );
+              }
+            })
+            .catch((err) => console.warn("[viewer] paste-to-Claude failed:", err));
+        }}
+        {...rest}
+      >
+        {children}
+      </a>
+    );
+  }
+  const isExternal = !!href && /^https?:\/\//i.test(href);
+  if (!isExternal) {
+    return (
+      <a href={href} {...rest}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <a
+      href={href}
+      onClick={(e) => {
+        e.preventDefault();
+        openUrl(href).catch((err) => console.warn("[viewer] openUrl failed:", err));
+      }}
+      {...rest}
+    >
+      {children}
+    </a>
+  );
+}
 
 type ViewMode = "rendered" | "raw" | "table";
 
@@ -52,11 +132,22 @@ export function Viewer({
   source,
   repo,
   fsTick,
+  intakeUrl,
+  welcomeFlashKey,
   onOpenPath,
 }: {
   source: ViewerSource;
   repo: string;
   fsTick?: number;
+  /** Current intake server URL — substituted into `{{INTAKE_URL}}` placeholders
+   *  in markdown content (the welcome doc uses this to surface a clickable
+   *  link to the live intake page despite the URL being a dynamic OS-assigned
+   *  port that changes per app launch). */
+  intakeUrl?: string | null;
+  /** Bumped by the parent when the user clicks "Getting Started" while the
+   *  welcome doc is already the active source. Triggers a one-shot flash
+   *  animation so the click doesn't look like a no-op. */
+  welcomeFlashKey?: number;
   /** Open another path in the viewer (used by the conversations-list
    *  cards to drill into a specific thread). Optional — falls back to
    *  no-op if the parent didn't wire it. */
@@ -328,9 +419,29 @@ export function Viewer({
         return <OfficeViewer filename={source.path} />;
       }
       if (mode === "rendered" && isMarkdown(source.path)) {
+        // Substitute live template tokens before rendering. {{INTAKE_URL}}
+        // is the only one for now — used by the welcome doc to link to
+        // the dynamic intake URL that changes per app launch. If the
+        // server isn't running yet (intakeUrl is null), strip the link
+        // gracefully so we don't render a broken `[text](null)`.
+        const rendered = intakeUrl
+          ? content.split("{{INTAKE_URL}}").join(intakeUrl)
+          : content.replace(/\[([^\]]+)\]\(\{\{INTAKE_URL\}\}\)/g, "$1");
+        // Re-mount the markdown subtree on flashKey change so the CSS
+        // animation re-fires. Combining with a class is enough — no
+        // imperative DOM poking.
+        const flashClass =
+          welcomeFlashKey && welcomeFlashKey > 0 ? "viewer-md-flash" : "";
         return (
-          <div className="viewer-md">
-            <ReactMarkdown>{content}</ReactMarkdown>
+          <div className={`viewer-md ${flashClass}`} key={`md-${welcomeFlashKey ?? 0}`}>
+            <ReactMarkdown
+              components={{ a: ExternalAnchor }}
+              urlTransform={(url) =>
+                url.startsWith("openit://") ? url : defaultUrlTransform(url)
+              }
+            >
+              {rendered}
+            </ReactMarkdown>
           </div>
         );
       }
