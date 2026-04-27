@@ -54,32 +54,37 @@ export async function resolvePathToSource(
     }
   }
 
-  // databases/conversations/ (top level) → conversations-list. List
-  // each thread subfolder, look up its ticket for subject/date/status,
-  // count its messages. Sorted newest-first by lastTurnAt. Click a
-  // card → conversation-thread view.
-  if (rel === "databases/conversations") {
+  // databases/tickets/ → conversations-list (one card per ticket
+  // with subject/status/last-activity from the ticket file + message
+  // count from the corresponding conversations subfolder). The user
+  // mental model is "tickets" — one entry — so we route the click
+  // there and hide the underlying `conversations` folder elsewhere.
+  // Older code paths may still hit `databases/conversations`; we
+  // alias both paths through the same resolver.
+  if (rel === "databases/tickets" || rel === "databases/conversations") {
     try {
-      const subdirs = await fsList(path);
+      const ticketsDir = `${repo}/databases/tickets`;
+      const conversationsDir = `${repo}/databases/conversations`;
+      const ticketNodes = await fsList(ticketsDir);
       const threads: ConversationThreadSummary[] = [];
-      const conversationsPrefix = `${path}/`;
-      for (const sd of subdirs) {
-        if (!sd.is_dir) continue;
-        // Depth-1 filter — fs_list walks recursively; without this we'd
-        // pick up sub-sub-folders if any sync artifact ever drops one
-        // inside a thread, and treat them as separate threads.
-        const tail = sd.path.startsWith(conversationsPrefix) ? sd.path.slice(conversationsPrefix.length) : "";
+      const ticketsPrefix = `${ticketsDir}/`;
+      for (const node of ticketNodes) {
+        if (node.is_dir) continue;
+        // Depth-1 filter — fs_list is recursive.
+        const tail = node.path.startsWith(ticketsPrefix) ? node.path.slice(ticketsPrefix.length) : "";
         if (!tail || tail.includes("/")) continue;
-        const ticketId = sd.name;
-        // Default empty fields; backfill from ticket + msgs below.
+        if (!node.name.endsWith(".json")) continue;
+        if (node.name === "_schema.json") continue;
+        if (node.name.includes(".server.")) continue;
+
+        const ticketId = node.name.replace(/\.json$/, "");
         let subject = "";
         let asker = "";
         let status = "";
         let createdAt = "";
-        // Try the corresponding ticket file for subject/date/status.
         try {
-          const ticketRaw = await fsRead(`${repo}/databases/tickets/${ticketId}.json`);
-          const ticket = JSON.parse(ticketRaw);
+          const raw = await fsRead(node.path);
+          const ticket = JSON.parse(raw);
           if (ticket && typeof ticket === "object") {
             subject = typeof ticket.subject === "string" ? ticket.subject : "";
             asker = typeof ticket.asker === "string" ? ticket.asker : "";
@@ -87,20 +92,22 @@ export async function resolvePathToSource(
             createdAt = typeof ticket.createdAt === "string" ? ticket.createdAt : "";
           }
         } catch {
-          /* ticket missing — keep defaults */
+          /* unparseable — keep defaults; fall back to ticketId in subject */
         }
-        // Walk the thread to count msgs + find last activity.
+
+        // Look up the conversation folder for message count + last
+        // activity. Missing folder = brand-new ticket with no turns
+        // yet (the chat-intake server creates it on first turn).
+        const threadDir = `${conversationsDir}/${ticketId}`;
         let turnCount = 0;
         let lastTurnAt = "";
         let firstBody = "";
         try {
-          const msgs = await fsList(sd.path);
-          // Sort by name asc — names start with msg-<unix-ms>- so older comes first.
+          const msgs = await fsList(threadDir);
           msgs.sort((a, b) => a.name.localeCompare(b.name));
-          const threadPrefix = `${sd.path}/`;
+          const threadPrefix = `${threadDir}/`;
           for (const m of msgs) {
             if (m.is_dir) continue;
-            // Depth-1 filter; see comment on the outer loop.
             const mTail = m.path.startsWith(threadPrefix) ? m.path.slice(threadPrefix.length) : "";
             if (!mTail || mTail.includes("/")) continue;
             if (!m.name.endsWith(".json")) continue;
@@ -121,8 +128,9 @@ export async function resolvePathToSource(
             }
           }
         } catch {
-          /* empty subdir */
+          /* no thread folder yet */
         }
+
         threads.push({
           ticketId,
           subject: subject || firstBody.split("\n")[0].slice(0, 80) || ticketId,
@@ -133,7 +141,6 @@ export async function resolvePathToSource(
           turnCount,
         });
       }
-      // Newest activity first.
       threads.sort((a, b) => b.lastTurnAt.localeCompare(a.lastTurnAt));
       return { kind: "conversations-list", threads };
     } catch {
@@ -413,6 +420,12 @@ export async function resolvePathToSource(
         // — those are the actual collections.
         const tail = sd.path.startsWith(dbChildPrefix) ? sd.path.slice(dbChildPrefix.length) : "";
         if (!tail || tail.includes("/")) continue;
+        // Hide the `conversations` collection from the databases
+        // overview. Conversations are folder-of-msg-*.json data tied
+        // to a specific ticket; the ticket-list view (which we route
+        // `databases/tickets` to below) shows them aggregated as
+        // chat-thread cards. Showing both was repetitive.
+        if (sd.name === "conversations") continue;
         let itemCount = 0;
         let hasSchema = false;
         try {
