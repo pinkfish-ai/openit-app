@@ -1,5 +1,5 @@
 ---
-name: intake-chat
+name: ai-intake
 description: Per-turn helpdesk responder for the localhost chat intake. Reads the conversation context, searches the knowledge base, and writes either an answer (KB hit → status `resolved`) or an escalation reply (KB miss → status `escalated`). The ticket, asker turn, and people row are pre-written by the server before this skill runs.
 ---
 

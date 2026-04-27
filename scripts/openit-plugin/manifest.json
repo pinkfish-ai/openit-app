@@ -1,11 +1,11 @@
 {
-  "version": "2026-04-27-006",
+  "version": "2026-04-27-007",
   "bubbles": [
     { "label": "Answer ticket", "skill": "/answer-ticket" }
   ],
   "files": [
     { "path": "CLAUDE.md" },
-    { "path": "skills/intake-chat.md" },
+    { "path": "skills/ai-intake.md" },
     { "path": "skills/answer-ticket.md" },
     { "path": "schemas/tickets._schema.json" },
     { "path": "schemas/people._schema.json" },

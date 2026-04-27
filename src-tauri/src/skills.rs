@@ -135,8 +135,8 @@ mod tests {
             "openit-plugin/manifest.json",
         );
         assert_eq!(
-            sanitize_bundled_relpath("skills/intake-chat.md").unwrap(),
-            "openit-plugin/skills/intake-chat.md",
+            sanitize_bundled_relpath("skills/ai-intake.md").unwrap(),
+            "openit-plugin/skills/ai-intake.md",
         );
         assert_eq!(
             sanitize_bundled_relpath("schemas/openit-tickets._schema.json").unwrap(),

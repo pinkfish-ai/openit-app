@@ -3,7 +3,7 @@
 // A coworker on the same machine (or LAN, when the Phase 3b toggle
 // ships) opens the URL surfaced in the OpenIT header and chats with
 // an AI agent. The agent — driven by `agents/triage.json` and the
-// `intake-chat` skill — gathers the question, searches the local
+// `ai-intake` skill — gathers the question, searches the local
 // knowledge base, and either answers inline (KB hit) or escalates to
 // the admin (KB miss → status flips to `escalated`, admin sees the
 // banner).
@@ -600,7 +600,7 @@ fn build_chat_prompt(
     prompt.push_str("\n\n");
     prompt.push_str(
         "Operational context: You are running inside a chat-intake \
-         turn. Use the `intake-chat` skill at `.claude/skills/intake-chat/SKILL.md` \
+         turn. Use the `ai-intake` skill at `.claude/skills/ai-intake/SKILL.md` \
          for the file paths and field conventions. Use \
          `Bash node .claude/scripts/kb-search.mjs \"<query>\"` to find \
          relevant knowledge-base articles.\n\n",
