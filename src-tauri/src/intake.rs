@@ -216,7 +216,21 @@ async fn handle_post(
     let subject = first_line_truncated(trimmed_question, 80);
 
     let now = chrono_iso8601_now();
-    let id = format!("incoming-{}", Uuid::new_v4());
+    // Short, human-readable ticket id matching the triage-skill
+    // convention: `ticket-<unix-ms>-<4-char-rand>`. UUIDs were unwieldy
+    // and the (ms + 4 random) combo gives plenty of uniqueness for any
+    // realistic submission rate.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let rand4: String = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(4)
+        .collect();
+    let id = format!("ticket-{}-{}", now_ms, rand4);
 
     let row = serde_json::json!({
         "subject": subject,

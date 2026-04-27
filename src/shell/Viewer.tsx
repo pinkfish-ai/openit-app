@@ -172,6 +172,11 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
       setContent("");
       return;
     }
+    if (source.kind === "conversation-thread") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
   }, [source]);
 
   // Re-read the single-row file from disk when fsTick fires. Lets edits
@@ -256,6 +261,7 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
       case "datastore-row": return `${source.collection?.name ?? "Datastore"} / ${source.item?.key || source.item?.id || "Row"}`;
       case "agent": return source.agent?.name ?? "Agent";
       case "workflow": return source.workflow?.name ?? "Workflow";
+      case "conversation-thread": return `Conversation — ${source.ticketId}`;
       default: return "";
     }
   };
@@ -439,6 +445,40 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
               </tbody>
             </table>
           </div>
+        </div>
+      );
+    }
+
+    // Conversation thread — chat-style bubbles, ordered by timestamp.
+    if (source.kind === "conversation-thread") {
+      const turns = source.turns;
+      if (turns.length === 0) {
+        return (
+          <div className="viewer-summary">
+            <p className="summary-desc">No turns logged yet for this thread.</p>
+          </div>
+        );
+      }
+      return (
+        <div className="viewer-thread">
+          {turns.map((t) => {
+            const isAsker = t.role === "asker";
+            return (
+              <div
+                key={t.id}
+                className={`thread-turn ${isAsker ? "thread-turn-asker" : "thread-turn-agent"}`}
+              >
+                <div className="thread-turn-meta">
+                  <span className="thread-turn-sender">{t.sender || t.role}</span>
+                  <span className="thread-turn-role">{t.role}</span>
+                  {t.timestamp && (
+                    <span className="thread-turn-time">{t.timestamp}</span>
+                  )}
+                </div>
+                <div className="thread-turn-body">{t.body}</div>
+              </div>
+            );
+          })}
         </div>
       );
     }

@@ -41,7 +41,7 @@ A ticket exists for every incoming question. Even when you can answer instantly,
   }
   ```
 
-- Log the user's first turn as a conversation row: `Write` to `databases/conversations/msg-<timestamp>-<rand>.json`:
+- Log the user's first turn as a conversation row: `Write` to `databases/conversations/<ticket-id>/msg-<timestamp>-<rand>.json`. The subfolder is the ticket id — one folder per thread.
 
   ```json
   {

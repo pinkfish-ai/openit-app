@@ -1,5 +1,5 @@
 import { fsRead, fsList } from "../lib/api";
-import type { ViewerSource } from "./types";
+import type { ConversationTurn, ViewerSource } from "./types";
 import type { DataCollection } from "../lib/skillsApi";
 
 /**
@@ -49,6 +49,44 @@ export async function resolvePathToSource(
         collection: { id: "", name: rowMatch[1], type: "datastore", numItems: 0, schema },
         item: { id: rowMatch[2], key: rowMatch[2], content, createdAt: "", updatedAt: "" },
       };
+    } catch {
+      return { kind: "file", path };
+    }
+  }
+
+  // databases/conversations/<ticketId>/ directory → conversation-thread
+  // (read every msg-*.json under the subfolder, sort by timestamp).
+  // Match before the generic datastore-table rule so conversation
+  // subfolders don't get rendered as tables.
+  const threadMatch = rel.match(/^databases\/conversations\/([^/]+)$/);
+  if (threadMatch) {
+    try {
+      const ticketId = threadMatch[1];
+      const nodes = await fsList(path);
+      const turns: ConversationTurn[] = [];
+      for (const node of nodes) {
+        if (node.is_dir) continue;
+        if (!node.name.endsWith(".json")) continue;
+        if (node.name.includes(".server.")) continue;
+        try {
+          const raw = await fsRead(node.path);
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {
+            turns.push({
+              id: typeof parsed.id === "string" ? parsed.id : node.name,
+              ticketId: typeof parsed.ticketId === "string" ? parsed.ticketId : ticketId,
+              role: typeof parsed.role === "string" ? parsed.role : "asker",
+              sender: typeof parsed.sender === "string" ? parsed.sender : "",
+              timestamp: typeof parsed.timestamp === "string" ? parsed.timestamp : "",
+              body: typeof parsed.body === "string" ? parsed.body : "",
+            });
+          }
+        } catch {
+          /* skip unparseable */
+        }
+      }
+      turns.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      return { kind: "conversation-thread", ticketId, turns };
     } catch {
       return { kind: "file", path };
     }

@@ -766,6 +766,88 @@ body,
   border-color: var(--border);
 }
 
+/* Conversation thread: chat-style bubbles for messages under
+   databases/conversations/<ticketId>/. Asker turns left-aligned;
+   agent/admin turns right-aligned. */
+.viewer-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.thread-turn {
+  max-width: 75%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.thread-turn-asker {
+  align-self: flex-start;
+}
+
+.thread-turn-agent {
+  align-self: flex-end;
+}
+
+.thread-turn-meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--text-faint);
+  padding: 0 4px;
+}
+
+.thread-turn-asker .thread-turn-meta {
+  justify-content: flex-start;
+}
+
+.thread-turn-agent .thread-turn-meta {
+  justify-content: flex-end;
+}
+
+.thread-turn-sender {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.thread-turn-role {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 9px;
+}
+
+.thread-turn-time {
+  font-family: Menlo, monospace;
+  font-size: 10px;
+}
+
+.thread-turn-body {
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.thread-turn-asker .thread-turn-body {
+  background: var(--surface-soft);
+  border-top-left-radius: 2px;
+}
+
+.thread-turn-agent .thread-turn-body {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  border-top-right-radius: 2px;
+}
+
 .viewer-copy-btn {
   margin-left: auto;
   background: transparent;

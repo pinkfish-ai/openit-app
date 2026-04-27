@@ -8,7 +8,7 @@ This project folder is a **local IT helpdesk you own.** Tickets, knowledge base,
 |---|---|
 | `databases/tickets/*.json` | Ticket rows, structured. `_schema.json` next to them documents fields. |
 | `databases/people/*.json` | Contacts directory, structured. |
-| `databases/conversations/*.json` | One JSON file per conversation turn. **Unstructured** — no schema enforcement. Linked to a ticket via `ticketId`. |
+| `databases/conversations/<ticketId>/msg-*.json` | One subfolder per ticket thread; one JSON file per turn inside it. **Unstructured** — no schema enforcement. Subfolder name = `ticketId` so all turns for a ticket live together. |
 | `knowledge-base/*.md` | Solution articles. Markdown. The "answer once" capture target. |
 | `filestore/*` | Document storage — PDFs, screenshots, attachments. |
 | `agents/<name>.json` | Agent configurations. The triage agent lives at `agents/triage.json`. |
@@ -36,7 +36,7 @@ The agent's instructions describe the **intent** of each step (record the asker,
 - *"Record the asker as a person"* → look up `databases/people/` for an existing row matching the asker's email; if none, `Write` a new row. Read `databases/people/_schema.json` for field IDs (`displayName`, `email`, `role`, `department`, `channels`, etc.). Idempotent — skip the write if a row with that email already exists.
 - *"Create a ticket"* → `Write` a new file at `databases/tickets/ticket-<timestamp>-<short-rand>.json`. Read `databases/tickets/_schema.json` for field IDs (they're plain language: `subject`, `description`, `asker`, `status`, etc.). Set `status: "incoming"` for newly-arrived tickets, `"open"` once you've decided the ticket needs human attention, `"answered"` once it's been resolved.
 - *"Search the KB"* → `Glob "knowledge-base/*.md"` + `Read` the most relevant files. Filename + headings are usually enough cue. Be willing to read 3–5 articles if the question's topic matches multiple.
-- *"Log a conversation turn"* → `Write` to `databases/conversations/msg-<timestamp>-<short-rand>.json`. Required fields: `id`, `ticketId`, `role` (asker / agent / admin / system), `sender`, `timestamp`, `body`. No schema enforcement; just follow the convention.
+- *"Log a conversation turn"* → `Write` to `databases/conversations/<ticketId>/msg-<timestamp>-<short-rand>.json`. The subfolder is the `ticketId` — one folder per ticket thread, one file per turn. Required fields: `id`, `ticketId`, `role` (asker / agent / admin / system), `sender`, `timestamp`, `body`. Create the subfolder on first turn.
 - *"Reply to the user"* → write your reply text into a conversation turn (`role: "agent"`) AND surface it in the chat for the admin to copy/paste to the user (until cloud channel ingest does that automatically).
 
 ## How to talk to me about changes
