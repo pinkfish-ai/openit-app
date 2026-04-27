@@ -69,11 +69,11 @@ Show the change. Auto-apply when confident. Ask only when there's a real choice 
 
 ## Skills
 
-Slash-invoke each (e.g., `/triage what does the user want?`).
+Slash-invoke each (e.g., `/answer-ticket <ticket-path>`).
 
 | Skill | Use when |
 |---|---|
-| `triage` | The user sends a support question. Logs the ticket, searches KB, answers or escalates. The triage agent's behavior, surfaced as a callable. |
+| `intake-chat` | Auto-loaded by `claude -p` per chat-intake turn. The user opens the localhost chat URL, asks a question; the server invokes this skill to KB-search and decide answer-vs-escalate. Not normally invoked by hand. |
 | `answer-ticket` | The user (or the escalated-ticket banner) hands you tickets needing a human reply. Walks the response loop and captures the answer as a KB article — "answer once". |
 | `resolve-sync-conflict` | The conflict banner hands you sync conflicts (cloud mode only). Per-conflict merge + resolve-script call + optional push. |
 | `deploy` | Push current local state to Pinkfish. Cloud-connected only. |
