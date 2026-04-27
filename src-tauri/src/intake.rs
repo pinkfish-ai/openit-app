@@ -197,40 +197,39 @@ async fn handle_post(
             .into_response();
     }
 
-    // Pick a single asker label: prefer email, fall back to name, then "unknown".
-    // The schema's `asker` field is a free-form string.
-    let asker = form
+    // Email is required. Server-side check mirrors the form's HTML5
+    // `required` + `type="email"` so a curl/script bypass still gets
+    // the same answer the browser would.
+    let email = form
         .email
         .as_ref()
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            form.name
-                .as_ref()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_else(|| "unknown".to_string());
+        .filter(|s| !s.is_empty() && s.contains('@'));
+    let Some(email) = email else {
+        return (StatusCode::BAD_REQUEST, "a valid email is required")
+            .into_response();
+    };
+
+    // Asker label = email (always present after validation above).
+    let asker = email.clone();
 
     // Subject = first line of the question, capped at 80 chars.
     let subject = first_line_truncated(trimmed_question, 80);
 
     let now = chrono_iso8601_now();
-    // Short, human-readable ticket id matching the triage-skill
-    // convention: `ticket-<unix-ms>-<4-char-rand>`. UUIDs were unwieldy
-    // and the (ms + 4 random) combo gives plenty of uniqueness for any
-    // realistic submission rate.
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+    // Ticket id = ISO timestamp + short random suffix. Filesystem-safe
+    // (colons replaced with dashes) and datetime-readable. Lex-sortable
+    // ascending = oldest-first; the explorer reverses these for the
+    // tickets/conversations dirs so the user sees newest-first.
+    // Format: `2026-04-27T04-42-05Z-x9q1`. Doubles as the conversation
+    // subfolder name so all turns for a thread live together.
     let rand4: String = Uuid::new_v4()
         .simple()
         .to_string()
         .chars()
         .take(4)
         .collect();
-    let id = format!("ticket-{}-{}", now_ms, rand4);
+    let id = format!("{}-{}", now.replace(':', "-"), rand4);
 
     let row = serde_json::json!({
         "subject": subject,
@@ -270,15 +269,24 @@ async fn handle_post(
             .into_response();
     }
 
-    // Best-effort: also create a people row for the asker if we have
-    // an email. Idempotent (skips if a row with the same email-derived
-    // filename already exists). Failures here don't fail the ticket
-    // submission — the ticket already landed.
-    if let Some(email) = form
-        .email
-        .as_ref()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty() && s.contains('@'))
+    // Write the asker's first conversation turn into the thread
+    // subfolder. Doing this here (not in triage) means the chat-thread
+    // viewer is correct from the moment the form is submitted — no
+    // dependency on the LLM running before the asker turn exists.
+    if let Err(e) = write_first_conversation_turn(
+        &state.repo,
+        &id,
+        &asker,
+        trimmed_question,
+        &now,
+    )
+    .await
+    {
+        eprintln!("[intake] first turn write failed (non-fatal): {}", e);
+    }
+
+    // Also create a people row idempotently. Email is required (checked
+    // above), so this always runs.
     {
         if let Err(e) = ensure_people_row(
             &state.repo,
@@ -293,6 +301,52 @@ async fn handle_post(
     }
 
     Html(success_page(&id)).into_response()
+}
+
+/// Write the asker's opening message into
+/// `databases/conversations/<ticketId>/msg-<unix-ms>-<rand>.json`.
+/// Done at intake time (not triage time) so the chat-thread viewer
+/// always has the asker's first turn — no dependency on Claude
+/// running before the user opens the thread.
+async fn write_first_conversation_turn(
+    repo: &std::path::Path,
+    ticket_id: &str,
+    sender: &str,
+    body: &str,
+    now: &str,
+) -> Result<(), String> {
+    let dir = repo.join("databases").join("conversations").join(ticket_id);
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("mkdir conversations/<id>: {}", e))?;
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let rand4: String = Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(4)
+        .collect();
+    let msg_id = format!("msg-{}-{}", now_ms, rand4);
+
+    let row = serde_json::json!({
+        "id": msg_id,
+        "ticketId": ticket_id,
+        "role": "asker",
+        "sender": sender,
+        "timestamp": now,
+        "body": body,
+    });
+    let json = serde_json::to_string_pretty(&row)
+        .map_err(|e| format!("serialize first turn: {}", e))?;
+    let path = dir.join(format!("{}.json", msg_id));
+    tokio::fs::write(&path, json)
+        .await
+        .map_err(|e| format!("write first turn: {}", e))?;
+    Ok(())
 }
 
 /// Create `databases/people/<sanitized-email>.json` if one doesn't
@@ -491,8 +545,8 @@ button:hover { background: #143620; }
 <form method="post" action="/ticket">
 <label for="name">Your name</label>
 <input id="name" name="name" type="text" autocomplete="name">
-<label for="email">Email (optional)</label>
-<input id="email" name="email" type="email" autocomplete="email">
+<label for="email">Email</label>
+<input id="email" name="email" type="email" autocomplete="email" required>
 <label for="question">What's going on?</label>
 <textarea id="question" name="question" required placeholder="Describe the problem. Include error messages, screenshots-text, what you've already tried."></textarea>
 <button type="submit">File ticket</button>
@@ -554,10 +608,8 @@ mod tests {
     }
 
     fn read_only_ticket_file(repo: &std::path::Path) -> serde_json::Value {
-        let dir = repo.join("databases").join(format!(
-            "openit-tickets-{}",
-            repo.file_name().unwrap().to_str().unwrap()
-        ));
+        // Tickets land in `databases/tickets/` post-rename (slug-free).
+        let dir = repo.join("databases").join("tickets");
         let entries: Vec<_> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("read_dir {}: {}", dir.display(), e))
             .filter_map(|e| e.ok())
@@ -609,33 +661,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_falls_back_to_name_then_unknown_when_email_missing() {
-        // Email empty → asker = name.
-        {
-            let (base, dir) = spawn_test_server().await;
-            reqwest::Client::new()
-                .post(format!("{}/ticket", base))
-                .header("Origin", &base)
-                .form(&[("name", "Bob"), ("email", ""), ("question", "x")])
-                .send()
-                .await
-                .expect("post");
-            let row = read_only_ticket_file(dir.path());
-            assert_eq!(row["asker"], "Bob");
-        }
-        // Both empty → asker = "unknown".
-        {
-            let (base, dir) = spawn_test_server().await;
-            reqwest::Client::new()
-                .post(format!("{}/ticket", base))
-                .header("Origin", &base)
-                .form(&[("name", ""), ("email", ""), ("question", "x")])
-                .send()
-                .await
-                .expect("post");
-            let row = read_only_ticket_file(dir.path());
-            assert_eq!(row["asker"], "unknown");
-        }
+    async fn post_rejects_when_email_missing() {
+        let (base, _dir) = spawn_test_server().await;
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", &base)
+            .form(&[("name", "Bob"), ("question", "x")])
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn post_rejects_when_email_lacks_at_sign() {
+        let (base, _dir) = spawn_test_server().await;
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", &base)
+            .form(&[("name", "Bob"), ("email", "not-an-email"), ("question", "x")])
+            .send()
+            .await
+            .expect("post");
+        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -644,7 +692,10 @@ mod tests {
         reqwest::Client::new()
             .post(format!("{}/ticket", base))
             .header("Origin", &base)
-            .form(&[("question", "first line\nsecond line\nthird line")])
+            .form(&[
+                ("email", "u@x.com"),
+                ("question", "first line\nsecond line\nthird line"),
+            ])
             .send()
             .await
             .expect("post");
@@ -652,6 +703,48 @@ mod tests {
         assert_eq!(row["subject"], "first line");
         // description preserves the full multi-line input.
         assert_eq!(row["description"], "first line\nsecond line\nthird line");
+    }
+
+    #[tokio::test]
+    async fn post_writes_asker_first_turn_into_thread_subfolder() {
+        // Intake writes the asker's opening message at submission time,
+        // not at triage time. Without this, a user clicking into the
+        // conversation thread before Claude triages would see an empty
+        // chat or just the agent reply (the bug that prompted this
+        // change).
+        let (base, dir) = spawn_test_server().await;
+        let resp = reqwest::Client::new()
+            .post(format!("{}/ticket", base))
+            .header("Origin", &base)
+            .form(&[("email", "alice@example.com"), ("question", "vpn broken")])
+            .send()
+            .await
+            .expect("post");
+        assert!(resp.status().is_success(), "status: {}", resp.status());
+
+        // Locate the thread subfolder (named after the ticket id).
+        let conv_root = dir.path().join("databases").join("conversations");
+        let threads: Vec<_> = std::fs::read_dir(&conv_root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|e| e.path())
+            .collect();
+        assert_eq!(threads.len(), 1, "expected exactly one thread subfolder");
+
+        let msgs: Vec<_> = std::fs::read_dir(&threads[0])
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("json"))
+            .collect();
+        assert_eq!(msgs.len(), 1, "expected exactly one msg file (the asker turn)");
+
+        let body = std::fs::read_to_string(&msgs[0]).unwrap();
+        let msg: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(msg["role"], "asker");
+        assert_eq!(msg["sender"], "alice@example.com");
+        assert_eq!(msg["body"], "vpn broken");
     }
 
     #[tokio::test]
@@ -675,7 +768,7 @@ mod tests {
         let (base, _dir) = spawn_test_server().await;
         let resp = reqwest::Client::new()
             .post(format!("{}/ticket", base))
-            .form(&[("question", "x")])
+            .form(&[("email", "u@x.com"), ("question", "x")])
             .send()
             .await
             .expect("post");
@@ -692,7 +785,7 @@ mod tests {
         let resp = reqwest::Client::new()
             .post(format!("{}/ticket", base))
             .header("Origin", "https://evil.com")
-            .form(&[("question", "x")])
+            .form(&[("email", "u@x.com"), ("question", "x")])
             .send()
             .await
             .expect("post");
@@ -712,7 +805,7 @@ mod tests {
         let resp = reqwest::Client::new()
             .post(format!("{}/ticket", base))
             .header("Origin", localhost_origin)
-            .form(&[("question", "x")])
+            .form(&[("email", "u@x.com"), ("question", "x")])
             .send()
             .await
             .expect("post");
@@ -731,7 +824,7 @@ mod tests {
         let resp = reqwest::Client::new()
             .post(format!("{}/ticket", base))
             .header("Origin", ipv6_origin)
-            .form(&[("question", "x")])
+            .form(&[("email", "u@x.com"), ("question", "x")])
             .send()
             .await
             .expect("post");

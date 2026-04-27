@@ -58,11 +58,47 @@ pub fn fs_list(root: String) -> Result<Vec<FileNode>, String> {
             is_dir: entry.file_type().is_dir(),
         });
     }
-    // Sort by path so each dir is followed by its descendants — correct
-    // hierarchical reading order in a flat list. Dirs-first within a parent
-    // is enforced at render time by the front-end.
-    nodes.sort_by(|a, b| a.path.cmp(&b.path));
+    // Sort by a custom key so each dir is followed by its descendants
+    // — correct hierarchical reading order in a flat list. The custom
+    // key inverts ordering for direct children of `databases/tickets/`
+    // and `databases/conversations/` so the user sees newest-first
+    // there (ticket / thread names start with an ISO timestamp prefix,
+    // so descending name = descending time).
+    nodes.sort_by(|a, b| descending_for_threads_key(&a.path).cmp(&descending_for_threads_key(&b.path)));
     Ok(nodes)
+}
+
+/// Build a sort key that mostly preserves path order but reverses
+/// direct children of `databases/tickets/` and `databases/conversations/`.
+/// Implementation: detect whether the path lives under one of those
+/// dirs and replace the immediate child segment with its character-
+/// inverse (`u32::MAX - codepoint` per char), which makes lexical
+/// ordering on the key equivalent to descending order on that segment.
+/// All other segments stay as-is so hierarchy and depth-first
+/// traversal are preserved.
+fn descending_for_threads_key(path: &str) -> String {
+    for marker in ["/databases/tickets/", "/databases/conversations/"] {
+        if let Some(idx) = path.find(marker) {
+            let prefix_end = idx + marker.len();
+            let after = &path[prefix_end..];
+            let (child, rest) = after
+                .find('/')
+                .map(|i| (&after[..i], &after[i..]))
+                .unwrap_or((after, ""));
+            let inverted: String = child
+                .chars()
+                .map(|c| {
+                    char::from_u32(0x10_FFFF - (c as u32)).unwrap_or('\u{10FFFF}')
+                })
+                .collect();
+            let mut key = String::with_capacity(path.len() + 8);
+            key.push_str(&path[..prefix_end]);
+            key.push_str(&inverted);
+            key.push_str(rest);
+            return key;
+        }
+    }
+    path.to_string()
 }
 
 #[tauri::command]

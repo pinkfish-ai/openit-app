@@ -558,15 +558,25 @@ export function FileExplorer({
               onClick={() => {
                 if (n.is_dir) {
                   toggle(n.path);
-                  // Also open table view for database collection directories
-                  if (rel.match(/^databases\/[^/]+$/)) {
+                  // Open viewer for:
+                  //   - top-level datastore dirs (databases/<col>/) → table
+                  //   - conversation thread subfolders
+                  //     (databases/conversations/<ticketId>/) → chat thread
+                  if (
+                    rel.match(/^databases\/[^/]+$/) ||
+                    rel.match(/^databases\/conversations\/[^/]+$/)
+                  ) {
                     onSelect(n.path);
                   }
                   return;
                 }
                 onSelect(n.path);
               }}
-              draggable={!n.is_dir || rel.match(/^databases\/[^/]+$/) !== null}
+              draggable={
+                !n.is_dir ||
+                rel.match(/^databases\/[^/]+$/) !== null ||
+                rel.match(/^databases\/conversations\/[^/]+$/) !== null
+              }
               onDragStart={(e) => {
                 // Drop the file (or collection-directory) path as the
                 // reference. Previously we built rich `[Pinkfish ...]`

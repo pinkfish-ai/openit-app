@@ -766,6 +766,130 @@ body,
   border-color: var(--border);
 }
 
+/* Conversation thread list — one clickable card per ticket. Shown
+   when the conversations/ folder itself is selected. Cards click
+   through to the chat-bubble view for that thread. */
+.viewer-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.thread-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: border-color 0.1s, background 0.1s;
+}
+
+.thread-card:hover {
+  border-color: var(--accent);
+  background: var(--surface-soft);
+}
+
+.thread-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.thread-card-subject {
+  font-weight: 500;
+  color: var(--text);
+  font-size: 13px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-card-status {
+  flex: 0 0 auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+
+.thread-card-status-incoming {
+  /* Green tint matching the incoming-ticket banner palette. */
+}
+.thread-card-status-incoming .thread-card-status {
+  color: #1f4d2c;
+  background: #e8f5ec;
+  border-color: #82c39a;
+}
+
+.thread-card-meta {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.thread-card-asker {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.thread-card-count {
+  /* default */
+}
+
+.thread-card-time {
+  font-family: Menlo, monospace;
+  font-size: 10px;
+  margin-left: auto;
+}
+
+/* Wrapper around the thread bubbles + a top toolbar. */
+.viewer-thread-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.viewer-thread-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.viewer-add-btn {
+  font-size: 12px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.viewer-add-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Conversation thread: chat-style bubbles for messages under
    databases/conversations/<ticketId>/. Asker turns left-aligned;
    agent/admin turns right-aligned. */

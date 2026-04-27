@@ -450,7 +450,15 @@ export function Shell({
         </Panel>
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[1]} minSize={20}>
-          <Viewer source={source} repo={repo ?? ""} fsTick={fsTick} />
+          <Viewer
+            source={source}
+            repo={repo ?? ""}
+            fsTick={fsTick}
+            onOpenPath={async (path) => {
+              const resolved = await resolvePathToSource(path, repo);
+              setSource(resolved);
+            }}
+          />
         </Panel>
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[2]} minSize={25}>

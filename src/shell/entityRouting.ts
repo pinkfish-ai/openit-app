@@ -1,5 +1,5 @@
 import { fsRead, fsList } from "../lib/api";
-import type { ConversationTurn, ViewerSource } from "./types";
+import type { ConversationThreadSummary, ConversationTurn, ViewerSource } from "./types";
 import type { DataCollection } from "../lib/skillsApi";
 
 /**
@@ -49,6 +49,83 @@ export async function resolvePathToSource(
         collection: { id: "", name: rowMatch[1], type: "datastore", numItems: 0, schema },
         item: { id: rowMatch[2], key: rowMatch[2], content, createdAt: "", updatedAt: "" },
       };
+    } catch {
+      return { kind: "file", path };
+    }
+  }
+
+  // databases/conversations/ (top level) → conversations-list. List
+  // each thread subfolder, look up its ticket for subject/date/status,
+  // count its messages. Sorted newest-first by lastTurnAt. Click a
+  // card → conversation-thread view.
+  if (rel === "databases/conversations") {
+    try {
+      const subdirs = await fsList(path);
+      const threads: ConversationThreadSummary[] = [];
+      for (const sd of subdirs) {
+        if (!sd.is_dir) continue;
+        const ticketId = sd.name;
+        // Default empty fields; backfill from ticket + msgs below.
+        let subject = "";
+        let asker = "";
+        let status = "";
+        let createdAt = "";
+        // Try the corresponding ticket file for subject/date/status.
+        try {
+          const ticketRaw = await fsRead(`${repo}/databases/tickets/${ticketId}.json`);
+          const ticket = JSON.parse(ticketRaw);
+          if (ticket && typeof ticket === "object") {
+            subject = typeof ticket.subject === "string" ? ticket.subject : "";
+            asker = typeof ticket.asker === "string" ? ticket.asker : "";
+            status = typeof ticket.status === "string" ? ticket.status : "";
+            createdAt = typeof ticket.createdAt === "string" ? ticket.createdAt : "";
+          }
+        } catch {
+          /* ticket missing — keep defaults */
+        }
+        // Walk the thread to count msgs + find last activity.
+        let turnCount = 0;
+        let lastTurnAt = "";
+        let firstBody = "";
+        try {
+          const msgs = await fsList(sd.path);
+          // Sort by name asc — names start with msg-<unix-ms>- so older comes first.
+          msgs.sort((a, b) => a.name.localeCompare(b.name));
+          for (const m of msgs) {
+            if (m.is_dir) continue;
+            if (!m.name.endsWith(".json")) continue;
+            if (m.name.includes(".server.")) continue;
+            turnCount += 1;
+            try {
+              const raw = await fsRead(m.path);
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === "object") {
+                const ts = typeof parsed.timestamp === "string" ? parsed.timestamp : "";
+                if (ts > lastTurnAt) lastTurnAt = ts;
+                if (!firstBody && parsed.role === "asker" && typeof parsed.body === "string") {
+                  firstBody = parsed.body;
+                }
+              }
+            } catch {
+              /* skip unparseable */
+            }
+          }
+        } catch {
+          /* empty subdir */
+        }
+        threads.push({
+          ticketId,
+          subject: subject || firstBody.split("\n")[0].slice(0, 80) || ticketId,
+          asker,
+          status,
+          createdAt: createdAt || lastTurnAt,
+          lastTurnAt,
+          turnCount,
+        });
+      }
+      // Newest activity first.
+      threads.sort((a, b) => b.lastTurnAt.localeCompare(a.lastTurnAt));
+      return { kind: "conversations-list", threads };
     } catch {
       return { kind: "file", path };
     }

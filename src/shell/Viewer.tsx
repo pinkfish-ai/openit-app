@@ -48,7 +48,20 @@ function mimeForPath(path: string): string {
   return map[ext] ?? "application/octet-stream";
 }
 
-export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: string; fsTick?: number }) {
+export function Viewer({
+  source,
+  repo,
+  fsTick,
+  onOpenPath,
+}: {
+  source: ViewerSource;
+  repo: string;
+  fsTick?: number;
+  /** Open another path in the viewer (used by the conversations-list
+   *  cards to drill into a specific thread). Optional — falls back to
+   *  no-op if the parent didn't wire it. */
+  onOpenPath?: (path: string) => void | Promise<void>;
+}) {
   const [content, setContent] = useState<string>("");
   const [binaryData, setBinaryData] = useState<Uint8Array | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -177,6 +190,11 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
       setContent("");
       return;
     }
+    if (source.kind === "conversations-list") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
   }, [source]);
 
   // Re-read the single-row file from disk when fsTick fires. Lets edits
@@ -262,6 +280,7 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
       case "agent": return source.agent?.name ?? "Agent";
       case "workflow": return source.workflow?.name ?? "Workflow";
       case "conversation-thread": return `Conversation — ${source.ticketId}`;
+      case "conversations-list": return `Conversations — ${source.threads.length} thread${source.threads.length === 1 ? "" : "s"}`;
       default: return "";
     }
   };
@@ -449,36 +468,100 @@ export function Viewer({ source, repo, fsTick }: { source: ViewerSource; repo: s
       );
     }
 
-    // Conversation thread — chat-style bubbles, ordered by timestamp.
-    if (source.kind === "conversation-thread") {
-      const turns = source.turns;
-      if (turns.length === 0) {
+    // Conversations list — one clickable card per thread, sorted by
+    // most-recent activity. Click a card → open that thread's chat
+    // view via the parent's onOpenPath callback.
+    if (source.kind === "conversations-list") {
+      if (source.threads.length === 0) {
         return (
           <div className="viewer-summary">
-            <p className="summary-desc">No turns logged yet for this thread.</p>
+            <p className="summary-desc">
+              No conversation threads yet. They appear here once a ticket gets
+              its first message — file a ticket via the Intake form to start one.
+            </p>
           </div>
         );
       }
       return (
-        <div className="viewer-thread">
-          {turns.map((t) => {
-            const isAsker = t.role === "asker";
-            return (
-              <div
-                key={t.id}
-                className={`thread-turn ${isAsker ? "thread-turn-asker" : "thread-turn-agent"}`}
-              >
-                <div className="thread-turn-meta">
-                  <span className="thread-turn-sender">{t.sender || t.role}</span>
-                  <span className="thread-turn-role">{t.role}</span>
-                  {t.timestamp && (
-                    <span className="thread-turn-time">{t.timestamp}</span>
-                  )}
-                </div>
-                <div className="thread-turn-body">{t.body}</div>
+        <div className="viewer-thread-list">
+          {source.threads.map((t) => (
+            <button
+              key={t.ticketId}
+              type="button"
+              className={`thread-card thread-card-status-${t.status || "unknown"}`}
+              onClick={() => {
+                if (onOpenPath) {
+                  void onOpenPath(`${repo}/databases/conversations/${t.ticketId}`);
+                }
+              }}
+              title={`Open conversation for ${t.ticketId}`}
+            >
+              <div className="thread-card-row">
+                <span className="thread-card-subject">{t.subject || "(no subject)"}</span>
+                {t.status && <span className="thread-card-status">{t.status}</span>}
               </div>
-            );
-          })}
+              <div className="thread-card-meta">
+                {t.asker && <span className="thread-card-asker">{t.asker}</span>}
+                <span className="thread-card-count">
+                  {t.turnCount} message{t.turnCount === 1 ? "" : "s"}
+                </span>
+                {t.lastTurnAt && (
+                  <span className="thread-card-time">{t.lastTurnAt}</span>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    // Conversation thread — chat-style bubbles, ordered by timestamp.
+    if (source.kind === "conversation-thread") {
+      const turns = source.turns;
+      const threadPath = `${repo}/databases/conversations/${source.ticketId}`;
+      const onAddToClaude = () => {
+        writeToActiveSession(threadPath + " ").catch((e) =>
+          console.warn("[viewer] add-to-claude failed:", e),
+        );
+      };
+      return (
+        <div className="viewer-thread-wrapper">
+          <div className="viewer-thread-toolbar">
+            <button
+              type="button"
+              className="viewer-add-btn"
+              onClick={onAddToClaude}
+              title="Reference this conversation in Claude (pastes the thread path into the chat)"
+            >
+              Add to Claude
+            </button>
+          </div>
+          {turns.length === 0 ? (
+            <div className="viewer-summary">
+              <p className="summary-desc">No turns logged yet for this thread.</p>
+            </div>
+          ) : (
+            <div className="viewer-thread">
+              {turns.map((t) => {
+                const isAsker = t.role === "asker";
+                return (
+                  <div
+                    key={t.id}
+                    className={`thread-turn ${isAsker ? "thread-turn-asker" : "thread-turn-agent"}`}
+                  >
+                    <div className="thread-turn-meta">
+                      <span className="thread-turn-sender">{t.sender || t.role}</span>
+                      <span className="thread-turn-role">{t.role}</span>
+                      {t.timestamp && (
+                        <span className="thread-turn-time">{t.timestamp}</span>
+                      )}
+                    </div>
+                    <div className="thread-turn-body">{t.body}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       );
     }
