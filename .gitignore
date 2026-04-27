@@ -37,3 +37,8 @@ dist-ssr
 # is mirrored at merge time. Local builds / cargo dev runs can
 # regenerate it on demand via `npm run build:slack-listener`.
 scripts/openit-plugin/scripts/slack-listen.bundle.cjs
+
+# Ephemeral runtime state from the autonomous-dev /loop driver.
+# Machine-specific (session id, pid, start time); commits cause noise
+# and merge conflicts.
+.claude/scheduled_tasks.lock

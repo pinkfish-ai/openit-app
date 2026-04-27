@@ -54,8 +54,12 @@ fn run_overview_blocking(repo: &str) -> Result<String, String> {
     }
 
     let line = stdout.trim();
-    let parsed: Value = serde_json::from_str(line)
-        .map_err(|e| format!("could not parse script output as JSON: {} (raw: {})", e, line))?;
+    let parsed: Value = serde_json::from_str(line).map_err(|e| {
+        format!(
+            "could not parse script output as JSON: {} (raw: {})",
+            e, line
+        )
+    })?;
 
     let ok = parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
     if !ok {

@@ -443,6 +443,11 @@ export function Viewer({
       setContent("");
       return;
     }
+    if (source.kind === "agent-trace") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
   }, [source]);
 
   // Re-read the single-row file from disk when fsTick fires. Lets edits
@@ -559,6 +564,8 @@ export function Viewer({
         const n = source.collections.length;
         return `Knowledge bases — ${n} collection${n === 1 ? "" : "s"}`;
       }
+      case "agent-trace":
+        return `Agent trace — ${source.subject}`;
       default: return "";
     }
   };
@@ -1159,11 +1166,6 @@ export function Viewer({
                       {c.itemCount} {c.name === "conversations" ? "thread" : "row"}{c.itemCount === 1 ? "" : "s"}
                     </span>
                   </div>
-                  <div className="databases-list-meta">
-                    <span className="databases-list-tag">
-                      {c.hasSchema ? "schema" : "schema-less"}
-                    </span>
-                  </div>
                 </button>
               </li>
             ))}
@@ -1198,25 +1200,65 @@ export function Viewer({
             <p className="viewer-edit-error">{reportError}</p>
           )}
           <ul className="entity-folder-list">
-            {source.files.map((f) => (
-              <li key={f.path}>
-                <button
-                  type="button"
-                  className="entity-folder-item"
-                  onClick={() => {
-                    if (onOpenPath) void onOpenPath(f.path);
-                  }}
-                  // Surface the full description on hover for long
-                  // strings the line-clamp truncates.
-                  title={f.description ? `${f.displayName} — ${f.description}` : `Open ${f.name}`}
-                >
-                  <span className="entity-folder-name">{f.displayName}</span>
-                  {f.description && (
-                    <span className="entity-folder-desc">{f.description}</span>
-                  )}
-                </button>
-              </li>
-            ))}
+            {source.files.map((f) => {
+              // Reports flip the standard `name → description` card
+              // layout: description is the primary title (it's the
+              // human-readable label — "Helpdesk overview", "Tickets
+              // by asker — all time") and the filename + parsed date
+              // become the muted metadata below. Other entities keep
+              // the standard layout (filename as title, description
+              // as subtitle).
+              const isReport = source.entity === "reports";
+              let slug = f.displayName;
+              let dateLabel = "";
+              if (isReport) {
+                const m = f.displayName.match(/^(\d{4})-(\d{2})-(\d{2})(?:-(\d{2})(\d{2}))?-(.+)$/);
+                if (m) {
+                  const [, yyyy, mm, dd, hh, mi, parsedSlug] = m;
+                  slug = parsedSlug;
+                  const monthShort = [
+                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+                  ][Math.max(0, Math.min(11, Number(mm) - 1))];
+                  const yearTail =
+                    new Date().getFullYear() === Number(yyyy) ? "" : `, ${yyyy}`;
+                  dateLabel = hh && mi
+                    ? `${monthShort} ${Number(dd)}${yearTail} · ${hh}:${mi}`
+                    : `${monthShort} ${Number(dd)}${yearTail}`;
+                }
+              }
+              const titleText = isReport
+                ? f.description || slug
+                : f.displayName;
+              return (
+                <li key={f.path}>
+                  <button
+                    type="button"
+                    className="entity-folder-item"
+                    onClick={() => {
+                      if (onOpenPath) void onOpenPath(f.path);
+                    }}
+                    title={`Open ${f.name}`}
+                  >
+                    {isReport ? (
+                      <span className="entity-folder-name-row">
+                        <span className="entity-folder-name">{titleText}</span>
+                        {dateLabel && (
+                          <span className="entity-folder-date">{dateLabel}</span>
+                        )}
+                      </span>
+                    ) : (
+                      <>
+                        <span className="entity-folder-name">{titleText}</span>
+                        {f.description && (
+                          <span className="entity-folder-desc">{f.description}</span>
+                        )}
+                      </>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       );
@@ -1228,6 +1270,62 @@ export function Viewer({
     if (source.kind === "conversation-thread") {
       const turns = source.turns;
       const ticketId = source.ticketId;
+
+      /// Write a single admin turn to disk + bump the ticket back to
+      /// `open`. Shared between the textarea Send path and the
+      /// drag-drop path so a dropped file always shows up as a real
+      /// thread message (not just a chip on the composer that the
+      /// admin still has to click Send on). Caller has already
+      /// validated body / attachments are non-empty.
+      const writeAdminTurn = async (
+        body: string,
+        attachments: string[],
+      ): Promise<void> => {
+        if (!repo) return;
+        const { entityWriteFile, fsRead } = await import("../lib/api");
+        const nowMs = Date.now();
+        const rand = Math.random().toString(36).slice(2, 6);
+        const msgId = `msg-${nowMs}-${rand}`;
+        const isoNow = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+        const sender = adminEmail ?? "admin";
+        const payload: Record<string, unknown> = {
+          id: msgId,
+          ticketId,
+          role: "admin",
+          sender,
+          timestamp: isoNow,
+          body,
+        };
+        if (attachments.length > 0) payload.attachments = attachments;
+        await entityWriteFile(
+          repo,
+          `databases/conversations/${ticketId}`,
+          `${msgId}.json`,
+          JSON.stringify(payload, null, 2),
+        );
+        // Bumping the ticket back to `open` (it might be at
+        // escalated / resolved / closed). Best-effort: missing
+        // ticket file is logged but the reply itself stays.
+        try {
+          const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
+          const raw = await fsRead(ticketPath);
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          parsed.status = "open";
+          parsed.updatedAt = isoNow;
+          if (typeof parsed.assignee !== "string" || !parsed.assignee) {
+            parsed.assignee = sender;
+          }
+          await entityWriteFile(
+            repo,
+            "databases/tickets",
+            `${ticketId}.json`,
+            JSON.stringify(parsed, null, 2),
+          );
+        } catch (e) {
+          console.warn("[viewer] reply: ticket update skipped:", e);
+        }
+      };
+
       const sendReply = async () => {
         const trimmed = replyText.trim();
         // Allow attachment-only replies (admin drops a screenshot
@@ -1238,56 +1336,12 @@ export function Viewer({
         setReplySending(true);
         setReplyError(null);
         try {
-          const { entityWriteFile } = await import("../lib/api");
-          const nowMs = Date.now();
-          const rand = Math.random().toString(36).slice(2, 6);
-          const msgId = `msg-${nowMs}-${rand}`;
-          const isoNow = new Date().toISOString().replace(/\.\d+Z$/, "Z");
-          const sender = adminEmail ?? "admin";
-          const payload: Record<string, unknown> = {
-            id: msgId,
-            ticketId,
-            role: "admin",
-            sender,
-            timestamp: isoNow,
-            body: trimmed || "(attachment)",
-          };
-          if (replyAttachments.length > 0) {
-            payload.attachments = replyAttachments.map((a) => a.path);
-          }
-          await entityWriteFile(
-            repo,
-            `databases/conversations/${ticketId}`,
-            `${msgId}.json`,
-            JSON.stringify(payload, null, 2),
+          await writeAdminTurn(
+            trimmed || "(attachment)",
+            replyAttachments.map((a) => a.path),
           );
           setReplyText("");
           setReplyAttachments([]);
-          // Bumping the ticket back to `open` (it might be at
-          // escalated / resolved / closed). Done as a best-effort
-          // optimistic write — the auto-commit driver picks both
-          // files up. If reading the ticket fails (e.g. file
-          // missing), skip without surfacing a hard error since the
-          // reply itself succeeded.
-          try {
-            const { fsRead } = await import("../lib/api");
-            const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
-            const raw = await fsRead(ticketPath);
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
-            parsed.status = "open";
-            parsed.updatedAt = isoNow;
-            if (typeof parsed.assignee !== "string" || !parsed.assignee) {
-              parsed.assignee = sender;
-            }
-            await entityWriteFile(
-              repo,
-              "databases/tickets",
-              `${ticketId}.json`,
-              JSON.stringify(parsed, null, 2),
-            );
-          } catch (e) {
-            console.warn("[viewer] reply: ticket update skipped:", e);
-          }
         } catch (err) {
           setReplyError(`Send failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
@@ -1358,8 +1412,33 @@ export function Viewer({
                   console.error(`[admin-reply] failed to attach ${filename}:`, err);
                 }
               }
-              if (newAttachments.length > 0) {
-                setReplyAttachments((prev) => [...prev, ...newAttachments]);
+              if (newAttachments.length === 0) return;
+              // Post the dropped files as a standalone admin turn so
+              // they show up in the thread immediately. The admin can
+              // still type follow-up text and click Send for a separate
+              // turn afterwards. If the textarea has unsent text, we
+              // bundle it with this drop instead of leaving it stuck
+              // in the composer waiting for a manual Send.
+              const trimmed = replyText.trim();
+              const filenames = newAttachments.map((a) => a.filename);
+              const fallbackBody =
+                filenames.length === 1
+                  ? `attached file: ${filenames[0]}`
+                  : `attached files: ${filenames.join(", ")}`;
+              setReplySending(true);
+              setReplyError(null);
+              try {
+                await writeAdminTurn(
+                  trimmed || fallbackBody,
+                  newAttachments.map((a) => a.path),
+                );
+                setReplyText("");
+              } catch (err) {
+                setReplyError(
+                  `Drop failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              } finally {
+                setReplySending(false);
               }
             }}
           >
@@ -1419,6 +1498,112 @@ export function Viewer({
               </button>
             </div>
           </div>
+        </div>
+      );
+    }
+
+    // Agent-trace timeline — the verbs the agent emitted while
+    // running this turn, in order. The banner click-through opens
+    // the most recent turn's trace; admins use this to audit "what
+    // did the agent actually do" without paging through the JSON.
+    if (source.kind === "agent-trace") {
+      const { doc, subject } = source;
+      if (!doc) {
+        // First-turn race: the banner clicked before
+        // `agent_trace::persist_trace` wrote the file. Show a
+        // placeholder; the fsTick effect below re-fetches and
+        // swaps in the real doc as soon as it lands.
+        return (
+          <div className="agent-trace-view">
+            <div className="agent-trace-header">
+              <div className="agent-trace-subject">{subject}</div>
+              <div className="agent-trace-meta">
+                <span className="agent-trace-time">composing reply…</span>
+              </div>
+            </div>
+            <div className="viewer-summary">
+              <p className="summary-desc">
+                The agent hasn't finished its first reply on this
+                ticket yet. The timeline will appear here as soon as
+                the turn completes.
+              </p>
+            </div>
+          </div>
+        );
+      }
+      // Filter to events that have something to show. Tool_result
+      // entries carry only the tool_use_id (for UI pairing); we
+      // skip them in this list to keep the timeline focused on
+      // *actions taken* rather than their internal correlation.
+      const items = doc.events.filter(
+        (e) => e.kind === "tool_use" || e.kind === "text" || e.kind === "result",
+      );
+      const formatTs = (iso: string) => {
+        // The trace timestamps are ISO-8601 UTC with second precision.
+        // Render as local time HH:MM:SS so the relative ordering reads
+        // naturally without making the admin parse a Z-suffixed UTC.
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        return d.toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+      };
+      return (
+        <div className="agent-trace-view">
+          <div className="agent-trace-header">
+            <div className="agent-trace-subject">{subject}</div>
+            <div className="agent-trace-meta">
+              <span className={`agent-trace-outcome agent-trace-outcome-${doc.outcome}`}>
+                {doc.outcome}
+              </span>
+              <span className="agent-trace-model">{doc.model}</span>
+              <span className="agent-trace-time">
+                {formatTs(doc.started_at)} → {formatTs(doc.completed_at)}
+              </span>
+            </div>
+          </div>
+          {items.length === 0 ? (
+            <div className="viewer-summary">
+              <p className="summary-desc">
+                No actions recorded for this turn yet.
+              </p>
+            </div>
+          ) : (
+            <ol className="agent-trace-timeline">
+              {items.map((e, idx) => {
+                const verb =
+                  e.verb ?? (e.tool ? `Running ${e.tool}` : null);
+                const isFinalResult = e.kind === "result";
+                const isText = e.kind === "text";
+                const label = isFinalResult
+                  ? "Replied"
+                  : isText
+                    ? "Thinking"
+                    : verb || e.kind;
+                // For text/result events, show the model's wording
+                // truncated to one line so the timeline stays scannable.
+                const snippet = (() => {
+                  if (!e.text) return null;
+                  const first = e.text.split("\n")[0]?.trim() ?? "";
+                  return first.length > 140 ? `${first.slice(0, 137)}…` : first;
+                })();
+                return (
+                  <li
+                    key={`${e.ts}-${idx}`}
+                    className={`agent-trace-step agent-trace-step-${e.kind}`}
+                  >
+                    <span className="agent-trace-step-time">{formatTs(e.ts)}</span>
+                    <span className="agent-trace-step-label">{label}</span>
+                    {snippet && (
+                      <span className="agent-trace-step-snippet">{snippet}</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
         </div>
       );
     }

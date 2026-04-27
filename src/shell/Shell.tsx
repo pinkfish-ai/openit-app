@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
+  agentTraceLatest,
   entityWriteFile,
   fsDelete,
   fsRead,
@@ -265,6 +266,38 @@ export function Shell({
     };
   }, [fsTick, repo]);
 
+  // Re-fetch the live agent trace whenever the fs watcher ticks. The
+  // chat-intake server writes a partial trace file after each event
+  // during the turn (see `LiveTracePersister` in `intake.rs`); this
+  // effect pulls the latest snapshot in so the timeline animates
+  // through the agent's actions instead of waiting for the turn to
+  // finish.
+  useEffect(() => {
+    if (!repo || fsTick === 0) return;
+    const current = sourceRef.current;
+    if (!current || current.kind !== "agent-trace") return;
+    const ticketId = current.ticketId;
+    const subject = current.subject;
+    let cancelled = false;
+    agentTraceLatest(repo, ticketId)
+      .then((doc) => {
+        if (cancelled) return;
+        // Only update if events actually changed — comparing
+        // lengths is a cheap proxy that avoids re-rendering the
+        // viewer for unrelated fs ticks (KB push, ticket status
+        // flips, etc.) when the trace file itself hasn't grown.
+        const currentLen = current.doc?.events.length ?? -1;
+        const nextLen = doc?.events.length ?? -1;
+        const outcomeChanged = (current.doc?.outcome ?? "") !== (doc?.outcome ?? "");
+        if (currentLen === nextLen && !outcomeChanged) return;
+        setSource({ kind: "agent-trace", ticketId, subject, doc });
+      })
+      .catch((e) => console.warn("[shell] agent-trace reload failed:", e));
+    return () => {
+      cancelled = true;
+    };
+  }, [fsTick, repo]);
+
   // First-load auto-open of welcome (only when nothing else is loaded yet).
   useEffect(() => {
     if (repo && !source) {
@@ -495,7 +528,25 @@ export function Shell({
   return (
     <div className="shell">
       <ConflictBanner />
-      <AgentActivityBanner repo={repo} fsTick={fsTick} />
+      <AgentActivityBanner
+        repo={repo}
+        fsTick={fsTick}
+        onOpenTrace={async (ticketId, subject) => {
+          if (!repo) return;
+          try {
+            const doc = await agentTraceLatest(repo, ticketId);
+            // doc may be null when the click lands during the first
+            // turn for a brand-new ticket (the trace file is written
+            // only after the turn completes). Push the source anyway
+            // — the viewer renders a "composing" placeholder and the
+            // fs-watcher reload below swaps in the real doc once it
+            // lands.
+            setSource({ kind: "agent-trace", ticketId, subject, doc });
+          } catch (e) {
+            console.warn("[shell] agent-trace open failed:", e);
+          }
+        }}
+      />
       <EscalatedTicketBanner
         repo={repo}
         fsTick={fsTick}

@@ -36,7 +36,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{oneshot, Mutex as TokioMutex};
@@ -132,6 +132,14 @@ struct ChatMessage {
     role: String,
     content: String,
     timestamp: String,
+    /// Repo-relative paths of files the asker attached on this turn
+    /// (`filestores/attachments/<ticketId>/<filename>`). Empty for
+    /// assistant turns and for asker turns without attachments. The
+    /// prompt builder lists these inline so the agent knows to
+    /// `Read` them before answering — Claude Code can ingest image
+    /// content via the Read tool.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -478,6 +486,7 @@ async fn chat_turn(
         role: "user".to_string(),
         content: trimmed.to_string(),
         timestamp: now_iso(),
+        attachments: valid_attachments.clone(),
     };
     let mut history = history_before;
     history.push(user_msg);
@@ -489,9 +498,24 @@ async fn chat_turn(
     // (~3-5s per turn). The skill is auto-loaded by Claude based on
     // the cwd's .claude/skills/ directory.
     let prompt = build_chat_prompt(&agent_instructions, &history, &ticket_id, &email);
-    let reply_result = spawn_claude_chat(&repo, &model, &prompt).await;
+    let started_at = now_iso();
+    // Live trace persister — writes a partial trace file after each
+    // event so the desktop viewer (clicked into via the activity
+    // banner) shows the agent's actions appearing in real time
+    // rather than a single dump after the turn completes. Same
+    // file path as the final `persist_trace` call below, so the
+    // final write just overwrites with the dispatched outcome.
+    let turn_id = format!("turn-{}", unix_now_secs());
+    let persister = LiveTracePersister {
+        repo: repo.as_ref().clone(),
+        ticket_id: ticket_id.clone(),
+        turn_id: turn_id.clone(),
+        started_at: started_at.clone(),
+        model: model.clone(),
+    };
+    let reply_result = spawn_claude_chat(&repo, &model, &prompt, Some(&persister)).await;
 
-    let reply = match reply_result {
+    let ChatTurnOutput { reply, events } = match reply_result {
         Ok(out) => out,
         Err(e) => {
             eprintln!("[intake/chat] claude -p failed: {}", e);
@@ -527,6 +551,7 @@ async fn chat_turn(
                 role: "assistant".to_string(),
                 content: reply_body.clone(),
                 timestamp: now_iso(),
+                attachments: Vec::new(),
             });
         }
     }
@@ -536,31 +561,54 @@ async fn chat_turn(
     // status marker — so the server controls sender + role + body.
     let _ = write_agent_turn(&repo, &ticket_id, &reply_body).await;
 
-    // Apply the agent's decision. Two valid outcomes:
-    //   Answered  → ticket status `open` (KB hit; conversation alive,
-    //               waiting for the asker's next message; no banner).
-    //   Escalated → ticket status `escalated` (KB miss; admin banner).
+    // Apply the agent's decision. Three valid outcomes:
+    //   Answered  → ticket → `open`     (KB hit; conversation alive)
+    //   Resolved  → ticket → `resolved` (asker confirmed; terminal)
+    //   Escalated → ticket → `escalated` (admin attention)
     // Either way the ticket exits `agent-responding`, so the activity
-    // banner is visible only during the ~3-5s claude -p window —
-    // never after the turn completes.
+    // banner is visible only during the ~3-5s claude -p window.
     //
-    // Note: `resolved` is intentionally NOT set by the agent. That
-    // status means the case is end-to-end done (asker's issue fixed,
-    // admin marks closed) and only an admin / explicit confirmation
-    // flow should set it. Treating each KB-hit answer as `resolved`
-    // would mislabel ongoing conversations as closed.
+    // `Resolved` is terminal but NOT permanent — `ensure_responding_stub`
+    // flips a resolved ticket back to `agent-responding` on the next
+    // asker turn, and that turn's outcome takes over (e.g. another
+    // "thanks!" → resolved again, or "wait it broke" → escalated).
+    // The agent makes the call each turn; the lifecycle is self-healing.
     //
     // The Clarifying variant is kept for backwards compatibility with
     // any in-flight legacy skill; treating it as Escalated is the safe
     // fallback so the admin gets visibility and the ticket can't pin
     // the banner.
-    match decided_status {
+    let outcome_label = match decided_status {
         DecidedStatus::Answered => {
             let _ = mark_status(&repo, &ticket_id, "open").await;
+            "answered"
+        }
+        DecidedStatus::Resolved => {
+            let _ = mark_status(&repo, &ticket_id, "resolved").await;
+            "resolved"
         }
         DecidedStatus::Escalated | DecidedStatus::Clarifying => {
             let _ = mark_status(&repo, &ticket_id, "escalated").await;
+            "escalated"
         }
+    };
+
+    // Persist the agent-trace audit log for this turn. Best-effort;
+    // a failed write shouldn't block the chat reply (the conversation
+    // turn is already on disk and the user is waiting). The frontend
+    // banner / activity viewer will pick the file up via the watcher
+    // once it lands.
+    let trace_doc = crate::agent_trace::TraceDoc {
+        ticket_id: ticket_id.clone(),
+        turn_id,
+        started_at,
+        completed_at: now_iso(),
+        model: model.clone(),
+        outcome: outcome_label.to_string(),
+        events,
+    };
+    if let Err(e) = crate::agent_trace::persist_trace(&repo, &trace_doc).await {
+        eprintln!("[intake/chat] persist_trace failed: {}", e);
     }
 
     // Auto-commit everything this turn touched so the admin's Versions
@@ -1093,6 +1141,24 @@ fn build_chat_prompt(
             "ASSISTANT"
         };
         prompt.push_str(&format!("{}: {}\n", label, msg.content));
+        if !msg.attachments.is_empty() {
+            // Inline the attachment paths so the agent knows which
+            // files belong to this turn. Reading them is up to the
+            // agent — for screenshots / diagrams the model can ingest
+            // image content via the Read tool.
+            for att in &msg.attachments {
+                prompt.push_str(&format!("  [attachment: {}]\n", att));
+            }
+        }
+    }
+    if history.iter().any(|m| !m.attachments.is_empty()) {
+        prompt.push_str(
+            "\nWhen a USER turn lists attachments, use the Read tool on each \
+             repo-relative path BEFORE deciding the outcome. Screenshots, \
+             logs, and PDFs often carry the actual question (e.g. \"this?\" \
+             with a screenshot of an error). Skipping the attachment and \
+             escalating because the body looks vague is the wrong move.\n",
+        );
     }
     prompt.push_str(
         "\nIMPORTANT: Do NOT write any conversation turn files (no \
@@ -1107,22 +1173,25 @@ fn build_chat_prompt(
          clobbered.\n\n\
          Your job: (1) read the ticket + conversation history for \
          context, (2) run `Bash node .claude/scripts/kb-search.mjs \
-         \"<query>\"` to search the local knowledge base — pass a \
-         compact query that captures the user's current question, \
-         (3) decide one of exactly two outcomes — `answered` (KB \
-         had a relevant article and you replied from it) or \
-         `escalated` (KB had no relevant match, or the question \
-         needs a human), (4) output your reply to the user, then \
-         (5) end with a status marker on its own line: \
-         `<<STATUS:answered>>` or `<<STATUS:escalated>>`.\n\n\
-         The marker reflects your *turn outcome*, not the case \
-         lifecycle. `answered` means you answered THIS turn — the \
-         server flips the ticket to `open` (conversation alive, no \
-         banner) and the asker may follow up. Multiple answered \
-         turns in a row is normal for ongoing back-and-forth. Only \
-         an admin (or an explicit confirmation flow) sets the \
-         terminal `resolved` status; do NOT emit `<<STATUS:resolved>>` \
-         even though it's accepted as a legacy alias.\n\n\
+         \"<query>\"` to search the local knowledge base when the \
+         user is asking a new question — pass a compact query that \
+         captures it, (3) decide one of exactly three outcomes — \
+         `answered` (KB had a relevant article and you replied from \
+         it; ticket → open), `escalated` (KB had no relevant match, \
+         or the question needs a human; ticket → escalated), or \
+         `resolved` (the asker has explicitly confirmed the case is \
+         done — \"thanks that worked\" / \"all good\" / \"works now\" \
+         — and a prior agent or admin turn provided the answer; \
+         ticket → resolved, terminal), (4) output your reply to the \
+         user, then (5) end with a status marker on its own line: \
+         `<<STATUS:answered>>`, `<<STATUS:escalated>>`, or \
+         `<<STATUS:resolved>>`.\n\n\
+         The marker reflects your *turn outcome*, not just the case \
+         lifecycle. Multiple `answered` turns in a row is normal for \
+         ongoing back-and-forth. Use `resolved` only when you're \
+         confident the asker is closing the loop — when in doubt, \
+         emit `answered`; the admin can always close manually, and \
+         the asker can reopen by sending another message.\n\n\
          CRITICAL: do NOT ask the user a follow-up question. There \
          is no \"clarifying\" outcome. If you can't answer from the \
          KB on the information you already have, escalate — the \
@@ -1152,7 +1221,22 @@ fn build_chat_prompt(
 /// subprocesses don't always inherit the user's full shell PATH —
 /// dev mode and .app launches may only see `/usr/bin:/bin`. Same
 /// pattern as `claude_generate_commit_message`.
-async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<String, String> {
+/// Output of a single `claude -p` chat turn — the assistant's reply
+/// text plus a normalized timeline of events the model emitted while
+/// running (tool calls, text deltas, the final `result`). The
+/// dispatcher in `chat_turn` consumes the reply for the chat UI and
+/// hands the events to `agent_trace::persist_trace` for the audit log.
+struct ChatTurnOutput {
+    reply: String,
+    events: Vec<crate::agent_trace::TraceEvent>,
+}
+
+async fn spawn_claude_chat(
+    repo: &Path,
+    model: &str,
+    prompt: &str,
+    persister: Option<&LiveTracePersister>,
+) -> Result<ChatTurnOutput, String> {
     let claude_path = which::which("claude")
         .map_err(|_| "Claude CLI not found on PATH. Install claude (see https://docs.anthropic.com/claude/docs/claude-code) and ensure it's reachable from this app.".to_string())?;
     // `--permission-mode bypassPermissions` so the headless run can
@@ -1160,13 +1244,24 @@ async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<Str
     // script without prompting. Safe in this context — scope is the
     // user's own repo, the skill is OpenIT-bundled, and the only
     // shell command is the local kb-search.mjs.
+    //
+    // `--verbose --output-format stream-json` makes claude emit one
+    // JSON event per line: a `system/init`, then per-step
+    // `assistant`/`user`/`tool_*` messages, ending with a `result`.
+    // We parse those into a normalized timeline so the audit log
+    // (`.openit/agent-traces/`) and the eventual live banner can
+    // surface friendly verbs ("Reading the ticket", "Searching the
+    // knowledge base for …") without re-parsing claude's wire format
+    // on the frontend.
+    //
     // `kill_on_drop(true)` so a timeout (or any early-return below)
     // reaps the subprocess instead of leaving an orphaned `claude`
     // running with the user's prompt.
     let mut child = TokioCommand::new(&claude_path)
         .arg("-p")
+        .arg("--verbose")
         .arg("--output-format")
-        .arg("text")
+        .arg("stream-json")
         .arg("--permission-mode")
         .arg("bypassPermissions")
         .arg("--model")
@@ -1180,13 +1275,23 @@ async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<Str
         .map_err(|e| format!("spawn claude: {}", e))?;
 
     {
-        let stdin = child.stdin.as_mut().ok_or("no stdin handle")?;
+        let mut stdin = child.stdin.take().ok_or("no stdin handle")?;
         stdin
             .write_all(prompt.as_bytes())
             .await
             .map_err(|e| format!("write stdin: {}", e))?;
         stdin.flush().await.ok();
+        // Drop `stdin` here (end of scope) so claude sees EOF and
+        // proceeds. Without this, `claude -p` blocks reading stdin
+        // forever and `child.wait()` deadlocks against
+        // `parse_stream_json` for the full 90s timeout window —
+        // every chat turn would fail. The previous implementation
+        // used `wait_with_output()` which closes stdin implicitly;
+        // the manual `child.wait()` path doesn't.
     }
+
+    let stdout = child.stdout.take().ok_or("no stdout handle")?;
+    let stderr = child.stderr.take().ok_or("no stderr handle")?;
 
     // Bound the subprocess lifetime. A hung `claude` (model stall,
     // network blip, stuck stdin) would otherwise pin the ticket at
@@ -1195,30 +1300,304 @@ async fn spawn_claude_chat(repo: &Path, model: &str, prompt: &str) -> Result<Str
     // anything past that the admin should handle, and the caller
     // surfaces the timeout as an escalation so the user isn't blocked.
     const CLAUDE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
-    let output = match tokio::time::timeout(CLAUDE_TIMEOUT, child.wait_with_output()).await {
-        Ok(Ok(out)) => out,
-        Ok(Err(e)) => return Err(format!("wait claude: {}", e)),
-        Err(_) => {
-            return Err(format!(
-                "claude -p timed out after {}s",
-                CLAUDE_TIMEOUT.as_secs()
-            ));
-        }
-    };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    let stream_task = parse_stream_json(stdout, persister);
+    let stderr_task = collect_stderr(stderr);
+    let wait_task = child.wait();
+
+    // Drive all three (stdout parse, stderr collect, child wait) as
+    // a single bounded future. `tokio::join!` waits for ALL three to
+    // finish before returning — but in the normal case that's exactly
+    // what we want: claude exits, its stdout/stderr pipes close, both
+    // readers drain to EOF, child.wait() reaps the process, and we
+    // get a complete trace. The 90s `tokio::time::timeout` is the
+    // only escape hatch for a hung subprocess (since `kill_on_drop`
+    // reaps it on timeout, the pipe-readers will drop too).
+    let combined = async move {
+        let (parse_result, stderr_text, wait_result) =
+            tokio::join!(stream_task, stderr_task, wait_task);
+        (parse_result, stderr_text, wait_result)
+    };
+    let (parse_result, stderr_text, wait_result) =
+        match tokio::time::timeout(CLAUDE_TIMEOUT, combined).await {
+            Ok(triple) => triple,
+            Err(_) => {
+                return Err(format!(
+                    "claude -p timed out after {}s",
+                    CLAUDE_TIMEOUT.as_secs()
+                ));
+            }
+        };
+
+    let exit_status = wait_result.map_err(|e| format!("wait claude: {}", e))?;
+    if !exit_status.success() {
         return Err(format!(
             "claude exited {} — stderr: {}",
-            output.status, stderr
+            exit_status, stderr_text
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() {
+    let parse = parse_result.map_err(|e| format!("read claude stdout: {}", e))?;
+    if parse.reply.trim().is_empty() {
         return Err("claude returned empty output".to_string());
     }
-    Ok(stdout)
+    Ok(ChatTurnOutput {
+        reply: parse.reply,
+        events: parse.events,
+    })
+}
+
+/// Read the child's stderr to completion. Used for diagnostics on a
+/// non-zero exit only — we don't surface stderr lines on the happy
+/// path since stream-json carries everything we need.
+async fn collect_stderr<R: tokio::io::AsyncRead + Unpin>(reader: R) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut buf = String::new();
+    let mut r = reader;
+    let _ = r.read_to_string(&mut buf).await;
+    buf
+}
+
+struct StreamParseResult {
+    reply: String,
+    events: Vec<crate::agent_trace::TraceEvent>,
+}
+
+/// Owns the per-turn trace-file path + metadata, and writes the
+/// partial timeline to disk after each event the parser sees. This
+/// is what makes the click-from-banner viewer surface *live* —
+/// the file changes during the turn, the fs-watcher fires, and the
+/// viewer re-reads it on each tick. The final `persist_trace` call
+/// in `chat_turn` overwrites this with the dispatched outcome
+/// (answered / escalated / resolved).
+struct LiveTracePersister {
+    repo: std::path::PathBuf,
+    ticket_id: String,
+    turn_id: String,
+    started_at: String,
+    model: String,
+}
+
+impl LiveTracePersister {
+    async fn write_partial(&self, events: &[crate::agent_trace::TraceEvent]) {
+        let doc = crate::agent_trace::TraceDoc {
+            ticket_id: self.ticket_id.clone(),
+            turn_id: self.turn_id.clone(),
+            started_at: self.started_at.clone(),
+            // `completed_at` is meaningless mid-turn; we reuse the
+            // field as "last update" so the viewer shows a clock
+            // that ticks forward as the agent works.
+            completed_at: now_iso(),
+            model: self.model.clone(),
+            outcome: "in_progress".to_string(),
+            events: events.to_vec(),
+        };
+        // Best-effort. A failed live write is recoverable: the final
+        // `persist_trace` in `chat_turn` will land the complete doc
+        // either way; a skipped intermediate just means the viewer
+        // doesn't refresh that one tick.
+        let _ = crate::agent_trace::persist_trace(&self.repo, &doc).await;
+    }
+}
+
+/// Parse claude's `--output-format stream-json` ndjson stream into
+/// a normalized timeline of `TraceEvent`s plus the final reply text.
+///
+/// Event shape (claude wire format, abbreviated):
+///   `{"type":"system","subtype":"init",...}`               — ignored
+///   `{"type":"assistant","message":{"content":[
+///       {"type":"text","text":"…"},
+///       {"type":"tool_use","name":"Read","input":{…}}
+///   ],...}}`
+///   `{"type":"user","message":{"content":[
+///       {"type":"tool_result","tool_use_id":"…","content":"…"}
+///   ]}}`
+///   `{"type":"result","subtype":"success","result":"…"}`   — final reply
+///
+/// We pull tool_use blocks out of assistant messages (one TraceEvent
+/// per call) and use the `result.result` field as the reply. Text
+/// blocks inside intermediate assistant messages are recorded as
+/// `kind="text"` events but NOT used as the reply — claude
+/// occasionally emits a "draft" block before tool calls; relying on
+/// the explicit `result` event is safer.
+async fn parse_stream_json<R: tokio::io::AsyncRead + Unpin>(
+    reader: R,
+    persister: Option<&LiveTracePersister>,
+) -> Result<StreamParseResult, std::io::Error> {
+    use crate::agent_trace::{verb_for_tool, TraceEvent};
+    let mut events: Vec<TraceEvent> = Vec::new();
+    let mut reply: Option<String> = None;
+    let mut buf_reader = BufReader::new(reader);
+    let mut line = String::new();
+    loop {
+        let events_before = events.len();
+        line.clear();
+        let n = buf_reader.read_line(&mut line).await?;
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let parsed: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => {
+                events.push(TraceEvent {
+                    ts: now_iso(),
+                    kind: "raw".to_string(),
+                    tool: None,
+                    verb: None,
+                    raw: Some(serde_json::Value::String(trimmed.to_string())),
+                    text: None,
+                });
+                continue;
+            }
+        };
+        let kind = parsed
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        match kind.as_str() {
+            "system" => {
+                // `system/init` carries session metadata; not useful
+                // for the audit timeline.
+            }
+            "assistant" => {
+                let content = parsed
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                if let Some(blocks) = content {
+                    for block in blocks {
+                        let btype = block.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        match btype {
+                            "tool_use" => {
+                                let tool = block
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let input = block
+                                    .get("input")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
+                                let verb = verb_for_tool(&tool, &input).or_else(|| {
+                                    if !tool.is_empty() {
+                                        Some(format!("Running {}", tool))
+                                    } else {
+                                        None
+                                    }
+                                });
+                                events.push(TraceEvent {
+                                    ts: now_iso(),
+                                    kind: "tool_use".to_string(),
+                                    tool: Some(tool),
+                                    verb,
+                                    raw: Some(input),
+                                    text: None,
+                                });
+                            }
+                            "text" => {
+                                if let Some(t) = block
+                                    .get("text")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.trim().is_empty())
+                                {
+                                    events.push(TraceEvent {
+                                        ts: now_iso(),
+                                        kind: "text".to_string(),
+                                        tool: None,
+                                        verb: None,
+                                        raw: None,
+                                        text: Some(t.to_string()),
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            "user" => {
+                // tool_result blocks live under user messages. Worth
+                // keeping in the audit trail for "Read returned 0
+                // matches" debugging, but we record only that they
+                // happened — the full payload would balloon the
+                // trace file.
+                let content = parsed
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                if let Some(blocks) = content {
+                    for block in blocks {
+                        if block.get("type").and_then(|v| v.as_str()) == Some("tool_result") {
+                            // Keep only `tool_use_id` so the UI can
+                            // pair the result back to its tool_use
+                            // event. The full `content` payload (file
+                            // bodies, KB articles, grep matches) is
+                            // intentionally dropped — including it
+                            // here would balloon trace files into MB.
+                            let tool_use_id = block
+                                .get("tool_use_id")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            events.push(TraceEvent {
+                                ts: now_iso(),
+                                kind: "tool_result".to_string(),
+                                tool: None,
+                                verb: None,
+                                raw: None,
+                                text: tool_use_id,
+                            });
+                        }
+                    }
+                }
+            }
+            "result" => {
+                if let Some(text) = parsed.get("result").and_then(|v| v.as_str()) {
+                    reply = Some(text.to_string());
+                }
+                events.push(TraceEvent {
+                    ts: now_iso(),
+                    kind: "result".to_string(),
+                    tool: None,
+                    verb: None,
+                    raw: Some(parsed.clone()),
+                    text: parsed
+                        .get("result")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                });
+            }
+            _ => {
+                // Unknown event types — preserve verbatim so future
+                // claude versions don't lose audit info silently.
+                events.push(TraceEvent {
+                    ts: now_iso(),
+                    kind: "raw".to_string(),
+                    tool: None,
+                    verb: None,
+                    raw: Some(parsed),
+                    text: None,
+                });
+            }
+        }
+        // Persist a partial trace after each iteration that produced
+        // new events, so the desktop viewer (which re-reads on every
+        // fs-watcher tick) shows live progress as the agent works
+        // rather than a single dump at the end of the turn.
+        if events.len() > events_before {
+            if let Some(p) = persister {
+                p.write_partial(&events).await;
+            }
+        }
+    }
+    Ok(StreamParseResult {
+        reply: reply.unwrap_or_default(),
+        events,
+    })
 }
 
 /// Read `databases/tickets/<ticket_id>.json` and return the `status`
@@ -1343,17 +1722,17 @@ async fn ensure_responding_stub(
             .await
             .map_err(|e| format!("write ticket: {}", e))?;
     } else {
-        // Subsequent turn: flip status + bump updatedAt — UNLESS the
-        // ticket is in a terminal state (resolved / closed). The skill's
-        // idempotency rule says terminal-state follow-ups should remain
-        // a conversational moment, not silently reopen the case. The
-        // agent will still get the new asker turn in its prompt and can
-        // explicitly re-escalate via its STATUS marker if warranted.
-        let current = read_ticket_status(repo, ticket_id).await;
-        let terminal = matches!(current.as_deref(), Some("resolved") | Some("closed"));
-        if !terminal {
-            let _ = mark_status(repo, ticket_id, "agent-responding").await;
-        }
+        // Subsequent turn: always flip to `agent-responding` — even
+        // for terminal-state follow-ups (resolved / closed). The
+        // earlier "skip if terminal" policy left a resolved ticket
+        // pinned at `resolved` on a follow-up like "wait it broke
+        // again", so the admin's banner never fired. Now the lifecycle
+        // is self-healing: the agent reads the new asker turn, decides
+        // an outcome (`answered` / `resolved` / `escalated`), and the
+        // dispatcher above flips status accordingly. A "thanks again!"
+        // round-trips back to `resolved`; a regression report flips to
+        // `escalated`.
+        let _ = mark_status(repo, ticket_id, "agent-responding").await;
     }
 
     // Append the asker's turn for this message.
@@ -1433,17 +1812,24 @@ fn evict_idle_sessions(sessions: &mut HashMap<String, SessionData>) {
     }
 }
 
-/// The agent's per-turn outcome, parsed out of stdout. Note: this is
-/// the agent's *intent* for the turn, not the final ticket status.
-/// `Answered` maps to ticket status `open` (KB hit, conversation
-/// alive), `Escalated` maps to `escalated`. The `Clarifying` variant
-/// is kept only for backwards compatibility with any in-flight legacy
-/// skill — it is treated as Escalated so the banner clears and the
-/// admin gets visibility instead of leaving the ticket stuck.
+/// The agent's per-turn outcome, parsed out of stdout. Three valid
+/// outcomes:
+///   `Answered`  — KB hit, replied. Ticket → `open` (alive).
+///   `Resolved`  — asker confirmed case done. Ticket → `resolved`
+///                 (terminal; reopens automatically if the asker
+///                 sends another message).
+///   `Escalated` — KB miss / needs human. Ticket → `escalated`.
+///
+/// The `Clarifying` variant is kept only for backwards compatibility
+/// with any in-flight legacy skill — it is treated as Escalated so
+/// the banner clears and the admin gets visibility instead of
+/// leaving the ticket stuck.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DecidedStatus {
     /// KB hit — the agent answered. Ticket → `open`.
     Answered,
+    /// Asker confirmed the case is done. Ticket → `resolved` (terminal).
+    Resolved,
     /// KB miss / can't help — admin needs to respond. Ticket → `escalated`.
     Escalated,
     /// Legacy: agent asked for clarification. Treated as Escalated by
@@ -1452,15 +1838,14 @@ enum DecidedStatus {
 }
 
 /// Parse the agent's status marker out of its stdout. Contract:
-/// the marker is `<<STATUS:answered>>` (KB hit) or
-/// `<<STATUS:escalated>>` (KB miss) somewhere in the output
-/// (typically last line). `<<STATUS:resolved>>` is accepted as a
-/// legacy alias for `answered` since older skills used it; the
-/// dispatcher above maps both to ticket status `open`. Returns the
-/// body with ALL marker spans stripped, plus the status from the
-/// LAST marker (the agent's final decision wins). Missing or
-/// unrecognized marker → Escalated, so the admin always gets
-/// visibility on a malformed agent run.
+/// the marker is `<<STATUS:answered>>` (KB hit, ticket → open),
+/// `<<STATUS:resolved>>` (asker confirmed case done, ticket →
+/// resolved), or `<<STATUS:escalated>>` (KB miss, ticket →
+/// escalated) somewhere in the output (typically last line).
+/// Returns the body with ALL marker spans stripped, plus the
+/// status from the LAST marker (the agent's final decision wins).
+/// Missing or unrecognized marker → Escalated, so the admin always
+/// gets visibility on a malformed agent run.
 fn parse_status_marker(raw: &str) -> (String, DecidedStatus) {
     let spans = regex_lite_find_all(raw);
     if spans.is_empty() {
@@ -1499,11 +1884,8 @@ fn regex_lite_find_all(s: &str) -> Vec<(DecidedStatus, usize, usize)> {
         let close = after_open + rel_close;
         let value = s[after_open..close].trim().to_ascii_lowercase();
         let status = match value.as_str() {
-            // `answered` is the canonical KB-hit marker. `resolved`
-            // is the pre-rename alias kept for any unsynced skill on
-            // an older repo; both produce the same DecidedStatus and
-            // the dispatcher maps it to ticket status `open`.
-            "answered" | "resolved" => Some(DecidedStatus::Answered),
+            "answered" => Some(DecidedStatus::Answered),
+            "resolved" => Some(DecidedStatus::Resolved),
             "escalated" => Some(DecidedStatus::Escalated),
             "clarifying" => Some(DecidedStatus::Clarifying),
             _ => None,
@@ -2400,12 +2782,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_resolved_marker_maps_to_answered() {
-        // Older skills emit `resolved`; the parser accepts it as an
-        // alias so the dispatcher can still flip the ticket to `open`.
-        let raw = "Per our VPN guide, click Reset.\n\n<<STATUS:resolved>>";
-        let (_body, status) = parse_status_marker(raw);
-        assert_eq!(status, DecidedStatus::Answered);
+    fn parses_resolved_marker() {
+        // `resolved` is a first-class outcome — agent emits it when the
+        // asker has confirmed the case is done. The dispatcher flips
+        // the ticket to terminal `resolved`.
+        let raw = "Glad to hear it!\n\n<<STATUS:resolved>>";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Resolved);
+        assert_eq!(body, "Glad to hear it!");
     }
 
     #[test]
@@ -2469,5 +2853,57 @@ mod tests {
         // second. We can't deterministically assert <, but we can
         // assert it's no greater than now.
         assert!(ago <= now);
+    }
+
+    /// Regression: a follow-up asker turn on a `resolved` ticket must
+    /// flip status back to `agent-responding` so the indicator banner
+    /// fires and the agent can re-evaluate. Earlier behavior skipped
+    /// the flip for terminal states, leaving a "wait it broke again"
+    /// follow-up silently stuck at `resolved`.
+    #[tokio::test]
+    async fn ensure_responding_stub_reopens_resolved_ticket() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let repo = tmp.path();
+        let ticket_id = "test-2026-04-27T18-07-02Z-reopen";
+        let email = "asker@example.com";
+
+        // Seed a resolved ticket on disk.
+        let tickets_dir = repo.join("databases").join("tickets");
+        std::fs::create_dir_all(&tickets_dir).unwrap();
+        let ticket_path = tickets_dir.join(format!("{}.json", ticket_id));
+        let row = serde_json::json!({
+            "subject": "i cant login",
+            "description": "i cant login",
+            "asker": email,
+            "askerChannel": "chat",
+            "status": "resolved",
+            "priority": "normal",
+            "tags": [],
+            "createdAt": "2026-04-27T18:07:07Z",
+            "updatedAt": "2026-04-27T18:32:00Z",
+        });
+        std::fs::write(&ticket_path, serde_json::to_string_pretty(&row).unwrap()).unwrap();
+
+        // Asker sends a follow-up. Pass TransportMeta::Chat to match
+        // the seeded ticket's askerChannel — this argument was added
+        // by the slack-channel-local branch so non-web transports
+        // (Slack listener etc.) can stamp ticket provenance on first
+        // turn without a follow-up Edit.
+        ensure_responding_stub(
+            repo,
+            ticket_id,
+            email,
+            "wait it broke again",
+            &[],
+            &TransportMeta::Chat,
+        )
+        .await
+        .expect("stub run");
+
+        // Status should now be `agent-responding` regardless of prior
+        // terminal state — the dispatcher will pick the final outcome
+        // after claude -p runs.
+        let status = read_ticket_status(repo, ticket_id).await;
+        assert_eq!(status.as_deref(), Some("agent-responding"));
     }
 }

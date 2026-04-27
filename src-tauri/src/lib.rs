@@ -1,3 +1,4 @@
+mod agent_trace;
 mod claude;
 mod filestore;
 mod fs_tree;
@@ -108,6 +109,7 @@ pub fn run() {
             intake::intake_start,
             intake::intake_stop,
             intake::intake_url,
+            agent_trace::agent_trace_latest,
             slack::slack_connect,
             slack::slack_disconnect,
             slack::slack_config_read,

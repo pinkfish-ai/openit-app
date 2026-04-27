@@ -232,6 +232,21 @@ body,
   border-bottom: 1px solid var(--border);
   font-size: 13px;
   flex: 0 0 auto;
+  /* Click target for the trace viewer — strip <button>'s defaults so
+     the banner reads as a passive status indicator until hover, then
+     subtly hints at interactivity. */
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.agent-activity-banner:hover {
+  background: var(--surface-hover, var(--surface-soft));
+  color: var(--text);
 }
 
 .agent-activity-banner-spinner {
@@ -2684,9 +2699,46 @@ body,
   border-color: var(--border, #ddd);
 }
 
+.entity-folder-name-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+/* Push the date to the far right of the row so the title and the
+   timestamp don't crowd each other on short titles. The flex auto
+   margin is the cleanest way to right-align without forcing a fixed
+   column layout. */
+.entity-folder-name-row .entity-folder-date {
+  margin-left: auto;
+}
+
 .entity-folder-name {
   font-weight: 500;
   font-size: 14px;
+}
+
+.entity-folder-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Reports cards use this for the slug-as-metadata line under the
+   description-as-title. Same muted treatment as the standard
+   description but always single-line, mono so it reads as a
+   filename rather than prose. */
+.entity-folder-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .entity-folder-desc {
@@ -2995,4 +3047,125 @@ body,
   color: var(--text-muted);
   padding: 20px;
   text-align: center;
+}
+
+/* Agent-trace timeline — opened by clicking the agent-activity
+   banner. Each step is one verb the agent emitted (Reading the
+   ticket, Searching the knowledge base, Replying), in chronological
+   order. Compact layout so a 6-tool turn fits without scrolling. */
+.agent-trace-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.agent-trace-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-trace-subject {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.agent-trace-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  align-items: center;
+}
+
+.agent-trace-outcome {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-trace-outcome-answered {
+  background: rgba(46, 160, 67, 0.16);
+  color: rgb(46, 160, 67);
+}
+
+.agent-trace-outcome-resolved {
+  background: rgba(46, 160, 67, 0.16);
+  color: rgb(46, 160, 67);
+}
+
+.agent-trace-outcome-escalated {
+  background: rgba(207, 124, 24, 0.18);
+  color: rgb(207, 124, 24);
+}
+
+.agent-trace-model {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+
+.agent-trace-time {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.agent-trace-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agent-trace-step {
+  display: grid;
+  grid-template-columns: 80px 180px 1fr;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  align-items: baseline;
+}
+
+.agent-trace-step:nth-child(odd) {
+  background: var(--surface-soft);
+}
+
+.agent-trace-step-time {
+  color: var(--text-muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+
+.agent-trace-step-label {
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-trace-step-snippet {
+  color: var(--text-muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-trace-step-result .agent-trace-step-label,
+.agent-trace-step-text .agent-trace-step-label {
+  color: var(--accent, var(--text));
 }

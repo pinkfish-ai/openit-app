@@ -19,9 +19,16 @@ import {
 export function AgentActivityBanner({
   repo,
   fsTick,
+  onOpenTrace,
 }: {
   repo: string | null;
   fsTick: number;
+  /// Click handler — opens the latest persisted agent trace for the
+  /// banner's leading ticket in the center-panel viewer. Banner-as-a-
+  /// whole is the click target so the admin can drop into "what's the
+  /// agent doing right now" without having to know about the trace
+  /// file path layout.
+  onOpenTrace: (ticketId: string, subject: string) => void;
 }) {
   const [tickets, setTickets] = useState<TicketSummary[]>([]);
 
@@ -50,10 +57,18 @@ export function AgentActivityBanner({
 
   const first = tickets[0];
   const others = tickets.length - 1;
-  const subjectLabel = first.subject || first.relPath.split("/").pop() || first.relPath;
+  const ticketId = first.relPath.split("/").pop()?.replace(/\.json$/, "") ?? "";
+  const subjectLabel = first.subject || ticketId || first.relPath;
 
   return (
-    <div className="agent-activity-banner" role="status">
+    <button
+      type="button"
+      className="agent-activity-banner"
+      onClick={() => {
+        if (ticketId) onOpenTrace(ticketId, subjectLabel);
+      }}
+      title="Click to see what the agent is doing"
+    >
       <span className="agent-activity-banner-spinner" aria-hidden>
         ◐
       </span>
@@ -61,6 +76,6 @@ export function AgentActivityBanner({
         Agent is responding to <strong>{subjectLabel}</strong>
         {others > 0 ? ` and ${others} other${others === 1 ? "" : "s"}` : ""}…
       </span>
-    </div>
+    </button>
   );
 }

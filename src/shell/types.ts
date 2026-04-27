@@ -2,6 +2,29 @@ import type { DataCollection, MemoryItem } from "../lib/skillsApi";
 import type { Agent } from "../lib/agentSync";
 import type { Workflow } from "../lib/workflowSync";
 
+/// Mirrors `agent_trace::TraceEvent` on the Rust side. Persisted at
+/// `.openit/agent-traces/<ticketId>/<startedAt>.json` per turn; the
+/// agent-activity banner click-through opens the latest one in the
+/// viewer.
+export type TraceEvent = {
+  ts: string;
+  kind: string;
+  tool?: string;
+  verb?: string;
+  raw?: unknown;
+  text?: string;
+};
+
+export type TraceDoc = {
+  ticket_id: string;
+  turn_id: string;
+  started_at: string;
+  completed_at: string;
+  model: string;
+  outcome: string;
+  events: TraceEvent[];
+};
+
 /// One conversation turn — sender, role, body, timestamp. The thread
 /// view orders these by timestamp and renders them as chat bubbles.
 export type ConversationTurn = {
@@ -51,6 +74,19 @@ export type ViewerSource =
   | { kind: "workflow"; workflow: Workflow }
   | { kind: "conversation-thread"; ticketId: string; turns: ConversationTurn[] }
   | { kind: "conversations-list"; threads: ConversationThreadSummary[] }
+  // Per-turn agent trace (the verbs + timestamps the agent emitted
+  // running this chat turn). Opened by clicking the agent-activity
+  // banner; resolves to the most recent trace file under
+  // `.openit/agent-traces/<ticketId>/`. `doc` may be null on the
+  // very first click before any turn has finished — the viewer shows
+  // a "composing first reply" placeholder, and the fs-watcher tick
+  // re-resolves the source once the file lands.
+  | {
+      kind: "agent-trace";
+      ticketId: string;
+      subject: string;
+      doc: TraceDoc | null;
+    }
   // Top-level entity folder (agents/, workflows/, knowledge-base/, filestore/).
   // Carries the files inside so the viewer can either show a list or a
   // friendly empty-state notice — the same affordance the conversations-
