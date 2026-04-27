@@ -62,6 +62,10 @@ features:
   bot_user:
     display_name: OpenIT
     always_online: false
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
 oauth_config:
   scopes:
     bot:
@@ -90,19 +94,39 @@ DMs, `users:read` + `users:read.email` to identify the asker and
 file the ticket against the right email, `team:read` to confirm
 the workspace at startup. Nothing for channels — V1 is DM-only.
 
-### Step 3 — Install + grab the bot token
+**Why the `app_home` block:** without
+`messages_tab_read_only_enabled: false`, Slack treats the bot's
+DM Messages tab as read-only and the asker sees "Sending messages
+to this app has been turned off." The bot can post to them, but
+they can't reply. This block is the one Slack-side knob you have
+to set or DMs are one-way.
 
-> "Click **Install to Workspace**, approve the permissions. Then
-> in the left sidebar, **OAuth & Permissions** → copy the **Bot
-> User OAuth Token** (it starts with `xoxb-`). Paste it here so
-> we can validate it."
+**If they already created the app with an older manifest** (and
+are now hitting "Sending messages turned off" in the bot DM):
+they don't need to delete and recreate. Tell them to go to the
+left sidebar → **App Manifest** → paste this updated YAML →
+**Save Changes** → on the warning prompt, **Reinstall** the app
+to apply the new permissions. The bot token doesn't change on
+reinstall, so existing OpenIT config keeps working.
 
-When they paste it, do NOT store it yourself — tokens stay out of
-the conversation log. Tell them:
+### Step 3 — Install & grab the bot token
 
-> "Hold onto that token; I'll have you paste it into a modal in
-> the OpenIT header in a moment, where it goes straight into
-> macOS Keychain."
+> "1. Click **Install to Workspace** and approve the permissions.
+> 2. The page reloads to **Installed App Settings** with the **Bot
+>    User OAuth Token** shown right there — starts with `xoxb-`.
+>    Copy it.
+>
+> Hold onto that token — don't paste it here. You'll enter it
+> into a modal in the OpenIT header in a moment, where it goes
+> straight into macOS Keychain."
+
+(If for any reason the token isn't visible after install, they
+can also find it in the left sidebar under **OAuth & Permissions
+→ Bot User OAuth Token**. Same value either place.)
+
+If they paste a token at you anyway, do NOT echo it back — tokens
+stay out of the conversation log. Acknowledge it's in hand and
+pivot to Step 4.
 
 ### Step 4 — Generate the app-level token (Socket Mode)
 

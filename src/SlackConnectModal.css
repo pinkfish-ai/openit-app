@@ -162,10 +162,29 @@
   margin: 4px 0;
 }
 
+.slack-modal-verify {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .slack-modal-verify h3 {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
+}
+
+.slack-modal-verify .slack-modal-blurb {
+  margin: 0 0 4px;
+}
+
+/* The "Send intro DM" button is the action for the email input
+   above it. Sit it on its own row, slightly inset, so the
+   browser's focus ring on the input doesn't visually bleed onto
+   the button below. */
+.slack-modal-verify > button {
+  align-self: flex-start;
+  margin-top: 4px;
 }
 
 .slack-modal-success {
