@@ -58,18 +58,27 @@ function tokenize(s) {
     .filter((t) => t.length >= 2 && !STOPWORDS.has(t));
 }
 
-/// Word-overlap score: fraction of distinct query tokens that appear
-/// anywhere in the doc. Range 0..1. Filename matches double-count (a
-/// hit in `how-to-reset-vpn.md` is more meaningful than in body
-/// noise). Cheap, no IDF — fine for V1.
+/// Word-overlap score: weighted fraction of distinct query tokens
+/// that appear in the doc. Range 0..1. Filename hits weight 2x body
+/// hits because a token in `how-to-reset-vpn.md`'s name is much more
+/// meaningful than the same token buried in body noise — the prior
+/// version concatenated the filename twice into the search string,
+/// which did nothing because `String.includes` is boolean. Cheap,
+/// no IDF — fine for V1.
 function score(queryTokens, filename, body) {
   if (queryTokens.length === 0) return 0;
-  const docText = (filename + " " + filename + " " + body).toLowerCase();
-  let hits = 0;
+  const filenameLower = filename.toLowerCase();
+  const bodyLower = body.toLowerCase();
+  let weightedHits = 0;
   for (const tok of queryTokens) {
-    if (docText.includes(tok)) hits += 1;
+    const inName = filenameLower.includes(tok);
+    const inBody = bodyLower.includes(tok);
+    if (inName) weightedHits += 1.0;
+    else if (inBody) weightedHits += 0.5;
   }
-  return hits / queryTokens.length;
+  // Max possible per token = 1.0 (filename hit), so divide by
+  // queryTokens.length to keep the result in [0, 1].
+  return weightedHits / queryTokens.length;
 }
 
 function snippet(body) {

@@ -78,7 +78,23 @@ struct SessionData {
     /// every turn so it doesn't have to ask.
     email: String,
     history: Vec<ChatMessage>,
+    /// Unix-seconds wall-clock timestamp of the last chat_start /
+    /// chat_turn / chat_poll touching this session. Used by the LRU
+    /// eviction in `evict_idle_sessions` to bound memory growth.
+    last_seen_unix: u64,
 }
+
+/// Sessions idle longer than this are dropped from the in-memory map.
+/// Picked to be longer than a typical helpdesk back-and-forth (so an
+/// admin reply hours later still hits a live session) but short enough
+/// that abandoned tabs don't accumulate forever. Disk state survives
+/// eviction — a /chat/start with a never-expiring email simply makes
+/// a new session id.
+const SESSION_IDLE_TTL_SECS: u64 = 60 * 60 * 6; // 6 hours
+/// Hard cap. Even within TTL, if more than this many sessions exist
+/// we drop the oldest. Defends against burst traffic from a hostile
+/// localhost client repeatedly hitting /chat/start.
+const SESSION_MAX_ENTRIES: usize = 256;
 
 #[derive(Clone, Serialize, Deserialize)]
 struct ChatMessage {
@@ -229,12 +245,14 @@ async fn chat_start(
     let ticket_id = generate_ticket_id();
 
     let mut sessions = state.sessions.lock().await;
+    evict_idle_sessions(&mut sessions);
     sessions.insert(
         session_id.clone(),
         SessionData {
             ticket_id: ticket_id.clone(),
             email: email.to_string(),
             history: Vec::new(),
+            last_seen_unix: unix_now_secs(),
         },
     );
 
@@ -283,11 +301,14 @@ async fn chat_turn(
 
     // Snapshot the session for this turn. Done with the lock held;
     // released before we spawn `claude -p` (which can take seconds).
+    // Also bump `last_seen_unix` so the LRU eviction doesn't drop an
+    // active session.
     let (ticket_id, email, history_before, repo) = {
-        let sessions = state.sessions.lock().await;
-        let Some(session) = sessions.get(&req.session_id) else {
+        let mut sessions = state.sessions.lock().await;
+        let Some(session) = sessions.get_mut(&req.session_id) else {
             return (StatusCode::NOT_FOUND, "unknown session").into_response();
         };
+        session.last_seen_unix = unix_now_secs();
         (
             session.ticket_id.clone(),
             session.email.clone(),
@@ -340,6 +361,16 @@ async fn chat_turn(
         }
     };
 
+    // Parse the agent's status marker out of stdout. Contract: the
+    // agent's last non-empty line is `<<STATUS:resolved>>` /
+    // `<<STATUS:escalated>>` / `<<STATUS:clarifying>>`. Server strips
+    // the marker before writing the reply turn, and uses it as the
+    // authoritative status decision (no more agent free-Edit'ing the
+    // ticket status field, which raced against `ensure_responding_stub`
+    // and the post-turn safety net). Missing marker → escalated, so
+    // a malformed agent run still surfaces to the admin.
+    let (reply_body, decided_status) = parse_status_marker(&reply);
+
     // Persist the assistant reply to the in-memory history.
     {
         let mut sessions = state.sessions.lock().await;
@@ -347,39 +378,48 @@ async fn chat_turn(
             session.history = history;
             session.history.push(ChatMessage {
                 role: "assistant".to_string(),
-                content: reply.clone(),
+                content: reply_body.clone(),
                 timestamp: now_iso(),
             });
         }
     }
 
     // Write the agent's reply turn to disk deterministically. The
-    // skill is told not to write conversation turns — only the
-    // ticket status — so the server controls sender + role + the
-    // turn shape, eliminating duplicate-asker-turn and wrong-sender
-    // bugs from agent free-styling.
-    let _ = write_agent_turn(&repo, &ticket_id, &reply).await;
+    // skill is told not to write conversation turns — only emit the
+    // status marker — so the server controls sender + role + body.
+    let _ = write_agent_turn(&repo, &ticket_id, &reply_body).await;
 
-    // Safety net: if the agent finished but didn't update status off
-    // `agent-responding`, force-flip to `escalated` so the admin's
-    // activity banner clears and the ticket lands in their queue.
-    // Defaulting to escalated (admin attention) is safer than leaving
-    // it pretending to type forever, even if the agent's reply was
-    // actually a confident KB answer.
-    if read_ticket_status(&repo, &ticket_id).await.as_deref() == Some("agent-responding") {
-        let _ = mark_status(&repo, &ticket_id, "escalated").await;
+    // Apply the agent's decision. `Clarifying` is a no-op: the ticket
+    // is already at `agent-responding` (set by ensure_responding_stub
+    // at the top of this turn) and we want it to stay there until a
+    // future turn decides resolved/escalated.
+    match decided_status {
+        DecidedStatus::Resolved => {
+            let _ = mark_status(&repo, &ticket_id, "resolved").await;
+        }
+        DecidedStatus::Escalated => {
+            let _ = mark_status(&repo, &ticket_id, "escalated").await;
+        }
+        DecidedStatus::Clarifying => {}
     }
 
-    // Read status from disk (the skill's writes are the source of
-    // truth). Falls back to "no-ticket" if no file exists yet.
+    // Read status from disk for the response payload.
     let status = read_ticket_status(&repo, &ticket_id)
         .await
         .unwrap_or_else(|| "no-ticket".to_string());
 
+    // The polled_at returned to the client must be just before the
+    // turns we wrote, so the next /chat/poll's `since` filter doesn't
+    // skip same-second turns. With second-precision ISO timestamps
+    // and a `<` filter, returning a timestamp < (asker_turn_ts,
+    // agent_turn_ts) keeps both visible to subsequent polls (the
+    // client's seenTurnKeys de-dupes anything already rendered).
+    let polled_at = iso_one_second_ago();
+
     Json(ChatTurnResp {
-        reply,
+        reply: reply_body,
         status,
-        polled_at: now_iso(),
+        polled_at,
     })
     .into_response()
 }
@@ -413,12 +453,19 @@ struct PolledTurn {
 
 async fn chat_poll(
     State(state): State<ServerState>,
+    headers: HeaderMap,
     Query(q): Query<ChatPollQuery>,
 ) -> Response {
+    if !origin_is_localhost(&headers) {
+        return (StatusCode::FORBIDDEN, "cross-origin not allowed").into_response();
+    }
     let ticket_id = {
-        let sessions = state.sessions.lock().await;
-        match sessions.get(&q.session_id) {
-            Some(s) => s.ticket_id.clone(),
+        let mut sessions = state.sessions.lock().await;
+        match sessions.get_mut(&q.session_id) {
+            Some(s) => {
+                s.last_seen_unix = unix_now_secs();
+                s.ticket_id.clone()
+            }
             None => return (StatusCode::NOT_FOUND, "unknown session").into_response(),
         }
     };
@@ -457,7 +504,12 @@ async fn chat_poll(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            if !since.is_empty() && timestamp <= since {
+            // Strict `<` (not `<=`) so same-second turns aren't dropped.
+            // Timestamps are ISO with second precision, and an admin
+            // reply written in the same wall-clock second as the agent
+            // reply must still be visible. Client de-dupes via the
+            // (timestamp, role, body) key in `seenTurnKeys`.
+            if !since.is_empty() && timestamp < since {
                 continue;
             }
             turns.push(PolledTurn {
@@ -582,14 +634,23 @@ fn build_chat_prompt(
          server will write your agent reply turn after you finish \
          using your stdout as the body. If you write a turn yourself \
          it WILL appear duplicated in the admin UI.\n\n\
+         Also do NOT Edit the ticket's `status` field — the server \
+         sets it based on the marker you emit (see below), so an \
+         agent-side Edit will race against the server and may be \
+         clobbered.\n\n\
          Your job: (1) read the ticket + conversation history for \
          context, (2) run kb-search if the message warrants it, (3) \
-         Edit the ticket's `status` field to either `resolved` (KB \
-         hit) or `escalated` (KB miss / needs human) and bump \
-         `updatedAt`, (4) output your reply to the user as the LAST \
-         thing on stdout. The reply is what the user sees in the \
-         chat — keep it conversational, no file paths, no status \
-         narration, no meta-commentary.",
+         decide one of `resolved` (confident answer, KB hit), \
+         `escalated` (KB miss or needs a human), or `clarifying` \
+         (you're asking the user for more info before deciding), \
+         (4) output your reply to the user, then (5) end with a \
+         status marker on its own line: `<<STATUS:resolved>>`, \
+         `<<STATUS:escalated>>`, or `<<STATUS:clarifying>>`.\n\n\
+         The reply is what the user sees in the chat — conversational, \
+         no file paths, no status narration, no meta-commentary. The \
+         server strips the marker line before writing the turn. \
+         Missing or malformed marker → defaults to escalated, so the \
+         admin still sees the ticket.",
     );
     prompt
 }
@@ -744,8 +805,17 @@ async fn ensure_responding_stub(
             .await
             .map_err(|e| format!("write ticket: {}", e))?;
     } else {
-        // Subsequent turn: just flip status + bump updatedAt.
-        let _ = mark_status(repo, ticket_id, "agent-responding").await;
+        // Subsequent turn: flip status + bump updatedAt — UNLESS the
+        // ticket is in a terminal state (resolved / closed). The skill's
+        // idempotency rule says terminal-state follow-ups should remain
+        // a conversational moment, not silently reopen the case. The
+        // agent will still get the new asker turn in its prompt and can
+        // explicitly re-escalate via its STATUS marker if warranted.
+        let current = read_ticket_status(repo, ticket_id).await;
+        let terminal = matches!(current.as_deref(), Some("resolved") | Some("closed"));
+        if !terminal {
+            let _ = mark_status(repo, ticket_id, "agent-responding").await;
+        }
     }
 
     // Append the asker's turn for this message.
@@ -785,6 +855,120 @@ async fn ensure_responding_stub(
     // Idempotent people row.
     let _ = ensure_people_row(repo, email, &now).await;
     Ok(())
+}
+
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Drop sessions older than `SESSION_IDLE_TTL_SECS`, then trim back
+/// to `SESSION_MAX_ENTRIES` by oldest-first if we're still over the
+/// cap. Called from /chat/start under the sessions lock.
+fn evict_idle_sessions(sessions: &mut HashMap<String, SessionData>) {
+    let now = unix_now_secs();
+    sessions.retain(|_, s| now.saturating_sub(s.last_seen_unix) < SESSION_IDLE_TTL_SECS);
+    if sessions.len() <= SESSION_MAX_ENTRIES {
+        return;
+    }
+    // Sort entries by last_seen ascending and drop the oldest.
+    let mut by_age: Vec<(String, u64)> = sessions
+        .iter()
+        .map(|(k, v)| (k.clone(), v.last_seen_unix))
+        .collect();
+    by_age.sort_by_key(|(_, ls)| *ls);
+    let drop_count = sessions.len() - SESSION_MAX_ENTRIES;
+    for (k, _) in by_age.into_iter().take(drop_count) {
+        sessions.remove(&k);
+    }
+}
+
+/// The agent's per-turn status decision, parsed out of stdout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DecidedStatus {
+    /// KB hit — the agent answered confidently.
+    Resolved,
+    /// KB miss / can't help — admin needs to respond.
+    Escalated,
+    /// Agent asked for more info; ticket stays at agent-responding.
+    Clarifying,
+}
+
+/// Parse the agent's status marker out of its stdout. Contract:
+/// the marker is `<<STATUS:resolved>>` / `<<STATUS:escalated>>` /
+/// `<<STATUS:clarifying>>` somewhere in the output (typically last
+/// line). Returns the body with the marker line stripped, plus the
+/// parsed status. Missing or unrecognized marker → Escalated, so the
+/// admin always gets visibility on a malformed agent run.
+fn parse_status_marker(raw: &str) -> (String, DecidedStatus) {
+    let marker_re = regex_lite_find(raw);
+    match marker_re {
+        Some((status, span_start, span_end)) => {
+            let mut body = String::with_capacity(raw.len());
+            body.push_str(&raw[..span_start]);
+            body.push_str(&raw[span_end..]);
+            (body.trim().to_string(), status)
+        }
+        None => (raw.trim().to_string(), DecidedStatus::Escalated),
+    }
+}
+
+/// Tiny hand-rolled scanner for `<<STATUS:xxx>>` so we don't pull in
+/// the `regex` crate just for this. Returns (status, start, end) of
+/// the LAST occurrence (the agent might mention earlier statuses
+/// inline; the final one wins). Tolerates surrounding whitespace.
+fn regex_lite_find(s: &str) -> Option<(DecidedStatus, usize, usize)> {
+    let needle_open = "<<STATUS:";
+    let needle_close = ">>";
+    let mut last: Option<(DecidedStatus, usize, usize)> = None;
+    let mut search_from = 0;
+    while let Some(rel_open) = s[search_from..].find(needle_open) {
+        let open = search_from + rel_open;
+        let after_open = open + needle_open.len();
+        let Some(rel_close) = s[after_open..].find(needle_close) else {
+            break;
+        };
+        let close = after_open + rel_close;
+        let value = s[after_open..close].trim().to_ascii_lowercase();
+        let status = match value.as_str() {
+            "resolved" => Some(DecidedStatus::Resolved),
+            "escalated" => Some(DecidedStatus::Escalated),
+            "clarifying" => Some(DecidedStatus::Clarifying),
+            _ => None,
+        };
+        if let Some(st) = status {
+            // Expand to consume a trailing newline if present so the
+            // stripped body doesn't have a dangling blank line.
+            let mut end = close + needle_close.len();
+            if s.as_bytes().get(end) == Some(&b'\n') {
+                end += 1;
+            }
+            // And consume a leading newline so we don't leave a blank
+            // line where the marker was.
+            let mut start = open;
+            if start > 0 && s.as_bytes()[start - 1] == b'\n' {
+                start -= 1;
+            }
+            last = Some((st, start, end));
+        }
+        search_from = close + needle_close.len();
+    }
+    last
+}
+
+/// ISO-8601 UTC timestamp ~1 second before now, used as the polled_at
+/// returned to the chat client so subsequent /chat/poll's `since`
+/// filter doesn't drop turns whose timestamp is the same wall-clock
+/// second as the response. Client de-dupes via seenTurnKeys.
+fn iso_one_second_ago() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs().saturating_sub(1))
+        .unwrap_or(0);
+    let (y, mo, d, h, mi, s) = unix_to_ymdhms(secs as i64);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, h, mi, s)
 }
 
 /// Write the agent's reply turn to

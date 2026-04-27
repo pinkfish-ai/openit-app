@@ -47,21 +47,29 @@ If the top match has `score > 0.5`, `Read` it and judge whether it actually answ
 
 Re-search on every substantive user turn. If a follow-up gives you new info ("oh it's only the VPN, not email"), the new search may hit where the prior didn't — which means the ticket can transition from `escalated` back to `resolved`.
 
-### 3. Update ticket status
+### 3. Decide the status
 
-**Do NOT write any conversation turn files.** The server already wrote the asker turn before invoking you, and it will write your agent reply turn from your stdout after you finish. Writing a turn yourself causes duplicates in the admin UI.
+**Do NOT write any conversation turn files, and do NOT Edit the ticket's `status` field.** The server handles both writes — it wrote the asker turn before invoking you, will write your reply turn from stdout, and will set status from the marker you emit. Editing status yourself races against the server and may be clobbered.
 
-Your only file write is `Edit`-ing the ticket at `databases/tickets/<ticketId>.json`:
+Decide one of:
 
-**3a. KB has a confident answer** — `status: "answered"`, append cited filename(s) to `kbArticleRefs`, bump `updatedAt`. Your reply text leads with the answer and cites the article casually ("Per our VPN guide, you can…").
+- **`resolved`** — KB hit, you confidently answered. (You may Edit `kbArticleRefs` to append cited filenames; that field doesn't race.)
+- **`escalated`** — KB miss, or the question needs a human. Reply text: something like *"Thanks — I don't have a definitive answer yet. I've escalated this to the team; someone will follow up here when they're ready."*
+- **`clarifying`** — you need one more piece of info before deciding ("can you tell me which system?"). Reply with the question; the ticket stays at `agent-responding`.
 
-**3b. KB has no confident answer — escalate** — `status: "escalated"`, bump `updatedAt`. Your reply text: *"Thanks — I don't have a definitive answer yet. I've escalated this to the team; someone will follow up here when they're ready."* (Adjust to the situation.)
+### 4. End with reply text + status marker
 
-**3c. Conversational holding turn (mid-clarification)** — if the user's message is too vague to KB-search or you need one more piece of info ("can you tell me which system?"), reply with the clarifying question and leave the ticket as `agent-responding` (Edit it explicitly back to that status so `updatedAt` bumps). Don't escalate yet — you're still working on it.
+Your stdout shape:
 
-### 4. End your output with the reply text
+```
+<your conversational reply to the user>
 
-The last thing in your stdout becomes the user's chat bubble (the server reads stdout and writes it as the agent turn with sender `triage`). Don't narrate the file writes — just the conversational reply.
+<<STATUS:resolved>>
+```
+
+Replace `resolved` with `escalated` or `clarifying` per step 3. The server strips the marker before writing the turn, then sets ticket status. Missing or malformed marker → defaults to `escalated`, so the admin always sees a borked agent run.
+
+Keep the reply conversational — no file paths, no status narration, no meta-commentary.
 
 ## Conversation conventions
 
