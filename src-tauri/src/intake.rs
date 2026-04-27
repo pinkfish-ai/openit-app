@@ -353,6 +353,16 @@ async fn chat_turn(
         }
     }
 
+    // Safety net: if the agent finished but didn't update status off
+    // `agent-responding`, force-flip to `escalated` so the admin's
+    // activity banner clears and the ticket lands in their queue.
+    // Defaulting to escalated (admin attention) is safer than leaving
+    // it pretending to type forever, even if the agent's reply was
+    // actually a confident KB answer.
+    if read_ticket_status(&repo, &ticket_id).await.as_deref() == Some("agent-responding") {
+        let _ = mark_status(&repo, &ticket_id, "escalated").await;
+    }
+
     // Read status from disk (the skill's writes are the source of
     // truth). Falls back to "no-ticket" if no file exists yet.
     let status = read_ticket_status(&repo, &ticket_id)
