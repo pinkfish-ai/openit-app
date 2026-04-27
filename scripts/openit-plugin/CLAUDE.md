@@ -16,6 +16,7 @@ You're Claude, helping the admin run this helpdesk. Most of what they'll ask you
 | `filestores/attachments/<ticketId>/*` | Operational attachment storage — files dropped into the chat intake by the asker, or files the admin attached to a reply. One subfolder per ticket so attachments stay tied to their thread. |
 | `agents/<name>.json` | Agent configurations. The triage agent lives at `agents/triage.json`. |
 | `workflows/<name>.json` | (Future, V2.) Captured action playbooks. |
+| `reports/<YYYY-MM-DD-HHmm>-<slug>.md` | Generated helpdesk reports. Newest sorts to the top by filename. The "Generate overview" button in the explorer writes a canned status snapshot; the `/report` skill writes freeform reports authored by Claude. |
 
 The directory names are stable — same in local mode and after connecting to cloud. The cloud sync engine maps these to per-org collections on Pinkfish at push time; the local layout doesn't change.
 
@@ -80,6 +81,7 @@ Naming convention: skills prefixed with **`ai-`** are agent-facing — auto-load
 | `connect-to-cloud` | Admin (desktop) | The user wants to connect this project to Pinkfish (cloud companion) — for public intake URL, channel ingest, multi-device sync, always-on agents. Conversational walkthrough: one step at a time, confirm, advance. |
 | `resolve-sync-conflict` | Admin (desktop) | The conflict banner hands you sync conflicts (cloud mode only). Per-conflict merge + resolve-script call + optional push. |
 | `deploy` | Admin (desktop) | Push current local state to Pinkfish. Cloud-connected only. |
+| `report` | Admin (desktop) | The admin wants a custom helpdesk report — by tag, time window, asker, etc. Reads tickets / conversations and writes a markdown file to `reports/<timestamp>-<slug>.md`. The canned overview is a one-click button in the explorer; this skill is for anything more specific. |
 
 ## Scripts
 
@@ -89,6 +91,7 @@ Plugin scripts live at `.claude/scripts/`. Each prints one JSON line (`{"ok": tr
 |---|---|
 | `sync-resolve-conflict.mjs --prefix <p> --key <k>` | Marks one conflict resolved (rewrites the manifest entry, removes leftover shadow). Cloud mode only. |
 | `sync-push.mjs [--timeout <s>]` | Pushes local entities to Pinkfish via the running OpenIT app. Cloud mode only. |
+| `report-overview.mjs` | Reads tickets / people / conversations and writes a markdown helpdesk overview to `reports/<timestamp>-overview.md`. Pure file I/O — runs in <1s, no LLM. Triggered by the "Generate overview" button in the explorer; also runnable from the terminal. |
 
 ## When cloud is connected
 

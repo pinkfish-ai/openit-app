@@ -264,9 +264,11 @@ export async function resolvePathToSource(
   //                     with entity:"knowledge-base" + an explicit
   //                     path so the title bar / re-resolver know
   //                     which collection.
+  //   reports/      → on-demand generated markdown reports;
+  //                  newest sorts to top by filename.
   const kbCollectionMatch = rel.match(/^knowledge-bases\/([^/]+)$/);
   const entityFolderEntry: {
-    entity: "agents" | "workflows" | "knowledge-base" | "library";
+    entity: "agents" | "workflows" | "knowledge-base" | "library" | "reports";
   } | null =
     rel === "agents"
       ? { entity: "agents" }
@@ -276,7 +278,9 @@ export async function resolvePathToSource(
           ? { entity: "knowledge-base" }
           : rel === "filestores/library"
             ? { entity: "library" }
-            : null;
+            : rel === "reports"
+              ? { entity: "reports" }
+              : null;
   if (entityFolderEntry) {
     try {
       const nodes = await fsList(path);
@@ -318,7 +322,7 @@ export async function resolvePathToSource(
               /* unparseable — keep filename-derived display name */
             }
           }
-        } else if (entityFolderEntry.entity === "knowledge-base") {
+        } else if (entityFolderEntry.entity === "knowledge-base" || entityFolderEntry.entity === "reports") {
           // Pull the first heading or first non-empty line as a
           // description preview. Markdown files are the common case;
           // for non-markdown files we fall back to just the name.
@@ -355,9 +359,16 @@ export async function resolvePathToSource(
         }
         files.push({ name: n.name, displayName, description, path: n.path });
       }
-      // Stable alphabetical order by display name so the layout doesn't
-      // jump around when files are renamed in place.
-      files.sort((a, b) => a.displayName.localeCompare(b.displayName));
+      // jump around when files are renamed in place. Reports are the
+      // exception — filenames carry a leading `YYYY-MM-DD-HHmm`
+      // timestamp, so reverse-alphabetical on `name` puts the newest
+      // run on top, which is what the admin wants when scanning
+      // recent helpdesk activity.
+      if (entityFolderEntry.entity === "reports") {
+        files.sort((a, b) => b.name.localeCompare(a.name));
+      } else {
+        files.sort((a, b) => a.displayName.localeCompare(b.displayName));
+      }
       return {
         kind: "entity-folder",
         entity: entityFolderEntry.entity,

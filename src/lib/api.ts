@@ -472,6 +472,14 @@ export async function kbSupportedExtensions(): Promise<string[]> {
   return invoke("kb_supported_extensions");
 }
 
+/// Run the local helpdesk-overview script
+/// (`.claude/scripts/report-overview.mjs`) in the given repo and
+/// return the repo-relative path to the markdown file it wrote, e.g.
+/// `reports/2026-04-27-1432-overview.md`. Rejects on failure.
+export async function reportOverviewRun(repo: string): Promise<string> {
+  return invoke("report_overview_run", { repo });
+}
+
 /// Generic JSON-RPC tools/call against any Pinkfish MCP server. Returns the
 /// raw JSON-RPC envelope; callers pluck `.result.structuredContent` etc.
 export async function pinkfishMcpCall(args: {

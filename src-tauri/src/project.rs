@@ -117,6 +117,12 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
             // to create additional collections.
             "knowledge-bases",
             "knowledge-bases/default",
+            // On-demand markdown reports — populated by the
+            // "Generate overview" button in the explorer (which shells
+            // out to .claude/scripts/report-overview.mjs) and by the
+            // /report skill. Always create so the sidebar entry isn't
+            // empty on a fresh project.
+            "reports",
         ] {
             fs::create_dir_all(path.join(dir))
                 .map_err(|e| format!("create_dir failed for {}: {}", dir, e))?;
@@ -131,6 +137,9 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     let _ = fs::create_dir_all(path.join("filestores").join("attachments"));
     let _ = fs::create_dir_all(path.join("filestores").join("library"));
     let _ = fs::create_dir_all(path.join("knowledge-bases").join("default"));
+    // Same idempotent guard for `reports/` so projects bootstrapped
+    // before the reports feature shipped get the dir on next open.
+    let _ = fs::create_dir_all(path.join("reports"));
 
     // One-time migration: legacy `filestore/<file>` content moves into
     // the new `filestores/library/<file>` location. Idempotent — runs
