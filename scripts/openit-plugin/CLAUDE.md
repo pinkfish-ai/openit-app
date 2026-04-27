@@ -1,83 +1,123 @@
-## Pinkfish Platform
+# OpenIT — local-first IT helpdesk
 
-This project is managed by **OpenIT**. The project folder contains synced Pinkfish resources.
+This project folder is a **local IT helpdesk you own.** Tickets, knowledge base, agents, and contacts all live as files on disk. By default OpenIT runs entirely locally — no cloud, no sign-up. If the user has connected this project to Pinkfish (their cloud account), additional capabilities turn on (channel ingest, third-party integrations via MCP, multi-device sync, semantic KB search). The "When cloud is connected" section near the bottom covers those.
 
-### Directory Layout
-- `knowledge-base/` — synced KB files (markdown, PDFs, images, docs)
-- `filestore/` — synced file storage documents
-- `databases/<collection>/` — structured datastore rows as JSON + `_schema.json`
-- `agents/<name>.json` — agent configurations
-- `workflows/<name>.json` — workflow configurations
+## Directory layout
 
-### How to interact with Pinkfish resources
+| Path | What's there |
+|---|---|
+| `databases/openit-tickets-<slug>/*.json` | Ticket rows, structured. `_schema.json` next to them documents fields. |
+| `databases/openit-people-<slug>/*.json` | Contacts directory, structured. |
+| `databases/openit-conversations-<slug>/*.json` | One JSON file per conversation turn. **Unstructured** — no schema enforcement. Linked to a ticket via `ticketId`. |
+| `knowledge-base/*.md` | Solution articles. Markdown. The "answer once" capture target. |
+| `filestore/*` | Document storage — PDFs, screenshots, attachments. |
+| `agents/<name>.json` | Agent configurations. The triage agent lives at `agents/openit-triage-<slug>.json`. |
+| `workflows/<name>.json` | (Future, V2.) Captured action playbooks. |
 
-Use the **Pinkfish Gateway** — a unified API to all connected services.
+`<slug>` is the project slug — derived from the project name on first run, stable thereafter.
 
-**Pattern for every operation:**
-1. `capabilities_discover` — describe what you want to do in natural language, get back tool + server names
-2. `capability_details` — get the full tool schema (arguments, types, descriptions)
-3. `gateway_invoke` — call the tool with `{ server, tool, arguments }`
+## How to interact with the data — local file ops first
 
-**Servers for built-in resources:**
+Everything is on disk. Default to the built-in tools:
+
+- **Read** — open a file. Lists with `Glob`. Search content with `Grep`.
+- **Write** — create a new file (e.g., new ticket, new KB article).
+- **Edit** — update an existing file (e.g., set a ticket's status to `answered`, append a turn to a conversation).
+- **Bash** — list directories, count files, run scripts the project provides.
+
+You don't need to call any gateway / network tool to read or write tickets, KB articles, agent configs, or contact records. Those are just files. Reach for the gateway only when the user is asking you to do something involving a connected third-party system (Slack, Okta, GitHub, GCP) — and even then, only when cloud is connected.
+
+## The triage agent
+
+This project has a triage agent at `agents/openit-triage-<slug>.json`. When the user sends what looks like a support question (someone needs help with an IT thing), behave as the triage agent: read its `instructions` field and follow it.
+
+The agent's instructions describe the **intent** of each step (log the ticket, search the KB, answer or escalate, capture the answer as a KB article on resolve). Map intent to mechanism using this CLAUDE.md and the data layout above:
+
+- *"Create a ticket"* → `Write` a new file at `databases/openit-tickets-<slug>/ticket-<timestamp>-<short-rand>.json`. Read `databases/openit-tickets-<slug>/_schema.json` for field IDs (they're plain language: `subject`, `description`, `asker`, `status`, etc.). Set `status: "incoming"` for newly-arrived tickets, `"open"` once you've decided the ticket needs human attention, `"answered"` once it's been resolved.
+- *"Search the KB"* → `Glob "knowledge-base/*.md"` + `Read` the most relevant files. Filename + headings are usually enough cue. Be willing to read 3–5 articles if the question's topic matches multiple.
+- *"Log a conversation turn"* → `Write` to `databases/openit-conversations-<slug>/msg-<timestamp>-<short-rand>.json`. Required fields: `id`, `ticketId`, `role` (asker / agent / admin / system), `sender`, `timestamp`, `body`. No schema enforcement; just follow the convention.
+- *"Reply to the user"* → write your reply text into a conversation turn (`role: "agent"`) AND surface it in the chat for the admin to copy/paste to the user (until cloud channel ingest does that automatically).
+
+## How to talk to me about changes
+
+**Don't make me do more work than I have to.** Auto-resolve / apply when confident; ask only when there's a real decision.
+
+**Just do it when you're confident.** If I gave a direct instruction or the right answer is obvious from context, write the file and tell me what changed. Don't ask "OK to apply?" for unambiguous edits.
+
+**Show what changed, in plain language.** Use human terms ("email", "name", "phone number"), not field IDs (this project's schema labels ARE plain language already, so there's no excuse). Quote the before/after values so I can sanity-check from the message alone — don't assume I have the file open.
+
+```
+Updated Bob's record in the People database:
+  - email: "alice@a.com" → "bob@example.com"
+```
+
+**Ask only for genuine decisions.** If both sides of a sync conflict changed the same field to different values, or my request is genuinely ambiguous, surface candidates and let me pick. Never decide silently for a field where you can't infer the intent.
+
+```
+The email field changed on both sides — which should win?
+  - local:    "alice@a.com"
+  - Pinkfish: "bob@example.com"
+```
+
+The anti-pattern is a bare summary that hides the values:
+
+- ❌ "Updated 3 fields on row-123" — what fields, what values?
+- ❌ "Resolved the conflict by keeping your local change" — kept what?
+
+Show the change. Auto-apply when confident. Ask only when there's a real choice to make.
+
+## Skills
+
+Slash-invoke each (e.g., `/triage what does the user want?`).
+
+| Skill | Use when |
+|---|---|
+| `triage` | The user sends a support question. Logs the ticket, searches KB, answers or escalates. The triage agent's behavior, surfaced as a callable. |
+| `answer-ticket` | The user (or the escalated-ticket banner) hands you tickets needing a human reply. Walks the response loop and captures the answer as a KB article — "answer once". |
+| `resolve-sync-conflict` | The conflict banner hands you sync conflicts (cloud mode only). Per-conflict merge + resolve-script call + optional push. |
+| `deploy` | Push current local state to Pinkfish. Cloud-connected only. |
+
+## Scripts
+
+Plugin scripts live at `.claude/scripts/`. Each prints one JSON line (`{"ok": true, ...}` or `{"ok": false, "error": ...}`) so you can branch on it.
+
+| Script | What it does |
+|---|---|
+| `sync-resolve-conflict.mjs --prefix <p> --key <k>` | Marks one conflict resolved (rewrites the manifest entry, removes leftover shadow). Cloud mode only. |
+| `sync-push.mjs [--timeout <s>]` | Pushes local entities to Pinkfish via the running OpenIT app. Cloud mode only. |
+
+## When cloud is connected
+
+If the user has connected this project to Pinkfish via the **Connect to Cloud** option, additional capabilities are available:
+
+**The Pinkfish Gateway** — a unified API to all connected services (built-in MCPs + third-party connectors). Pattern:
+
+1. `capabilities_discover` — describe what you want to do in natural language, get tool + server names back.
+2. `capability_details` — get the full tool schema.
+3. `gateway_invoke` — call the tool with `{ server, tool, arguments }`.
+
+**Built-in MCP servers** (cloud-connected only):
+
 | Resource | Server | Example tools |
-|----------|--------|---------------|
-| Databases | `datastore-structured` | `create_item`, `list_items`, `search`, `natural_query` |
-| Agents | `agent-management` | `agent_create`, `agent_invoke`, `agent_list` |
-| Workflows | `pinkfish-sidekick` | `workflow_run`, `workflow_create`, `workflow_list` |
-| Knowledge Base | `knowledge-base` | `knowledge-base_ask`, `knowledge-base_upload_file` |
-| File Store | `filestorage` | `filestorage_create_file_from_content`, `filestorage_list_items` |
+|---|---|---|
+| Databases (cloud) | `datastore-structured` | `create_item`, `list_items`, `search`, `natural_query` |
+| Knowledge base (cloud) | `knowledge-base` | `knowledge-base_ask` (semantic search), `knowledge-base_upload_file` |
+| File storage (cloud) | `filestorage` | `filestorage_create_file_from_content`, `filestorage_list_items` |
+| Agents (cloud) | `agent-management` | `agent_create`, `agent_invoke`, `agent_list` |
+| Workflows (cloud) | `pinkfish-sidekick` | `workflow_run`, `workflow_create`, `workflow_list` |
 
-**For external services** (Gmail, Slack, Salesforce, etc.), always start with `capabilities_discover`. The gateway gives access to 100+ connected services — don't guess tool names.
+**Third-party connectors** (cloud-connected only) — Slack, Gmail, Salesforce, Okta, GitHub, GCP, AWS, Azure, and ~100+ others. Always start with `capabilities_discover` for these — don't guess tool names.
 
-**For complex multi-step operations**, use `code-execution_execute` to run JavaScript with `callTool()` access to all MCP tools.
+**Important:** even when cloud is connected, **prefer file ops for own-data operations.** A locally-edited ticket JSON syncs to Pinkfish through the engine; you don't need to also call `gateway_invoke datastore-structured update_item`. Reach for the gateway only when:
 
-### Working with local files
+- The action targets a third-party system (e.g. *"send Alice a Slack DM"*).
+- Semantic search would be meaningfully better than reading files (large KBs).
+- The user explicitly asks for a gateway-shaped capability.
 
-All Pinkfish resources are synced to local JSON files. You can:
-- **Read** any resource by reading the local file (fastest, no API call needed)
-- **Edit** local files directly — modify a database row JSON, update an agent's instructions, etc.
-- **Commit** changes via the Deploy tab to sync edits back to Pinkfish
+## Permissions
 
-This means for simple edits (update a ticket status, fix an agent's instructions), just edit the JSON file. No Gateway call needed. The user commits when ready.
+Claude Code skills in this project need filesystem access. When a skill asks for `Bash` / `Read` / `Write` permission, approve once — Claude Code remembers per-project. The skills need it to:
 
-Use the Gateway for operations that don't map to file edits: running workflows, invoking agents, querying KBs with natural language, or interacting with external services.
-
-### Key rules
-- **Read local files first** — databases/, agents/, workflows/ have the data on disk already
-- **Edit local files for simple changes** — modify the JSON, user commits to sync
-- **Use Gateway for actions** — running workflows, invoking agents, querying KBs, external services
-- **Always discover first** — use `capabilities_discover` before invoking unfamiliar tools
-- **Connections are auto-injected** — never hardcode PCIDs
-- **Read the schema** — always check `_schema.json` before working with database rows
-
-### Formatting — what to show the user
-
-Database rows under `databases/<collection>/` commonly hold PII: names, emails, phone numbers, employee IDs, addresses, ticket descriptions. **Don't echo raw row field values back into the chat**, even when the user asks ("what's the value", "what changed", etc.). The user has the file open in OpenIT and can see the values themselves; pasting them into the conversation just leaks them into transcripts and screenshots.
-
-What this means in practice when you've edited a row:
-
-- ✅ Good: *"Updated `f_1` (last name field) on `row-1777161749894.json`. Run `/deploy` to sync."*
-- ✅ Good: *"Wrote 3 changes to `row-XYZ.json`."*
-- ❌ Avoid: showing a diff that includes the values: ~~*"Updated f_1 from 'Bob Edgar' to 'Bob Edgaring'"*~~
-- ❌ Avoid: tables of before/after values
-- ❌ Avoid: quoting values inside narrative ("set the email to alice@example.com")
-
-When you must reference a field, use the **field name** (`f_1`, `f_2`) or the **schema label** if `_schema.json` provides one (`name`, `email`). Never the value.
-
-This rule applies any time you work with `databases/`. It does **not** apply to:
-- `agents/` and `workflows/` — these are configurations the user authored, not user data; show diffs normally
-- `knowledge-base/` and `filestore/` — same, show contents normally
-- Edit/Write tool diffs — those are surfaced by Claude Code itself, you can't suppress them
-
-### Permissions
-
-Claude Code skills in this project need filesystem access to explore your project structure, read databases, and scan resources. When you first use skills like "Get Started" or "Triage Tickets", Claude will ask permission to:
-
-- **Bash** — list and explore directories
-- **Read** — examine resource files and configuration
-
-**You can approve these once** — Claude Code remembers your choice for this project, so you won't see the prompt again. This enables skills to:
-- Discover what databases you have
-- Read ticket and people data from local JSON
-- Scan the knowledge base for available solutions
-- Check your connected systems and workflows
+- List and read files under `databases/` / `knowledge-base/` / `agents/`.
+- Write new ticket / conversation rows.
+- Read `_schema.json` to map field IDs to plain language.
