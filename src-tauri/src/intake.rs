@@ -383,7 +383,21 @@ async fn chat_turn(
     // the cwd's .claude/skills/ directory.
     let prompt = build_chat_prompt(&agent_instructions, &history, &ticket_id, &email);
     let started_at = now_iso();
-    let reply_result = spawn_claude_chat(&repo, &model, &prompt).await;
+    // Live trace persister — writes a partial trace file after each
+    // event so the desktop viewer (clicked into via the activity
+    // banner) shows the agent's actions appearing in real time
+    // rather than a single dump after the turn completes. Same
+    // file path as the final `persist_trace` call below, so the
+    // final write just overwrites with the dispatched outcome.
+    let turn_id = format!("turn-{}", unix_now_secs());
+    let persister = LiveTracePersister {
+        repo: repo.as_ref().clone(),
+        ticket_id: ticket_id.clone(),
+        turn_id: turn_id.clone(),
+        started_at: started_at.clone(),
+        model: model.clone(),
+    };
+    let reply_result = spawn_claude_chat(&repo, &model, &prompt, Some(&persister)).await;
 
     let ChatTurnOutput { reply, events } = match reply_result {
         Ok(out) => out,
@@ -469,7 +483,7 @@ async fn chat_turn(
     // once it lands.
     let trace_doc = crate::agent_trace::TraceDoc {
         ticket_id: ticket_id.clone(),
-        turn_id: format!("turn-{}", unix_now_secs()),
+        turn_id,
         started_at,
         completed_at: now_iso(),
         model: model.clone(),
@@ -1086,6 +1100,7 @@ async fn spawn_claude_chat(
     repo: &Path,
     model: &str,
     prompt: &str,
+    persister: Option<&LiveTracePersister>,
 ) -> Result<ChatTurnOutput, String> {
     let claude_path = which::which("claude")
         .map_err(|_| "Claude CLI not found on PATH. Install claude (see https://docs.anthropic.com/claude/docs/claude-code) and ensure it's reachable from this app.".to_string())?;
@@ -1151,7 +1166,7 @@ async fn spawn_claude_chat(
     // surfaces the timeout as an escalation so the user isn't blocked.
     const CLAUDE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
-    let stream_task = parse_stream_json(stdout);
+    let stream_task = parse_stream_json(stdout, persister);
     let stderr_task = collect_stderr(stderr);
     let wait_task = child.wait();
 
@@ -1213,6 +1228,43 @@ struct StreamParseResult {
     events: Vec<crate::agent_trace::TraceEvent>,
 }
 
+/// Owns the per-turn trace-file path + metadata, and writes the
+/// partial timeline to disk after each event the parser sees. This
+/// is what makes the click-from-banner viewer surface *live* —
+/// the file changes during the turn, the fs-watcher fires, and the
+/// viewer re-reads it on each tick. The final `persist_trace` call
+/// in `chat_turn` overwrites this with the dispatched outcome
+/// (answered / escalated / resolved).
+struct LiveTracePersister {
+    repo: std::path::PathBuf,
+    ticket_id: String,
+    turn_id: String,
+    started_at: String,
+    model: String,
+}
+
+impl LiveTracePersister {
+    async fn write_partial(&self, events: &[crate::agent_trace::TraceEvent]) {
+        let doc = crate::agent_trace::TraceDoc {
+            ticket_id: self.ticket_id.clone(),
+            turn_id: self.turn_id.clone(),
+            started_at: self.started_at.clone(),
+            // `completed_at` is meaningless mid-turn; we reuse the
+            // field as "last update" so the viewer shows a clock
+            // that ticks forward as the agent works.
+            completed_at: now_iso(),
+            model: self.model.clone(),
+            outcome: "in_progress".to_string(),
+            events: events.to_vec(),
+        };
+        // Best-effort. A failed live write is recoverable: the final
+        // `persist_trace` in `chat_turn` will land the complete doc
+        // either way; a skipped intermediate just means the viewer
+        // doesn't refresh that one tick.
+        let _ = crate::agent_trace::persist_trace(&self.repo, &doc).await;
+    }
+}
+
 /// Parse claude's `--output-format stream-json` ndjson stream into
 /// a normalized timeline of `TraceEvent`s plus the final reply text.
 ///
@@ -1235,6 +1287,7 @@ struct StreamParseResult {
 /// the explicit `result` event is safer.
 async fn parse_stream_json<R: tokio::io::AsyncRead + Unpin>(
     reader: R,
+    persister: Option<&LiveTracePersister>,
 ) -> Result<StreamParseResult, std::io::Error> {
     use crate::agent_trace::{verb_for_tool, TraceEvent};
     let mut events: Vec<TraceEvent> = Vec::new();
@@ -1242,6 +1295,7 @@ async fn parse_stream_json<R: tokio::io::AsyncRead + Unpin>(
     let mut buf_reader = BufReader::new(reader);
     let mut line = String::new();
     loop {
+        let events_before = events.len();
         line.clear();
         let n = buf_reader.read_line(&mut line).await?;
         if n == 0 {
@@ -1393,6 +1447,15 @@ async fn parse_stream_json<R: tokio::io::AsyncRead + Unpin>(
                     raw: Some(parsed),
                     text: None,
                 });
+            }
+        }
+        // Persist a partial trace after each iteration that produced
+        // new events, so the desktop viewer (which re-reads on every
+        // fs-watcher tick) shows live progress as the agent works
+        // rather than a single dump at the end of the turn.
+        if events.len() > events_before {
+            if let Some(p) = persister {
+                p.write_partial(&events).await;
             }
         }
     }

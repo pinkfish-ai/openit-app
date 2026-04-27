@@ -77,8 +77,16 @@ export type ViewerSource =
   // Per-turn agent trace (the verbs + timestamps the agent emitted
   // running this chat turn). Opened by clicking the agent-activity
   // banner; resolves to the most recent trace file under
-  // `.openit/agent-traces/<ticketId>/`.
-  | { kind: "agent-trace"; ticketId: string; subject: string; doc: TraceDoc }
+  // `.openit/agent-traces/<ticketId>/`. `doc` may be null on the
+  // very first click before any turn has finished — the viewer shows
+  // a "composing first reply" placeholder, and the fs-watcher tick
+  // re-resolves the source once the file lands.
+  | {
+      kind: "agent-trace";
+      ticketId: string;
+      subject: string;
+      doc: TraceDoc | null;
+    }
   // Top-level entity folder (agents/, workflows/, knowledge-base/, filestore/).
   // Carries the files inside so the viewer can either show a list or a
   // friendly empty-state notice — the same affordance the conversations-

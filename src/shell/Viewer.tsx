@@ -1436,6 +1436,29 @@ export function Viewer({
     // did the agent actually do" without paging through the JSON.
     if (source.kind === "agent-trace") {
       const { doc, subject } = source;
+      if (!doc) {
+        // First-turn race: the banner clicked before
+        // `agent_trace::persist_trace` wrote the file. Show a
+        // placeholder; the fsTick effect below re-fetches and
+        // swaps in the real doc as soon as it lands.
+        return (
+          <div className="agent-trace-view">
+            <div className="agent-trace-header">
+              <div className="agent-trace-subject">{subject}</div>
+              <div className="agent-trace-meta">
+                <span className="agent-trace-time">composing reply…</span>
+              </div>
+            </div>
+            <div className="viewer-summary">
+              <p className="summary-desc">
+                The agent hasn't finished its first reply on this
+                ticket yet. The timeline will appear here as soon as
+                the turn completes.
+              </p>
+            </div>
+          </div>
+        );
+      }
       // Filter to events that have something to show. Tool_result
       // entries carry only the tool_use_id (for UI pairing); we
       // skip them in this list to keep the timeline focused on
