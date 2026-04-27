@@ -25,7 +25,8 @@
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
     "react-pdf": "^10.4.1",
-    "react-resizable-panels": "^2.1.9"
+    "react-resizable-panels": "^2.1.9",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

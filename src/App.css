@@ -1428,6 +1428,27 @@ body,
   text-decoration: underline;
 }
 
+/* GFM tables (enabled via remark-gfm). Used by reports/, KB articles
+   that include tables, etc. Minimal styling: border between cells,
+   muted header row, comfortable padding. */
+.viewer-md table {
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 12px 0;
+  width: auto;
+}
+.viewer-md table th,
+.viewer-md table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.viewer-md table th {
+  background: var(--bg-muted, rgba(0, 0, 0, 0.03));
+  font-weight: 600;
+}
+
 /* Prominent CTA-style link: anchors whose only child is a `<strong>`
    element render as a button-like pill. Convention: use `[**text**](url)`
    in markdown when you want the link to read as an action, not a

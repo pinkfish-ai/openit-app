@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { fsRead, fsReadBytes, fsList, reportOverviewRun } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
@@ -682,6 +683,7 @@ export function Viewer({
         return (
           <div className={`viewer-md ${flashClass}`} key={`md-${welcomeFlashKey ?? 0}`}>
             <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
               components={{ a: ExternalAnchor }}
               urlTransform={(url) =>
                 url.startsWith("openit://") ? url : defaultUrlTransform(url)
@@ -834,7 +836,7 @@ export function Viewer({
             <div className="summary-section">
               <h3>Instructions</h3>
               <div className="viewer-md">
-                <ReactMarkdown>{a.instructions}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{a.instructions}</ReactMarkdown>
               </div>
             </div>
           )}
