@@ -7,7 +7,7 @@ use std::process::Command;
 
 use serde::Serialize;
 
-const GITIGNORE: &str = ".DS_Store\n.openit/\n.claude/\nCLAUDE.md\nknowledge-base/*.server.*\nfilestores/**/*.server.*\nagents/*.server.*\nworkflows/*.server.*\ndatabases/**/*.server.json\n";
+const GITIGNORE: &str = ".DS_Store\n.openit/\n.claude/\nCLAUDE.md\nknowledge-bases/**/*.server.*\nfilestores/**/*.server.*\nagents/*.server.*\nworkflows/*.server.*\ndatabases/**/*.server.json\n";
 
 fn git_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(".git")

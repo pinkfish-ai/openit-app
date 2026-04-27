@@ -52,7 +52,7 @@ const ENTITY_FOLDER_EMPTY_COPY: Record<"agents" | "workflows" | "knowledge-base"
   "knowledge-base":
     "No knowledge-base articles yet. This is where runbooks and reference docs live — Claude reads them when answering tickets. Drop in markdown files, or ask Claude to draft one (\"write a runbook for resetting a Slack workspace owner\").",
   library:
-    "No library files yet. Drop runbook PDFs, scripts, or any reference doc you reach for repeatedly — Claude can pull from these when answering tickets or building workflows. (Per-ticket attachments live separately under filestores/attachments and surface inline in the conversation thread.)",
+    "No library files yet. Drop runbook PDFs, scripts, or any reference doc you reach for repeatedly — Claude can pull from these when answering tickets or building workflows.",
 };
 
 /// Anchor tag override for ReactMarkdown rendering. Three URL shapes
@@ -403,6 +403,21 @@ export function Viewer({
       setContent("");
       return;
     }
+    if (source.kind === "filestores-list") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
+    if (source.kind === "attachments-folder") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
+    if (source.kind === "knowledge-bases-list") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
   }, [source]);
 
   // Re-read the single-row file from disk when fsTick fires. Lets edits
@@ -490,13 +505,32 @@ export function Viewer({
       case "conversation-thread": return `Conversation — ${source.ticketId}`;
       case "conversations-list": return `Conversations — ${source.threads.length} thread${source.threads.length === 1 ? "" : "s"}`;
       case "entity-folder": {
-        const label = ENTITY_FOLDER_LABELS[source.entity];
         const noun = ENTITY_FOLDER_NOUN[source.entity];
+        // For KB collections, surface the collection name in the
+        // title (e.g. "Knowledge base — default — 3 articles") so the
+        // admin can tell which KB they're in when more than one
+        // exists.
+        if (source.entity === "knowledge-base") {
+          const m = source.path.match(/^knowledge-bases\/([^/]+)$/);
+          const colName = m ? m[1] : "default";
+          return `Knowledge base — ${colName} — ${source.files.length} ${noun}${source.files.length === 1 ? "" : "s"}`;
+        }
+        const label = ENTITY_FOLDER_LABELS[source.entity];
         return `${label} — ${source.files.length} ${noun}${source.files.length === 1 ? "" : "s"}`;
       }
       case "databases-list": {
         const n = source.collections.length;
         return `Databases — ${n} collection${n === 1 ? "" : "s"}`;
+      }
+      case "filestores-list":
+        return "Filestores — attachments + library";
+      case "attachments-folder": {
+        const n = source.tickets.length;
+        return `Attachments — ${n} ticket${n === 1 ? "" : "s"}`;
+      }
+      case "knowledge-bases-list": {
+        const n = source.collections.length;
+        return `Knowledge bases — ${n} collection${n === 1 ? "" : "s"}`;
       }
       default: return "";
     }
@@ -940,6 +974,124 @@ export function Viewer({
       );
     }
 
+    // Top-level `filestores/` parent. Two cards (attachments,
+    // library) — same layout as databases-list. Click attachments →
+    // attachments-folder welcome stub. Click library → entity-folder
+    // file view.
+    if (source.kind === "knowledge-bases-list") {
+      return (
+        <div className="viewer-summary">
+          <ul className="databases-list">
+            {source.collections.map((c) => (
+              <li key={c.path}>
+                <button
+                  type="button"
+                  className="databases-list-item"
+                  onClick={() => {
+                    if (onOpenPath) void onOpenPath(c.path);
+                  }}
+                  title={`Open ${c.name}`}
+                >
+                  <div className="databases-list-row">
+                    <span className="databases-list-name">{c.name}</span>
+                    <span className="databases-list-count">
+                      {c.itemCount} article{c.itemCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <p className="databases-list-desc">{c.description}</p>
+                  {!c.isBuiltin && (
+                    <div className="databases-list-meta">
+                      <span className="databases-list-tag">custom</span>
+                    </div>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    }
+
+    if (source.kind === "filestores-list") {
+      return (
+        <div className="viewer-summary">
+          <ul className="databases-list">
+            {source.collections.map((c) => (
+              <li key={c.path}>
+                <button
+                  type="button"
+                  className="databases-list-item"
+                  onClick={() => {
+                    if (onOpenPath) void onOpenPath(c.path);
+                  }}
+                  title={`Open ${c.name}`}
+                >
+                  <div className="databases-list-row">
+                    <span className="databases-list-name">{c.name}</span>
+                    <span className="databases-list-count">
+                      {c.itemCount} {c.itemNoun}{c.itemCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <p className="databases-list-desc">{c.description}</p>
+                  {!c.isBuiltin && (
+                    <div className="databases-list-meta">
+                      <span className="databases-list-tag">custom</span>
+                    </div>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    }
+
+    // `filestores/attachments/` welcome stub + per-ticket roll-up.
+    // The lead paragraph explains what lives in this folder so an
+    // admin clicking it for the first time understands the split
+    // from `library/`. Below, one card per ticket subfolder routes
+    // back to the conversation thread — that's where attachments
+    // belong contextually, alongside the messages they came in
+    // with.
+    if (source.kind === "attachments-folder") {
+      return (
+        <div className="viewer-summary">
+          {source.tickets.length === 0 ? (
+            <p className="summary-desc">
+              No attachments yet. Files dropped into a chat or admin reply land here, grouped by ticket.
+            </p>
+          ) : (
+            <ul className="databases-list">
+              {source.tickets.map((t) => (
+                <li key={t.ticketId}>
+                  <button
+                    type="button"
+                    className="databases-list-item"
+                    onClick={() => {
+                      // Jump to the conversation thread, not the raw
+                      // attachments folder — that's where the files
+                      // make sense.
+                      if (onOpenPath && repo) {
+                        void onOpenPath(`${repo}/databases/conversations/${t.ticketId}`);
+                      }
+                    }}
+                    title={`Open conversation for ${t.ticketId}`}
+                  >
+                    <div className="databases-list-row">
+                      <span className="databases-list-name">{t.ticketId}</span>
+                      <span className="databases-list-count">
+                        {t.fileCount} file{t.fileCount === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      );
+    }
+
     // Top-level `databases/` parent. Each subfolder is a collection
     // with its own row format (datastore-table for tickets/people,
     // conversations-list for conversations). The parent view here
@@ -962,10 +1114,6 @@ export function Viewer({
       }
       return (
         <div className="viewer-summary">
-          <p className="summary-desc">
-            One row per collection. Click a card to open its rows; the schema lives in
-            <code> _schema.json</code> inside each folder.
-          </p>
           <ul className="databases-list">
             {source.collections.map((c) => (
               <li key={c.path}>

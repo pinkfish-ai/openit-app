@@ -75,7 +75,14 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
             "filestores",
             "filestores/attachments",
             "filestores/library",
-            "knowledge-base",
+            // Knowledge bases got the same plural-with-default split
+            // as filestores (2026-04-27): one folder per KB, with
+            // `default` shipping out of the box. Skills target
+            // `knowledge-bases/default/` unless explicitly told
+            // otherwise; admins can `mkdir knowledge-bases/<custom>/`
+            // to create additional collections.
+            "knowledge-bases",
+            "knowledge-bases/default",
         ] {
             fs::create_dir_all(path.join(dir))
                 .map_err(|e| format!("create_dir failed for {}: {}", dir, e))?;
@@ -83,11 +90,13 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     }
 
     // Idempotent layout maintenance: ensure the filestores/{attachments,library}
-    // dirs exist for every project on every open, even ones bootstrapped
-    // before the split. Cheap to create, lets the explorer render the
-    // canonical structure without waiting for first-use.
+    // and knowledge-bases/default dirs exist for every project on every
+    // open, even ones bootstrapped before the splits. Cheap to create,
+    // lets the explorer render the canonical structure without waiting
+    // for first-use.
     let _ = fs::create_dir_all(path.join("filestores").join("attachments"));
     let _ = fs::create_dir_all(path.join("filestores").join("library"));
+    let _ = fs::create_dir_all(path.join("knowledge-bases").join("default"));
 
     // One-time migration: legacy `filestore/<file>` content moves into
     // the new `filestores/library/<file>` location. Idempotent — runs
@@ -116,6 +125,29 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
         // alone if the rename loop failed to drain it — better to
         // surface stranded files than silently delete.
         let _ = fs::remove_dir(&legacy_filestore);
+    }
+
+    // Same one-time migration for the knowledge-base split. Articles
+    // sitting at the legacy flat `knowledge-base/<file>.md` location
+    // move into `knowledge-bases/default/<file>.md`. Same collision
+    // semantics as filestore (`<name>.legacy` suffix on duplicates).
+    let legacy_kb = path.join("knowledge-base");
+    if legacy_kb.is_dir() {
+        let default_kb = path.join("knowledge-bases").join("default");
+        if let Ok(entries) = fs::read_dir(&legacy_kb) {
+            for entry in entries.flatten() {
+                let from = entry.path();
+                let name = entry.file_name();
+                let mut to = default_kb.join(&name);
+                if to.exists() {
+                    let mut alt_name = name.to_string_lossy().into_owned();
+                    alt_name.push_str(".legacy");
+                    to = default_kb.join(alt_name);
+                }
+                let _ = fs::rename(&from, &to);
+            }
+        }
+        let _ = fs::remove_dir(&legacy_kb);
     }
 
     // Local git for sync history (idempotent if `.git` already exists).

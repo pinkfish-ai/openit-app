@@ -59,9 +59,18 @@ export type ViewerSource =
       kind: "entity-folder";
       // Top-level entity folders that render a card list. `library`
       // is the curated filestore collection (`filestores/library/`);
-      // the operational `filestores/attachments/` collection has its
-      // own ticketid-grouped renderer and isn't part of this set.
+      // `knowledge-base` covers any KB collection under
+      // `knowledge-bases/<name>/` (default + user-created); the
+      // operational `filestores/attachments/` collection has its own
+      // ticketid-grouped renderer and isn't part of this set.
       entity: "agents" | "workflows" | "knowledge-base" | "library";
+      // Repo-relative path the resolver matched. For non-KB entities
+      // it equals the entity name; for KB it carries the specific
+      // collection (e.g. `knowledge-bases/default` or
+      // `knowledge-bases/<custom>`) so the fsTick re-resolver knows
+      // which folder to walk, and the title-bar can show the
+      // collection name.
+      path: string;
       // displayName drops the file extension and falls back to the
       // entity's own `name` field when readable (agents/workflows JSON);
       // description is the entity's `description` field, or the first
@@ -74,4 +83,22 @@ export type ViewerSource =
   // (datastore-table or conversations-list, whichever the child
   // resolver picks up).
   | { kind: "databases-list"; collections: { name: string; path: string; itemCount: number; hasSchema: boolean }[] }
+  // Top-level `filestores/` directory — mirrors `databases-list`.
+  // `attachments` and `library` ship as built-ins (special-cased for
+  // copy + counting semantics); the resolver also enumerates any
+  // user-created collection (`mkdir filestores/foo`) so the UI
+  // gracefully surfaces them with a generic description.
+  | { kind: "filestores-list"; collections: { name: string; path: string; itemCount: number; itemNoun: string; description: string; isBuiltin: boolean }[] }
+  // `filestores/attachments/` view: introductory copy explaining the
+  // collection's purpose plus a list of per-ticket subfolders (each
+  // is a clickable card that jumps to the matching conversation
+  // thread). This is what surfaces when the admin clicks the
+  // attachments folder in the explorer.
+  | { kind: "attachments-folder"; tickets: { ticketId: string; path: string; fileCount: number }[] }
+  // Top-level `knowledge-bases/` directory — same plural-with-default
+  // shape as filestores/. `default` ships out of the box (cloud-sync
+  // target in V1); admins can `mkdir knowledge-bases/<custom>/` to
+  // add their own collections, which surface here too. Each card
+  // shows article count + one-line purpose blurb.
+  | { kind: "knowledge-bases-list"; collections: { name: string; path: string; itemCount: number; description: string; isBuiltin: boolean }[] }
   | null;

@@ -221,17 +221,38 @@ export function Shell({
       current.kind === "conversation-thread";
     const isEntityFolder = current.kind === "entity-folder";
     const isDatabasesList = current.kind === "databases-list";
-    if (!isConversation && !isEntityFolder && !isDatabasesList) return;
+    const isFilestoresList = current.kind === "filestores-list";
+    const isAttachmentsFolder = current.kind === "attachments-folder";
+    const isKnowledgeBasesList = current.kind === "knowledge-bases-list";
+    if (
+      !isConversation &&
+      !isEntityFolder &&
+      !isDatabasesList &&
+      !isFilestoresList &&
+      !isAttachmentsFolder &&
+      !isKnowledgeBasesList
+    )
+      return;
     const path =
       current.kind === "conversations-list"
         ? `${repo}/databases/conversations`
         : current.kind === "conversation-thread"
           ? `${repo}/databases/conversations/${current.ticketId}`
           : current.kind === "entity-folder"
-            ? `${repo}/${current.entity}`
+            // Source carries an explicit `path` post-2026-04-27 splits
+            // (KB collections + filestores/library); fall back to the
+            // entity name for built-ins that still match 1:1 (agents,
+            // workflows).
+            ? `${repo}/${current.path}`
             : current.kind === "databases-list"
               ? `${repo}/databases`
-              : "";
+              : current.kind === "filestores-list"
+                ? `${repo}/filestores`
+                : current.kind === "attachments-folder"
+                  ? `${repo}/filestores/attachments`
+                  : current.kind === "knowledge-bases-list"
+                    ? `${repo}/knowledge-bases`
+                    : "";
     if (!path) return;
     let cancelled = false;
     resolvePathToSource(path, repo)
@@ -333,10 +354,13 @@ export function Shell({
         // safe and gives the snappy "banner gone now" UX the user
         // expected.
         for (const p of [
-          "kb",
-          // Filestore split: prefix matches what the adapter writes
-          // (`filestores/library`). Attachments under filestores/
-          // aren't sync-tracked yet and don't generate conflicts.
+          // 2026-04-27 plural rename: KB adapter prefix is now
+          // `knowledge-bases/default`. Filestore split: prefix matches
+          // what the adapter writes (`filestores/library`). Both
+          // operational sub-collections (attachments under filestores,
+          // user-created KBs) aren't sync-tracked in V1 and don't
+          // generate conflicts.
+          "knowledge-bases/default",
           "filestores/library",
           "datastore",
           "agent",

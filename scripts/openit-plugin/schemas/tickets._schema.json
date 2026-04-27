@@ -82,7 +82,7 @@
       "label": "KB articles cited",
       "type": "string[]",
       "nullable": true,
-      "comment": "Filenames in knowledge-base/ used to answer this ticket. Helps the 'answer once' loop stay traceable."
+      "comment": "Repo-relative paths (e.g. `knowledge-bases/default/foo.md`) used to answer this ticket. Helps the 'answer once' loop stay traceable across multiple KB collections."
     },
     {
       "id": "notes",

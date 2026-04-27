@@ -5,7 +5,13 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
-const KB_DIR: &str = "knowledge-base";
+// 2026-04-27 plural rename: `knowledge-base/` (singular, single
+// flat dir) → `knowledge-bases/<collection>/` (plural parent, one
+// subdir per KB). Default is `knowledge-bases/default/` and is what
+// the skills write to + cloud sync targets in V1; admins can `mkdir
+// knowledge-bases/<custom>/` to create additional collections, which
+// kb-search walks alongside the default.
+const KB_DIR: &str = "knowledge-bases/default";
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct KbState {

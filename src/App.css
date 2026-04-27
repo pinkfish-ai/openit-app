@@ -2731,6 +2731,16 @@ body,
   background: var(--warn-bg, rgba(255, 170, 50, 0.15));
 }
 
+/* Multi-line description under a card title — sentence-cased prose,
+   not a pill label. Distinct from `.databases-list-tag` so the
+   uppercase styling there doesn't leak into descriptions. */
+.databases-list-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin: 4px 0 0;
+}
+
 /* Conversations-list filter bar — subtle pill buttons with a count
    badge on the right. Active button is filled, inactive is borderless
    and reads as a quiet text option until hovered. */

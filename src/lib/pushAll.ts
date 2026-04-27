@@ -60,7 +60,7 @@ export async function pushAllEntities(
           );
           for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
           if (hasShadow && conflicts.length === 0) {
-            onLine("  • server shadow files present under knowledge-base/");
+            onLine("  • server shadow files present under knowledge-bases/default/");
           }
         } else {
           onLine("▸ sync: kb pushing");

@@ -128,7 +128,8 @@ function prettyName(
   }
   // Knowledge-base markdown articles — same logic as agents/workflows:
   // the .md is implementation noise; users think of them by title.
-  if (rel.match(/^knowledge-base\/[^/]+\.(md|markdown)$/)) {
+  // Matches files under any KB collection: `knowledge-bases/<col>/<name>.md`.
+  if (rel.match(/^knowledge-bases\/[^/]+\/[^/]+\.(md|markdown)$/)) {
     return name.replace(/\.(md|markdown)$/, "");
   }
   return name;
@@ -525,10 +526,11 @@ export function FileExplorer({
       return;
     }
 
-    // Default: drop into knowledge-base with file type filtering.
-    // Resolve a friendly name first so the kb-supported check sees
-    // the real extension (a Slack-id-shaped name has no extension and
-    // would be rejected as unsupported).
+    // Default: drop into the default knowledge base
+    // (`knowledge-bases/default/`) with file type filtering. Resolve
+    // a friendly name first so the kb-supported check sees the real
+    // extension (a Slack-id-shaped name has no extension and would
+    // be rejected as unsupported).
     const acceptedRecords: { file: File; filename: string }[] = [];
     const rejected: string[] = [];
     for (let i = 0; i < files.length; i += 1) {
@@ -568,7 +570,12 @@ export function FileExplorer({
       return next;
     });
 
-  const KB_PREFIX = "knowledge-base/";
+  // 2026-04-27 plural rename: KB articles live in
+  // `knowledge-bases/default/`. The delete affordance still scopes to
+  // the default collection (cloud-sync target); custom KBs are
+  // off-limits via this path until V1 wires their per-collection
+  // delete pipeline.
+  const KB_PREFIX = "knowledge-bases/default/";
   const isDeletable = (node: FileNode) => {
     if (node.is_dir || !repo) return false;
     return relPath(repo, node.path).startsWith(KB_PREFIX);
@@ -672,12 +679,19 @@ export function FileExplorer({
                     rel.match(/^databases\/conversations\/[^/]+$/) ||
                     rel === "agents" ||
                     rel === "workflows" ||
-                    rel === "knowledge-base" ||
-                    // The 2026-04-27 split: `filestores/library/` is
-                    // the curated entity-folder view (replaces the
-                    // legacy flat `filestore/`). The parent
-                    // `filestores/` itself just expands; per-ticket
-                    // attachment folders are explored manually.
+                    // 2026-04-27 plural rename: knowledge-bases/<col>/
+                    // replaces the legacy flat knowledge-base/.
+                    //   - `knowledge-bases/`         → cards (default + custom)
+                    //   - `knowledge-bases/<name>/`  → entity-folder file list
+                    rel === "knowledge-bases" ||
+                    rel.match(/^knowledge-bases\/[^/]+$/) ||
+                    // 2026-04-27 filestore split:
+                    //   - `filestores/`             → two-card overview
+                    //   - `filestores/attachments/` → welcome stub +
+                    //                                 per-ticket subfolders
+                    //   - `filestores/library/`     → curated entity-folder
+                    rel === "filestores" ||
+                    rel === "filestores/attachments" ||
                     rel === "filestores/library"
                   ) {
                     onSelect(n.path);

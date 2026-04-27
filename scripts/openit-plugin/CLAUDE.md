@@ -11,7 +11,7 @@ You're Claude, helping the admin run this helpdesk. Most of what they'll ask you
 | `databases/tickets/*.json` | Ticket rows, structured. `_schema.json` next to them documents fields. |
 | `databases/people/*.json` | Contacts directory, structured. |
 | `databases/conversations/<ticketId>/msg-*.json` | One subfolder per ticket thread; one JSON file per turn inside it. **Unstructured** — no schema enforcement. Subfolder name = `ticketId` so all turns for a ticket live together. |
-| `knowledge-base/*.md` | Solution articles. Markdown. The "answer once" capture target. |
+| `knowledge-bases/default/*.md` | Solution articles. Markdown. The "answer once" capture target — write new articles here unless the admin explicitly asks for a different KB collection. Admins can `mkdir knowledge-bases/<custom>/` to add more KBs; `kb-search` walks all of them. |
 | `filestores/library/*` | Curated reference files — runbooks, scripts, recurring docs the admin keeps handy. Cloud-synced via the existing filestore sync engine. |
 | `filestores/attachments/<ticketId>/*` | Operational attachment storage — files dropped into the chat intake by the asker, or files the admin attached to a reply. One subfolder per ticket so attachments stay tied to their thread. |
 | `agents/<name>.json` | Agent configurations. The triage agent lives at `agents/triage.json`. |
@@ -39,7 +39,7 @@ You don't normally run the triage flow yourself — `ai-intake` does. But if the
 - **Ticket** → `databases/tickets/ticket-<id>.json`. Status enum: `incoming` → `agent-responding` (chat is live, agent composing) → `resolved` (answered) or `escalated` (needs admin). `closed` for fully done. `databases/tickets/_schema.json` has the full field list in plain-language labels.
 - **Person** → `databases/people/<sanitized-email>.json`. Idempotent — skip the write if a row with that email already exists. Schema next door.
 - **Conversation turn** → `databases/conversations/<ticketId>/msg-<unix-ms>-<rand>.json`. Subfolder name = `ticketId`. Fields: `id`, `ticketId`, `role` (`asker` / `agent` / `admin`), `sender`, `timestamp` (ISO-8601 UTC), `body`.
-- **KB lookup** → `Glob "knowledge-base/*.md"` then `Read` the most relevant. Filename + headings usually enough cue.
+- **KB lookup** → `Glob "knowledge-bases/**/*.md"` (all collections) or `Glob "knowledge-bases/default/*.md"` (default only) then `Read` the most relevant. Filename + headings usually enough cue. Or run `node .claude/scripts/kb-search.mjs "<query>"` to score across every KB at once.
 
 ## How to talk to me about changes
 
@@ -122,6 +122,6 @@ If the user has connected this project to Pinkfish via the **Connect to Cloud** 
 
 Claude Code skills in this project need filesystem access. When a skill asks for `Bash` / `Read` / `Write` permission, approve once — Claude Code remembers per-project. The skills need it to:
 
-- List and read files under `databases/` / `knowledge-base/` / `agents/`.
+- List and read files under `databases/` / `knowledge-bases/` / `agents/`.
 - Write new ticket / conversation rows.
 - Read `_schema.json` to map field IDs to plain language.

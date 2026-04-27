@@ -11,7 +11,7 @@ Invoked when the admin clicks the **Solve with Claude** button on the escalated-
 
 ## The principle — answer once
 
-When the admin writes a reply, **capture it as a knowledge-base article.** The next time someone asks the same question, the triage agent will answer from the KB without anyone touching it.
+When the admin writes a reply, **capture it as a knowledge-base article in `knowledge-bases/default/`.** The next time someone asks the same question, the triage agent will answer from the KB without anyone touching it. (If the admin explicitly asks you to file the article in a custom KB collection — `knowledge-bases/<custom>/` — write it there instead. The default is `default`.)
 
 If the ticket is action-shaped (the admin had to *do* something rather than just answer — reset a password, grant access, run a command), flag it for the admin so they're aware future automation could capture it as a workflow. **Workflows themselves are V2** — for V1, just note it.
 
@@ -29,7 +29,7 @@ Plain language. Show who asked, what they asked, when, and any context from the 
 
 ### 3. Sanity-check the KB
 
-`Glob "knowledge-base/*.md"`. Read filenames. The triage agent already searched but might have missed something. Try once more with the admin's perspective on the question. If you find a match, point the admin at it: *"This article looks relevant — should I just send the user the answer from `kb/how-to-reset-vpn.md`?"*
+`Glob "knowledge-bases/**/*.md"` (covers default + any custom KBs). Read filenames. The triage agent already searched but might have missed something. Try once more with the admin's perspective on the question. If you find a match, point the admin at it: *"This article looks relevant — should I just send the user the answer from `knowledge-bases/default/how-to-reset-vpn.md`?"*
 
 ### 4. Draft a reply with the admin
 
@@ -69,7 +69,7 @@ This is the load-bearing step. **Skipping it costs the org the same answer being
 
 - Suggest a kebab-case filename matching the question's intent (not the user's exact wording): `how-to-reset-vpn-password.md`, `granting-staging-gcp-access.md`.
 - Draft the article: short title (`# How to reset a VPN password`), the question phrased generally, the answer, any related links.
-- Confirm with the admin before writing. On approval, `Write` to `knowledge-base/<filename>.md`.
+- Confirm with the admin before writing. On approval, `Write` to `knowledge-bases/default/<filename>.md` (unless the admin asked for a different KB collection — then `knowledge-bases/<that>/<filename>.md`).
 - If the admin says no (e.g. *"this was a one-off, doesn't generalize"*), skip the capture but note it in the ticket's `notes` or `description` field so we know why.
 
 ### 8. Tell the admin what happened
@@ -80,14 +80,14 @@ For a **chat** ticket (delivery already happened in step 6):
 ```
 Replied to ticket-XXX → status: open (waiting on asker's reply).
 Logged the admin reply as a conversation turn — the asker is seeing it in their chat browser now.
-Captured the answer as `knowledge-base/how-to-reset-vpn-password.md`.
+Captured the answer as `knowledge-bases/default/how-to-reset-vpn-password.md`.
 ```
 
 For a **slack/teams/email/web/api** ticket (no egress yet):
 ```
 Drafted reply for ticket-XXX → status: open.
 Logged the admin reply as a conversation turn (audit trail).
-Captured the answer as `knowledge-base/how-to-reset-vpn-password.md`.
+Captured the answer as `knowledge-bases/default/how-to-reset-vpn-password.md`.
 
 Still to do (manual): send the reply to <asker> via <channel> — V1 doesn't have <channel> egress wired up yet.
 ```
