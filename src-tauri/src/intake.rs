@@ -675,6 +675,9 @@ async fn spawn_claude_chat(repo: &PathBuf, model: &str, prompt: &str) -> Result<
     // script without prompting. Safe in this context — scope is the
     // user's own repo, the skill is OpenIT-bundled, and the only
     // shell command is the local kb-search.mjs.
+    // `kill_on_drop(true)` so a timeout (or any early-return below)
+    // reaps the subprocess instead of leaving an orphaned `claude`
+    // running with the user's prompt.
     let mut child = TokioCommand::new(&claude_path)
         .arg("-p")
         .arg("--output-format")
@@ -687,6 +690,7 @@ async fn spawn_claude_chat(repo: &PathBuf, model: &str, prompt: &str) -> Result<
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("spawn claude: {}", e))?;
 
@@ -699,10 +703,23 @@ async fn spawn_claude_chat(repo: &PathBuf, model: &str, prompt: &str) -> Result<
         stdin.flush().await.ok();
     }
 
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| format!("wait claude: {}", e))?;
+    // Bound the subprocess lifetime. A hung `claude` (model stall,
+    // network blip, stuck stdin) would otherwise pin the ticket at
+    // `agent-responding` forever and tie up the request indefinitely.
+    // 90s covers a long-but-normal agent turn (KB read + reasoning);
+    // anything past that the admin should handle, and the caller
+    // surfaces the timeout as an escalation so the user isn't blocked.
+    const CLAUDE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+    let output = match tokio::time::timeout(CLAUDE_TIMEOUT, child.wait_with_output()).await {
+        Ok(Ok(out)) => out,
+        Ok(Err(e)) => return Err(format!("wait claude: {}", e)),
+        Err(_) => {
+            return Err(format!(
+                "claude -p timed out after {}s",
+                CLAUDE_TIMEOUT.as_secs()
+            ));
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -902,30 +919,38 @@ enum DecidedStatus {
 /// Parse the agent's status marker out of its stdout. Contract:
 /// the marker is `<<STATUS:resolved>>` / `<<STATUS:escalated>>` /
 /// `<<STATUS:clarifying>>` somewhere in the output (typically last
-/// line). Returns the body with the marker line stripped, plus the
-/// parsed status. Missing or unrecognized marker → Escalated, so the
-/// admin always gets visibility on a malformed agent run.
+/// line). Returns the body with ALL marker spans stripped, plus the
+/// status from the LAST marker (the agent's final decision wins).
+/// Missing or unrecognized marker → Escalated, so the admin always
+/// gets visibility on a malformed agent run.
 fn parse_status_marker(raw: &str) -> (String, DecidedStatus) {
-    let marker_re = regex_lite_find(raw);
-    match marker_re {
-        Some((status, span_start, span_end)) => {
-            let mut body = String::with_capacity(raw.len());
-            body.push_str(&raw[..span_start]);
-            body.push_str(&raw[span_end..]);
-            (body.trim().to_string(), status)
-        }
-        None => (raw.trim().to_string(), DecidedStatus::Escalated),
+    let spans = regex_lite_find_all(raw);
+    if spans.is_empty() {
+        return (raw.trim().to_string(), DecidedStatus::Escalated);
     }
+    // Stitch together the body with each marker span removed.
+    let mut body = String::with_capacity(raw.len());
+    let mut cursor = 0usize;
+    for (_, start, end) in &spans {
+        body.push_str(&raw[cursor..*start]);
+        cursor = *end;
+    }
+    body.push_str(&raw[cursor..]);
+    let final_status = spans
+        .last()
+        .map(|(s, _, _)| *s)
+        .unwrap_or(DecidedStatus::Escalated);
+    (body.trim().to_string(), final_status)
 }
 
 /// Tiny hand-rolled scanner for `<<STATUS:xxx>>` so we don't pull in
-/// the `regex` crate just for this. Returns (status, start, end) of
-/// the LAST occurrence (the agent might mention earlier statuses
-/// inline; the final one wins). Tolerates surrounding whitespace.
-fn regex_lite_find(s: &str) -> Option<(DecidedStatus, usize, usize)> {
+/// the `regex` crate just for this. Returns (status, start, end) for
+/// every recognized marker in `s`, in order. Tolerates surrounding
+/// whitespace inside the marker (e.g. `<<STATUS: resolved >>`).
+fn regex_lite_find_all(s: &str) -> Vec<(DecidedStatus, usize, usize)> {
     let needle_open = "<<STATUS:";
     let needle_close = ">>";
-    let mut last: Option<(DecidedStatus, usize, usize)> = None;
+    let mut found: Vec<(DecidedStatus, usize, usize)> = Vec::new();
     let mut search_from = 0;
     while let Some(rel_open) = s[search_from..].find(needle_open) {
         let open = search_from + rel_open;
@@ -942,8 +967,8 @@ fn regex_lite_find(s: &str) -> Option<(DecidedStatus, usize, usize)> {
             _ => None,
         };
         if let Some(st) = status {
-            // Expand to consume a trailing newline if present so the
-            // stripped body doesn't have a dangling blank line.
+            // Consume a trailing newline so the stripped body doesn't
+            // leave a dangling blank line.
             let mut end = close + needle_close.len();
             if s.as_bytes().get(end) == Some(&b'\n') {
                 end += 1;
@@ -954,11 +979,11 @@ fn regex_lite_find(s: &str) -> Option<(DecidedStatus, usize, usize)> {
             if start > 0 && s.as_bytes()[start - 1] == b'\n' {
                 start -= 1;
             }
-            last = Some((st, start, end));
+            found.push((st, start, end));
         }
         search_from = close + needle_close.len();
     }
-    last
+    found
 }
 
 /// ISO-8601 UTC timestamp ~1 second before now, used as the polled_at
@@ -1497,3 +1522,77 @@ gateForm.addEventListener('submit', async (e) => {
 </script>
 </body>
 </html>"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_resolved_marker() {
+        let raw = "Per our VPN guide, click Reset.\n\n<<STATUS:resolved>>";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Resolved);
+        assert_eq!(body, "Per our VPN guide, click Reset.");
+    }
+
+    #[test]
+    fn parses_escalated_marker() {
+        let raw = "I don't have an answer yet.\n<<STATUS:escalated>>\n";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Escalated);
+        assert_eq!(body, "I don't have an answer yet.");
+    }
+
+    #[test]
+    fn parses_clarifying_marker() {
+        let raw = "Which system do you mean?\n\n<<STATUS:clarifying>>";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Clarifying);
+        assert_eq!(body, "Which system do you mean?");
+    }
+
+    #[test]
+    fn missing_marker_defaults_to_escalated() {
+        let raw = "Some reply with no marker.";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Escalated);
+        assert_eq!(body, "Some reply with no marker.");
+    }
+
+    #[test]
+    fn unknown_marker_value_defaults_to_escalated() {
+        let raw = "reply\n<<STATUS:bogus>>";
+        let (_body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Escalated);
+    }
+
+    #[test]
+    fn last_marker_wins_when_multiple_present() {
+        // The agent might mention an earlier status inline; the final
+        // marker is the authoritative decision.
+        let raw = "I considered <<STATUS:clarifying>> but actually:\n\nHere's the answer.\n<<STATUS:resolved>>";
+        let (body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Resolved);
+        assert!(body.contains("Here's the answer"));
+        // Both markers stripped.
+        assert!(!body.contains("<<STATUS:"));
+    }
+
+    #[test]
+    fn marker_with_surrounding_whitespace() {
+        let raw = "answer\n<<STATUS: resolved >>";
+        let (_body, status) = parse_status_marker(raw);
+        assert_eq!(status, DecidedStatus::Resolved);
+    }
+
+    #[test]
+    fn iso_one_second_ago_is_lt_now() {
+        let ago = iso_one_second_ago();
+        let now = now_iso();
+        // Lexicographic compare on ISO-8601 second-precision strings is
+        // strictly less for any pair not within the same wall-clock
+        // second. We can't deterministically assert <, but we can
+        // assert it's no greater than now.
+        assert!(ago <= now);
+    }
+}

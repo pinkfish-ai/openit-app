@@ -96,18 +96,18 @@ export function EscalatedTicketBanner({
   };
 
   return (
-    <div className="incoming-ticket-banner" role="status">
-      <span className="incoming-ticket-banner-icon" aria-hidden>
+    <div className="escalated-ticket-banner" role="status">
+      <span className="escalated-ticket-banner-icon" aria-hidden>
         ✎
       </span>
-      <span className="incoming-ticket-banner-text">
+      <span className="escalated-ticket-banner-text">
         {tickets.length} ticket{tickets.length === 1 ? "" : "s"} need{tickets.length === 1 ? "s" : ""} your help —{" "}
         <strong>{subjectLabel}</strong>
         {others > 0 ? ` and ${others} other${others === 1 ? "" : "s"}` : ""}.
       </span>
       <button
         type="button"
-        className="incoming-ticket-banner-action"
+        className="escalated-ticket-banner-action"
         onClick={onAnswer}
         disabled={sending}
         title="Open the queued tickets with Claude to draft a response"
@@ -116,7 +116,7 @@ export function EscalatedTicketBanner({
       </button>
       <button
         type="button"
-        className="incoming-ticket-banner-dismiss"
+        className="escalated-ticket-banner-dismiss"
         onClick={() => setDismissedKey(ticketKey)}
         title="Hide until a new ticket escalates"
       >

@@ -242,7 +242,7 @@ body,
    activity banner, fires when any ticket row has
    status: "escalated". Green palette to read as "ready for you to
    handle" rather than "something's wrong". */
-.incoming-ticket-banner {
+.escalated-ticket-banner {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -254,12 +254,12 @@ body,
   flex: 0 0 auto;
 }
 
-.incoming-ticket-banner-icon {
+.escalated-ticket-banner-icon {
   font-size: 14px;
   flex: 0 0 auto;
 }
 
-.incoming-ticket-banner-text {
+.escalated-ticket-banner-text {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -267,12 +267,12 @@ body,
   white-space: nowrap;
 }
 
-.incoming-ticket-banner-text strong {
+.escalated-ticket-banner-text strong {
   font-weight: 600;
 }
 
-.incoming-ticket-banner-action,
-.incoming-ticket-banner-dismiss {
+.escalated-ticket-banner-action,
+.escalated-ticket-banner-dismiss {
   flex: 0 0 auto;
   padding: 3px 10px;
   border: 1px solid #4a9d6b;
@@ -283,23 +283,23 @@ body,
   font-size: 12px;
 }
 
-.incoming-ticket-banner-action {
+.escalated-ticket-banner-action {
   background: #1f4d2c;
   color: #e8f5ec;
   border-color: #1f4d2c;
   font-weight: 500;
 }
 
-.incoming-ticket-banner-action:hover:not(:disabled) {
+.escalated-ticket-banner-action:hover:not(:disabled) {
   background: #143620;
 }
 
-.incoming-ticket-banner-action:disabled {
+.escalated-ticket-banner-action:disabled {
   opacity: 0.6;
   cursor: default;
 }
 
-.incoming-ticket-banner-dismiss:hover {
+.escalated-ticket-banner-dismiss:hover {
   background: rgba(0, 0, 0, 0.05);
 }
 
