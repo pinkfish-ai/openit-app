@@ -1,5 +1,5 @@
 {
-  "version": "2026-04-27-010",
+  "version": "2026-04-27-011",
   "bubbles": [
     { "label": "Answer ticket", "skill": "/answer-ticket" }
   ],

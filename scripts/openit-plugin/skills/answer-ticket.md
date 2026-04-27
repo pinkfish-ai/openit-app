@@ -5,7 +5,9 @@ description: Walks the IT admin through responding to an escalated ticket — re
 
 ## When to use
 
-Invoked when the admin clicks the **Solve with Claude** button on the escalated-ticket banner, or directly via `/answer-ticket <ticket-path>` for a specific ticket. The caller will name the ticket file path(s); if not, scan `databases/tickets/` for rows with `status: "open"` and surface them.
+Invoked when the admin clicks the **Solve with Claude** button on the escalated-ticket banner, or directly via `/answer-ticket <ticket-path>` for a specific ticket. The caller will name the ticket file path(s); if not, scan `databases/tickets/` for rows with `status: "escalated"` and surface them.
+
+**Status terms used below.** `escalated` = agent gave up, admin needs to act. `open` = active conversation, agent answered last turn or admin replied last turn — waiting on asker. `resolved` = case fully closed (asker confirmed fixed, or admin marked done). After this skill runs, the ticket lands in `open` (most common — admin replied with a clarifying question or partial answer, asker may follow up) or `resolved` (admin is sure the case is finished).
 
 ## The principle — answer once
 
@@ -33,15 +35,21 @@ Plain language. Show who asked, what they asked, when, and any context from the 
 
 Show what you'd write. Iterate with the admin until they're happy. Be concise; lead with the answer.
 
-### 5. Send the reply
+### 5. Deliver the reply (writing the conversation turn IS the delivery for chat-channel tickets)
 
-For V1, OpenIT doesn't have channel ingest yet — show the admin the final text and tell them to copy it to wherever the user is (email, Slack DM, etc.). Note this in the conversation log so the audit trail is intact.
+How the reply reaches the asker depends on `askerChannel` (look it up on the ticket file you read in step 1):
 
-(When cloud channel ingest lands in a future phase, this becomes automatic.)
+- **`askerChannel: "chat"`** — the asker filed via the localhost OpenIT chat (the Intake link in the header). The chat UI polls `databases/conversations/<ticketId>/` for new turns and renders them automatically. **Writing the admin conversation turn in step 6 IS the reply delivery.** No copy/paste needed; the asker will see your message in their chat browser within a couple seconds. Do NOT tell the admin to manually email or Slack the asker for chat tickets — they're already wired up.
+- **`askerChannel: "slack" | "teams" | "email" | "web" | "api"`** — those channels don't have egress wired up in V1. After writing the conversation turn (step 6), tell the admin to manually send the reply to the asker via that channel and note it in the conversation log. (When cloud channel ingest+egress lands in a future phase, this becomes automatic too.)
+
+Treat the chat case as the default unless the ticket clearly says otherwise.
 
 ### 6. Update the ticket and log the conversation turn
 
-- `Edit` the ticket: set `status: "answered"`, append cited KB filenames (if any) to `kbArticleRefs`, set `updatedAt` to now. If the admin assigned themselves, set `assignee`.
+- `Edit` the ticket:
+  - `status` → `"open"` if the admin's reply is conversational (asking for more info, partial answer, ack-while-investigating). The asker may follow up; the conversation is alive but no banner fires.
+  - `status` → `"resolved"` only if the admin is confident the case is fully done (the answer fixes it, no follow-up expected). Don't preemptively close — `open` is the safer default.
+  - Append cited KB filenames (if any) to `kbArticleRefs`, set `updatedAt` to now. If the admin assigned themselves, set `assignee`.
 - `Write` a conversation turn at `databases/conversations/<ticketId>/msg-<timestamp>-<rand>.json` (same thread subfolder as the asker's turns):
 
   ```json
@@ -66,15 +74,25 @@ This is the load-bearing step. **Skipping it costs the org the same answer being
 
 ### 8. Tell the admin what happened
 
-Brief summary:
+Brief summary. Adapt to the ticket's `askerChannel`:
 
+For a **chat** ticket (delivery already happened in step 6):
 ```
-Drafted reply, updated ticket-XXX → status: answered.
+Replied to ticket-XXX → status: open (waiting on asker's reply).
+Logged the admin reply as a conversation turn — the asker is seeing it in their chat browser now.
 Captured the answer as `knowledge-base/how-to-reset-vpn-password.md`.
-Logged the admin's reply as a conversation turn.
-
-Still to do (manual): copy the reply to Alice via Slack/email.
 ```
+
+For a **slack/teams/email/web/api** ticket (no egress yet):
+```
+Drafted reply for ticket-XXX → status: open.
+Logged the admin reply as a conversation turn (audit trail).
+Captured the answer as `knowledge-base/how-to-reset-vpn-password.md`.
+
+Still to do (manual): send the reply to <asker> via <channel> — V1 doesn't have <channel> egress wired up yet.
+```
+
+If the admin chose `resolved` instead of `open`, swap the status word but keep the rest the same.
 
 ## Action-shaped tickets
 
