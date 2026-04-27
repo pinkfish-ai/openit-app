@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
-import { fsRead, projectBootstrap, stateLoad, stateSave } from "./lib/api";
+import { fsRead, intakeStart, intakeStop, projectBootstrap, stateLoad, stateSave } from "./lib/api";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
@@ -87,6 +87,35 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, orgName: string): v
   );
 }
 
+/// Small pill in the header showing the localhost intake URL. Click to
+/// copy. Surfaced here as a temporary home until the Phase 3b settings
+/// panel lands — that's where the URL + the LAN-toggle will live
+/// long-term, per the local-first plan.
+function IntakeUrlPill({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      console.warn("[app] clipboard write failed:", e);
+    }
+  };
+  return (
+    <button
+      type="button"
+      className="intake-url-pill"
+      onClick={onCopy}
+      title="Click to copy. Share with someone on this machine to file a ticket via web form."
+    >
+      <span className="intake-url-pill-label">Intake</span>
+      <code className="intake-url-pill-value">{url.replace(/^https?:\/\//, "")}</code>
+      <span className="intake-url-pill-status">{copied ? "copied" : "copy"}</span>
+    </button>
+  );
+}
+
 function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -96,6 +125,7 @@ function App() {
   const [savedCreds, setSavedCreds] = useState<PinkfishCreds | null>(null);
   const [bypassOnboarding, setBypassOnboarding] = useState(false);
   const [bubbles, setBubbles] = useState<PromptBubble[]>(DEFAULT_BUBBLES);
+  const [intakeServerUrl, setIntakeServerUrl] = useState<string | null>(null);
 
   useEffect(() => {
     // Stop the WebView from navigating to a dropped file when the drop
@@ -242,6 +272,38 @@ function App() {
     };
   }, []);
 
+  // Localhost ticket-intake server lifecycle. Tied to `repo` — start
+  // when a project opens, transparently restart with the new path on
+  // project switch, stop on app close. The Rust side enforces single-
+  // instance semantics: calling intakeStart with a new repo stops the
+  // previous server before binding the new one.
+  useEffect(() => {
+    if (!repo) {
+      setIntakeServerUrl(null);
+      return;
+    }
+    let cancelled = false;
+    intakeStart(repo)
+      .then((url) => {
+        if (cancelled) {
+          // Component unmounted before bind completed — stop the server
+          // so we don't leak a listening socket.
+          intakeStop().catch((e) => console.warn("[app] intake stop after cancel:", e));
+          return;
+        }
+        console.log("[app] intake server up at", url);
+        setIntakeServerUrl(url);
+      })
+      .catch((e) => {
+        console.error("[app] intake start failed:", e);
+        if (!cancelled) setIntakeServerUrl(null);
+      });
+    return () => {
+      cancelled = true;
+      intakeStop().catch((e) => console.warn("[app] intake stop:", e));
+    };
+  }, [repo]);
+
   const onSyncLine = (line: string) => setSyncLines((prev) => [...prev, line]);
 
   const onPinkfishConnected = async (incoming: string | null) => {
@@ -303,6 +365,7 @@ function App() {
       <header className="app-header">
         <span className="app-title">OpenIT</span>
         <span className="app-tagline">get IT done</span>
+        {intakeServerUrl && <IntakeUrlPill url={intakeServerUrl} />}
         <button
           className={`icon-btn ${connected ? "key-set" : ""}`}
           onClick={() => setBypassOnboarding(false)}

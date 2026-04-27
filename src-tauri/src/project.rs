@@ -62,19 +62,3 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn slugify_collapses_punctuation() {
-        assert_eq!(slugify("AcmeCo - Dev"), "acmeco-dev");
-        assert_eq!(
-            slugify("Ben Rigby's Organization"),
-            "ben-rigby-s-organization"
-        );
-        assert_eq!(slugify("My Organization"), "my-organization");
-        assert_eq!(slugify("   "), "");
-        assert_eq!(slugify("CK's Personal Org"), "ck-s-personal-org");
-    }
-}

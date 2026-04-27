@@ -172,6 +172,22 @@ export async function projectBootstrap(args: {
   return invoke("project_bootstrap", { orgName: args.orgName, orgId: args.orgId });
 }
 
+/// Start the localhost ticket-intake HTTP server scoped to `repo`.
+/// Returns the URL clients hit (e.g. `http://127.0.0.1:54123`). If a
+/// server is already running, it's stopped first so calling this on
+/// project switch transparently moves the server to the new repo.
+export async function intakeStart(repo: string): Promise<string> {
+  return invoke("intake_start", { repo });
+}
+
+export async function intakeStop(): Promise<void> {
+  return invoke("intake_stop");
+}
+
+export async function intakeUrl(): Promise<string | null> {
+  return invoke("intake_url");
+}
+
 export async function pinkfishListOrgs(args: {
   accessToken: string;
   orgId: string;
