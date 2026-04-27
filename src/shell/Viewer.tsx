@@ -1420,11 +1420,16 @@ export function Viewer({
               // bundle it with this drop instead of leaving it stuck
               // in the composer waiting for a manual Send.
               const trimmed = replyText.trim();
+              const filenames = newAttachments.map((a) => a.filename);
+              const fallbackBody =
+                filenames.length === 1
+                  ? `attached file: ${filenames[0]}`
+                  : `attached files: ${filenames.join(", ")}`;
               setReplySending(true);
               setReplyError(null);
               try {
                 await writeAdminTurn(
-                  trimmed || "(attachment)",
+                  trimmed || fallbackBody,
                   newAttachments.map((a) => a.path),
                 );
                 setReplyText("");
