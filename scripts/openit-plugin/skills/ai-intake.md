@@ -51,12 +51,20 @@ If `matches` is empty, or the top match clearly doesn't address the question (to
 
 **Do NOT write any conversation turn files, and do NOT Edit the ticket's `status` field.** The server handles both writes — it wrote the asker turn before invoking you, will write your reply turn from stdout, and will set ticket status from the marker you emit. Editing status yourself races against the server and may be clobbered.
 
-Decide exactly one of two outcomes for this turn:
+Decide exactly one of three outcomes for this turn:
 
-- **`answered`** — KB had a relevant article, you answered from it. The server flips the ticket from `agent-responding` → `open` (conversation still alive; the asker may or may not have a follow-up question, but the agent is idle until they do). Don't conflate "I answered this turn" with "this case is resolved" — `resolved` is a terminal state set later, not by you. (You may Edit `kbArticleRefs` to append cited filenames; that field doesn't race.)
-- **`escalated`** — anything else: KB miss, KB articles aren't relevant to the question, or the question needs human judgment. The server flips the ticket to `escalated` and the admin gets the escalation banner. Reply text: something like *"Thanks — I don't have an answer for that one. I've escalated this to the team; someone will follow up here when they're ready."* Keep it short and human.
+- **`answered`** — KB had a relevant article, you answered from it. The server flips the ticket to `open` (conversation alive; the asker may or may not follow up, but the agent is idle until they do). (You may Edit `kbArticleRefs` to append cited filenames; that field doesn't race.)
+- **`escalated`** — KB miss, KB articles aren't relevant, or the question needs human judgment. The server flips the ticket to `escalated` and the admin gets the escalation banner. Reply text: something like *"Thanks — I don't have an answer for that one. I've escalated this to the team; someone will follow up here when they're ready."* Keep it short and human.
+- **`resolved`** — the asker has explicitly confirmed the case is done. The server flips the ticket to `resolved` (terminal). Use this **only** when:
+  1. A previous agent or admin turn provided an answer or fix,
+  2. The asker's most-recent message reads as confirmation — e.g. *"thanks that solved it"*, *"works now"*, *"all good"*, *"perfect"* — not a new question, and
+  3. There's nothing else outstanding in the conversation.
+  Reply text: something like *"Glad to hear it! Let me know if anything else comes up."*
+  When in doubt, prefer `answered` — admins can close manually, and the asker can always reopen by sending another message (the next turn's outcome takes over).
 
 There is no "ask the user for clarification" path. If the question is ambiguous, escalate — the admin will ask the asker themselves.
+
+**Reopen note**: a follow-up asker message on a `resolved` or `closed` ticket flips it back to `agent-responding` automatically while you process this turn — you don't need to do anything special. Just judge the new message on its own merits and emit the correct outcome (e.g. `escalated` if they're reporting a regression, `resolved` if it's just another "thanks").
 
 ### 4. End with reply text + status marker
 
@@ -68,7 +76,7 @@ Your stdout shape:
 <<STATUS:answered>>
 ```
 
-Replace `answered` with `escalated` per step 3. The server strips the marker before writing the turn, then sets ticket status. Missing or malformed marker → defaults to `escalated`, so the admin always sees a borked agent run.
+Replace `answered` with `escalated` or `resolved` per step 3. The server strips the marker before writing the turn, then sets ticket status. Missing or malformed marker → defaults to `escalated`, so the admin always sees a borked agent run.
 
 Keep the reply conversational — no file paths, no status narration, no meta-commentary.
 
