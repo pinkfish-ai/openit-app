@@ -67,12 +67,55 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
             "databases/tickets",
             "databases/people",
             "databases/conversations",
-            "filestore",
+            // Filestore split into two purpose-specific collections.
+            // `attachments` is operational (per-ticket file uploads from
+            // the chat intake); `library` is curated (admin's go-to
+            // runbooks/scripts). Both share the existing filestore sync
+            // engine when cloud is connected.
+            "filestores",
+            "filestores/attachments",
+            "filestores/library",
             "knowledge-base",
         ] {
             fs::create_dir_all(path.join(dir))
                 .map_err(|e| format!("create_dir failed for {}: {}", dir, e))?;
         }
+    }
+
+    // Idempotent layout maintenance: ensure the filestores/{attachments,library}
+    // dirs exist for every project on every open, even ones bootstrapped
+    // before the split. Cheap to create, lets the explorer render the
+    // canonical structure without waiting for first-use.
+    let _ = fs::create_dir_all(path.join("filestores").join("attachments"));
+    let _ = fs::create_dir_all(path.join("filestores").join("library"));
+
+    // One-time migration: legacy `filestore/<file>` content moves into
+    // the new `filestores/library/<file>` location. Idempotent — runs
+    // only when the legacy dir exists; once empty it is removed so
+    // the bootstrap loop can't recreate it on a future run. Files
+    // shadowed by a same-named entry already in `library/` are kept
+    // under their original names with a `.legacy` suffix to avoid
+    // silent overwrites.
+    let legacy_filestore = path.join("filestore");
+    if legacy_filestore.is_dir() {
+        let library_dir = path.join("filestores").join("library");
+        if let Ok(entries) = fs::read_dir(&legacy_filestore) {
+            for entry in entries.flatten() {
+                let from = entry.path();
+                let name = entry.file_name();
+                let mut to = library_dir.join(&name);
+                if to.exists() {
+                    let mut alt_name = name.to_string_lossy().into_owned();
+                    alt_name.push_str(".legacy");
+                    to = library_dir.join(alt_name);
+                }
+                let _ = fs::rename(&from, &to);
+            }
+        }
+        // Drop the legacy dir if it's empty after migration. Leave it
+        // alone if the rename loop failed to drain it — better to
+        // surface stranded files than silently delete.
+        let _ = fs::remove_dir(&legacy_filestore);
     }
 
     // Local git for sync history (idempotent if `.git` already exists).

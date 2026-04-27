@@ -57,6 +57,7 @@ pub fn run() {
             git_ops::git_file_diff,
             git_ops::git_has_conflict_markers,
             git_ops::git_diff_name_only,
+            git_ops::git_global_user_email,
             claude::claude_generate_commit_message,
             state::state_load,
             state::state_save,

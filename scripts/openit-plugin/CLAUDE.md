@@ -12,7 +12,8 @@ You're Claude, helping the admin run this helpdesk. Most of what they'll ask you
 | `databases/people/*.json` | Contacts directory, structured. |
 | `databases/conversations/<ticketId>/msg-*.json` | One subfolder per ticket thread; one JSON file per turn inside it. **Unstructured** — no schema enforcement. Subfolder name = `ticketId` so all turns for a ticket live together. |
 | `knowledge-base/*.md` | Solution articles. Markdown. The "answer once" capture target. |
-| `filestore/*` | Document storage — PDFs, screenshots, attachments. |
+| `filestores/library/*` | Curated reference files — runbooks, scripts, recurring docs the admin keeps handy. Cloud-synced via the existing filestore sync engine. |
+| `filestores/attachments/<ticketId>/*` | Operational attachment storage — files dropped into the chat intake by the asker, or files the admin attached to a reply. One subfolder per ticket so attachments stay tied to their thread. |
 | `agents/<name>.json` | Agent configurations. The triage agent lives at `agents/triage.json`. |
 | `workflows/<name>.json` | (Future, V2.) Captured action playbooks. |
 

@@ -425,10 +425,19 @@ pub fn kb_supported_extensions() -> Vec<String> {
 
 // ---------------------------------------------------------------------------
 // Filestore commands — mirror the kb_* local commands but target
-// `filestore/` and `.openit/fs-state.json`.
+// `filestores/library/` and `.openit/fs-state.json`.
+//
+// Layout split (2026-04-27):
+//   filestores/attachments/<ticketId>/<filename>  — operational
+//     uploads from the chat intake; written by the intake server, not
+//     these commands. Each thread owns its subfolder.
+//   filestores/library/<filename>  — curated docs/scripts the admin
+//     keeps handy. Synced via the existing `openit-*` cloud filestore
+//     collection. Default path that `fs_store_*` commands here target.
 // ---------------------------------------------------------------------------
 
-const FS_DIR: &str = "filestore";
+const FS_DIR: &str = "filestores/library";
+const FS_ATTACHMENTS_DIR: &str = "filestores/attachments";
 
 fn fs_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(FS_DIR)

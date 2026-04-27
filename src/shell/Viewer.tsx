@@ -6,6 +6,7 @@ import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
 import { DataTable } from "./DataTable";
+import { RowEditForm } from "./RowEditForm";
 import { ImageViewer } from "./viewers/ImageViewer";
 import { PdfViewer } from "./viewers/PdfViewer";
 import { SpreadsheetViewer } from "./viewers/SpreadsheetViewer";
@@ -24,33 +25,33 @@ export type { ViewerSource };
 
 /// Title labels for the entity-folder view. Capital case for the title
 /// bar; the explorer rows use the lowercase folder names directly.
-const ENTITY_FOLDER_LABELS: Record<"agents" | "workflows" | "knowledge-base" | "filestore", string> = {
+const ENTITY_FOLDER_LABELS: Record<"agents" | "workflows" | "knowledge-base" | "library", string> = {
   agents: "Agents",
   workflows: "Workflows",
   "knowledge-base": "Knowledge base",
-  filestore: "Filestore",
+  library: "Library",
 };
 
 /// Singular noun for the count pill in the title — "3 agents", "1 file".
-const ENTITY_FOLDER_NOUN: Record<"agents" | "workflows" | "knowledge-base" | "filestore", string> = {
+const ENTITY_FOLDER_NOUN: Record<"agents" | "workflows" | "knowledge-base" | "library", string> = {
   agents: "agent",
   workflows: "workflow",
   "knowledge-base": "article",
-  filestore: "file",
+  library: "file",
 };
 
 /// Friendly empty-state copy per top-level entity folder, mirroring the
 /// conversations-list notice. Each message says what lives here, why it
 /// is empty, and the natural way to populate it.
-const ENTITY_FOLDER_EMPTY_COPY: Record<"agents" | "workflows" | "knowledge-base" | "filestore", string> = {
+const ENTITY_FOLDER_EMPTY_COPY: Record<"agents" | "workflows" | "knowledge-base" | "library", string> = {
   agents:
     "No agents yet. Agents are reusable Claude prompts (triage, onboarding, audits) that drive the workflows in this project. Ask Claude in the chat — \"draft an agent that triages tickets by urgency\" — and it will scaffold one here.",
   workflows:
     "No workflows yet. Workflows orchestrate agents and connections to automate IT work end-to-end. Ask Claude — \"build a workflow that escalates SLA breaches\" — and it will land a workflow file here.",
   "knowledge-base":
     "No knowledge-base articles yet. This is where runbooks and reference docs live — Claude reads them when answering tickets. Drop in markdown files, or ask Claude to draft one (\"write a runbook for resetting a Slack workspace owner\").",
-  filestore:
-    "No files yet. Drag any file into this folder (PDFs, screenshots, logs) and Claude can reference them when answering tickets or building workflows.",
+  library:
+    "No library files yet. Drop runbook PDFs, scripts, or any reference doc you reach for repeatedly — Claude can pull from these when answering tickets or building workflows. (Per-ticket attachments live separately under filestores/attachments and surface inline in the conversation thread.)",
 };
 
 /// Anchor tag override for ReactMarkdown rendering. Three URL shapes
@@ -225,8 +226,46 @@ export function Viewer({
   const [editDraft, setEditDraft] = useState<string>("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Parallel state for row-edit mode — keyed by field id, mirrors the
+  // row content. Stored as `unknown` per field so `string[]`,
+  // booleans, etc. round-trip without coercion until save.
+  const [rowEditDraft, setRowEditDraft] = useState<Record<string, unknown>>({});
+
+  // Reply composer state for the conversation-thread view. The admin
+  // can answer the asker directly from the thread bubble pane —
+  // bypasses Claude entirely for the "I can answer this myself"
+  // case. The write lands as `role: "admin"` and the auto-commit
+  // driver bookkeeps it.
+  const [replyText, setReplyText] = useState("");
+  const [replySending, setReplySending] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
+  useEffect(() => {
+    setReplyText("");
+    setReplySending(false);
+    setReplyError(null);
+  }, [source]);
+  useEffect(() => {
+    // Fetch the admin's git email once and cache it so the composer
+    // doesn't re-shell for every thread open. Falls back to "admin"
+    // if git's user.email isn't set globally.
+    let cancelled = false;
+    (async () => {
+      try {
+        const { gitGlobalUserEmail } = await import("../lib/api");
+        const email = await gitGlobalUserEmail();
+        if (!cancelled) setAdminEmail(email);
+      } catch {
+        /* leave as null — composer falls back to "admin" */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   useEffect(() => {
     setEditDraft("");
+    setRowEditDraft({});
     setEditSaving(false);
     setEditError(null);
   }, [source]);
@@ -648,6 +687,54 @@ export function Viewer({
           />
         );
       }
+      if (mode === "edit") {
+        const collection = source.collection;
+        const rowKey = liveItem.key || liveItem.id;
+        const onSave = async () => {
+          if (!repo) {
+            setEditError("Cannot save: no repo open.");
+            return;
+          }
+          setEditSaving(true);
+          setEditError(null);
+          try {
+            const { entityWriteFile } = await import("../lib/api");
+            const json = JSON.stringify(rowEditDraft, null, 2);
+            await entityWriteFile(
+              repo,
+              `databases/${collection.name}`,
+              `${rowKey}.json`,
+              json,
+            );
+            setContent(json);
+            // Mirror the saved state back into the live row override
+            // so the View tab updates without a re-click. The original
+            // `source.item` is captured at click time and won't move.
+            setRowOverride({ ...liveItem, content: rowEditDraft });
+            setMode("table");
+          } catch (err) {
+            setEditError(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+          } finally {
+            setEditSaving(false);
+          }
+        };
+        const onCancel = () => {
+          setRowEditDraft({});
+          setEditError(null);
+          setMode("table");
+        };
+        return (
+          <RowEditForm
+            collection={collection}
+            draft={rowEditDraft}
+            onChange={setRowEditDraft}
+            onSave={onSave}
+            onCancel={onCancel}
+            saving={editSaving}
+            error={editError}
+          />
+        );
+      }
       return <pre className="viewer-content">{content}</pre>;
     }
 
@@ -943,6 +1030,65 @@ export function Viewer({
     // up in the viewer-header (see below) — keeping this body clean.
     if (source.kind === "conversation-thread") {
       const turns = source.turns;
+      const ticketId = source.ticketId;
+      const sendReply = async () => {
+        const trimmed = replyText.trim();
+        if (!trimmed || !repo) return;
+        setReplySending(true);
+        setReplyError(null);
+        try {
+          const { entityWriteFile } = await import("../lib/api");
+          const nowMs = Date.now();
+          const rand = Math.random().toString(36).slice(2, 6);
+          const msgId = `msg-${nowMs}-${rand}`;
+          const isoNow = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+          const sender = adminEmail ?? "admin";
+          const payload = {
+            id: msgId,
+            ticketId,
+            role: "admin",
+            sender,
+            timestamp: isoNow,
+            body: trimmed,
+          };
+          await entityWriteFile(
+            repo,
+            `databases/conversations/${ticketId}`,
+            `${msgId}.json`,
+            JSON.stringify(payload, null, 2),
+          );
+          setReplyText("");
+          // Bumping the ticket back to `open` (it might be at
+          // escalated / resolved / closed). Done as a best-effort
+          // optimistic write — the auto-commit driver picks both
+          // files up. If reading the ticket fails (e.g. file
+          // missing), skip without surfacing a hard error since the
+          // reply itself succeeded.
+          try {
+            const { fsRead } = await import("../lib/api");
+            const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
+            const raw = await fsRead(ticketPath);
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
+            parsed.status = "open";
+            parsed.updatedAt = isoNow;
+            if (typeof parsed.assignee !== "string" || !parsed.assignee) {
+              parsed.assignee = sender;
+            }
+            await entityWriteFile(
+              repo,
+              "databases/tickets",
+              `${ticketId}.json`,
+              JSON.stringify(parsed, null, 2),
+            );
+          } catch (e) {
+            console.warn("[viewer] reply: ticket update skipped:", e);
+          }
+        } catch (err) {
+          setReplyError(`Send failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setReplySending(false);
+        }
+      };
       return (
         <div className="viewer-thread-wrapper">
           {turns.length === 0 ? (
@@ -971,6 +1117,39 @@ export function Viewer({
               })}
             </div>
           )}
+          <div className="thread-reply-composer">
+            <textarea
+              className="thread-reply-input"
+              placeholder={`Reply as ${adminEmail ?? "admin"}…`}
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              onKeyDown={(e) => {
+                // Cmd/Ctrl + Enter sends — matches Slack / iMessage.
+                // Plain Enter inserts a newline so multi-line replies
+                // are easy.
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  void sendReply();
+                }
+              }}
+              rows={2}
+              disabled={replySending}
+            />
+            <div className="thread-reply-footer">
+              {replyError && (
+                <span className="thread-reply-error">{replyError}</span>
+              )}
+              <span className="thread-reply-hint">⌘↩ to send</span>
+              <button
+                type="button"
+                className="viewer-edit-btn viewer-edit-btn-primary"
+                onClick={() => void sendReply()}
+                disabled={replySending || !replyText.trim()}
+              >
+                {replySending ? "Sending…" : "Send"}
+              </button>
+            </div>
+          </div>
         </div>
       );
     }
@@ -1029,14 +1208,6 @@ export function Viewer({
             </button>
             <button
               role="tab"
-              aria-selected={mode === "raw"}
-              className={`viewer-tab ${mode === "raw" ? "active" : ""}`}
-              onClick={() => setMode("raw")}
-            >
-              Raw
-            </button>
-            <button
-              role="tab"
               aria-selected={mode === "edit"}
               className={`viewer-tab ${mode === "edit" ? "active" : ""}`}
               onClick={() => {
@@ -1056,19 +1227,48 @@ export function Viewer({
           <div className="viewer-tabs" role="tablist">
             <button
               role="tab"
+              aria-selected={mode === "table"}
+              className={`viewer-tab ${mode === "table" ? "active" : ""}`}
+              onClick={() => setMode("table")}
+            >
+              View
+            </button>
+            <button
+              role="tab"
+              aria-selected={mode === "edit"}
+              className={`viewer-tab ${mode === "edit" ? "active" : ""}`}
+              onClick={() => {
+                // Seed the form with the current row content the
+                // first time edit mode is entered. Re-clicking Edit
+                // while already editing keeps the in-progress draft.
+                if (mode !== "edit" && source && source.kind === "datastore-row") {
+                  const liveItem = rowOverride ?? source.item;
+                  const raw = liveItem.content;
+                  let parsed: Record<string, unknown> = {};
+                  if (raw && typeof raw === "object") {
+                    parsed = { ...(raw as Record<string, unknown>) };
+                  } else if (typeof raw === "string") {
+                    try {
+                      parsed = JSON.parse(raw) as Record<string, unknown>;
+                    } catch {
+                      parsed = {};
+                    }
+                  }
+                  setRowEditDraft(parsed);
+                }
+                setEditError(null);
+                setMode("edit");
+              }}
+            >
+              Edit
+            </button>
+            <button
+              role="tab"
               aria-selected={mode === "raw"}
               className={`viewer-tab ${mode === "raw" ? "active" : ""}`}
               onClick={() => setMode("raw")}
             >
               Raw
-            </button>
-            <button
-              role="tab"
-              aria-selected={mode === "table"}
-              className={`viewer-tab ${mode === "table" ? "active" : ""}`}
-              onClick={() => setMode("table")}
-            >
-              Table
             </button>
           </div>
         )}

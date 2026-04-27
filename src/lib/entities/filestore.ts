@@ -1,8 +1,15 @@
 // Filestore adapter for syncEngine. The remote API is the same `kb_list_remote`
 // shape (skills `/datacollection/{id}/items`) but the working-tree dir is
-// `filestore/` and downloads use `fs_store_download_to_local`. Filestore had
-// no shadow handling pre-engine; engine now provides it for free, with the
-// shadow filename mirroring KB's `<base>.server.<ext>` convention.
+// `filestores/library/` and downloads use `fs_store_download_to_local`.
+// Filestore had no shadow handling pre-engine; engine now provides it for
+// free, with the shadow filename mirroring KB's `<base>.server.<ext>`
+// convention.
+//
+// Layout split (2026-04-27): `filestores/library/` holds curated docs/scripts
+// and is what this adapter maps to. `filestores/attachments/<ticketId>/` is a
+// separate, server-managed surface for chat-intake uploads — those live
+// under conversations operationally and aren't routed through this
+// adapter (no shadow needed; auto-commit driver handles them).
 
 import {
   entityDeleteFile,
@@ -22,7 +29,7 @@ import {
   type RemoteItem,
 } from "../syncEngine";
 
-const DIR = "filestore";
+const DIR = "filestores/library";
 
 export type FilestoreCollection = {
   id: string;
@@ -36,7 +43,7 @@ export function filestoreAdapter(args: {
 }): EntityAdapter {
   const { creds, collection } = args;
   return {
-    prefix: "filestore",
+    prefix: "filestores/library",
 
     loadManifest: (repo) => fsStoreStateLoad(repo),
     saveManifest: (repo, m) => fsStoreStateSave(repo, m),

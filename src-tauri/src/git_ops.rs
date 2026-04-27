@@ -7,7 +7,7 @@ use std::process::Command;
 
 use serde::Serialize;
 
-const GITIGNORE: &str = ".DS_Store\n.openit/\n.claude/\nCLAUDE.md\nknowledge-base/*.server.*\nfilestore/*.server.*\nagents/*.server.*\nworkflows/*.server.*\ndatabases/**/*.server.json\n";
+const GITIGNORE: &str = ".DS_Store\n.openit/\n.claude/\nCLAUDE.md\nknowledge-base/*.server.*\nfilestores/**/*.server.*\nagents/*.server.*\nworkflows/*.server.*\ndatabases/**/*.server.json\n";
 
 fn git_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(".git")
@@ -209,6 +209,27 @@ pub fn git_add_and_commit(repo: String, message: String) -> Result<bool, String>
         return Err(stderr.into_owned());
     }
     Ok(true)
+}
+
+/// Read the user's global git `user.email` if set. Used by in-app
+/// flows that need an "admin identity" to stamp on a write (e.g. the
+/// conversation-thread reply composer). Returns None if the value is
+/// missing, blank, or matches the project-local placeholder
+/// `openit@local` — callers fall through to a generic identity.
+#[tauri::command]
+pub fn git_global_user_email() -> Result<Option<String>, String> {
+    let output = Command::new("git")
+        .args(["config", "--global", "user.email"])
+        .output()
+        .map_err(|e| format!("failed to run git: {}", e))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() || raw == "openit@local" {
+        return Ok(None);
+    }
+    Ok(Some(raw))
 }
 
 #[derive(Serialize, Clone, Debug)]

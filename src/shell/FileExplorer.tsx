@@ -493,10 +493,23 @@ export function FileExplorer({
 
     // Determine which directory was the drop target
     const targetRel = targetPath ? relPath(repo, targetPath) : null;
-    const isFilestoreTarget = targetRel?.startsWith("filestore") ?? false;
+    // The 2026-04-27 split made `filestores/` the parent and
+    // `filestores/library/` the canonical drop target for curated
+    // files. Drops on the legacy `filestore` path are remapped to
+    // library so any stale UI references still land somewhere useful.
+    const isFilestoreTarget =
+      (targetRel?.startsWith("filestores/library") ?? false) ||
+      (targetRel?.startsWith("filestores/attachments") ?? false) ||
+      (targetRel?.startsWith("filestores") ?? false) ||
+      (targetRel?.startsWith("filestore") ?? false);
 
     if (isFilestoreTarget) {
-      // Drop into filestore — no file type restriction
+      // Drop into filestore — no file type restriction. All filestore
+      // drops route to `filestores/library/` regardless of which
+      // subfolder the user hovered: that's the curated surface admins
+      // populate manually. The `filestores/attachments/` collection is
+      // server-managed (chat-intake uploads) and admins shouldn't
+      // mix curated docs into per-ticket folders by accident.
       for (let i = 0; i < files.length; i += 1) {
         const f = files[i];
         const filename = friendlyDroppedFilename(f.name, dragUrls[i]);
@@ -660,7 +673,12 @@ export function FileExplorer({
                     rel === "agents" ||
                     rel === "workflows" ||
                     rel === "knowledge-base" ||
-                    rel === "filestore"
+                    // The 2026-04-27 split: `filestores/library/` is
+                    // the curated entity-folder view (replaces the
+                    // legacy flat `filestore/`). The parent
+                    // `filestores/` itself just expands; per-ticket
+                    // attachment folders are explored manually.
+                    rel === "filestores/library"
                   ) {
                     onSelect(n.path);
                   }

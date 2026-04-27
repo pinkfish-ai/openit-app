@@ -42,7 +42,7 @@ Prefix maps to a manifest file:
 | prefix | manifest file |
 |---|---|
 | `kb` | `.openit/kb-state.json` |
-| `filestore` | `.openit/fs-state.json` |
+| `filestores/library` | `.openit/fs-state.json` |
 | `datastore` | `.openit/datastore-state.json` |
 | `agent` | `.openit/agent-state.json` |
 | `workflow` | `.openit/workflow-state.json` |

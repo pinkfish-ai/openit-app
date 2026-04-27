@@ -28,13 +28,15 @@
 //   - `databases/tickets/<id>.json`
 //   - `databases/conversations/<ticketId>/...` (whole subtree)
 //   - `databases/people/<email>.json`
+//   - `filestores/attachments/<ticketId>/...` (chat-intake uploads;
+//     they're operational, paired one-to-one with conversation turns)
 //
 // Out of scope (admin curates manually):
 //   - `agents/`, `workflows/` — entity definitions the admin authors.
 //   - `knowledge-base/` — KB articles are admin work; capture step in
 //     `/answer-ticket` is itself a deliberate write the admin
 //     reviews.
-//   - `filestore/` — uploads are user-driven attachment work.
+//   - `filestores/library/` — admin-curated docs/scripts.
 //   - `.openit/`, `.claude/`, `CLAUDE.md` — gitignored / admin
 //     editing surface.
 
@@ -65,6 +67,13 @@ function pathSpecForAutoCommit(repo: string, abs: string): string | null {
     // writes inside one ticket coalesces into a single commit.
     const m = rel.match(/^databases\/conversations\/([^/]+)/);
     if (m) return `databases/conversations/${m[1]}`;
+  }
+  if (rel.startsWith("filestores/attachments/")) {
+    // Same per-ticket roll-up: each attachment lives under
+    // `filestores/attachments/<ticketId>/<filename>`. A drag of
+    // multiple files coalesces into a single commit per thread.
+    const m = rel.match(/^filestores\/attachments\/([^/]+)/);
+    if (m) return `filestores/attachments/${m[1]}`;
   }
   return null;
 }

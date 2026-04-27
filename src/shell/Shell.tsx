@@ -332,7 +332,16 @@ export function Shell({
         // will repopulate the aggregate. So clearing optimistically is
         // safe and gives the snappy "banner gone now" UX the user
         // expected.
-        for (const p of ["kb", "filestore", "datastore", "agent", "workflow"]) {
+        for (const p of [
+          "kb",
+          // Filestore split: prefix matches what the adapter writes
+          // (`filestores/library`). Attachments under filestores/
+          // aren't sync-tracked yet and don't generate conflicts.
+          "filestores/library",
+          "datastore",
+          "agent",
+          "workflow",
+        ]) {
           clearConflictsForPrefix(p);
         }
         onSyncLine("─── push triggered by Claude ───");

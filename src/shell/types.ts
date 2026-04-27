@@ -50,11 +50,15 @@ export type ViewerSource =
   // list provides for the databases/conversations folder.
   | {
       kind: "entity-folder";
-      entity: "agents" | "workflows" | "knowledge-base" | "filestore";
+      // Top-level entity folders that render a card list. `library`
+      // is the curated filestore collection (`filestores/library/`);
+      // the operational `filestores/attachments/` collection has its
+      // own ticketid-grouped renderer and isn't part of this set.
+      entity: "agents" | "workflows" | "knowledge-base" | "library";
       // displayName drops the file extension and falls back to the
       // entity's own `name` field when readable (agents/workflows JSON);
       // description is the entity's `description` field, or the first
-      // markdown heading for knowledge-base, or empty for filestore.
+      // markdown heading for knowledge-base, or empty for library.
       files: { name: string; displayName: string; description: string; path: string }[];
     }
   // Top-level `databases/` directory. Each collection is its own

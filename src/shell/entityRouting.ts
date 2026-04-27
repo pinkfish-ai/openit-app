@@ -249,7 +249,22 @@ export async function resolvePathToSource(
   // own dedicated list view above; the rest share a single generic
   // entity-folder kind so the viewer can show a friendly empty-state
   // notice when nothing is inside yet.
-  if (rel === "agents" || rel === "workflows" || rel === "knowledge-base" || rel === "filestore") {
+  // Map the click target to the entity-folder `entity` key. The
+  // 2026-04-27 filestore split made the top-level dir `filestores/`
+  // (plural) with `library/` and `attachments/` inside. Library is
+  // the entity-folder surface; attachments has its own ticket-id
+  // grouping (handled separately, not as an entity-folder).
+  const entityFolderEntry: { entity: "agents" | "workflows" | "knowledge-base" | "library" } | null =
+    rel === "agents"
+      ? { entity: "agents" }
+      : rel === "workflows"
+        ? { entity: "workflows" }
+        : rel === "knowledge-base"
+          ? { entity: "knowledge-base" }
+          : rel === "filestores/library"
+            ? { entity: "library" }
+            : null;
+  if (entityFolderEntry) {
     try {
       const nodes = await fsList(path);
       const files: {
@@ -330,9 +345,9 @@ export async function resolvePathToSource(
       // Stable alphabetical order by display name so the layout doesn't
       // jump around when files are renamed in place.
       files.sort((a, b) => a.displayName.localeCompare(b.displayName));
-      return { kind: "entity-folder", entity: rel, files };
+      return { kind: "entity-folder", entity: entityFolderEntry.entity, files };
     } catch {
-      return { kind: "entity-folder", entity: rel, files: [] };
+      return { kind: "entity-folder", entity: entityFolderEntry.entity, files: [] };
     }
   }
 

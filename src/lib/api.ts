@@ -91,6 +91,13 @@ export async function gitDiffNameOnly(repo: string, baseSha: string): Promise<st
   return invoke("git_diff_name_only", { repo, baseSha });
 }
 
+/// User's global git email — used as a best-guess admin identity for
+/// in-app writes (conversation reply, etc.). Returns null when git's
+/// user.email is unset, blank, or the project-local placeholder.
+export async function gitGlobalUserEmail(): Promise<string | null> {
+  return invoke<string | null>("git_global_user_email");
+}
+
 export type AppPersistedState = {
   last_repo: string | null;
   pane_sizes: number[] | null;
@@ -336,7 +343,11 @@ export async function fsStoreInit(repo: string): Promise<string> {
 }
 
 export async function fsStoreListLocal(repo: string): Promise<KbLocalFile[]> {
-  return invoke("entity_list_local", { repo, subdir: "filestore" });
+  // The cloud-synced filestore lives at `filestores/library/` after
+  // the 2026-04-27 split. `attachments/` is a separate, server-managed
+  // surface (per-ticket conversation uploads) and isn't routed
+  // through the cloud sync engine.
+  return invoke("entity_list_local", { repo, subdir: "filestores/library" });
 }
 
 export async function fsStoreReadFile(repo: string, filename: string): Promise<string> {

@@ -912,20 +912,25 @@ body,
    for the conversation-thread source. Sized to match the View / Raw
    tabs so it visually belongs in that row. */
 .viewer-add-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-muted);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #ddd);
+  color: var(--text);
   border-radius: 5px;
-  padding: 3px 10px;
-  font-size: 11px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
   font-family: -apple-system, sans-serif;
   cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
 }
 
 .viewer-add-btn:hover {
-  background: var(--surface-soft);
-  color: var(--text);
-  border-color: var(--border);
+  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
+  border-color: var(--text-muted);
+}
+
+.viewer-add-btn:active {
+  background: var(--surface-soft, #f0f0f0);
 }
 
 /* Back-arrow button on the conversation-thread view — returns to
@@ -1025,6 +1030,152 @@ body,
 
 .viewer-edit-btn-primary:hover:not(:disabled) {
   filter: brightness(0.92);
+}
+
+/* Row edit form — one field per schema entry. Layout mirrors the
+   markdown edit footer so Save / Cancel buttons sit in the same
+   place across both edit modes. */
+.row-edit {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.row-edit-form {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row-edit-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.row-edit-required {
+  color: var(--accent, #c43e3e);
+  font-weight: 400;
+}
+
+.row-edit-input,
+.row-edit-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.row-edit-textarea {
+  resize: vertical;
+  min-height: 64px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.row-edit-input:focus,
+.row-edit-textarea:focus {
+  outline: none;
+  border-color: var(--accent, #c43e3e);
+}
+
+.row-edit-checkbox {
+  width: 16px;
+  height: 16px;
+  align-self: flex-start;
+}
+
+.row-edit-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.row-edit-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-soft, #f7f7f7);
+  border-top: 1px solid var(--border-subtle, #eee);
+}
+
+.row-edit-error {
+  flex: 1;
+  font-size: 12px;
+  color: var(--warn-text, #a85b00);
+}
+
+/* Reply composer at the bottom of the conversation-thread view —
+   sticky to the bottom of the scroll area so the input stays in
+   view as the thread grows. */
+.thread-reply-composer {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface, #fff);
+  border-top: 1px solid var(--border-subtle, #eee);
+  padding: 10px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thread-reply-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  resize: vertical;
+  min-height: 44px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.thread-reply-input:focus {
+  border-color: var(--text-muted);
+}
+
+.thread-reply-input:disabled {
+  opacity: 0.6;
+}
+
+.thread-reply-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.thread-reply-error {
+  flex: 1;
+  color: var(--warn-text, #a85b00);
+}
+
+.thread-reply-hint {
+  /* Faint hint about the keyboard shortcut. */
+  opacity: 0.7;
 }
 
 /* Conversation thread: chat-style bubbles for messages under
