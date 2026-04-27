@@ -17,7 +17,15 @@ export function PdfViewer({ data }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   // react-pdf needs { data: ArrayBuffer }
-  const file = useMemo(() => ({ data: data.buffer }), [data]);
+  const file = useMemo(
+    () => ({
+      data: data.buffer.slice(
+        data.byteOffset,
+        data.byteOffset + data.byteLength,
+      ) as ArrayBuffer,
+    }),
+    [data],
+  );
 
   if (error) {
     return (
