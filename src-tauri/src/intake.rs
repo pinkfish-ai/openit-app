@@ -584,10 +584,17 @@ async fn spawn_claude_chat(
 ) -> Result<String, String> {
     let claude_path = which::which("claude")
         .map_err(|_| "Claude CLI not found on PATH. Install claude (see https://docs.anthropic.com/claude/docs/claude-code) and ensure it's reachable from this app.".to_string())?;
+    // `--permission-mode bypassPermissions` so the headless run can
+    // Write/Edit ticket+conversation files and Bash the kb-search
+    // script without prompting. Safe in this context — scope is the
+    // user's own repo, the skill is OpenIT-bundled, and the only
+    // shell command is the local kb-search.mjs.
     let mut child = TokioCommand::new(&claude_path)
         .arg("-p")
         .arg("--output-format")
         .arg("text")
+        .arg("--permission-mode")
+        .arg("bypassPermissions")
         .arg("--model")
         .arg(model)
         .current_dir(repo)
