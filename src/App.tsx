@@ -18,6 +18,19 @@ const DEFAULT_BUBBLES: PromptBubble[] = [
   { label: "People", prompt: "/people" },
 ];
 
+// Default project identity when running local-only (no Pinkfish creds).
+// Folder lands at `~/OpenIT/local/`. Stable across launches so the same
+// local helpdesk is reopened on relaunch. If the user later connects to
+// Pinkfish, that opens a separate folder keyed by the cloud orgId; the
+// two are disjoint until Phase 6 designs a migration.
+const LOCAL_ORG_ID = "local";
+const LOCAL_ORG_NAME = "OpenIT (local)";
+
+// Dev escape-hatch: when set, behave as if no creds even if dev-env creds
+// exist. Lets a dev exercise the local-only path without clearing the
+// keychain.
+const FORCE_LOCAL_ONLY = import.meta.env.VITE_DEV_LOCAL_ONLY === "true";
+
 function basename(p: string): string {
   const parts = p.split("/").filter((s) => s.length > 0);
   return parts[parts.length - 1] ?? p;
@@ -28,6 +41,29 @@ function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubbl
     label: b.label,
     prompt: b.skill,
   }));
+}
+
+/// Fan out the cloud sync engines for a connected project. Centralized so
+/// the relaunch + fresh-bootstrap paths can't drift on which engines they
+/// start. Each engine swallows its own init error so one failure doesn't
+/// take down the others.
+function startCloudSyncs(creds: PinkfishCreds, repo: string, orgName: string): void {
+  const slug = basename(repo);
+  startKbSync({ creds, repo, orgSlug: slug, orgName }).catch((e) =>
+    console.error("kb sync init failed:", e),
+  );
+  startFilestoreSync({ creds, repo }).catch((e) =>
+    console.error("filestore sync init failed:", e),
+  );
+  startDatastoreSync({ creds, repo }).catch((e) =>
+    console.error("datastore sync init failed:", e),
+  );
+  startAgentSync({ creds, repo }).catch((e) =>
+    console.error("agent sync init failed:", e),
+  );
+  startWorkflowSync({ creds, repo }).catch((e) =>
+    console.error("workflow sync init failed:", e),
+  );
 }
 
 function App() {
@@ -56,7 +92,7 @@ function App() {
 
   useEffect(() => {
     Promise.all([stateLoad(), startAuth(), loadCreds()])
-      .then(async ([s, _token, creds]) => {
+      .then(async ([s, _token, rawCreds]) => {
         // Repos created before we moved out of ~/Documents are stale — TCC blocks
         // fs/git ops there. Discard so we re-bootstrap into the new ~/OpenIT/ root.
         const stale = s.last_repo?.includes("/Documents/OpenIT/") ?? false;
@@ -64,83 +100,50 @@ function App() {
         if (stale) {
           console.log("[app] discarding legacy ~/Documents/OpenIT/ last_repo — connect via modal to bootstrap into ~/OpenIT/");
         }
-        console.log("[app] startup state:", { hasRepo: !!lastRepo, hasCreds: !!creds, orgId: creds?.orgId });
+        // Honor the dev local-only flag by treating creds as absent.
+        const creds = FORCE_LOCAL_ONLY ? null : rawCreds;
+        if (FORCE_LOCAL_ONLY && rawCreds) {
+          console.log("[app] VITE_DEV_LOCAL_ONLY set — ignoring stored creds");
+        }
+        console.log("[app] startup state:", {
+          hasRepo: !!lastRepo,
+          hasCreds: !!creds,
+          orgId: creds?.orgId,
+          localOnly: !creds,
+        });
         setRepo(lastRepo);
-        setSavedCreds(creds);
-        // If we relaunched into a fully-connected state with a project folder,
-        // skip the onboarding screen entirely AND restart KB sync against the
-        // existing folder so polling resumes without onboarding.
+        setSavedCreds(rawCreds);
+
+        const finish = () => setLoaded(true);
+
         if (creds && lastRepo) {
+          // Cloud-connected relaunch — skip onboarding and resume syncs.
+          // We don't have orgName cached on relaunch — use the slug as
+          // the user-facing label until something better is fetched.
           setBypassOnboarding(true);
-          // We don't have orgName cached on relaunch — re-fetch it lazily.
-          // The KB collection is already named openit-<slug> where
-          // slug == basename(repo). Use that as both slug and a placeholder
-          // name; resolveProjectKb will find the existing collection by name.
-          const slug = basename(lastRepo);
-          startKbSync({
-            creds,
-            repo: lastRepo,
-            orgSlug: slug,
-            orgName: slug,
-          }).catch((e) => console.error("kb sync init failed:", e));
-          startFilestoreSync({
-            creds,
-            repo: lastRepo,
-          }).catch((e) => console.error("filestore sync init failed:", e));
-          startDatastoreSync({
-            creds,
-            repo: lastRepo,
-          }).catch((e) => console.error("datastore sync init failed:", e));
-          startAgentSync({
-            creds,
-            repo: lastRepo,
-          }).catch((e) => console.error("agent sync init failed:", e));
-          startWorkflowSync({
-            creds,
-            repo: lastRepo,
-          }).catch((e) => console.error("workflow sync init failed:", e));
-        } else if (creds && !lastRepo && !repo && !stale) {
-          // First run with dev creds — auto-bootstrap. Skipped when stale so
-          // the user lands on the connect screen and re-connects deliberately.
+          startCloudSyncs(creds, lastRepo, basename(lastRepo));
+          finish();
+          return;
+        }
+
+        if (creds && !lastRepo && !stale) {
+          // First run with dev creds — auto-bootstrap into the cloud-keyed folder.
           try {
             console.log("[app] bootstrap on startup with dev creds");
             const result = await projectBootstrap({
               orgName: creds.orgId || "default",
               orgId: creds.orgId,
             });
-            console.log("[app] startup bootstrap result", result);
             setRepo(result.path);
             setConnected(true);
             setBypassOnboarding(true);
-            // Persist new repo path so we don't keep treating last_repo as stale.
             await stateSave({
               last_repo: result.path,
               pane_sizes: s.pane_sizes ?? null,
               pinned_bubbles: s.pinned_bubbles ?? null,
               onboarding_complete: s.onboarding_complete ?? false,
             });
-            startKbSync({
-              creds,
-              repo: result.path,
-              orgSlug: basename(result.path),
-              orgName: creds.orgId,
-            }).catch((e) => console.error("kb sync init failed:", e));
-            startFilestoreSync({
-              creds,
-              repo: result.path,
-            }).catch((e) => console.error("filestore sync init failed:", e));
-            startDatastoreSync({
-              creds,
-              repo: result.path,
-            }).catch((e) => console.error("datastore sync init failed:", e));
-            startAgentSync({
-              creds,
-              repo: result.path,
-            }).catch((e) => console.error("agent sync init failed:", e));
-            startWorkflowSync({
-              creds,
-              repo: result.path,
-            }).catch((e) => console.error("workflow sync init failed:", e));
+            startCloudSyncs(creds, result.path, creds.orgId);
             syncSkillsToDisk(result.path, creds)
               .then((manifest) => {
                 console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
@@ -150,8 +153,57 @@ function App() {
           } catch (e) {
             console.error("[app] startup bootstrap failed:", e);
           }
+          finish();
+          return;
         }
-        setLoaded(true);
+
+        // No-creds / local-only path. Fresh install or VITE_DEV_LOCAL_ONLY:
+        // bootstrap a default local project at ~/OpenIT/local/, sync the
+        // bundled plugin, skip onboarding. The user can opt into Pinkfish
+        // later via the header pill (which still routes through the
+        // existing PinkfishOauthModal).
+        try {
+          console.log("[app] local-only bootstrap");
+          // If lastRepo is a cloud-keyed folder we can't sync without
+          // creds, but the files are still readable. Prefer it over a
+          // fresh local folder so a user who disconnected doesn't lose
+          // access to their existing data.
+          let projectPath: string;
+          let freshBootstrap = false;
+          if (lastRepo) {
+            projectPath = lastRepo;
+          } else {
+            const result = await projectBootstrap({
+              orgName: LOCAL_ORG_NAME,
+              orgId: LOCAL_ORG_ID,
+            });
+            projectPath = result.path;
+            freshBootstrap = result.created;
+            await stateSave({
+              last_repo: projectPath,
+              pane_sizes: s.pane_sizes ?? null,
+              pinned_bubbles: s.pinned_bubbles ?? null,
+              onboarding_complete: s.onboarding_complete ?? false,
+            });
+          }
+          setRepo(projectPath);
+          setBypassOnboarding(true);
+          // Sync the bundled plugin only on fresh bootstrap. On relaunch
+          // we trust whatever's already on disk so user edits to skills /
+          // agents / schemas survive across launches. Plugin upgrades are
+          // a Phase 3b concern (versioning + diff prompt).
+          if (freshBootstrap) {
+            syncSkillsToDisk(projectPath, null)
+              .then((manifest) => {
+                console.log("[app] bundled skill sync complete, bubbles:", manifest.bubbles);
+                setBubbles(convertBubblesForPrompt(manifest.bubbles));
+              })
+              .catch((e) => console.error("bundled skill sync failed:", e));
+          }
+        } catch (e) {
+          console.error("[app] local-only bootstrap failed:", e);
+        }
+        finish();
       })
       .catch(() => setLoaded(true));
     const unsub = subscribeToken((t) => setConnected(t !== null));
@@ -190,28 +242,7 @@ function App() {
       });
       const fullCreds = await loadCreds();
       if (fullCreds) {
-        startKbSync({
-          creds: fullCreds,
-          repo: result.path,
-          orgSlug: basename(result.path),
-          orgName: incoming,
-        }).catch((e) => console.error("kb sync init failed:", e));
-        startFilestoreSync({
-          creds: fullCreds,
-          repo: result.path,
-        }).catch((e) => console.error("filestore sync init failed:", e));
-        startDatastoreSync({
-          creds: fullCreds,
-          repo: result.path,
-        }).catch((e) => console.error("datastore sync init failed:", e));
-        startAgentSync({
-          creds: fullCreds,
-          repo: result.path,
-        }).catch((e) => console.error("agent sync init failed:", e));
-        startWorkflowSync({
-          creds: fullCreds,
-          repo: result.path,
-        }).catch((e) => console.error("workflow sync init failed:", e));
+        startCloudSyncs(fullCreds, result.path, incoming);
         syncSkillsToDisk(result.path, fullCreds)
           .then((manifest) => {
             console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
