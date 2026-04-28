@@ -103,6 +103,14 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
             // /report skill. Always create so the sidebar entry isn't
             // empty on a fresh project.
             "reports",
+            // MCP-server catalog. The actual config lives in
+            // `.mcp.json` at the project root (Claude Code owns the
+            // schema); this directory is just a placeholder so the
+            // file explorer shows `tools/` alongside the other entity
+            // directories. Workbench routes clicks through to the
+            // synthetic { kind: "tools" } source regardless of
+            // whether the dir is empty.
+            "tools",
         ] {
             fs::create_dir_all(path.join(dir))
                 .map_err(|e| format!("create_dir failed for {}: {}", dir, e))?;
@@ -120,6 +128,10 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     // Same idempotent guard for `reports/` so projects bootstrapped
     // before the reports feature shipped get the dir on next open.
     let _ = fs::create_dir_all(path.join("reports"));
+    // And the same for `tools/` so projects bootstrapped before the
+    // MCP-tools catalog shipped pick it up on next open without
+    // requiring a reconnect.
+    let _ = fs::create_dir_all(path.join("tools"));
 
     // One-time migration: legacy `filestore/<file>` content moves into
     // the new `filestores/library/<file>` location. Idempotent — runs
