@@ -583,6 +583,8 @@ export function Viewer({
       case "knowledge-bases-list": return "Knowledge";
       case "agent-trace":
         return `Agent trace — ${source.subject}`;
+      case "agent-trace-list":
+        return `Agent traces — ${source.subject} (${source.docs.length} turn${source.docs.length === 1 ? "" : "s"})`;
       case "people-list":        return "People";
       case "cloud-cta": return "Connect to Pinkfish Cloud";
       case "getting-started": return "Getting started";
@@ -1769,6 +1771,97 @@ export function Viewer({
                 );
               })}
             </ol>
+          )}
+        </div>
+      );
+    }
+
+    // Agent-trace-list — every per-turn trace for one ticket,
+    // stacked oldest-first with a separator between turns. Click
+    // path: file explorer → `.openit/agent-traces/<ticketId>/`
+    // (the folder, not the individual trace files). Reuses the
+    // same step formatting as the single-trace view.
+    if (source.kind === "agent-trace-list") {
+      const formatTs = (iso: string) => {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        return d.toLocaleTimeString([], {
+          hour: "2-digit", minute: "2-digit", second: "2-digit",
+        });
+      };
+      return (
+        <div className="agent-trace-view">
+          <div className="agent-trace-header">
+            <div className="agent-trace-subject">{source.subject}</div>
+            <div className="agent-trace-meta">
+              <span className="agent-trace-time">
+                {source.docs.length} turn{source.docs.length === 1 ? "" : "s"}
+              </span>
+            </div>
+          </div>
+          {source.docs.length === 0 ? (
+            <div className="viewer-summary">
+              <p className="summary-desc">No traces recorded for this ticket yet.</p>
+            </div>
+          ) : (
+            source.docs.map((entry, idx) => {
+              const { doc, name } = entry;
+              if (!doc) {
+                return (
+                  <section key={name} className="agent-trace-list-turn">
+                    <header className="agent-trace-list-divider">
+                      Turn {idx + 1} · {name} · (unparseable)
+                    </header>
+                  </section>
+                );
+              }
+              const items = doc.events.filter(
+                (e) => e.kind === "tool_use" || e.kind === "text" || e.kind === "result",
+              );
+              return (
+                <section key={name} className="agent-trace-list-turn">
+                  <header className="agent-trace-list-divider">
+                    <span className="agent-trace-list-turn-num">Turn {idx + 1}</span>
+                    <span className={`agent-trace-outcome agent-trace-outcome-${doc.outcome}`}>
+                      {doc.outcome}
+                    </span>
+                    <span className="agent-trace-model">{doc.model}</span>
+                    <span className="agent-trace-time">
+                      {formatTs(doc.started_at)} → {formatTs(doc.completed_at)}
+                    </span>
+                  </header>
+                  {items.length === 0 ? (
+                    <p className="summary-desc">No actions recorded for this turn.</p>
+                  ) : (
+                    <ol className="agent-trace-timeline">
+                      {items.map((e, i) => {
+                        const verb = e.verb ?? (e.tool ? `Running ${e.tool}` : null);
+                        const isFinal = e.kind === "result";
+                        const isText = e.kind === "text";
+                        const label = isFinal ? "Replied" : isText ? "Thinking" : verb || e.kind;
+                        const snippet = (() => {
+                          if (!e.text) return null;
+                          const first = e.text.split("\n")[0]?.trim() ?? "";
+                          return first.length > 140 ? `${first.slice(0, 137)}…` : first;
+                        })();
+                        return (
+                          <li
+                            key={`${e.ts}-${i}`}
+                            className={`agent-trace-step agent-trace-step-${e.kind}`}
+                          >
+                            <span className="agent-trace-step-time">{formatTs(e.ts)}</span>
+                            <span className="agent-trace-step-label">{label}</span>
+                            {snippet && (
+                              <span className="agent-trace-step-snippet">{snippet}</span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
+                </section>
+              );
+            })
           )}
         </div>
       );
