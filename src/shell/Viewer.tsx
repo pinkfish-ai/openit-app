@@ -589,6 +589,29 @@ export function Viewer({
   // --- Tabs ---
   const showFileTabs = source.kind === "file" && isMarkdown(source.path);
   const showRowTabs = source.kind === "datastore-row";
+  const showPeopleTabs = source.kind === "people-list";
+  const showConversationsFilter = source.kind === "conversations-list";
+
+  // Pre-compute conversation status counts so the header pills can
+  // display them without re-walking on each render frame. Memoising
+  // would be overkill — the array is small and reads from the same
+  // reference until fsTick triggers a new resolver run.
+  const conversationCounts: Record<
+    "all" | "open" | "resolved" | "escalated",
+    number
+  > = { all: 0, open: 0, resolved: 0, escalated: 0 };
+  if (source.kind === "conversations-list") {
+    conversationCounts.all = source.threads.length;
+    for (const t of source.threads) {
+      if (t.status === "open" || t.status === "agent-responding") {
+        conversationCounts.open += 1;
+      } else if (t.status === "resolved" || t.status === "closed") {
+        conversationCounts.resolved += 1;
+      } else if (t.status === "escalated") {
+        conversationCounts.escalated += 1;
+      }
+    }
+  }
   // The sync stream and the diff view are the two cases where the
   // user's natural next step is "paste this into Claude". A copy
   // button here saves a triple-click + ⌘C and avoids selection
@@ -931,28 +954,9 @@ export function Viewer({
           </div>
         );
       }
-      // Counts per status drive the badges on the filter buttons. We
-      // walk threads once for both the counts and the filtered list to
-      // keep the render tight on big projects.
-      const counts: Record<"all" | "open" | "resolved" | "escalated", number> = {
-        all: source.threads.length,
-        open: 0,
-        resolved: 0,
-        escalated: 0,
-      };
-      for (const t of source.threads) {
-        if (t.status === "open" || t.status === "agent-responding") {
-          // Group `agent-responding` (transient processing) under `open`
-          // so a tiny burst of in-flight tickets doesn't surface its
-          // own column. The dedicated activity banner already covers
-          // the in-flight case visually.
-          counts.open += 1;
-        } else if (t.status === "resolved" || t.status === "closed") {
-          counts.resolved += 1;
-        } else if (t.status === "escalated") {
-          counts.escalated += 1;
-        }
-      }
+      // Status filter pills live in the viewer-header now (see
+      // `showConversationsFilter` below). The body just renders the
+      // filtered list.
       const matchesFilter = (status: string) => {
         if (conversationsFilter === "all") return true;
         if (conversationsFilter === "open") {
@@ -967,26 +971,8 @@ export function Viewer({
         return true;
       };
       const visibleThreads = source.threads.filter((t) => matchesFilter(t.status || ""));
-      const filterButton = (key: "all" | "open" | "resolved" | "escalated", label: string) => (
-        <button
-          key={key}
-          type="button"
-          className={`conv-filter-btn${conversationsFilter === key ? " conv-filter-btn-active" : ""}`}
-          onClick={() => setConversationsFilter(key)}
-          aria-pressed={conversationsFilter === key}
-        >
-          {label}
-          <span className="conv-filter-count">{counts[key]}</span>
-        </button>
-      );
       return (
         <div className="viewer-summary viewer-conversations">
-          <div className="conv-filter-bar" role="tablist">
-            {filterButton("all", "All")}
-            {filterButton("open", "Open")}
-            {filterButton("resolved", "Resolved")}
-            {filterButton("escalated", "Escalated")}
-          </div>
           {visibleThreads.length === 0 ? (
             <p className="summary-desc">No threads match this filter.</p>
           ) : (
@@ -1024,42 +1010,13 @@ export function Viewer({
       );
     }
 
-    // People directory — card or table view, toggled in the header.
-    // Cards default for the at-a-glance read; admins flipping in to
-    // edit a row click into the table for the full datastore-table
-    // experience (sortable cells, edit affordances).
+    // People directory — card or table view, toggled in the
+    // top-right of the viewer header (see `showPeopleTabs` below).
     if (source.kind === "people-list") {
       const view = peopleView;
-      const toggle = (
-        <div className="people-view-toggle" role="tablist">
-          <button
-            type="button"
-            className={`people-view-btn${view === "cards" ? " people-view-btn-active" : ""}`}
-            onClick={() => setPeopleView("cards")}
-            aria-pressed={view === "cards"}
-          >
-            Cards
-          </button>
-          <button
-            type="button"
-            className={`people-view-btn${view === "table" ? " people-view-btn-active" : ""}`}
-            onClick={() => setPeopleView("table")}
-            aria-pressed={view === "table"}
-          >
-            Table
-          </button>
-        </div>
-      );
-
       if (view === "table") {
-        // Re-use the existing DataTable component the
-        // datastore-table source path uses. People are loaded from
-        // disk (no Pinkfish pagination), so hasMore stays false and
-        // the row click writes the file path into the active
-        // session — mirroring the datastore-table behaviour.
         return (
           <div className="viewer-summary viewer-people">
-            {toggle}
             <DataTable
               collection={source.collection}
               items={source.items}
@@ -1075,7 +1032,6 @@ export function Viewer({
       if (source.people.length === 0) {
         return (
           <div className="viewer-summary viewer-people">
-            {toggle}
             <p className="summary-desc">
               No people yet. Anyone who files a ticket lands here so we can
               identify askers consistently across tickets and channels.
@@ -1086,7 +1042,6 @@ export function Viewer({
 
       return (
         <div className="viewer-summary viewer-people">
-          {toggle}
           <div className="viewer-thread-list">
             {source.people.map((p) => (
               <button
@@ -1799,6 +1754,42 @@ export function Viewer({
             >
               Raw
             </button>
+          </div>
+        )}
+        {showPeopleTabs && (
+          <div className="viewer-tabs" role="tablist">
+            <button
+              role="tab"
+              aria-selected={peopleView === "cards"}
+              className={`viewer-tab ${peopleView === "cards" ? "active" : ""}`}
+              onClick={() => setPeopleView("cards")}
+            >
+              Cards
+            </button>
+            <button
+              role="tab"
+              aria-selected={peopleView === "table"}
+              className={`viewer-tab ${peopleView === "table" ? "active" : ""}`}
+              onClick={() => setPeopleView("table")}
+            >
+              Table
+            </button>
+          </div>
+        )}
+        {showConversationsFilter && (
+          <div className="viewer-tabs" role="tablist">
+            {(["all", "open", "resolved", "escalated"] as const).map((key) => (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={conversationsFilter === key}
+                className={`viewer-tab ${conversationsFilter === key ? "active" : ""}`}
+                onClick={() => setConversationsFilter(key)}
+              >
+                {key === "all" ? "All" : key[0].toUpperCase() + key.slice(1)}
+                <span className="viewer-tab-count">{conversationCounts[key]}</span>
+              </button>
+            ))}
           </div>
         )}
         {showCopy && (

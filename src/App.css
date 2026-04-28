@@ -3190,39 +3190,23 @@ body::before {
   border-color: var(--border, #ddd);
 }
 
-/* People view toggle (Cards / Table) — same pill styling as the
-   conversations status filter. Sits at the top of the
-   `viewer-people` body and flips the underlying render between the
-   card list and the DataTable component. */
-.people-view-toggle {
-  display: inline-flex;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.people-view-btn {
-  display: inline-flex;
-  align-items: center;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 3px 12px;
-  font: inherit;
-  font-size: 12px;
+/* Count badge inside a viewer-tab — used by the conversations
+   status filter to show the per-bucket count without breaking the
+   uniform tab silhouette. Placed inline with the tab label. */
+.viewer-tab-count {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 500;
   color: var(--text-muted);
-  cursor: pointer;
-  transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+  background: var(--tag-bg, rgba(0, 0, 0, 0.05));
+  padding: 0 6px;
+  border-radius: 999px;
+  line-height: 14px;
 }
 
-.people-view-btn:hover {
+.viewer-tab.active .viewer-tab-count {
   color: var(--text);
-  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
-}
-
-.people-view-btn-active {
-  color: var(--text);
-  background: var(--card-bg, #fafafa);
-  border-color: var(--border, #ddd);
+  background: var(--tag-bg, rgba(0, 0, 0, 0.08));
 }
 
 .conv-filter-count {
