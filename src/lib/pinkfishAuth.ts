@@ -1,4 +1,10 @@
-import { keychainDelete, keychainGet, keychainSet, pinkfishOauthExchange } from "./api";
+import {
+  keychainDelete,
+  keychainGet,
+  keychainSet,
+  pinkfishListOrgs,
+  pinkfishOauthExchange,
+} from "./api";
 
 const SLOT_CLIENT_ID = "pinkfish.client_id";
 const SLOT_CLIENT_SECRET = "pinkfish.client_secret";
@@ -202,4 +208,24 @@ export async function startAuth(): Promise<PinkfishTokenState | null> {
     console.error("pinkfish initial token refresh failed:", e);
     return null;
   }
+}
+
+// V1 Connect to Cloud: auth-only handshake. Stores creds, mints a JWT,
+// resolves the org's display name. Does NOT call any *Sync engines —
+// V1 is intentionally auth-only. The new browser-handoff path and the
+// legacy manual-paste modal both route through here so they stay
+// consistent on what "connected" means. Sync re-validation is V2.
+export async function connectAndValidate(
+  creds: PinkfishCreds,
+): Promise<{ token: PinkfishTokenState; orgName: string | null }> {
+  const token = await refresh(creds);
+  const urls = derivedUrls(creds.tokenUrl);
+  const orgs = await pinkfishListOrgs({
+    accessToken: token.accessToken,
+    orgId: creds.orgId,
+    accountUrl: urls.accountUrl,
+  });
+  const me = orgs.find((o) => o.id === creds.orgId);
+  await saveCreds(creds);
+  return { token, orgName: me?.name ?? null };
 }

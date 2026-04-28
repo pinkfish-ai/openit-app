@@ -7,6 +7,7 @@ mod git_ops;
 mod intake;
 mod kb;
 mod keychain;
+mod oauth_callback;
 mod pinkfish;
 mod project;
 mod pty;
@@ -37,6 +38,7 @@ pub fn run() {
         .manage(pty::PtyState::default())
         .manage(watcher::WatcherState::default())
         .manage(intake::IntakeState::default())
+        .manage(oauth_callback::OauthCallbackState::default())
         .manage(slack::SlackSupervisorState::default())
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
@@ -110,6 +112,9 @@ pub fn run() {
             intake::intake_start,
             intake::intake_stop,
             intake::intake_url,
+            oauth_callback::oauth_callback_start,
+            oauth_callback::oauth_callback_await,
+            oauth_callback::oauth_callback_cancel,
             agent_trace::agent_trace_latest,
             skill_canvas::skill_state_read,
             skill_canvas::skill_state_write,

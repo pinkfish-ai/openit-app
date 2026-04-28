@@ -615,3 +615,37 @@ export async function agentTraceLatest(
 ): Promise<TraceDoc | null> {
   return invoke("agent_trace_latest", { repo, ticketId });
 }
+
+// ---------------------------------------------------------------------------
+// OAuth callback listener (V1 Connect to Cloud)
+// ---------------------------------------------------------------------------
+
+export type OauthCallbackStartResult = { url: string; port: number };
+export type OauthCallbackCreds = {
+  client_id: string;
+  client_secret: string;
+  org_id: string;
+  token_url: string;
+};
+
+/// Spin up a localhost HTTP listener that the web app's /openit/connect
+/// page POSTs Pinkfish creds to after the user authorizes. Returns the
+/// callback URL to embed in the browser query string.
+export async function oauthCallbackStart(
+  expectedState: string,
+): Promise<OauthCallbackStartResult> {
+  return invoke("oauth_callback_start", { expectedState });
+}
+
+/// Block until the listener receives a state-matching callback (or
+/// times out after 5 minutes). Resolves with the creds from the form
+/// body. The listener is torn down regardless of outcome.
+export async function oauthCallbackAwait(): Promise<OauthCallbackCreds> {
+  return invoke("oauth_callback_await");
+}
+
+/// User-cancellable: drops the listener mid-flow without waiting for
+/// timeout. Idempotent — safe to call when no listener is running.
+export async function oauthCallbackCancel(): Promise<void> {
+  return invoke("oauth_callback_cancel");
+}
