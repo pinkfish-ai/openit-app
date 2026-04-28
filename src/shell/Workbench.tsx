@@ -11,16 +11,22 @@ type Station = {
   /** If set, opens this child path on click instead of `rel` (used to
    *  jump into the canonical sub-folder when an entity has just one). */
   openRel?: string;
-  /** What to count among direct children. `dirs` = subdir count (e.g.
-   *  inbox's per-ticket folders, KB collections); `json-rows` = direct
-   *  `.json` files excluding schema + conflict shadows; `any` = every
-   *  non-dotfile direct child (for filestores). */
-  countMode: "dirs" | "json-rows" | "any";
+  /** What to count among direct children. `dirs` = subdir count
+   *  (e.g. KB collections, filestore collections); `json-rows` =
+   *  direct `.json` files excluding schema + conflict shadows;
+   *  `files` = any non-dir, non-dotfile, non-conflict-shadow file
+   *  (reports / library entries — typically `.md`). */
+  countMode: "dirs" | "json-rows" | "files";
 };
 
 const STATIONS: Station[] = [
-  { id: "inbox", label: "Inbox", glyph: "✉", rel: "databases/conversations", countMode: "dirs" },
-  { id: "tickets", label: "Tickets", glyph: "◉", rel: "databases/tickets", countMode: "json-rows" },
+  // "Tickets Inbox" reads from databases/tickets/ rather than
+  // databases/conversations/, so the count matches the ticket-list
+  // view (one card per ticket, regardless of how many turns each has).
+  // Click still opens databases/tickets which is wired to the
+  // conversations-list-style overview.
+  { id: "inbox", label: "Tickets Inbox", glyph: "✉", rel: "databases/tickets", countMode: "json-rows" },
+  { id: "reports", label: "Reports", glyph: "▦", rel: "reports", countMode: "files" },
   { id: "people", label: "People", glyph: "◔", rel: "databases/people", countMode: "json-rows" },
   { id: "knowledge", label: "Knowledge", glyph: "❋", rel: "knowledge-bases", countMode: "dirs" },
   { id: "files", label: "Files", glyph: "▤", rel: "filestores", countMode: "dirs" },
@@ -43,17 +49,13 @@ function directChildren(items: FileNode[], rootAbs: string): FileNode[] {
 
 function countWithMode(items: FileNode[], mode: Station["countMode"]): number {
   return items.filter((n) => {
-    if (n.name.startsWith(".")) return false;
+    if (n.name.startsWith(".") || n.name === "_schema.json") return false;
+    if (n.name.includes(".server.")) return false;
     if (mode === "dirs") return n.is_dir;
-    if (mode === "json-rows") {
-      if (n.is_dir) return false;
-      if (!n.name.endsWith(".json")) return false;
-      if (n.name === "_schema.json") return false;
-      if (n.name.includes(".server.")) return false;
-      return true;
-    }
-    // "any": every non-dotfile direct child counts.
-    return true;
+    if (mode === "json-rows") return !n.is_dir && n.name.endsWith(".json");
+    // "files": any non-dir direct child (reports = `.md`, library =
+    // mixed). Excludes the system files filtered above.
+    return !n.is_dir;
   }).length;
 }
 
@@ -133,7 +135,7 @@ export function Workbench({
         <div className="workbench-today-hero">
           <span className="workbench-today-number">{queueCount}</span>
           <span className="workbench-today-label">
-            {queueCount === 1 ? "thread in your inbox" : "threads in your inbox"}
+            {queueCount === 1 ? "ticket in your inbox" : "tickets in your inbox"}
           </span>
         </div>
         {escalatedCount > 0 && (
