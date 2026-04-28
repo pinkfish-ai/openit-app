@@ -19,9 +19,15 @@
 import type { SkillCanvasState } from "./skillCanvas";
 import type { SlackConfig } from "./api";
 
-/// State for a fresh setup — no .openit/slack.json yet. Five
+/// State for a fresh setup — no .openit/slack.json yet. Four
 /// steps, the first marked active. Pill click writes this, the
 /// canvas renders it, the skill drives it forward.
+///
+/// Paste-as-you-go ordering: the bot-token field lives on the
+/// install step (paste as soon as you copy it from Slack) and
+/// the app-token field lives on the app-token step (paste as
+/// soon as Slack generates it). No more "remember this token
+/// across two more steps" friction.
 ///
 /// Bodies are intentionally detailed: most OpenIT admins haven't
 /// installed a Slack app before, so each step spells out the
@@ -45,22 +51,17 @@ export function buildSetupState(): SkillCanvasState {
       },
       {
         id: "install",
-        title: "Install the app and copy the bot token",
+        title: "Install the app and paste the bot token",
         status: "pending",
-        body: "1. After Slack creates the app it lands on the app's settings page. In the left sidebar under **Settings**, click **Install App**.\n2. Click **Install to <your workspace>** and approve the permissions Slack lists.\n3. The page reloads to **Installed App Settings** and shows your **Bot User OAuth Token** right at the top — it starts with `xoxb-`.\n4. Click **Copy** next to the token. Hold onto it for a moment — you'll paste it below in the **Paste both tokens** step.\n\nThe bot token never goes into chat history. It'll go straight from your clipboard into a password field on this page, then into macOS Keychain.",
+        body: "1. After Slack creates the app it lands on the app's settings page. In the left sidebar under **Settings**, click **Install App**.\n2. Click **Install to <your workspace>** and approve the permissions Slack lists.\n3. The page reloads to **Installed App Settings** and shows your **Bot User OAuth Token** right at the top — it starts with `xoxb-`.\n4. Click **Copy** next to the token, then come back here and paste it into the field below.\n\nClick **Save bot token**. OpenIT validates the token against Slack right away (so you catch typos before generating the second token), and stages it in memory until you have the app-level token in the next step. Tokens never go into chat history.",
+        action: { kind: "bot-token-input" },
       },
       {
         id: "app-token",
-        title: "Generate the app-level token (Socket Mode)",
+        title: "Generate the app-level token and connect",
         status: "pending",
-        body: "Slack's Socket Mode uses a second token (an app-level token, prefix `xapp-`) so the listener can open a websocket without a public webhook URL. Generate it now:\n\n1. In the left sidebar under **Settings**, click **Basic Information**.\n2. Scroll down to the **App-Level Tokens** section (it's below **Display Information**).\n3. Click **Generate Token and Scopes**.\n4. Give the token a **Token Name** like `socket` (anything works — it's just a label).\n5. Click **Add Scope** and pick `connections:write`. That's the only scope it needs.\n6. Click **Generate**.\n7. Copy the token Slack shows you — it starts with `xapp-`. You won't see it again after closing the dialog, so copy it now.",
-      },
-      {
-        id: "paste-tokens",
-        title: "Paste both tokens into OpenIT",
-        status: "pending",
-        body: "Paste both tokens into the fields below — the bot token (`xoxb-...`) on top and the app-level token (`xapp-...`) below. Click **Connect** and OpenIT will:\n\n1. Validate the bot token against Slack (`auth.test`) so we catch typos before starting the listener.\n2. Store both tokens in macOS Keychain — they live there, not in any file on disk.\n3. Auto-start the local listener.\n\nNeither token is ever written to chat history, the JSON state file, or anywhere git can see.",
-        action: { kind: "token-input" },
+        body: "Slack's Socket Mode uses a second token (an app-level token, prefix `xapp-`) so the listener can open a websocket without a public webhook URL. Generate it now:\n\n1. In the left sidebar under **Settings**, click **Basic Information**.\n2. Scroll down to the **App-Level Tokens** section (it's below **Display Information**).\n3. Click **Generate Token and Scopes**.\n4. Give the token a **Token Name** like `socket` (anything works — it's just a label).\n5. Click **Add Scope** and pick `connections:write`. That's the only scope it needs.\n6. Click **Generate**.\n7. Copy the token Slack shows you (it starts with `xapp-`) and paste it below.\n\nClick **Connect** to combine this token with the staged bot token, store both in macOS Keychain, write the `.openit/slack.json` pointer file, and auto-start the listener.",
+        action: { kind: "app-token-input" },
       },
       {
         id: "verify",

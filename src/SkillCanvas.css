@@ -280,6 +280,17 @@
   font-size: 12px;
 }
 
+/* Soft hint, used when an action is disabled because a previous
+   step hasn't been completed (e.g. app-token-input before
+   bot-token has been validated). Visually subordinate to error
+   styling — informational, not a problem. */
+.skill-action-hint {
+  margin: 0;
+  color: #8a8a93;
+  font-size: 12px;
+  font-style: italic;
+}
+
 .skill-action-unknown {
   font-style: italic;
   color: #8a8a93;

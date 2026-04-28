@@ -115,6 +115,7 @@ pub fn run() {
             skill_canvas::skill_state_write,
             skill_canvas::skill_state_clear,
             slack::slack_connect,
+            slack::slack_validate_bot_token,
             slack::slack_disconnect,
             slack::slack_config_read,
             slack::slack_listener_start,

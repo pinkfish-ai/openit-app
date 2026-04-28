@@ -340,6 +340,42 @@ pub struct SlackConnectMeta {
     pub connected_at: String,
 }
 
+/// Validate a bot token against Slack without storing anything.
+/// Used by the canvas's "paste-as-you-go" flow: when the admin
+/// pastes the `xoxb-` token at the install step, we want to
+/// confirm it works (right away, while they still have the Slack
+/// tab open) before they move on to generate the app-level token.
+/// The returned metadata also lets the canvas show "Validated for
+/// Acme as @OpenIT" inline so they know the paste landed.
+///
+/// Storage happens later in `slack_connect` once both tokens are
+/// in hand. Bot token is held in React state between the two
+/// calls — never written to disk except via Keychain.
+#[tauri::command]
+pub async fn slack_validate_bot_token(bot_token: String) -> Result<SlackConnectMeta, String> {
+    let bot_token = bot_token.trim();
+    if !bot_token.starts_with("xoxb-") {
+        return Err("bot token must start with 'xoxb-'".into());
+    }
+    let http = HttpClient::builder()
+        .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("http client: {}", e))?;
+    let auth = slack_auth_test(&http, bot_token).await?;
+    if !auth.ok {
+        return Err(auth
+            .error
+            .unwrap_or_else(|| "auth.test failed (no error message)".into()));
+    }
+    Ok(SlackConnectMeta {
+        workspace_id: auth.team_id.ok_or("auth.test missing team_id")?,
+        workspace_name: auth.team.unwrap_or_else(|| "<unknown>".to_string()),
+        bot_user_id: auth.user_id.ok_or("auth.test missing user_id")?,
+        bot_name: auth.user.unwrap_or_else(|| "OpenIT".to_string()),
+        connected_at: now_iso(),
+    })
+}
+
 /// Validate the supplied bot token against Slack, persist both
 /// tokens to keychain, and write the non-secret `.openit/slack.json`
 /// pointer file. Returns the workspace metadata so the FE can show

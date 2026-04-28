@@ -266,6 +266,16 @@ export async function slackConnect(args: {
   });
 }
 
+/// Validate a bot token against Slack without storing anything.
+/// Used by the canvas's paste-as-you-go flow so the user gets
+/// feedback as soon as they paste the xoxb- token, before they
+/// move on to generate the app-level token.
+export async function slackValidateBotToken(
+  botToken: string,
+): Promise<SlackConnectMeta> {
+  return invoke("slack_validate_bot_token", { botToken });
+}
+
 export async function slackDisconnect(args: {
   repo: string;
   orgId: string;

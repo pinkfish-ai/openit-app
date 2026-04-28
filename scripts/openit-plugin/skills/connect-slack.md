@@ -76,9 +76,10 @@ cat .openit/skill-state/connect-slack.json
 Greet briefly based on what you find:
 
 - File has the **setup** shape (steps include `create-app`,
-  `install`, `app-token`, `paste-tokens`, `verify`) →
-  *"Setting up the Slack canvas — follow the checklist on the
-  left."*
+  `install`, `app-token`, `verify` — note: the bot token paste
+  field lives on `install`, the app token paste field lives on
+  `app-token`, paste-as-you-go) → *"Setting up the Slack canvas
+  — follow the checklist on the left."*
 - File has the **manage** shape (steps include `status`,
   `verify`, `disconnect`) → *"You're already connected. The
   canvas on the left lets you re-verify or disconnect."*
@@ -101,7 +102,8 @@ reply briefly in chat (one sentence).
 | Injected prompt | What happened | What to do |
 |---|---|---|
 | `(canvas) manifest copied to clipboard` | User clicked Copy. | Mark `create-app` as `completed`, mark `install` as `active`. Reply: *"Manifest copied — now create the app in Slack and install it."* |
-| `(canvas) tokens validated. Connected to <ws> as @<bot>...` | User pasted tokens; `slack_connect` succeeded. | Mark `paste-tokens` as `completed`, mark `verify` as `active`. Reply: *"Tokens validated — DM yourself to verify the loop works."* |
+| `(canvas) bot token validated for <ws> as @<bot>. Please mark the install step done and advance to the app-token step.` | User pasted the bot token; `slack_validate_bot_token` returned OK. Token is staged in canvas memory. | Mark `install` as `completed`, mark `app-token` as `active`. Reply: *"Bot token good for <ws>. Generate the app-level token next."* |
+| `(canvas) app token accepted; tokens stored in Keychain and listener auto-starting. Connected to <ws> as @<bot>. Please mark the app-token step done and advance to verify.` | User pasted the app token; `slack_connect` succeeded. Both tokens now in Keychain. | Mark `app-token` as `completed`, mark `verify` as `active`. Reply: *"Tokens stored, listener up — DM yourself to verify."* |
 | `(canvas) intro DM sent to <email>...` | User sent the intro. | Mark `verify` as `completed`. Reply: *"Sent. Now switch to Slack and reply to the bot to confirm the round-trip."* If this is the last step, also flip `active: false` (canvas hides). |
 | `(canvas) marked '<step>' as done` | User clicked the checkbox manually. | Mirror in the state file (set that step to `completed`); pick the next pending step and set it `active`. Reply: *"Marked '<step>' done."* |
 | `(canvas) un-checked '<step>'` | User toggled it off. | Set that step back to `active`; reply: *"Re-opened '<step>'."* |
@@ -127,7 +129,8 @@ and re-read the state file.
 
 - **Never echo tokens.** If the admin pastes `xoxb-...` or
   `xapp-...` at you, acknowledge receipt and pivot them to the
-  canvas's `paste-tokens` step. Tokens belong in the canvas's
+  canvas (bot token field on the `install` step, app token field
+  on the `app-token` step). Tokens belong in the canvas's
   password fields → Keychain, never in chat history.
 - **Always Edit, never re-Write.** Once the state file exists,
   use `Edit` to flip step statuses; `Write` overwrites and risks

@@ -29,6 +29,7 @@ import {
   slackConnect,
   slackListenerSendIntro,
   slackListenerStatus,
+  slackValidateBotToken,
 } from "./lib/api";
 import "./SkillCanvas.css";
 
@@ -51,6 +52,17 @@ export function SkillCanvas({
     () => state.steps.find((s) => s.status === "active") ?? null,
     [state.steps],
   );
+
+  // Bot token staged in component state between the bot-token-input
+  // step (paste-as-you-copy from Slack's Install App page) and the
+  // app-token-input step (paste-as-you-generate the app-level
+  // token). Held in memory only — never persisted to disk except
+  // via Keychain in the eventual slack_connect call. Survives
+  // canvas re-renders from state-file watcher updates; lost on
+  // dismiss/remount, in which case the user re-pastes (annoying
+  // but not catastrophic, and Keychain is the only durable home
+  // for tokens anyway).
+  const [stagedBotToken, setStagedBotToken] = useState<string | null>(null);
 
   async function dismiss() {
     // Soft-close: flip `active: false`, keep the file around so
@@ -91,6 +103,8 @@ export function SkillCanvas({
             intakeUrl={intakeUrl}
             skill={state.skill}
             currentState={state}
+            stagedBotToken={stagedBotToken}
+            setStagedBotToken={setStagedBotToken}
           />
         ))}
       </ol>
@@ -116,6 +130,8 @@ function StepRow({
   intakeUrl,
   skill,
   currentState,
+  stagedBotToken,
+  setStagedBotToken,
 }: {
   step: SkillStep;
   isActive: boolean;
@@ -124,6 +140,8 @@ function StepRow({
   intakeUrl: string;
   skill: string;
   currentState: SkillCanvasState;
+  stagedBotToken: string | null;
+  setStagedBotToken: (t: string | null) => void;
 }) {
   async function toggleManually() {
     // Manual checkbox click: flip status between completed and
@@ -179,7 +197,15 @@ function StepRow({
         )}
         {isActive && step.action && (
           <div className="skill-step-action">
-            {renderAction(step.action, { repo, orgId, intakeUrl, skill, currentState })}
+            {renderAction(step.action, {
+              repo,
+              orgId,
+              intakeUrl,
+              skill,
+              currentState,
+              stagedBotToken,
+              setStagedBotToken,
+            })}
           </div>
         )}
       </div>
@@ -199,6 +225,8 @@ function renderAction(
     intakeUrl: string;
     skill: string;
     currentState: SkillCanvasState;
+    stagedBotToken: string | null;
+    setStagedBotToken: (t: string | null) => void;
   },
 ) {
   switch (action.kind) {
@@ -206,6 +234,22 @@ function renderAction(
       return <CopyManifestAction label={action.label} />;
     case "token-input":
       return <TokenInputAction {...ctx} />;
+    case "bot-token-input":
+      return (
+        <BotTokenInputAction
+          stagedBotToken={ctx.stagedBotToken}
+          setStagedBotToken={ctx.setStagedBotToken}
+        />
+      );
+    case "app-token-input":
+      return (
+        <AppTokenInputAction
+          repo={ctx.repo}
+          orgId={ctx.orgId}
+          stagedBotToken={ctx.stagedBotToken}
+          setStagedBotToken={ctx.setStagedBotToken}
+        />
+      );
     case "verify-dm":
       return <VerifyDmAction defaultEmail={action.defaultEmail} />;
     case "link":
@@ -336,6 +380,186 @@ function TokenInputAction({
         disabled={busy}
       >
         {busy ? "Validating…" : "Connect"}
+      </button>
+      {error && <p className="skill-action-error">{error}</p>}
+    </div>
+  );
+}
+
+/// Step 2's input — paste the xoxb- bot token as soon as you've
+/// copied it from Slack's Install App page. Validates against
+/// auth.test (no storage), then stages the token in canvas-level
+/// state for step 3 to combine with the app token. Shows
+/// "Validated for <workspace> as @<bot>" inline so the user knows
+/// the paste landed before moving on.
+function BotTokenInputAction({
+  stagedBotToken,
+  setStagedBotToken,
+}: {
+  stagedBotToken: string | null;
+  setStagedBotToken: (t: string | null) => void;
+}) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [meta, setMeta] = useState<{ workspace: string; bot: string } | null>(
+    stagedBotToken
+      ? { workspace: "(staged)", bot: "(staged)" } // re-render after navigation; keep an indicator that token is held
+      : null,
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  async function handle() {
+    setError(null);
+    if (!token.trim().startsWith("xoxb-")) {
+      setError("Bot token should start with xoxb-");
+      return;
+    }
+    setBusy(true);
+    try {
+      const validated = await slackValidateBotToken(token.trim());
+      setStagedBotToken(token.trim());
+      setMeta({
+        workspace: validated.workspace_name,
+        bot: validated.bot_name,
+      });
+      setToken("");
+      await injectIntoChat(
+        `(canvas) bot token validated for ${validated.workspace_name} as @${validated.bot_name}. Please mark the install step done and advance to the app-token step.`,
+      );
+    } catch (e) {
+      setError(`Validate failed: ${String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function clear() {
+    setStagedBotToken(null);
+    setMeta(null);
+    setError(null);
+  }
+
+  if (meta) {
+    return (
+      <div className="skill-action-token-input">
+        <p className="skill-action-success">
+          ✓ Bot token validated for <strong>{meta.workspace}</strong> as @
+          {meta.bot}. Hold here while you generate the app-level token in the
+          next step.
+        </p>
+        <button
+          type="button"
+          className="skill-action-secondary"
+          onClick={clear}
+        >
+          Paste a different token
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="skill-action-token-input">
+      <label className="skill-action-field">
+        <span>Bot User OAuth Token</span>
+        <input
+          type="password"
+          placeholder="xoxb-..."
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+      <button
+        type="button"
+        className="skill-action-primary"
+        onClick={handle}
+        disabled={busy}
+      >
+        {busy ? "Validating with Slack…" : "Save bot token"}
+      </button>
+      {error && <p className="skill-action-error">{error}</p>}
+    </div>
+  );
+}
+
+/// Step 3's input — paste the xapp- app-level token. Combined with
+/// the staged bot token from step 2, calls slack_connect to store
+/// both in Keychain, write the slack.json pointer file, and
+/// auto-start the listener. Disabled (with a hint) until step 2's
+/// bot-token has been validated.
+function AppTokenInputAction({
+  repo,
+  orgId,
+  stagedBotToken,
+  setStagedBotToken,
+}: {
+  repo: string;
+  orgId: string;
+  stagedBotToken: string | null;
+  setStagedBotToken: (t: string | null) => void;
+}) {
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handle() {
+    setError(null);
+    if (!stagedBotToken) {
+      setError("Paste and save the bot token in the previous step first.");
+      return;
+    }
+    if (!token.trim().startsWith("xapp-")) {
+      setError("App token should start with xapp-");
+      return;
+    }
+    setBusy(true);
+    try {
+      const meta = await slackConnect({
+        repo,
+        orgId,
+        botToken: stagedBotToken,
+        appToken: token.trim(),
+      });
+      setStagedBotToken(null); // tokens are in keychain now; drop in-memory
+      setToken("");
+      await injectIntoChat(
+        `(canvas) app token accepted; tokens stored in Keychain and listener auto-starting. Connected to ${meta.workspace_name} as @${meta.bot_name}. Please mark the app-token step done and advance to verify.`,
+      );
+    } catch (e) {
+      setError(`Connect failed: ${String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="skill-action-token-input">
+      {!stagedBotToken && (
+        <p className="skill-action-hint">
+          Save the bot token in the previous step before generating the app
+          token.
+        </p>
+      )}
+      <label className="skill-action-field">
+        <span>App-Level Token (Socket Mode)</span>
+        <input
+          type="password"
+          placeholder="xapp-..."
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+      <button
+        type="button"
+        className="skill-action-primary"
+        onClick={handle}
+        disabled={busy || !stagedBotToken}
+      >
+        {busy ? "Connecting…" : "Connect"}
       </button>
       {error && <p className="skill-action-error">{error}</p>}
     </div>

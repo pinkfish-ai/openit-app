@@ -31,9 +31,24 @@ export type SkillAction =
     }
   | {
       kind: "token-input";
-      /// What to do when the user clicks Connect. The canvas calls
-      /// the matching Tauri command directly; the skill is told
-      /// what happened via a follow-up injected prompt.
+      /// Combined bot+app token form. Kept around for any non-Slack
+      /// future use; the connect-slack canvas now uses the split
+      /// `bot-token-input` + `app-token-input` so each token can
+      /// be pasted as soon as it's copied.
+    }
+  | {
+      kind: "bot-token-input";
+      /// xoxb- token only. On Save the canvas validates against
+      /// Slack via slack_validate_bot_token (no storage), then
+      /// stages the token in canvas state for the app-token step.
+    }
+  | {
+      kind: "app-token-input";
+      /// xapp- token only. On Connect the canvas combines the
+      /// staged bot token from the bot-token-input step + this
+      /// app token, calls slack_connect to store both in Keychain
+      /// and write the slack.json pointer file. Disabled until
+      /// the bot-token has been validated.
     }
   | {
       kind: "verify-dm";
