@@ -153,13 +153,24 @@ function App() {
   const triggerSlackFlow = useCallback(async () => {
     if (!repo || !intakeServerUrl) return;
     try {
-      const existing = await skillStateRead(repo, "connect-slack");
       const defaults = slackConfig
         ? buildManageState(slackConfig)
         : buildSetupState();
-      const next = existing
-        ? mergeSkillState(existing, defaults)
-        : defaults;
+      // Only merge with existing canvas state when slack.json actually
+      // exists on disk. Without that guard, a half-finished prior run
+      // (e.g. user marked verify as "completed" but slack.json was
+      // later deleted) replays stale "completed" checks on top of
+      // setup state — confusing because the user reads it as "I'm
+      // already connected" when they aren't. When slackConfig is null
+      // we know the connection is gone, so reset the canvas to a
+      // clean setup view.
+      const next =
+        slackConfig
+          ? mergeSkillState(
+              (await skillStateRead(repo, "connect-slack")) ?? defaults,
+              defaults,
+            )
+          : defaults;
       await skillStateWrite(repo, "connect-slack", next);
     } catch (e) {
       console.warn("[app] slack canvas scaffold failed:", e);
@@ -618,6 +629,15 @@ function App() {
             <kbd>⌘</kbd>
             <kbd>K</kbd>
             <span>jump anywhere</span>
+          </button>
+          <button
+            className="header-cmdk-hint"
+            onClick={() => setFilePaletteOpen(true)}
+            title="Find a file or folder"
+          >
+            <kbd>⌘</kbd>
+            <kbd>P</kbd>
+            <span>find a file</span>
           </button>
           <button
             className="icon-btn icon-btn-ghost"

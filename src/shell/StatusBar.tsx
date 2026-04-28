@@ -146,24 +146,7 @@ export function StatusBar({
               </span>
             </>
           ) : (
-            <>
-              <svg
-                className="status-chip-icon"
-                viewBox="0 0 14 14"
-                width="11"
-                height="11"
-                aria-hidden
-              >
-                <path
-                  d="M5 8.5h-2a1.5 1.5 0 0 1 0-3h2zM5.5 8v-2h3v2zM5.5 5.5h3a1.5 1.5 0 0 0 0-3h-3zM6 5h2v3H6zM9 5.5h2a1.5 1.5 0 0 1 0 3H9zM8.5 6v2h-3V6zM8.5 8.5h-3a1.5 1.5 0 0 0 0 3h3zM8 9H6V6h2z"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.1"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              <span className="status-chip-label">Connect Slack</span>
-            </>
+            <span className="status-chip-label">Connect Slack</span>
           )}
         </button>
 
