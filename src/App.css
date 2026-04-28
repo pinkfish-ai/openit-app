@@ -1180,13 +1180,18 @@ body::before {
    for the conversation-thread source. Sized to match the View / Raw
    tabs so it visually belongs in that row. */
 .viewer-add-btn {
-  background: var(--surface, #fff);
+  /* Sized to match `.viewer-tab` so action buttons (Overview / Ask
+     Claude / Add to Claude) read as part of the same top-right
+     control row as the tab toggles (Cards / Table, View / Edit).
+     Subtle persistent border keeps them visually distinct from
+     a toggle's "off" state — they're verbs, not modes. */
+  background: transparent;
   border: 1px solid var(--border, #ddd);
   color: var(--text);
   border-radius: 5px;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 400;
   font-family: -apple-system, sans-serif;
   cursor: pointer;
   transition: background 0.1s ease, border-color 0.1s ease;
