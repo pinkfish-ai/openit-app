@@ -88,6 +88,31 @@ function ExternalAnchor({
   children,
   ...rest
 }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+  // openit://cloud-cta — opens the cloud CTA page in the center pane.
+  // Used by the welcome doc's "Connect to Cloud" link so it routes
+  // through the same pitch-page surface as the header pill, sync
+  // panel, and command palette (instead of pasting a skill command
+  // into Claude). App.tsx listens for the event and calls into the
+  // Shell-registered showCloudCta handler.
+  // `openit://skill/connect-to-cloud` is the legacy URL that older
+  // welcome docs still ship with — re-route it to the same CTA event
+  // so existing projects don't try to paste a non-existent skill.
+  if (href === "openit://cloud-cta" || href === "openit://skill/connect-to-cloud") {
+    return (
+      <a
+        href="#"
+        data-openit-cta="cloud"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent("openit:show-cloud-cta"));
+        }}
+        {...rest}
+      >
+        {children}
+      </a>
+    );
+  }
   if (href && href.startsWith("openit://skill/")) {
     const skillName = href.slice("openit://skill/".length).split("?")[0];
     // Use href="#" rather than the openit:// URL — the Tauri webview
@@ -184,6 +209,7 @@ export function Viewer({
   intakeUrl,
   welcomeFlashKey,
   onOpenPath,
+  onConnectCloud,
 }: {
   source: ViewerSource;
   repo: string;
@@ -201,6 +227,9 @@ export function Viewer({
    *  cards to drill into a specific thread). Optional — falls back to
    *  no-op if the parent didn't wire it. */
   onOpenPath?: (path: string) => void | Promise<void>;
+  /** Kick off the Pinkfish onboarding flow. Wired by the cloud-cta
+   *  primary button; ignored for every other source kind. */
+  onConnectCloud?: () => void;
 }) {
   const [content, setContent] = useState<string>("");
   const [binaryData, setBinaryData] = useState<Uint8Array | null>(null);
@@ -582,6 +611,7 @@ export function Viewer({
         const n = source.people.length;
         return `People — ${n} ${n === 1 ? "person" : "people"}`;
       }
+      case "cloud-cta": return "Connect to Pinkfish Cloud";
       default: return "";
     }
   };
@@ -1081,6 +1111,71 @@ export function Viewer({
                 </div>
               </button>
             ))}
+          </div>
+        </div>
+      );
+    }
+
+    // Cloud CTA — pitch page shown when an admin clicks any
+    // "Connect to Cloud" affordance while still local-only. The page
+    // is intentionally static (no data fetch) so it can iterate on
+    // copy without regression risk. Primary button calls
+    // `onConnectCloud` which kicks the existing onboarding flow.
+    if (source.kind === "cloud-cta") {
+      return (
+        <div className="viewer-summary cloud-cta">
+          <p className="cloud-cta-eyebrow">CLOUD</p>
+          <h1 className="cloud-cta-headline">Unlock the rest of OpenIT.</h1>
+          <p className="cloud-cta-lead">
+            Bring your team in, run agents in the cloud, and plug in 200+ systems.
+          </p>
+
+          <div className="cloud-cta-card">
+            <h2 className="cloud-cta-card-title">Work with your team</h2>
+            <p className="cloud-cta-card-body">
+              Tickets and knowledge sync across the team — instantly.
+            </p>
+          </div>
+
+          <div className="cloud-cta-card">
+            <h2 className="cloud-cta-card-title">Cloud agents that don't sleep</h2>
+            <p className="cloud-cta-card-body">
+              Run agents in the cloud, even with your laptop closed.
+            </p>
+          </div>
+
+          <div className="cloud-cta-card">
+            <h2 className="cloud-cta-card-title">200+ integrations</h2>
+            <p className="cloud-cta-card-body">
+              Plug in the systems your tickets actually live in.
+            </p>
+            <ul className="cloud-cta-mcps">
+              <li>Jamf</li>
+              <li>Okta</li>
+              <li>Microsoft 365</li>
+              <li>Google Workspace</li>
+              <li>Intune</li>
+              <li>ServiceNow</li>
+              <li>JumpCloud</li>
+              <li>Slack</li>
+              <li>1Password</li>
+              <li>Zendesk</li>
+              <li className="cloud-cta-mcp-more">+ 190 more</li>
+            </ul>
+          </div>
+
+          <div className="cloud-cta-actions">
+            <button
+              type="button"
+              className="cloud-cta-primary"
+              onClick={() => onConnectCloud?.()}
+              disabled={!onConnectCloud}
+            >
+              Connect to Pinkfish Cloud
+            </button>
+            <p className="cloud-cta-fineprint">
+              Local mode keeps working — cloud just adds.
+            </p>
           </div>
         </div>
       );

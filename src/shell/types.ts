@@ -162,4 +162,9 @@ export type ViewerSource =
   // add their own collections, which surface here too. Each card
   // shows article count + one-line purpose blurb.
   | { kind: "knowledge-bases-list"; collections: { name: string; path: string; itemCount: number; description: string; isBuiltin: boolean }[] }
+  // Cloud CTA — shown when an admin clicks any "Connect to Cloud"
+  // affordance while still local-only. A static pitch page that
+  // explains what cloud unlocks (team sync, hosted agents, MCPs);
+  // the page's primary button kicks off the actual onboarding flow.
+  | { kind: "cloud-cta" }
   | null;
