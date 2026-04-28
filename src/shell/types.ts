@@ -46,6 +46,16 @@ export type ConversationTurn = {
 /// Summary of a single conversation thread, shown as a clickable card
 /// in the conversations-list view (one row per thread). Clicking opens
 /// the chat-thread view for that ticketId.
+export type PersonSummary = {
+  /// File-stem key (e.g. the email-as-id used for the person row).
+  key: string;
+  name: string;
+  email: string;
+  role: string;
+  department: string;
+  channels: string[];
+};
+
 export type ConversationThreadSummary = {
   ticketId: string;
   // Subject pulled from the ticket file; falls back to the first
@@ -74,6 +84,19 @@ export type ViewerSource =
   | { kind: "workflow"; workflow: Workflow }
   | { kind: "conversation-thread"; ticketId: string; turns: ConversationTurn[] }
   | { kind: "conversations-list"; threads: ConversationThreadSummary[] }
+  // People directory — one row per contact. Default view is cards
+  // (name + email + role/department); the header has a Cards / Table
+  // toggle so admins can flip into the raw datastore-table when they
+  // need to see every column. The `collection` mirrors what the
+  // datastore-table source carries so the table view can render
+  // without re-resolving.
+  | {
+      kind: "people-list";
+      view: "cards" | "table";
+      people: PersonSummary[];
+      collection: DataCollection;
+      items: MemoryItem[];
+    }
   // Per-turn agent trace (the verbs + timestamps the agent emitted
   // running this chat turn). Opened by clicking the agent-activity
   // banner; resolves to the most recent trace file under

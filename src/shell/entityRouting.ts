@@ -1,5 +1,10 @@
 import { fsRead, fsList } from "../lib/api";
-import type { ConversationThreadSummary, ConversationTurn, ViewerSource } from "./types";
+import type {
+  ConversationThreadSummary,
+  ConversationTurn,
+  PersonSummary,
+  ViewerSource,
+} from "./types";
 import type { DataCollection } from "../lib/skillsApi";
 
 /**
@@ -226,6 +231,53 @@ export async function resolvePathToSource(
           const key = node.name.replace(/\.json$/, "");
           items.push({ id: key, key, content, createdAt: "", updatedAt: "" });
         } catch { /* skip unparseable */ }
+      }
+
+      // People gets a friendlier card-list view by default with a
+      // Cards / Table toggle in the viewer header. Re-uses the same
+      // collection + items, so the table mode renders identically to
+      // the generic datastore-table view.
+      if (colName === "people") {
+        const people: PersonSummary[] = items
+          .map((it): PersonSummary | null => {
+            const c = it.content as Record<string, unknown> | null;
+            if (!c || typeof c !== "object") return null;
+            const channelsRaw = (c as { channels?: unknown }).channels;
+            const channels = Array.isArray(channelsRaw)
+              ? channelsRaw.filter((v): v is string => typeof v === "string")
+              : [];
+            return {
+              key: typeof it.key === "string" ? it.key : it.id,
+              name:
+                typeof (c as { displayName?: unknown }).displayName === "string"
+                  ? ((c as { displayName: string }).displayName)
+                  : "",
+              email:
+                typeof (c as { email?: unknown }).email === "string"
+                  ? ((c as { email: string }).email)
+                  : "",
+              role:
+                typeof (c as { role?: unknown }).role === "string"
+                  ? ((c as { role: string }).role)
+                  : "",
+              department:
+                typeof (c as { department?: unknown }).department === "string"
+                  ? ((c as { department: string }).department)
+                  : "",
+              channels,
+            };
+          })
+          .filter((p): p is PersonSummary => p !== null)
+          .sort((a, b) =>
+            (a.name || a.email || a.key).localeCompare(b.name || b.email || b.key),
+          );
+        return {
+          kind: "people-list",
+          view: "cards",
+          people,
+          collection: col,
+          items,
+        };
       }
 
       return { kind: "datastore-table", collection: col, items };

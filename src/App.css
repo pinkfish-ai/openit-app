@@ -3109,6 +3109,41 @@ body::before {
   border-color: var(--border, #ddd);
 }
 
+/* People view toggle (Cards / Table) — same pill styling as the
+   conversations status filter. Sits at the top of the
+   `viewer-people` body and flips the underlying render between the
+   card list and the DataTable component. */
+.people-view-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.people-view-btn {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+}
+
+.people-view-btn:hover {
+  color: var(--text);
+  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
+}
+
+.people-view-btn-active {
+  color: var(--text);
+  background: var(--card-bg, #fafafa);
+  border-color: var(--border, #ddd);
+}
+
 .conv-filter-count {
   font-size: 11px;
   font-weight: 500;

@@ -232,6 +232,11 @@ export function Viewer({
     setConversationsFilter("all");
   }, [repo]);
 
+  // People view-mode toggle (Cards / Table). Default cards; sticks
+  // for the lifetime of this Viewer instance so flipping into a
+  // ticket and back doesn't reset the admin's preferred mode.
+  const [peopleView, setPeopleView] = useState<"cards" | "table">("cards");
+
   // Edit-mode state for the markdown viewer. `editDraft` is the
   // textarea value (decoupled from `content` so unsaved edits don't
   // race with disk re-reads). `editSaving` shows a brief saving
@@ -448,6 +453,11 @@ export function Viewer({
       setContent("");
       return;
     }
+    if (source.kind === "people-list") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
   }, [source]);
 
   // Re-read the single-row file from disk when fsTick fires. Lets edits
@@ -566,6 +576,10 @@ export function Viewer({
       }
       case "agent-trace":
         return `Agent trace — ${source.subject}`;
+      case "people-list": {
+        const n = source.people.length;
+        return `People — ${n} ${n === 1 ? "person" : "people"}`;
+      }
       default: return "";
     }
   };
@@ -1005,6 +1019,105 @@ export function Viewer({
               ))}
             </div>
           )}
+        </div>
+      );
+    }
+
+    // People directory — card or table view, toggled in the header.
+    // Cards default for the at-a-glance read; admins flipping in to
+    // edit a row click into the table for the full datastore-table
+    // experience (sortable cells, edit affordances).
+    if (source.kind === "people-list") {
+      const view = peopleView;
+      const toggle = (
+        <div className="people-view-toggle" role="tablist">
+          <button
+            type="button"
+            className={`people-view-btn${view === "cards" ? " people-view-btn-active" : ""}`}
+            onClick={() => setPeopleView("cards")}
+            aria-pressed={view === "cards"}
+          >
+            Cards
+          </button>
+          <button
+            type="button"
+            className={`people-view-btn${view === "table" ? " people-view-btn-active" : ""}`}
+            onClick={() => setPeopleView("table")}
+            aria-pressed={view === "table"}
+          >
+            Table
+          </button>
+        </div>
+      );
+
+      if (view === "table") {
+        // Re-use the existing DataTable component the
+        // datastore-table source path uses. People are loaded from
+        // disk (no Pinkfish pagination), so hasMore stays false and
+        // the row click writes the file path into the active
+        // session — mirroring the datastore-table behaviour.
+        return (
+          <div className="viewer-summary viewer-people">
+            {toggle}
+            <DataTable
+              collection={source.collection}
+              items={source.items}
+              onRowClick={(key) => {
+                const filePath = `${repo}/databases/${source.collection.name}/${key}.json`;
+                writeToActiveSession(filePath + " ");
+              }}
+            />
+          </div>
+        );
+      }
+
+      if (source.people.length === 0) {
+        return (
+          <div className="viewer-summary viewer-people">
+            {toggle}
+            <p className="summary-desc">
+              No people yet. Anyone who files a ticket lands here so we can
+              identify askers consistently across tickets and channels.
+            </p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="viewer-summary viewer-people">
+          {toggle}
+          <div className="viewer-thread-list">
+            {source.people.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                className="thread-card thread-card-person"
+                onClick={() => {
+                  if (onOpenPath) {
+                    void onOpenPath(`${repo}/databases/people/${p.key}.json`);
+                  }
+                }}
+                title={`Open ${p.name || p.email || p.key}`}
+              >
+                <div className="thread-card-row">
+                  <span className="thread-card-subject">
+                    {p.name || p.email || p.key}
+                  </span>
+                  {p.role && (
+                    <span className="thread-card-status">{p.role}</span>
+                  )}
+                </div>
+                <div className="thread-card-meta">
+                  {p.email && p.email !== p.name && (
+                    <span className="thread-card-asker">{p.email}</span>
+                  )}
+                  {p.department && (
+                    <span className="thread-card-count">{p.department}</span>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
       );
     }
