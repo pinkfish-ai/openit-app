@@ -262,6 +262,18 @@ export async function resolvePathToSource(
               existingTags.push("auto-escalated");
             }
             parsed.tags = existingTags;
+            // Stamp the internal notes field so an admin opening the
+            // ticket sees the *reason* for the escalation, not just
+            // the status flip. Append-only: preserve any existing
+            // notes the admin or agent has already written.
+            const noteLine = "Escalated for time (no asker reply in 24h).";
+            const existingNotes =
+              typeof parsed.notes === "string" ? parsed.notes : "";
+            if (!existingNotes.includes(noteLine)) {
+              parsed.notes = existingNotes
+                ? `${existingNotes.replace(/\s+$/, "")}\n${noteLine}`
+                : noteLine;
+            }
             await entityWriteFile(
               repo,
               "databases/tickets",
@@ -436,6 +448,52 @@ export async function resolvePathToSource(
       return { kind: "workflow", workflow };
     } catch {
       return { kind: "file", path };
+    }
+  }
+
+  // `filestores/attachments/<ticketId>/` → entity-folder of the
+  // actual files in that ticket's attachments folder. Click on a
+  // ticket card in the attachments roll-up lands here, NOT on the
+  // conversation thread. The viewer adds a "Conversation" header
+  // link so admins can still jump to the related thread when they
+  // need context — but the default surface for "click attachments"
+  // is the files themselves.
+  const attachmentsTicketMatch = rel.match(
+    /^filestores\/attachments\/([^/]+)$/,
+  );
+  if (attachmentsTicketMatch) {
+    try {
+      const nodes = await fsList(path);
+      const files: {
+        name: string;
+        displayName: string;
+        description: string;
+        path: string;
+      }[] = [];
+      const childPrefix = `${path}/`;
+      for (const n of nodes) {
+        if (n.is_dir) continue;
+        const remainder = n.path.startsWith(childPrefix)
+          ? n.path.slice(childPrefix.length)
+          : "";
+        if (!remainder || remainder.includes("/")) continue;
+        if (n.name.includes(".server.")) continue;
+        files.push({ name: n.name, displayName: n.name, description: "", path: n.path });
+      }
+      files.sort((a, b) => a.name.localeCompare(b.name));
+      return {
+        kind: "entity-folder",
+        entity: "attachments-ticket",
+        path: rel,
+        files,
+      };
+    } catch {
+      return {
+        kind: "entity-folder",
+        entity: "attachments-ticket",
+        path: rel,
+        files: [],
+      };
     }
   }
 

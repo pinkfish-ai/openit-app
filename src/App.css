@@ -1285,6 +1285,61 @@ body::before {
   background: var(--surface-soft, #f0f0f0);
 }
 
+/* Sub-header strip — sits directly under .viewer-header and hosts
+   the "add to chat →" / "conversation →" right-aligned action links.
+   Pulled out of the main header so the links don't compete with
+   filter pills or tab strips for horizontal space (and don't wrap
+   awkwardly when the header is dense). */
+.viewer-subheader {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 14px 0;
+  background: var(--surface);
+}
+
+/* Subtle text-link variant of viewer-add-btn. Used on the
+   conversation-thread header for "add to chat →" — an action that
+   shouldn't compete visually with the Conversation/Ticket nav tabs.
+   No border, no background, just muted text + arrow that nudges on
+   hover. */
+.viewer-add-link {
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  margin-left: 2px;
+  color: var(--text-faint);
+  font-family: -apple-system, sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: lowercase;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: color 0.1s ease;
+}
+
+.viewer-add-link:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.viewer-add-link:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.viewer-add-link-arrow {
+  display: inline-block;
+  transition: transform 0.12s ease;
+}
+
+.viewer-add-link:hover .viewer-add-link-arrow {
+  transform: translateX(2px);
+}
+
 /* Back-arrow button on the conversation-thread view — returns to
    the parent conversations-list with the previously-selected filter
    intact. Sits flush left in the viewer header, ahead of the title. */
@@ -1382,6 +1437,84 @@ body::before {
 
 .viewer-edit-btn-primary:hover:not(:disabled) {
   filter: brightness(0.92);
+}
+
+/* Row view — read-only vertical key/value summary. Replaces the
+   single-row table, which forced horizontal scroll for any schema
+   with more than ~3 fields. Multi-row collections still render via
+   DataTable (where the horizontal layout is the right shape). */
+.row-view {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 24px;
+}
+
+.row-view-key {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.row-view-key-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+}
+
+.row-view-fields {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 24px;
+  row-gap: 12px;
+  align-items: baseline;
+}
+
+.row-view-field {
+  display: contents;
+}
+
+.row-view-field dt {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.row-view-field dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+  min-width: 0;
+  word-break: break-word;
+}
+
+.row-view-empty {
+  color: var(--text-faint);
+  opacity: 0.6;
+}
+
+.row-view-text {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.row-view-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.row-view-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 
 /* Row edit form — one field per schema entry. Layout mirrors the
@@ -4645,6 +4778,14 @@ button.status-chip-info:hover {
   font-size: 14px;
   font-weight: 600;
   line-height: 1;
+  overflow: hidden;
+}
+
+.file-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .entity-card-body {

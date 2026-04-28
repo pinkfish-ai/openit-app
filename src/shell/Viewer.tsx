@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -8,6 +8,7 @@ import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
 import { DataTable } from "./DataTable";
 import { EntityCardGrid } from "./EntityCardGrid";
+import { FileThumbnail, isImageFile } from "./FileThumbnail";
 import { EntityBadge, type EntityKind } from "./entityIcons";
 import { RowEditForm } from "./RowEditForm";
 import { AttachmentList } from "./AttachmentList";
@@ -30,7 +31,12 @@ export type { ViewerSource };
 /// Title labels for the entity-folder view. Capital case for the title
 /// bar; the explorer rows use the lowercase folder names directly.
 const ENTITY_FOLDER_LABELS: Record<
-  "agents" | "workflows" | "knowledge-base" | "library" | "reports",
+  | "agents"
+  | "workflows"
+  | "knowledge-base"
+  | "library"
+  | "reports"
+  | "attachments-ticket",
   string
 > = {
   agents: "Agents",
@@ -38,13 +44,19 @@ const ENTITY_FOLDER_LABELS: Record<
   "knowledge-base": "Knowledge base",
   library: "Library",
   reports: "Reports",
+  "attachments-ticket": "Attachments",
 };
 
 /// Friendly empty-state copy per top-level entity folder, mirroring the
 /// conversations-list notice. Each message says what lives here, why it
 /// is empty, and the natural way to populate it.
 const ENTITY_FOLDER_EMPTY_COPY: Record<
-  "agents" | "workflows" | "knowledge-base" | "library" | "reports",
+  | "agents"
+  | "workflows"
+  | "knowledge-base"
+  | "library"
+  | "reports"
+  | "attachments-ticket",
   string
 > = {
   agents:
@@ -57,6 +69,8 @@ const ENTITY_FOLDER_EMPTY_COPY: Record<
     "No library files yet. Drop runbook PDFs, scripts, or any reference doc you reach for repeatedly — Claude can pull from these when answering tickets or building workflows.",
   reports:
     "No reports yet. Click \"Overview\" above for an instant snapshot of ticket status, recent activity, top askers, and current escalations — or click \"Ask Claude\" to describe a custom report (\"VPN tickets last 30 days\", \"escalations by asker\").",
+  "attachments-ticket":
+    "No attachments on this ticket yet. Files dropped into the chat or admin reply will land here.",
 };
 
 /// Anchor tag override for ReactMarkdown rendering. Three URL shapes
@@ -603,6 +617,47 @@ export function Viewer({
   const showPeopleTabs = source.kind === "people-list";
   const showConversationsFilter = source.kind === "conversations-list";
 
+  // Path used by the "add to chat →" header link. Any source that maps
+  // to a real on-disk file or folder Claude can reference goes through
+  // this — keeps the link offer consistent across viewers without
+  // per-source render branches in the header.
+  const chatAddPath: string | null = (() => {
+    if (!source) return null;
+    if (source.kind === "file") return source.path;
+    if (source.kind === "conversation-thread")
+      return `${repo}/databases/conversations/${source.ticketId}`;
+    if (source.kind === "datastore-row")
+      return `${repo}/databases/${source.collection.name}/${source.item.key || source.item.id}.json`;
+    if (source.kind === "datastore-table")
+      return `${repo}/databases/${source.collection.name}`;
+    if (source.kind === "datastore-schema")
+      return `${repo}/databases/${source.collection.name}/_schema.json`;
+    if (source.kind === "entity-folder") {
+      // Reports already has dedicated header actions (generate
+      // overview / ask for custom report) — a generic "add to chat"
+      // link there would feel redundant.
+      if (source.entity === "reports") return null;
+      return `${repo}/${source.path}`;
+    }
+    if (source.kind === "people-list") return `${repo}/databases/people`;
+    if (source.kind === "conversations-list")
+      return `${repo}/databases/conversations`;
+    if (source.kind === "agent")
+      return `${repo}/agents/${source.agent.id || source.agent.name}.json`;
+    if (source.kind === "workflow")
+      return `${repo}/workflows/${source.workflow.id || source.workflow.name}.json`;
+    return null;
+  })();
+
+  // Ticket id for the "Conversation" header link on attachments
+  // subfolders (filestores/attachments/<ticketId>/). Lets admins jump
+  // from the file list back to the related thread without re-walking
+  // the file tree.
+  const attachmentsTicketId: string | null =
+    source && source.kind === "entity-folder" && source.entity === "attachments-ticket"
+      ? source.path.replace(/^filestores\/attachments\//, "")
+      : null;
+
   // Pre-compute conversation status counts so the header pills can
   // display them without re-walking on each render frame. Memoising
   // would be overkill — the array is small and reads from the same
@@ -805,15 +860,72 @@ export function Viewer({
     if (source.kind === "datastore-row") {
       const liveItem = rowOverride ?? source.item;
       if (mode === "table") {
+        // Vertical label/value summary instead of a single-row table.
+        // A single row in a wide-column table forces horizontal scroll
+        // and hides everything past the first 3-4 fields; a vertical
+        // form is far easier to scan when reading one row at a time.
+        // (Multi-row tables still use DataTable — that's where the
+        // horizontal layout pays off.)
+        const fields = (source.collection.schema?.fields ?? []) as Array<{
+          id: string;
+          label?: string;
+          type?: string;
+          values?: string[];
+          nullable?: boolean;
+        }>;
+        const content =
+          liveItem.content && typeof liveItem.content === "object"
+            ? (liveItem.content as Record<string, unknown>)
+            : {};
+        const renderValue = (
+          field: { id: string; type?: string },
+          value: unknown,
+        ): ReactNode => {
+          const empty =
+            value === null ||
+            value === undefined ||
+            (typeof value === "string" && value === "") ||
+            (Array.isArray(value) && value.length === 0);
+          if (empty) {
+            return <span className="row-view-empty">—</span>;
+          }
+          if (field.type === "string[]" && Array.isArray(value)) {
+            return (
+              <div className="row-view-tags">
+                {value.map((v, i) => (
+                  <span key={i} className="thread-card-tag">
+                    {String(v)}
+                  </span>
+                ))}
+              </div>
+            );
+          }
+          if (field.type === "text" && typeof value === "string") {
+            return <div className="row-view-text">{value}</div>;
+          }
+          if (typeof value === "boolean") {
+            return <span>{value ? "Yes" : "No"}</span>;
+          }
+          if (typeof value === "object") {
+            return <code className="row-view-code">{JSON.stringify(value)}</code>;
+          }
+          return <span>{String(value)}</span>;
+        };
         return (
-          <DataTable
-            collection={source.collection}
-            items={[liveItem]}
-            onRowClick={(key) => {
-              const filePath = `${repo}/databases/${source.collection.name}/${key}.json`;
-              writeToActiveSession(filePath + " ");
-            }}
-          />
+          <div className="row-view">
+            <div className="row-view-key">
+              <span className="row-view-key-label">Key</span>
+              <code className="row-view-code">{liveItem.key || liveItem.id}</code>
+            </div>
+            <dl className="row-view-fields">
+              {fields.map((field) => (
+                <div key={field.id} className="row-view-field">
+                  <dt>{field.label ?? field.id}</dt>
+                  <dd>{renderValue(field, content[field.id])}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
         );
       }
       if (mode === "edit") {
@@ -1297,11 +1409,12 @@ export function Viewer({
               title: t.ticketId,
               meta: `${t.fileCount} file${t.fileCount === 1 ? "" : "s"}`,
               onClick: () => {
-                // Jump to the conversation thread, not the raw
-                // attachments folder — that's where the files make
-                // sense.
-                if (onOpenPath && repo) {
-                  void onOpenPath(`${repo}/databases/conversations/${t.ticketId}`);
+                // Open the actual attachments folder for this ticket.
+                // The viewer adds a "Conversation" link in the header
+                // so admins can still jump to the related thread
+                // when they need context.
+                if (onOpenPath) {
+                  void onOpenPath(t.path);
                 }
               },
             }))}
@@ -1383,6 +1496,7 @@ export function Viewer({
           title: isReport ? f.description || slug : f.displayName,
           description: isReport ? undefined : f.description,
           meta: isReport ? dateLabel : undefined,
+          icon: isImageFile(f.path) ? <FileThumbnail absPath={f.path} /> : undefined,
           onClick: () => onOpenPath && void onOpenPath(f.path),
         };
       });
@@ -1392,7 +1506,7 @@ export function Viewer({
             <p className="viewer-edit-error">{reportError}</p>
           )}
           <EntityCardGrid
-            kind={source.entity}
+            kind={source.entity === "attachments-ticket" ? "attachments" : source.entity}
             cards={cards}
             empty={
               <p className="summary-desc">
@@ -1899,7 +2013,14 @@ export function Viewer({
   if (source) {
     switch (source.kind) {
       case "entity-folder":
-        headerKind = source.entity as EntityKind;
+        // Map the per-ticket attachments folder to the generic
+        // "attachments" icon kind — it doesn't have its own ENTITY_META
+        // entry. All other entity-folder values match an EntityKind
+        // 1:1.
+        headerKind =
+          source.entity === "attachments-ticket"
+            ? "attachments"
+            : (source.entity as EntityKind);
         break;
       case "knowledge-bases-list":
         headerKind = "knowledge-bases";
@@ -1944,28 +2065,68 @@ export function Viewer({
             ←
           </button>
         )}
+        {source &&
+          source.kind === "entity-folder" &&
+          source.entity === "attachments-ticket" &&
+          onOpenPath && (
+            <button
+              type="button"
+              className="viewer-back-btn"
+              onClick={() => {
+                void onOpenPath(`${repo}/filestores/attachments`);
+              }}
+              title="Back to attachments"
+              aria-label="Back to attachments"
+            >
+              ←
+            </button>
+          )}
+        {source &&
+          source.kind === "file" &&
+          onOpenPath &&
+          source.path.startsWith(`${repo}/`) &&
+          source.path.lastIndexOf("/") > repo.length && (
+            <button
+              type="button"
+              className="viewer-back-btn"
+              onClick={() => {
+                void onOpenPath(source.path.slice(0, source.path.lastIndexOf("/")));
+              }}
+              title="Back to folder"
+              aria-label="Back to folder"
+            >
+              ←
+            </button>
+          )}
         {headerKind && <EntityBadge kind={headerKind} showLabel={false} />}
         <span className="viewer-title">{title}</span>
-        {source && source.kind === "conversation-thread" && (
-          <button
-            type="button"
-            className="viewer-add-btn"
-            onClick={() => {
-              const path = `${repo}/databases/conversations/${source.ticketId}`;
-              writeToActiveSession(path + " ").catch((e) =>
-                console.warn("[viewer] add-to-claude failed:", e),
-              );
-            }}
-            title="Reference this conversation in Claude"
-          >
-            Add to Claude
-          </button>
+        {source && source.kind === "conversation-thread" && onOpenPath && (
+          <div className="viewer-tabs" role="tablist">
+            <button
+              role="tab"
+              aria-selected={true}
+              className="viewer-tab active"
+            >
+              Conversation
+            </button>
+            <button
+              role="tab"
+              aria-selected={false}
+              className="viewer-tab"
+              onClick={() => {
+                void onOpenPath(`${repo}/databases/tickets/${source.ticketId}.json`);
+              }}
+              title="Open the ticket record (status, tags, notes, asker info)"
+            >
+              Ticket
+            </button>
+          </div>
         )}
         {source && source.kind === "entity-folder" && source.entity === "reports" && (
           <>
             <button
               type="button"
-              className="viewer-add-btn"
+              className="viewer-add-link"
               onClick={async () => {
                 if (!repo || reportRunning) return;
                 setReportRunning(true);
@@ -1982,25 +2143,25 @@ export function Viewer({
               disabled={reportRunning || !repo}
               title="Generate an instant helpdesk overview report"
             >
-              {reportRunning ? "Generating…" : "Overview"}
+              {reportRunning ? "generating…" : "generate overview"}
             </button>
             <button
               type="button"
-              className="viewer-add-btn"
+              className="viewer-add-link"
               onClick={() => {
-                // Paste `/report ` into the Claude pane via the same
-                // bracketed-paste path the welcome doc's "Connect to
-                // Cloud" CTA uses. Trailing space puts the cursor in
-                // arg position so the admin types their question
-                // immediately.
+                // Paste `/report ` into the Claude pane so the admin
+                // can type their custom prompt immediately. Distinct
+                // from "add to chat" — that just references the
+                // reports folder; this kicks off the full skill.
                 const wrapped = `${BRACKETED_PASTE_OPEN}/report ${BRACKETED_PASTE_CLOSE}`;
                 writeToActiveSession(wrapped).catch((err) =>
-                  console.warn("[viewer] ask-claude paste failed:", err),
+                  console.warn("[viewer] ask-custom-report paste failed:", err),
                 );
               }}
-              title="Ask Claude for a custom report"
+              title="Kick off /report in chat for a custom report"
             >
-              Ask Claude
+              ask for custom report
+              <span className="viewer-add-link-arrow" aria-hidden="true">→</span>
             </button>
           </>
         )}
@@ -2033,13 +2194,33 @@ export function Viewer({
         )}
         {showRowTabs && (
           <div className="viewer-tabs" role="tablist">
+            {source.kind === "datastore-row" &&
+              source.collection.name === "tickets" &&
+              onOpenPath && (
+                <button
+                  role="tab"
+                  aria-selected={false}
+                  className="viewer-tab"
+                  onClick={() => {
+                    void onOpenPath(
+                      `${repo}/databases/conversations/${source.item.key || source.item.id}`,
+                    );
+                  }}
+                  title="Open the conversation thread for this ticket"
+                >
+                  Conversation
+                </button>
+              )}
             <button
               role="tab"
               aria-selected={mode === "table"}
               className={`viewer-tab ${mode === "table" ? "active" : ""}`}
               onClick={() => setMode("table")}
             >
-              View
+              {source.kind === "datastore-row" &&
+              source.collection.name === "tickets"
+                ? "Ticket"
+                : "View"}
             </button>
             <button
               role="tab"
@@ -2127,6 +2308,38 @@ export function Viewer({
           </button>
         )}
       </div>
+      {(chatAddPath || attachmentsTicketId) && (
+        <div className="viewer-subheader">
+          {attachmentsTicketId && onOpenPath && (
+            <button
+              type="button"
+              className="viewer-add-link"
+              onClick={() => {
+                void onOpenPath(`${repo}/databases/conversations/${attachmentsTicketId}`);
+              }}
+              title="Open the related conversation thread"
+            >
+              conversation
+              <span className="viewer-add-link-arrow" aria-hidden="true">→</span>
+            </button>
+          )}
+          {chatAddPath && (
+            <button
+              type="button"
+              className="viewer-add-link"
+              onClick={() => {
+                writeToActiveSession(chatAddPath + " ").catch((e) =>
+                  console.warn("[viewer] add-to-chat failed:", e),
+                );
+              }}
+              title="Reference this in Claude"
+            >
+              add to chat
+              <span className="viewer-add-link-arrow" aria-hidden="true">→</span>
+            </button>
+          )}
+        </div>
+      )}
       {renderBody()}
     </div>
   );

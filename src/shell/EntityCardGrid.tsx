@@ -13,6 +13,10 @@ export type EntityCard = {
   meta?: ReactNode;
   /** A single optional pill below the description (status, etc.). */
   badge?: { label: string; tone?: "neutral" | "ok" | "warn" | "info" };
+  /** Override the kind-shared glyph for this card — used for image
+   *  thumbnails on attachment / library cards. Falls back to the
+   *  kind icon when omitted. */
+  icon?: ReactNode;
   onClick?: () => void;
 };
 
@@ -57,7 +61,7 @@ export function EntityCardGrid({
             onClick={c.onClick}
           >
             <span className="entity-card-glyph" aria-hidden>
-              {meta.icon}
+              {c.icon ?? meta.icon}
             </span>
             <div className="entity-card-body">
               <div className="entity-card-row">
