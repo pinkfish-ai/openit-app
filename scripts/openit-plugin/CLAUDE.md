@@ -17,8 +17,24 @@ You're Claude, helping the admin run this helpdesk. Most of what they'll ask you
 | `agents/<name>.json` | Agent configurations. The triage agent lives at `agents/triage.json`. |
 | `workflows/<name>.json` | (Future, V2.) Captured action playbooks. |
 | `reports/<YYYY-MM-DD-HHmm>-<slug>.md` | Generated helpdesk reports. Newest sorts to the top by filename. The "Generate overview" button in the explorer writes a canned status snapshot; the `/report` skill writes freeform reports authored by Claude. |
+| `.claude/` | Plugin manifest territory — Claude Code's own conventions live here too (`.claude/skills/<name>/SKILL.md`, `.claude/scripts/*`, `.claude/settings.local.json`). **Owned by the plugin sync.** Overwritten on every reconnect / version bump. Don't write user state here — it'll get clobbered. Hidden from the explorer by default; the "show system files" toggle reveals it. |
+| `.openit/` | OpenIT runtime state — Slack workspace pointer (`slack.json`), listener session and delivery ledgers (`slack-sessions.json`, `slack-delivery.json`), Skill Canvas state (`skill-state/<skill>.json`), plugin-version sentinel. **Owned by the running OpenIT app and its child processes.** Survives plugin syncs. Hidden from the explorer by default; the "show system files" toggle reveals it. Gitignored. |
 
 The directory names are stable — same in local mode and after connecting to cloud. The cloud sync engine maps these to per-org collections on Pinkfish at push time; the local layout doesn't change.
+
+### Why `.claude/` and `.openit/` are split (architectural decision)
+
+Two dot-directories with related-looking content but different ownership and lifetime. Mixing them would be wrong; here's why:
+
+- **`.claude/` is owned by the plugin sync** (`syncSkillsToDisk` in `src/lib/skillsSync.ts`). On every Pinkfish reconnect or version bump, it fans out the manifest into this directory — overwriting anything with the same name. It's also Claude Code's own contract surface: Claude reads `.claude/skills/`, `.claude/settings.local.json`. Putting OpenIT runtime state under `.claude/` would mean either the sync clobbers it or we teach the sync to preserve a sub-tree (annoying special case). It also risks colliding with future Claude Code conventions in the same namespace.
+
+- **`.openit/` is owned by the running app and its child processes** (Tauri side `intake.rs` / `slack.rs` / `skill_canvas.rs`, plus the Node listener). Survives plugin syncs because the sync never touches it. Evolves with actual usage — sessions accrue, canvas progress advances, version sentinels roll. If we ever want to wipe runtime state without re-running the plugin sync (`rm -rf .openit/` to reset), the split makes that clean.
+
+Rule of thumb when adding a new file:
+- **Comes from the plugin manifest, gets refreshed periodically, user-doesn't-edit?** → `.claude/`.
+- **Written by the running OpenIT app or a child process, evolves with usage, survives plugin updates?** → `.openit/`.
+
+The explorer's "show system files" toggle reveals both at once, so the UX cost of the split is zero.
 
 ## How to interact with the data — local file ops first
 
