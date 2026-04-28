@@ -18,18 +18,17 @@ export function ChatShellHeader({
   onNewSession: () => void;
   dragHandle?: ReactNode;
 }) {
-  const [alive, setAlive] = useState<boolean>(() => getActiveSession() !== null);
-
-  useEffect(
-    () => subscribeActiveSession((id) => setAlive(id !== null)),
-    [],
+  const [alive, setAlive] = useState<boolean>(
+    () => getActiveSession() !== null,
   );
+
+  useEffect(() => subscribeActiveSession((id) => setAlive(id !== null)), []);
 
   return (
     <div className="chat-shell-header">
       {dragHandle}
       <span className="chat-shell-title">Claude</span>
-      <span className="chat-shell-sub">your IT co-pilot</span>
+      <span className="chat-shell-sub">power</span>
       <span className="chat-shell-spacer" />
       <span
         className={`chat-shell-dot ${alive ? "alive" : "idle"}`}

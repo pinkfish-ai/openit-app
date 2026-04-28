@@ -174,7 +174,24 @@ pub async fn oauth_callback_await(
     let result =
         tokio::time::timeout(Duration::from_secs(CALLBACK_TIMEOUT_SECS), rx).await;
 
-    cancel_inner(&state).await;
+    // Hold cmd_lock across cleanup so a concurrent
+    // `oauth_callback_start` (e.g. user clicked Cancel and immediately
+    // re-clicked Connect) can't have its freshly stored RunningCallback
+    // taken out from under it. Also only cancel if the receiver we
+    // owned is still the one in state — otherwise a newer start has
+    // replaced it and we shouldn't touch its server.
+    let _cmd_guard = state.cmd_lock.lock().await;
+    let still_ours = {
+        let guard = state.inner.lock();
+        guard
+            .as_ref()
+            .map(|s| Arc::ptr_eq(&s.creds_rx, &creds_rx_arc))
+            .unwrap_or(false)
+    };
+    if still_ours {
+        cancel_inner(&state).await;
+    }
+    drop(_cmd_guard);
 
     match result {
         Ok(Ok(creds)) => Ok(creds),

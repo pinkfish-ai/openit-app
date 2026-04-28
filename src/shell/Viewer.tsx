@@ -48,15 +48,15 @@ const ENTITY_FOLDER_EMPTY_COPY: Record<
   string
 > = {
   agents:
-    "No agents yet. Agents are reusable Claude prompts (triage, onboarding, audits) that drive the workflows in this project. Ask Claude in the chat — \"draft an agent that triages tickets by urgency\" — and it will scaffold one here.",
+    'No agents yet. Agents are reusable Claude prompts (triage, onboarding, audits) that drive the workflows in this project. Ask Claude in the chat — "draft an agent that triages tickets by urgency" — and it will scaffold one here.',
   workflows:
-    "No workflows yet. Workflows orchestrate agents and connections to automate IT work end-to-end. Ask Claude — \"build a workflow that escalates SLA breaches\" — and it will land a workflow file here.",
+    'No workflows yet. Workflows orchestrate agents and connections to automate IT work end-to-end. Ask Claude — "build a workflow that escalates SLA breaches" — and it will land a workflow file here.',
   "knowledge-base":
-    "No knowledge-base articles yet. This is where runbooks and reference docs live — Claude reads them when answering tickets. Drop in markdown files, or ask Claude to draft one (\"write a runbook for resetting a Slack workspace owner\").",
+    'No knowledge-base articles yet. This is where runbooks and reference docs live — Claude reads them when answering tickets. Drop in markdown files, or ask Claude to draft one ("write a runbook for resetting a Slack workspace owner").',
   library:
     "No library files yet. Drop runbook PDFs, scripts, or any reference doc you reach for repeatedly — Claude can pull from these when answering tickets or building workflows.",
   reports:
-    "No reports yet. Click \"Overview\" above for an instant snapshot of ticket status, recent activity, top askers, and current escalations — or click \"Ask Claude\" to describe a custom report (\"VPN tickets last 30 days\", \"escalations by asker\").",
+    'No reports yet. Click "Overview" above for an instant snapshot of ticket status, recent activity, top askers, and current escalations — or click "Ask Claude" to describe a custom report ("VPN tickets last 30 days", "escalations by asker").',
 };
 
 /// Anchor tag override for ReactMarkdown rendering. Three URL shapes
@@ -85,7 +85,10 @@ function ExternalAnchor({
   // `openit://skill/connect-to-cloud` is the legacy URL that older
   // welcome docs still ship with — re-route it to the same CTA event
   // so existing projects don't try to paste a non-existent skill.
-  if (href === "openit://cloud-cta" || href === "openit://skill/connect-to-cloud") {
+  if (
+    href === "openit://cloud-cta" ||
+    href === "openit://skill/connect-to-cloud"
+  ) {
     return (
       <a
         href="#"
@@ -126,7 +129,9 @@ function ExternalAnchor({
                 );
               }
             })
-            .catch((err) => console.warn("[viewer] paste-to-Claude failed:", err));
+            .catch((err) =>
+              console.warn("[viewer] paste-to-Claude failed:", err),
+            );
         }}
         {...rest}
       >
@@ -147,7 +152,9 @@ function ExternalAnchor({
       href={href}
       onClick={(e) => {
         e.preventDefault();
-        openUrl(href).catch((err) => console.warn("[viewer] openUrl failed:", err));
+        openUrl(href).catch((err) =>
+          console.warn("[viewer] openUrl failed:", err),
+        );
       }}
       {...rest}
     >
@@ -249,8 +256,9 @@ export function Viewer({
   // of the conversations folder within the same session, but resets
   // when the project (repo) changes — the filter is per-project, not
   // global.
-  const [conversationsFilter, setConversationsFilter] =
-    useState<"all" | "open" | "resolved" | "escalated">("all");
+  const [conversationsFilter, setConversationsFilter] = useState<
+    "all" | "open" | "resolved" | "escalated"
+  >("all");
   useEffect(() => {
     setConversationsFilter("all");
   }, [repo]);
@@ -352,7 +360,9 @@ export function Viewer({
         fsReadBytes(path)
           .then((bytes) => !cancelled && setBinaryData(bytes))
           .catch((e) => !cancelled && setError(String(e)));
-        return () => { cancelled = true; };
+        return () => {
+          cancelled = true;
+        };
       }
       if (isOfficeDoc(path)) {
         setMode("rendered");
@@ -363,7 +373,9 @@ export function Viewer({
       fsRead(path)
         .then((c) => !cancelled && setContent(c))
         .catch((e) => !cancelled && setError(String(e)));
-      return () => { cancelled = true; };
+      return () => {
+        cancelled = true;
+      };
     }
     if (source.kind === "sync") {
       setMode("raw");
@@ -385,9 +397,17 @@ export function Viewer({
         setTableLoading(true);
         let cancelled = false;
         loadCreds().then(async (creds) => {
-          if (!creds || cancelled) { setTableLoading(false); return; }
+          if (!creds || cancelled) {
+            setTableLoading(false);
+            return;
+          }
           try {
-            const resp = await fetchDatastoreItems(creds, source.collection.id, 100, 0);
+            const resp = await fetchDatastoreItems(
+              creds,
+              source.collection.id,
+              100,
+              0,
+            );
             if (!cancelled) {
               setTableItems(resp.items);
               setTableHasMore(resp.pagination.hasNextPage);
@@ -398,7 +418,9 @@ export function Viewer({
             if (!cancelled) setTableLoading(false);
           }
         });
-        return () => { cancelled = true; };
+        return () => {
+          cancelled = true;
+        };
       }
       return;
     }
@@ -509,12 +531,20 @@ export function Viewer({
         console.warn("[Viewer] row reload failed:", e);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [fsTick, source, repo]);
 
   // Re-read disk-based datastore tables when filesystem changes (fsTick from native watcher)
   useEffect(() => {
-    if (!source || source.kind !== "datastore-table" || source.collection.id || !repo) return;
+    if (
+      !source ||
+      source.kind !== "datastore-table" ||
+      source.collection.id ||
+      !repo
+    )
+      return;
     // Skip the initial render (fsTick === 0 is handled by the source-loading effect above)
     if (fsTick === 0) return;
     const dirPath = `${repo}/databases/${source.collection.name}`;
@@ -536,7 +566,9 @@ export function Viewer({
             const content = JSON.parse(raw);
             const key = node.name.replace(/\.json$/, "");
             items.push({ id: key, key, content, createdAt: "", updatedAt: "" });
-          } catch { /* skip unparseable */ }
+          } catch {
+            /* skip unparseable */
+          }
         }
         if (!cancelled) setTableItems(items);
       } catch (e) {
@@ -544,7 +576,9 @@ export function Viewer({
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [fsTick, source, repo]);
 
   if (!source) {
@@ -557,16 +591,26 @@ export function Viewer({
   // --- Title ---
   const getTitle = (): string => {
     switch (source.kind) {
-      case "file": return source.path;
-      case "sync": return "Sync output";
-      case "diff": return "Git diff";
-      case "datastore-table": return source.collection?.name ?? "Datastore";
-      case "datastore-schema": return `${source.collection?.name ?? "Datastore"} — Schema`;
-      case "datastore-row": return `${source.collection?.name ?? "Datastore"} / ${source.item?.key || source.item?.id || "Row"}`;
-      case "agent": return source.agent?.name ?? "Agent";
-      case "workflow": return source.workflow?.name ?? "Workflow";
-      case "conversation-thread": return `Conversation — ${source.ticketId}`;
-      case "conversations-list": return "Inbox";
+      case "file":
+        return source.path;
+      case "sync":
+        return "Sync output";
+      case "diff":
+        return "Git diff";
+      case "datastore-table":
+        return source.collection?.name ?? "Datastore";
+      case "datastore-schema":
+        return `${source.collection?.name ?? "Datastore"} — Schema`;
+      case "datastore-row":
+        return `${source.collection?.name ?? "Datastore"} / ${source.item?.key || source.item?.id || "Row"}`;
+      case "agent":
+        return source.agent?.name ?? "Agent";
+      case "workflow":
+        return source.workflow?.name ?? "Workflow";
+      case "conversation-thread":
+        return `Conversation — ${source.ticketId}`;
+      case "conversations-list":
+        return "Inbox";
       case "entity-folder": {
         // For KB collections, surface the collection name (e.g.
         // "Knowledge — default") so the admin can tell which KB they
@@ -581,18 +625,26 @@ export function Viewer({
         }
         return ENTITY_FOLDER_LABELS[source.entity];
       }
-      case "databases-list":     return "Databases";
-      case "filestores-list":    return "Files";
-      case "attachments-folder": return "Attachments";
-      case "knowledge-bases-list": return "Knowledge";
+      case "databases-list":
+        return "Databases";
+      case "filestores-list":
+        return "Files";
+      case "attachments-folder":
+        return "Attachments";
+      case "knowledge-bases-list":
+        return "Knowledge";
       case "agent-trace":
         return `Agent trace — ${source.subject}`;
       case "agent-trace-list":
         return `Agent traces — ${source.subject} (${source.docs.length} turn${source.docs.length === 1 ? "" : "s"})`;
-      case "people-list":        return "People";
-      case "cloud-cta": return "Connect to Pinkfish Cloud";
-      case "getting-started": return "Getting started";
-      default: return "";
+      case "people-list":
+        return "People";
+      case "cloud-cta":
+        return "Connect to Pinkfish Cloud";
+      case "getting-started":
+        return "Getting started";
+      default:
+        return "";
     }
   };
   const title = getTitle();
@@ -632,8 +684,8 @@ export function Viewer({
     source.kind === "sync"
       ? source.lines.join("\n")
       : source.kind === "diff"
-      ? source.text
-      : "";
+        ? source.text
+        : "";
   const handleCopy = async () => {
     if (!copyableText) return;
     try {
@@ -650,7 +702,9 @@ export function Viewer({
     // File viewers
     if (source.kind === "file") {
       if (isImage(source.path) && binaryData) {
-        return <ImageViewer data={binaryData} mimeType={mimeForPath(source.path)} />;
+        return (
+          <ImageViewer data={binaryData} mimeType={mimeForPath(source.path)} />
+        );
       }
       if (isPdf(source.path) && binaryData) {
         return <PdfViewer data={binaryData} />;
@@ -680,7 +734,9 @@ export function Viewer({
             setContent(editDraft);
             setMode("rendered");
           } catch (err) {
-            setEditError(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+            setEditError(
+              `Save failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
           } finally {
             setEditSaving(false);
           }
@@ -701,7 +757,9 @@ export function Viewer({
               autoFocus
             />
             <div className="viewer-edit-footer">
-              {editError && <span className="viewer-edit-error">{editError}</span>}
+              {editError && (
+                <span className="viewer-edit-error">{editError}</span>
+              )}
               <button
                 type="button"
                 className="viewer-edit-btn viewer-edit-btn-secondary"
@@ -737,7 +795,10 @@ export function Viewer({
         const flashClass =
           welcomeFlashKey && welcomeFlashKey > 0 ? "viewer-md-flash" : "";
         return (
-          <div className={`viewer-md ${flashClass}`} key={`md-${welcomeFlashKey ?? 0}`}>
+          <div
+            className={`viewer-md ${flashClass}`}
+            key={`md-${welcomeFlashKey ?? 0}`}
+          >
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{ a: ExternalAnchor }}
@@ -756,7 +817,11 @@ export function Viewer({
     // Datastore table view
     if (source.kind === "datastore-table") {
       if (tableLoading && tableItems.length === 0) {
-        return <div className="viewer-content" style={{ opacity: 0.5 }}>Loading table data...</div>;
+        return (
+          <div className="viewer-content" style={{ opacity: 0.5 }}>
+            Loading table data...
+          </div>
+        );
       }
       // Friendly empty-state — mirrors the conversations-list notice so
       // an empty `databases/<col>/` folder reads as "ready to receive
@@ -769,7 +834,7 @@ export function Viewer({
           colName === "tickets"
             ? "No tickets yet. Tickets land here when someone files one via the Intake form (top-right header) — share that URL on your machine and the new rows show up immediately."
             : colName === "people"
-              ? "No people records yet. People rows are referenced by tickets (asker, assignee) and access audits. Ask Claude — \"add Alice from Engineering\" — or sync a directory once you connect to cloud."
+              ? 'No people records yet. People rows are referenced by tickets (asker, assignee) and access audits. Ask Claude — "add Alice from Engineering" — or sync a directory once you connect to cloud.'
               : `No rows in "${colName}" yet. Add one by editing the JSON files on disk under databases/${colName}/, or ask Claude to populate this collection.`;
         return (
           <div className="viewer-summary">
@@ -786,7 +851,12 @@ export function Viewer({
             const creds = await loadCreds();
             if (!creds) return;
             try {
-              const resp = await fetchDatastoreItems(creds, source.collection.id, 100, tableItems.length);
+              const resp = await fetchDatastoreItems(
+                creds,
+                source.collection.id,
+                100,
+                tableItems.length,
+              );
               setTableItems((prev) => [...prev, ...resp.items]);
               setTableHasMore(resp.pagination.hasNextPage);
             } catch (e) {
@@ -842,7 +912,9 @@ export function Viewer({
             setRowOverride({ ...liveItem, content: rowEditDraft });
             setMode("table");
           } catch (err) {
-            setEditError(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+            setEditError(
+              `Save failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
           } finally {
             setEditSaving(false);
           }
@@ -879,12 +951,23 @@ export function Viewer({
             <table className="summary-table">
               <tbody>
                 {a.selectedModel && (
-                  <tr><td>Model</td><td>{a.selectedModel}</td></tr>
+                  <tr>
+                    <td>Model</td>
+                    <td>{a.selectedModel}</td>
+                  </tr>
                 )}
                 {a.isShared !== undefined && (
-                  <tr><td>Shared</td><td>{a.isShared ? "Yes" : "No"}</td></tr>
+                  <tr>
+                    <td>Shared</td>
+                    <td>{a.isShared ? "Yes" : "No"}</td>
+                  </tr>
                 )}
-                <tr><td>ID</td><td><code>{a.id}</code></td></tr>
+                <tr>
+                  <td>ID</td>
+                  <td>
+                    <code>{a.id}</code>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -892,7 +975,9 @@ export function Viewer({
             <div className="summary-section">
               <h3>Instructions</h3>
               <div className="viewer-md">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{a.instructions}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {a.instructions}
+                </ReactMarkdown>
               </div>
             </div>
           )}
@@ -912,13 +997,19 @@ export function Viewer({
               <h3>Inputs</h3>
               <table className="summary-table">
                 <thead>
-                  <tr><th>Name</th><th>Type</th><th>Required</th></tr>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Required</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {w.inputs.map((inp, i) => (
                     <tr key={i}>
                       <td>{inp.name}</td>
-                      <td><code>{inp.type}</code></td>
+                      <td>
+                        <code>{inp.type}</code>
+                      </td>
                       <td>{inp.required ? "Yes" : "No"}</td>
                     </tr>
                   ))}
@@ -943,7 +1034,12 @@ export function Viewer({
             <h3>Details</h3>
             <table className="summary-table">
               <tbody>
-                <tr><td>ID</td><td><code>{w.id}</code></td></tr>
+                <tr>
+                  <td>ID</td>
+                  <td>
+                    <code>{w.id}</code>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -960,7 +1056,8 @@ export function Viewer({
           <div className="viewer-summary">
             <p className="summary-desc">
               No conversation threads yet. They appear here once a ticket gets
-              its first message — file a ticket via the Intake form to start one.
+              its first message — file a ticket via the Intake form to start
+              one.
             </p>
           </div>
         );
@@ -981,7 +1078,9 @@ export function Viewer({
         }
         return true;
       };
-      const visibleThreads = source.threads.filter((t) => matchesFilter(t.status || ""));
+      const visibleThreads = source.threads.filter((t) =>
+        matchesFilter(t.status || ""),
+      );
       const filterCaption: Record<typeof conversationsFilter, string> = {
         all: "All tickets across every status.",
         open: "Agent is working with the person, awaiting their reply.",
@@ -990,7 +1089,9 @@ export function Viewer({
       };
       return (
         <div className="viewer-summary viewer-conversations">
-          <p className="viewer-list-caption">{filterCaption[conversationsFilter]}</p>
+          <p className="viewer-list-caption">
+            {filterCaption[conversationsFilter]}
+          </p>
           {visibleThreads.length === 0 ? (
             <p className="summary-desc">No threads match this filter.</p>
           ) : (
@@ -1002,17 +1103,25 @@ export function Viewer({
                   className={`thread-card thread-card-status-${t.status || "unknown"}`}
                   onClick={() => {
                     if (onOpenPath) {
-                      void onOpenPath(`${repo}/databases/conversations/${t.ticketId}`);
+                      void onOpenPath(
+                        `${repo}/databases/conversations/${t.ticketId}`,
+                      );
                     }
                   }}
                   title={`Open conversation for ${t.ticketId}`}
                 >
                   <div className="thread-card-row">
-                    <span className="thread-card-subject">{t.subject || "(no subject)"}</span>
-                    {t.status && <span className="thread-card-status">{t.status}</span>}
+                    <span className="thread-card-subject">
+                      {t.subject || "(no subject)"}
+                    </span>
+                    {t.status && (
+                      <span className="thread-card-status">{t.status}</span>
+                    )}
                   </div>
                   <div className="thread-card-meta">
-                    {t.asker && <span className="thread-card-asker">{t.asker}</span>}
+                    {t.asker && (
+                      <span className="thread-card-asker">{t.asker}</span>
+                    )}
                     <span className="thread-card-count">
                       {t.turnCount} message{t.turnCount === 1 ? "" : "s"}
                     </span>
@@ -1114,9 +1223,10 @@ export function Viewer({
       return (
         <div className="viewer-summary cloud-cta">
           <p className="cloud-cta-eyebrow">CLOUD</p>
-          <h1 className="cloud-cta-headline">Unlock the rest of OpenIT.</h1>
+          <h1 className="cloud-cta-headline">Hosted OpenIT</h1>
           <p className="cloud-cta-lead">
-            Bring your team in, run agents in the cloud, and plug in 200+ systems.
+            Bring your team in, run agents in the cloud, and plug in 200+
+            systems.
           </p>
 
           <div className="cloud-cta-card">
@@ -1127,7 +1237,9 @@ export function Viewer({
           </div>
 
           <div className="cloud-cta-card">
-            <h2 className="cloud-cta-card-title">Cloud agents that don't sleep</h2>
+            <h2 className="cloud-cta-card-title">
+              Cloud agents that don't sleep
+            </h2>
             <p className="cloud-cta-card-body">
               Run agents in the cloud, even with your laptop closed.
             </p>
@@ -1183,17 +1295,17 @@ export function Viewer({
           <p className="cloud-cta-eyebrow">GETTING STARTED</p>
           <h1 className="cloud-cta-headline">Your AI-driven IT helpdesk.</h1>
           <p className="cloud-cta-lead">
-            OpenIT runs on your machine. Share the intake link, and an
-            AI agent triages every question — answering directly or
-            escalating to you when it can't.
+            OpenIT runs on your machine. Share the intake link, and an AI agent
+            triages every question — answering directly or escalating to you
+            when it can't.
           </p>
 
           <div className="cloud-cta-card">
             <h2 className="cloud-cta-card-title">Try it in 30 seconds</h2>
             <p className="cloud-cta-card-body">
               Open the intake page and ask a question yourself —{" "}
-              <em>"I can't log in"</em>, <em>"how do I reset my VPN"</em> —
-              to see how the agent handles it.
+              <em>"I can't log in"</em>, <em>"how do I reset my VPN"</em> — to
+              see how the agent handles it.
             </p>
           </div>
 
@@ -1289,7 +1401,8 @@ export function Viewer({
             kind="attachments"
             empty={
               <p className="summary-desc">
-                No attachments yet. Files dropped into a chat or admin reply land here, grouped by ticket.
+                No attachments yet. Files dropped into a chat or admin reply
+                land here, grouped by ticket.
               </p>
             }
             cards={source.tickets.map((t) => ({
@@ -1301,7 +1414,9 @@ export function Viewer({
                 // attachments folder — that's where the files make
                 // sense.
                 if (onOpenPath && repo) {
-                  void onOpenPath(`${repo}/databases/conversations/${t.ticketId}`);
+                  void onOpenPath(
+                    `${repo}/databases/conversations/${t.ticketId}`,
+                  );
                 }
               },
             }))}
@@ -1324,12 +1439,12 @@ export function Viewer({
             kind="databases"
             empty={
               <p className="summary-desc">
-                No collections yet. Collections are JSON-backed tables that
-                hold tickets, people, conversations, and any custom entities
-                you create. Ask Claude —{" "}
-                <em>"create a collection for inventory items"</em> — and it
-                will scaffold one under <code>databases/</code> with a
-                starter schema.
+                No collections yet. Collections are JSON-backed tables that hold
+                tickets, people, conversations, and any custom entities you
+                create. Ask Claude —{" "}
+                <em>"create a collection for inventory items"</em> — and it will
+                scaffold one under <code>databases/</code> with a starter
+                schema.
               </p>
             }
             cards={source.collections.map((c) => ({
@@ -1363,8 +1478,18 @@ export function Viewer({
             const [, yyyy, mm, dd, hh, mi, parsedSlug] = m;
             slug = parsedSlug;
             const monthShort = [
-              "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+              "Jan",
+              "Feb",
+              "Mar",
+              "Apr",
+              "May",
+              "Jun",
+              "Jul",
+              "Aug",
+              "Sep",
+              "Oct",
+              "Nov",
+              "Dec",
             ][Math.max(0, Math.min(11, Number(mm) - 1))];
             const yearTail =
               new Date().getFullYear() === Number(yyyy) ? "" : `, ${yyyy}`;
@@ -1486,7 +1611,9 @@ export function Viewer({
           setReplyText("");
           setReplyAttachments([]);
         } catch (err) {
-          setReplyError(`Send failed: ${err instanceof Error ? err.message : String(err)}`);
+          setReplyError(
+            `Send failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
         } finally {
           setReplySending(false);
         }
@@ -1524,7 +1651,9 @@ export function Viewer({
             void onOpenPath(`${repo}/databases/conversations`);
           }
         } catch (err) {
-          setReplyError(`Resolve failed: ${err instanceof Error ? err.message : String(err)}`);
+          setReplyError(
+            `Resolve failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
         } finally {
           setReplySending(false);
         }
@@ -1533,7 +1662,9 @@ export function Viewer({
         <div className="viewer-thread-wrapper">
           {turns.length === 0 ? (
             <div className="viewer-summary">
-              <p className="summary-desc">No turns logged yet for this thread.</p>
+              <p className="summary-desc">
+                No turns logged yet for this thread.
+              </p>
             </div>
           ) : (
             <div className="viewer-thread">
@@ -1545,7 +1676,9 @@ export function Viewer({
                     className={`thread-turn ${isAsker ? "thread-turn-asker" : "thread-turn-agent"}`}
                   >
                     <div className="thread-turn-meta">
-                      <span className="thread-turn-sender">{t.sender || t.role}</span>
+                      <span className="thread-turn-sender">
+                        {t.sender || t.role}
+                      </span>
                       <span className="thread-turn-role">{t.role}</span>
                       {t.timestamp && (
                         <span className="thread-turn-time">{t.timestamp}</span>
@@ -1590,7 +1723,10 @@ export function Viewer({
                     filename,
                   });
                 } catch (err) {
-                  console.error(`[admin-reply] failed to attach ${filename}:`, err);
+                  console.error(
+                    `[admin-reply] failed to attach ${filename}:`,
+                    err,
+                  );
                 }
               }
               if (newAttachments.length === 0) return;
@@ -1627,7 +1763,9 @@ export function Viewer({
               <div className="thread-reply-chips">
                 {replyAttachments.map((att) => (
                   <span key={att.path} className="thread-reply-chip">
-                    <span className="thread-reply-chip-name">{att.filename}</span>
+                    <span className="thread-reply-chip-name">
+                      {att.filename}
+                    </span>
                     <button
                       type="button"
                       className="thread-reply-chip-remove"
@@ -1665,7 +1803,9 @@ export function Viewer({
               {replyError && (
                 <span className="thread-reply-error">{replyError}</span>
               )}
-              <span className="thread-reply-hint">⌘↩ to send · drop files to attach</span>
+              <span className="thread-reply-hint">
+                ⌘↩ to send · drop files to attach
+              </span>
               <button
                 type="button"
                 className="viewer-edit-btn"
@@ -1713,9 +1853,8 @@ export function Viewer({
             </div>
             <div className="viewer-summary">
               <p className="summary-desc">
-                The agent hasn't finished its first reply on this
-                ticket yet. The timeline will appear here as soon as
-                the turn completes.
+                The agent hasn't finished its first reply on this ticket yet.
+                The timeline will appear here as soon as the turn completes.
               </p>
             </div>
           </div>
@@ -1726,7 +1865,8 @@ export function Viewer({
       // skip them in this list to keep the timeline focused on
       // *actions taken* rather than their internal correlation.
       const items = doc.events.filter(
-        (e) => e.kind === "tool_use" || e.kind === "text" || e.kind === "result",
+        (e) =>
+          e.kind === "tool_use" || e.kind === "text" || e.kind === "result",
       );
       const formatTs = (iso: string) => {
         // The trace timestamps are ISO-8601 UTC with second precision.
@@ -1745,7 +1885,9 @@ export function Viewer({
           <div className="agent-trace-header">
             <div className="agent-trace-subject">{subject}</div>
             <div className="agent-trace-meta">
-              <span className={`agent-trace-outcome agent-trace-outcome-${doc.outcome}`}>
+              <span
+                className={`agent-trace-outcome agent-trace-outcome-${doc.outcome}`}
+              >
                 {doc.outcome}
               </span>
               <span className="agent-trace-model">{doc.model}</span>
@@ -1763,8 +1905,7 @@ export function Viewer({
           ) : (
             <ol className="agent-trace-timeline">
               {items.map((e, idx) => {
-                const verb =
-                  e.verb ?? (e.tool ? `Running ${e.tool}` : null);
+                const verb = e.verb ?? (e.tool ? `Running ${e.tool}` : null);
                 const isFinalResult = e.kind === "result";
                 const isText = e.kind === "text";
                 const label = isFinalResult
@@ -1783,10 +1924,14 @@ export function Viewer({
                     key={`${e.ts}-${idx}`}
                     className={`agent-trace-step agent-trace-step-${e.kind}`}
                   >
-                    <span className="agent-trace-step-time">{formatTs(e.ts)}</span>
+                    <span className="agent-trace-step-time">
+                      {formatTs(e.ts)}
+                    </span>
                     <span className="agent-trace-step-label">{label}</span>
                     {snippet && (
-                      <span className="agent-trace-step-snippet">{snippet}</span>
+                      <span className="agent-trace-step-snippet">
+                        {snippet}
+                      </span>
                     )}
                   </li>
                 );
@@ -1807,7 +1952,9 @@ export function Viewer({
         const d = new Date(iso);
         if (Number.isNaN(d.getTime())) return iso;
         return d.toLocaleTimeString([], {
-          hour: "2-digit", minute: "2-digit", second: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
         });
       };
       return (
@@ -1822,7 +1969,9 @@ export function Viewer({
           </div>
           {source.docs.length === 0 ? (
             <div className="viewer-summary">
-              <p className="summary-desc">No traces recorded for this ticket yet.</p>
+              <p className="summary-desc">
+                No traces recorded for this ticket yet.
+              </p>
             </div>
           ) : (
             source.docs.map((entry, idx) => {
@@ -1837,13 +1986,20 @@ export function Viewer({
                 );
               }
               const items = doc.events.filter(
-                (e) => e.kind === "tool_use" || e.kind === "text" || e.kind === "result",
+                (e) =>
+                  e.kind === "tool_use" ||
+                  e.kind === "text" ||
+                  e.kind === "result",
               );
               return (
                 <section key={name} className="agent-trace-list-turn">
                   <header className="agent-trace-list-divider">
-                    <span className="agent-trace-list-turn-num">Turn {idx + 1}</span>
-                    <span className={`agent-trace-outcome agent-trace-outcome-${doc.outcome}`}>
+                    <span className="agent-trace-list-turn-num">
+                      Turn {idx + 1}
+                    </span>
+                    <span
+                      className={`agent-trace-outcome agent-trace-outcome-${doc.outcome}`}
+                    >
                       {doc.outcome}
                     </span>
                     <span className="agent-trace-model">{doc.model}</span>
@@ -1852,28 +2008,43 @@ export function Viewer({
                     </span>
                   </header>
                   {items.length === 0 ? (
-                    <p className="summary-desc">No actions recorded for this turn.</p>
+                    <p className="summary-desc">
+                      No actions recorded for this turn.
+                    </p>
                   ) : (
                     <ol className="agent-trace-timeline">
                       {items.map((e, i) => {
-                        const verb = e.verb ?? (e.tool ? `Running ${e.tool}` : null);
+                        const verb =
+                          e.verb ?? (e.tool ? `Running ${e.tool}` : null);
                         const isFinal = e.kind === "result";
                         const isText = e.kind === "text";
-                        const label = isFinal ? "Replied" : isText ? "Thinking" : verb || e.kind;
+                        const label = isFinal
+                          ? "Replied"
+                          : isText
+                            ? "Thinking"
+                            : verb || e.kind;
                         const snippet = (() => {
                           if (!e.text) return null;
                           const first = e.text.split("\n")[0]?.trim() ?? "";
-                          return first.length > 140 ? `${first.slice(0, 137)}…` : first;
+                          return first.length > 140
+                            ? `${first.slice(0, 137)}…`
+                            : first;
                         })();
                         return (
                           <li
                             key={`${e.ts}-${i}`}
                             className={`agent-trace-step agent-trace-step-${e.kind}`}
                           >
-                            <span className="agent-trace-step-time">{formatTs(e.ts)}</span>
-                            <span className="agent-trace-step-label">{label}</span>
+                            <span className="agent-trace-step-time">
+                              {formatTs(e.ts)}
+                            </span>
+                            <span className="agent-trace-step-label">
+                              {label}
+                            </span>
                             {snippet && (
-                              <span className="agent-trace-step-snippet">{snippet}</span>
+                              <span className="agent-trace-step-snippet">
+                                {snippet}
+                              </span>
                             )}
                           </li>
                         );
@@ -1961,49 +2132,51 @@ export function Viewer({
             Add to Claude
           </button>
         )}
-        {source && source.kind === "entity-folder" && source.entity === "reports" && (
-          <>
-            <button
-              type="button"
-              className="viewer-add-btn"
-              onClick={async () => {
-                if (!repo || reportRunning) return;
-                setReportRunning(true);
-                setReportError(null);
-                try {
-                  const relPath = await reportOverviewRun(repo);
-                  if (onOpenPath) void onOpenPath(`${repo}/${relPath}`);
-                } catch (e) {
-                  setReportError(e instanceof Error ? e.message : String(e));
-                } finally {
-                  setReportRunning(false);
-                }
-              }}
-              disabled={reportRunning || !repo}
-              title="Generate an instant helpdesk overview report"
-            >
-              {reportRunning ? "Generating…" : "Overview"}
-            </button>
-            <button
-              type="button"
-              className="viewer-add-btn"
-              onClick={() => {
-                // Paste `/report ` into the Claude pane via the same
-                // bracketed-paste path the welcome doc's "Connect to
-                // Cloud" CTA uses. Trailing space puts the cursor in
-                // arg position so the admin types their question
-                // immediately.
-                const wrapped = `${BRACKETED_PASTE_OPEN}/report ${BRACKETED_PASTE_CLOSE}`;
-                writeToActiveSession(wrapped).catch((err) =>
-                  console.warn("[viewer] ask-claude paste failed:", err),
-                );
-              }}
-              title="Ask Claude for a custom report"
-            >
-              Ask Claude
-            </button>
-          </>
-        )}
+        {source &&
+          source.kind === "entity-folder" &&
+          source.entity === "reports" && (
+            <>
+              <button
+                type="button"
+                className="viewer-add-btn"
+                onClick={async () => {
+                  if (!repo || reportRunning) return;
+                  setReportRunning(true);
+                  setReportError(null);
+                  try {
+                    const relPath = await reportOverviewRun(repo);
+                    if (onOpenPath) void onOpenPath(`${repo}/${relPath}`);
+                  } catch (e) {
+                    setReportError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setReportRunning(false);
+                  }
+                }}
+                disabled={reportRunning || !repo}
+                title="Generate an instant helpdesk overview report"
+              >
+                {reportRunning ? "Generating…" : "Overview"}
+              </button>
+              <button
+                type="button"
+                className="viewer-add-btn"
+                onClick={() => {
+                  // Paste `/report ` into the Claude pane via the same
+                  // bracketed-paste path the welcome doc's "Connect to
+                  // Cloud" CTA uses. Trailing space puts the cursor in
+                  // arg position so the admin types their question
+                  // immediately.
+                  const wrapped = `${BRACKETED_PASTE_OPEN}/report ${BRACKETED_PASTE_CLOSE}`;
+                  writeToActiveSession(wrapped).catch((err) =>
+                    console.warn("[viewer] ask-claude paste failed:", err),
+                  );
+                }}
+                title="Ask Claude for a custom report"
+              >
+                Ask Claude
+              </button>
+            </>
+          )}
         {showFileTabs && (
           <div className="viewer-tabs" role="tablist">
             <button
@@ -2049,7 +2222,11 @@ export function Viewer({
                 // Seed the form with the current row content the
                 // first time edit mode is entered. Re-clicking Edit
                 // while already editing keeps the in-progress draft.
-                if (mode !== "edit" && source && source.kind === "datastore-row") {
+                if (
+                  mode !== "edit" &&
+                  source &&
+                  source.kind === "datastore-row"
+                ) {
                   const liveItem = rowOverride ?? source.item;
                   const raw = liveItem.content;
                   let parsed: Record<string, unknown> = {};
@@ -2111,7 +2288,9 @@ export function Viewer({
                 onClick={() => setConversationsFilter(key)}
               >
                 {key === "all" ? "All" : key[0].toUpperCase() + key.slice(1)}
-                <span className="viewer-tab-count">{conversationCounts[key]}</span>
+                <span className="viewer-tab-count">
+                  {conversationCounts[key]}
+                </span>
               </button>
             ))}
           </div>

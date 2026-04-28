@@ -2,9 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   claudeDetect,
-  oauthCallbackAwait,
-  oauthCallbackCancel,
-  oauthCallbackStart,
   pinkfishListConnections,
   type UserConnection,
 } from "./lib/api";
@@ -15,7 +12,6 @@ import { stopDatastoreSync } from "./lib/datastoreSync";
 import { stopAgentSync } from "./lib/agentSync";
 import { stopWorkflowSync } from "./lib/workflowSync";
 import {
-  connectAndValidate,
   DEFAULT_TOKEN_URL,
   derivedUrls,
   getToken,
@@ -23,35 +19,13 @@ import {
   subscribeToken,
   type PinkfishCreds,
 } from "./lib/pinkfishAuth";
+import type { BrowserConnectState } from "./lib/useBrowserConnect";
 
 const CLAUDE_INSTALL_DOCS = "https://docs.anthropic.com/claude/docs/claude-code";
 const CONNECTIONS_NEW_URL = "https://app.pinkfish.ai/tools/connections/new";
 const CONNECTIONS_MANAGE_URL = "https://app.pinkfish.ai/tools/connections";
 const SLACK_ICON = "https://app.pinkfish.ai/connection_icons/slack.svg";
 const TEAMS_ICON = "https://app.pinkfish.ai/connection_icons/microsoft-teams.svg";
-
-// Where to send the browser for the OAuth-style handoff. Defaults to
-// prod; override with VITE_PINKFISH_WEB_URL during dev (e.g.
-// `https://dev20.pinkfish.dev`) to drive the flow against a dev env.
-const PINKFISH_WEB_URL =
-  (import.meta.env.VITE_PINKFISH_WEB_URL as string | undefined)?.replace(
-    /\/$/,
-    "",
-  ) || "https://app.pinkfish.ai";
-
-type BrowserConnectState =
-  | { kind: "idle" }
-  | { kind: "starting" }
-  | { kind: "waiting" } // browser open, awaiting form-POST
-  | { kind: "validating" } // creds in hand, refreshing JWT
-  | { kind: "error"; message: string };
-
-// Auto-name the account-key so the user can find it later in Settings
-// → API Credentials. `navigator.platform` is good enough (e.g.
-// "MacIntel"); the user can rename it any time.
-function machineLabel(): string {
-  return navigator.platform || "this machine";
-}
 
 function findChat(connections: UserConnection[]): {
   slack: UserConnection | null;
@@ -121,75 +95,28 @@ export function Onboarding({
   initialCreds,
   onPinkfishConnected,
   onContinue,
+  browserConnect,
+  startBrowserConnect,
+  cancelBrowserConnect,
 }: {
   pinkfishConnected: boolean;
   pinkfishOrgName: string | null;
   initialCreds: Partial<PinkfishCreds> | null;
   onPinkfishConnected: (orgName: string | null) => void;
   onContinue: () => void;
+  // Browser-handoff state hoisted to App so the in-shell cloud-cta and
+  // the onboarding screen drive the same flow with shared state.
+  browserConnect: BrowserConnectState;
+  startBrowserConnect: () => void;
+  cancelBrowserConnect: () => void;
 }) {
   const [claudePath, setClaudePath] = useState<string | null | "loading">("loading");
   const [authOpen, setAuthOpen] = useState(false);
-  const [browserConnect, setBrowserConnect] = useState<BrowserConnectState>({
-    kind: "idle",
-  });
   const [chat, setChat] = useState<{
     state: "idle" | "loading" | "ready";
     slack: UserConnection | null;
     teams: UserConnection | null;
   }>({ state: "idle", slack: null, teams: null });
-
-  // Cancel any in-flight browser handoff if the user navigates away or
-  // unmounts the onboarding screen mid-flow. Otherwise the Rust
-  // listener would sit there until the 5-min timeout.
-  useEffect(() => {
-    return () => {
-      oauthCallbackCancel().catch(() => {
-        // Idempotent — fine to silently fail when nothing was running.
-      });
-    };
-  }, []);
-
-  const startBrowserConnect = useCallback(async () => {
-    setBrowserConnect({ kind: "starting" });
-    try {
-      const state = crypto.randomUUID();
-      const { url: cbUrl } = await oauthCallbackStart(state);
-      const params = new URLSearchParams({
-        cb: cbUrl,
-        state,
-        name: machineLabel(),
-      });
-      const target = `${PINKFISH_WEB_URL}/openit/connect?${params}`;
-      await openUrl(target);
-      setBrowserConnect({ kind: "waiting" });
-
-      const creds = await oauthCallbackAwait();
-      setBrowserConnect({ kind: "validating" });
-
-      const { orgName } = await connectAndValidate({
-        clientId: creds.client_id,
-        clientSecret: creds.client_secret,
-        orgId: creds.org_id,
-        tokenUrl: creds.token_url || DEFAULT_TOKEN_URL,
-      });
-      onPinkfishConnected(orgName);
-      setBrowserConnect({ kind: "idle" });
-    } catch (e) {
-      const message =
-        e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
-      setBrowserConnect({ kind: "error", message });
-    }
-  }, [onPinkfishConnected]);
-
-  const cancelBrowserConnect = useCallback(async () => {
-    try {
-      await oauthCallbackCancel();
-    } catch {
-      // ignore
-    }
-    setBrowserConnect({ kind: "idle" });
-  }, []);
 
   useEffect(() => {
     claudeDetect()
