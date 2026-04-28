@@ -87,6 +87,7 @@ export function Shell({
   slackStatus,
   orgName,
   onOpenPalette,
+  onConnectSlack,
   registerManualPull,
   registerSwitchToSync,
   registerShowCloudCta,
@@ -123,6 +124,10 @@ export function Shell({
   orgName: string | null;
   /** Open the cmd-K command palette. */
   onOpenPalette: () => void;
+  /** Kick off the /connect-slack skill-canvas flow. App owns the
+   *  scaffold-and-inject logic so the cmd-K palette and the bottom-
+   *  bar Slack pill share one entry point. */
+  onConnectSlack: () => void;
   /** Register the manual-pull handler so the command palette can call it. */
   registerManualPull: (fn: () => void) => void;
   /** Register the switch-to-sync-tab handler so the command palette can call it. */
@@ -346,8 +351,22 @@ export function Shell({
       setSource({ kind: "getting-started" });
     };
     window.addEventListener("openit:open-welcome", openWelcome);
+
+    // Cmd-P file picker (mounted in App.tsx) dispatches this event
+    // with an absolute path; we resolve it via the existing entity
+    // routing and set the viewer source. Custom event keeps the file
+    // picker decoupled from Shell's prop signature.
+    const openPath = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { path?: string };
+      const target = detail?.path;
+      if (!target) return;
+      void resolvePathToSource(target, repo).then((s) => setSource(s));
+    };
+    window.addEventListener("openit:open-path", openPath);
+
     return () => {
       window.removeEventListener("openit:open-welcome", openWelcome);
+      window.removeEventListener("openit:open-path", openPath);
     };
   }, [repo, source]);
 
@@ -706,10 +725,17 @@ export function Shell({
               <div className="left-tabs">
                 <button
                   type="button"
-                  className={`left-tab ${leftTab === "overview" || leftTab === "files" ? "active" : ""}`}
+                  className={`left-tab ${leftTab === "overview" ? "active" : ""}`}
                   onClick={() => setLeftTab("overview")}
                 >
                   Overview
+                </button>
+                <button
+                  type="button"
+                  className={`left-tab ${leftTab === "files" ? "active" : ""}`}
+                  onClick={() => setLeftTab("files")}
+                >
+                  Explorer
                 </button>
                 <button
                   type="button"
@@ -871,6 +897,7 @@ export function Shell({
         slackStatus={slackStatus}
         changeCount={changeCount}
         onOpenPalette={onOpenPalette}
+        onConnectSlack={onConnectSlack}
       />
     </div>
   );

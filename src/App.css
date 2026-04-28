@@ -4970,3 +4970,43 @@ button.status-chip-info:hover {
   margin: 0;
   line-height: 1.5;
 }
+
+
+/* ── Slack chip in unconfigured state ─────────────────────────────
+   Always-rendered Slack pill. Dashed border + muted color signals
+   "you don't have one yet — click to set up." Same flow as the
+   configured-state click — both kick off /connect-slack canvas. */
+.status-chip-unset {
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-muted);
+}
+
+button.status-chip-unset:hover {
+  background: var(--accent-faint);
+  border-color: var(--accent-soft);
+  border-style: solid;
+  color: var(--accent);
+}
+
+/* ── File search palette item polish ───────────────────────────── */
+.file-search-item {
+  align-items: center;
+  gap: 10px;
+}
+
+.file-search-glyph {
+  width: 14px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.file-search-dir {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  font-style: normal;
+}

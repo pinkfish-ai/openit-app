@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
 import { CommandPalette } from "./shell/CommandPalette";
+import { FileSearchPalette } from "./shell/FileSearchPalette";
 import {
   fsRead,
   intakeStart,
@@ -137,9 +138,36 @@ function App() {
   const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
   const [skillCanvasState, setSkillCanvasState] = useState<SkillCanvasState | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [filePaletteOpen, setFilePaletteOpen] = useState(false);
   const manualPullRef = useRef<(() => void) | null>(null);
   const switchToSyncRef = useRef<(() => void) | null>(null);
   const showCloudCtaRef = useRef<(() => void) | null>(null);
+
+  // Single-source-of-truth handler for "kick off the Slack flow":
+  //   1. scaffold the connect-slack skill canvas state (setup or
+  //      manage defaults, merged with anything already on disk),
+  //   2. inject /connect-slack into Claude.
+  // Used by the cmd-K palette AND the bottom-bar Slack pill so both
+  // surfaces behave identically. Also handles the no-canvas-prereq
+  // guard (needs repo + intake server up).
+  const triggerSlackFlow = useCallback(async () => {
+    if (!repo || !intakeServerUrl) return;
+    try {
+      const existing = await skillStateRead(repo, "connect-slack");
+      const defaults = slackConfig
+        ? buildManageState(slackConfig)
+        : buildSetupState();
+      const next = existing
+        ? mergeSkillState(existing, defaults)
+        : defaults;
+      await skillStateWrite(repo, "connect-slack", next);
+    } catch (e) {
+      console.warn("[app] slack canvas scaffold failed:", e);
+    }
+    injectIntoChat("/connect-slack").catch((e) =>
+      console.warn("[app] inject /connect-slack failed:", e),
+    );
+  }, [repo, intakeServerUrl, slackConfig]);
 
   // Global cmd-K / ctrl-K listener — opens the command palette from
   // anywhere in the app. We use a window listener (not document
@@ -148,16 +176,27 @@ function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isCmdK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
+      // Cmd-P / Ctrl-P → open the file/folder picker (VS Code's
+      // "Go to file"). Excludes shift to keep Cmd-Shift-P free for
+      // future use (e.g. a separate command-palette variant).
+      const isCmdP =
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "p";
       if (isCmdK) {
         e.preventDefault();
         setPaletteOpen((v) => !v);
-      } else if (e.key === "Escape" && paletteOpen) {
-        setPaletteOpen(false);
+      } else if (isCmdP) {
+        e.preventDefault();
+        setFilePaletteOpen((v) => !v);
+      } else if (e.key === "Escape") {
+        if (paletteOpen) setPaletteOpen(false);
+        if (filePaletteOpen) setFilePaletteOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paletteOpen]);
+  }, [paletteOpen, filePaletteOpen]);
 
   // Active skill canvas — currently we only support one canvas at a
   // time (V1), and the only canvas-driven skill is connect-slack.
@@ -624,6 +663,7 @@ function App() {
           slackStatus={slackStatus}
           orgName={orgName}
           onOpenPalette={() => setPaletteOpen(true)}
+          onConnectSlack={triggerSlackFlow}
           registerManualPull={(fn) => { manualPullRef.current = fn; }}
           registerSwitchToSync={(fn) => { switchToSyncRef.current = fn; }}
           registerShowCloudCta={(fn) => { showCloudCtaRef.current = fn; }}
@@ -637,33 +677,24 @@ function App() {
         if (connected) setBypassOnboarding(false);
         else showCloudCtaRef.current?.();
       }}
-      onConnectSlack={async () => {
-        if (!repo || !intakeServerUrl) return;
-        // Same two-step flow the SlackPill click used: scaffold the
-        // skill canvas state file FIRST so the canvas pops open
-        // immediately, THEN inject /connect-slack so Claude resumes
-        // orchestration. Without step 1, the slash-command goes in
-        // but no canvas appears (Claude has to author the JSON
-        // itself, which surfaces a noisy permission prompt).
-        try {
-          const existing = await skillStateRead(repo, "connect-slack");
-          const defaults = slackConfig
-            ? buildManageState(slackConfig)
-            : buildSetupState();
-          const next = existing
-            ? mergeSkillState(existing, defaults)
-            : defaults;
-          await skillStateWrite(repo, "connect-slack", next);
-        } catch (e) {
-          console.warn("[app] slack canvas scaffold failed:", e);
-        }
-        injectIntoChat("/connect-slack").catch((e) =>
-          console.warn("[app] inject /connect-slack failed:", e),
-        );
-      }}
+      onConnectSlack={triggerSlackFlow}
       onManualPull={() => manualPullRef.current?.()}
       onOpenWelcome={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
       onSwitchToSync={() => switchToSyncRef.current?.()}
+    />
+    <FileSearchPalette
+      open={filePaletteOpen}
+      repo={repo}
+      onClose={() => setFilePaletteOpen(false)}
+      onOpenPath={(path) => {
+        // Shell listens for `openit:open-path` and routes through
+        // resolvePathToSource → setSource. Custom event keeps Shell's
+        // signature unchanged (less prop-plumbing churn while Ben is
+        // also editing Shell.tsx in parallel).
+        window.dispatchEvent(
+          new CustomEvent("openit:open-path", { detail: { path } }),
+        );
+      }}
     />
     </>
   );

@@ -20,6 +20,7 @@ export function StatusBar({
   slackStatus,
   changeCount,
   onOpenPalette,
+  onConnectSlack,
 }: {
   repo: string | null;
   cloudConnected: boolean;
@@ -29,6 +30,9 @@ export function StatusBar({
   slackStatus: SlackStatus | null;
   changeCount: number;
   onOpenPalette: () => void;
+  /** Click handler for the Slack chip — kicks off the connect-slack
+   *  skill-canvas flow (setup if no config, manage if configured). */
+  onConnectSlack: () => void;
 }) {
   const projectName = repo ? basename(repo) : "no project";
   const slackRunning = !!slackStatus?.running;
@@ -106,27 +110,62 @@ export function StatusBar({
           </button>
         )}
 
-        {slackConfig && (
-          <span
-            className={`status-chip ${
-              slackRunning ? "status-chip-ok" : "status-chip-warn"
-            }`}
-            title={
-              slackRunning
+        {/* Slack chip — always rendered. Three visual states:
+              - configured + listener running → sage LED + "@bot · Ns"
+              - configured + listener stopped → ochre LED + "@bot"
+              - not configured                → dotted/unset, "Connect"
+            Click in any state opens the /connect-slack skill canvas
+            (setup vs manage is decided by the canvas itself). */}
+        <button
+          type="button"
+          className={`status-chip ${
+            slackConfig
+              ? slackRunning
+                ? "status-chip-ok"
+                : "status-chip-warn"
+              : "status-chip-unset"
+          }`}
+          title={
+            !slackConfig
+              ? "Connect Slack — bring DM-style support requests into your inbox"
+              : slackRunning
                 ? `Slack listener running (${
                     slackStatus?.last_heartbeat?.sessions ?? 0
-                  } sessions)`
-                : "Slack configured but not running"
-            }
-          >
-            <span className="status-led" />
-            <span className="status-chip-label">
-              slack · @{slackConfig.bot_name}
-              {slackRunning &&
-                ` · ${slackStatus?.last_heartbeat?.sessions ?? 0}s`}
-            </span>
-          </span>
-        )}
+                  } sessions). Click to manage.`
+                : "Slack configured but not running. Click to manage."
+          }
+          onClick={onConnectSlack}
+        >
+          {slackConfig ? (
+            <>
+              <span className="status-led" />
+              <span className="status-chip-label">
+                slack · @{slackConfig.bot_name}
+                {slackRunning &&
+                  ` · ${slackStatus?.last_heartbeat?.sessions ?? 0}s`}
+              </span>
+            </>
+          ) : (
+            <>
+              <svg
+                className="status-chip-icon"
+                viewBox="0 0 14 14"
+                width="11"
+                height="11"
+                aria-hidden
+              >
+                <path
+                  d="M5 8.5h-2a1.5 1.5 0 0 1 0-3h2zM5.5 8v-2h3v2zM5.5 5.5h3a1.5 1.5 0 0 0 0-3h-3zM6 5h2v3H6zM9 5.5h2a1.5 1.5 0 0 1 0 3H9zM8.5 6v2h-3V6zM8.5 8.5h-3a1.5 1.5 0 0 0 0 3h3zM8 9H6V6h2z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.1"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="status-chip-label">Connect Slack</span>
+            </>
+          )}
+        </button>
 
         {changeCount > 0 && (
           <span
