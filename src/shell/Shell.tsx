@@ -838,8 +838,14 @@ export function Shell({
           ),
         };
 
+        // No autoSaveId on the PanelGroup — persisted sizes are keyed
+        // by Panel id, but when a pane swaps slots its old persisted
+        // size is briefly re-applied at the new position before the
+        // library reflows, producing a visible width jump on drop.
+        // PANE_DEFAULT covers the common case; runtime resizes during
+        // a session still work via the library's own state.
         return (
-          <PanelGroup direction="horizontal" autoSaveId="openit-shell">
+          <PanelGroup direction="horizontal">
             {paneOrder.map((id, idx) => (
               <Fragment key={id}>
                 <Panel
