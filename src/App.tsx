@@ -2,7 +2,28 @@ import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
-import { fsRead, intakeStart, projectBootstrap, stateLoad, stateSave } from "./lib/api";
+import {
+  fsRead,
+  intakeStart,
+  projectBootstrap,
+  slackConfigRead,
+  slackListenerStart,
+  slackListenerStatus,
+  slackListenerStop,
+  stateLoad,
+  stateSave,
+  type SlackConfig,
+  type SlackStatus,
+} from "./lib/api";
+import {
+  type SkillCanvasState,
+  injectIntoChat,
+  mergeSkillState,
+  skillStateRead,
+  skillStateWrite,
+} from "./lib/skillCanvas";
+import { buildManageState, buildSetupState } from "./lib/connectSlackState";
+import { onFsChanged } from "./lib/fsWatcher";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
@@ -123,6 +144,58 @@ function IntakeUrlPill({ url }: { url: string }) {
   );
 }
 
+/// Slack status pill in the header. Three visual states:
+///   - not configured  → "Connect Slack" (dotted)
+///   - configured + listener running → "Slack: @<bot> · Nses" green dot
+///   - configured + listener stopped/erroring → "Slack: @<bot>" amber dot
+/// Click always opens the connect/manage modal.
+function SlackPill({
+  config,
+  status,
+  onClick,
+}: {
+  config: SlackConfig | null;
+  status: SlackStatus | null;
+  onClick: () => void;
+}) {
+  if (!config) {
+    return (
+      <button
+        type="button"
+        className="intake-url-pill slack-pill slack-pill-unset"
+        onClick={onClick}
+        title="Set up the OpenIT Slack bot for this project"
+      >
+        <span className="intake-url-pill-label">Slack</span>
+        <span className="intake-url-pill-action">CONNECT</span>
+      </button>
+    );
+  }
+  const running = !!status?.running;
+  const sessions = status?.last_heartbeat?.sessions ?? 0;
+  return (
+    <button
+      type="button"
+      className={`intake-url-pill slack-pill ${
+        running ? "slack-pill-running" : "slack-pill-stopped"
+      }`}
+      onClick={onClick}
+      title={
+        running
+          ? `Slack listener running for @${config.bot_name}. Click to manage.`
+          : `Slack configured but listener not running. Click to start.`
+      }
+    >
+      <span className="slack-pill-dot" />
+      <span className="intake-url-pill-label">Slack</span>
+      <code className="intake-url-pill-value">
+        @{config.bot_name}
+        {running && ` · ${sessions}s`}
+      </code>
+    </button>
+  );
+}
+
 function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -133,6 +206,133 @@ function App() {
   const [bypassOnboarding, setBypassOnboarding] = useState(false);
   const [bubbles, setBubbles] = useState<PromptBubble[]>(DEFAULT_BUBBLES);
   const [intakeServerUrl, setIntakeServerUrl] = useState<string | null>(null);
+  const [slackConfig, setSlackConfig] = useState<SlackConfig | null>(null);
+  const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
+  const [skillCanvasState, setSkillCanvasState] = useState<SkillCanvasState | null>(null);
+
+  // Active skill canvas — currently we only support one canvas at a
+  // time (V1), and the only canvas-driven skill is connect-slack.
+  // Watch its state file under .openit/skill-state/connect-slack.json
+  // and re-render whenever it changes. The skill is the orchestrator
+  // (writes state); React is the renderer (this state read fans out
+  // through Shell → SkillCanvas).
+  const ACTIVE_CANVAS_SKILL = "connect-slack";
+  useEffect(() => {
+    if (!repo) {
+      setSkillCanvasState(null);
+      return;
+    }
+    let mounted = true;
+    const refresh = () =>
+      skillStateRead(repo, ACTIVE_CANVAS_SKILL)
+        .then((s) => {
+          if (mounted) setSkillCanvasState(s);
+        })
+        .catch((e) => console.warn("[app] skill state read failed:", e));
+    refresh();
+    let unlistenFn: (() => void) | null = null;
+    onFsChanged((paths) => {
+      // Cheap match — re-read whenever any path under
+      // .openit/skill-state/ changes. Worst case: spurious read.
+      if (paths.some((p) => p.includes("/.openit/skill-state/"))) {
+        refresh();
+      }
+    })
+      .then((un) => {
+        if (mounted) unlistenFn = un;
+        else un();
+      })
+      .catch((e) => console.warn("[app] skill state watcher init failed:", e));
+    return () => {
+      mounted = false;
+      unlistenFn?.();
+    };
+  }, [repo]);
+
+  // Slack lifecycle:
+  //
+  //   1. On project open (repo set), read .openit/slack.json. If
+  //      present, auto-start the listener as soon as the intake
+  //      server URL is also known. Both are required because the
+  //      listener needs OPENIT_INTAKE_URL.
+  //   2. While a project is open, poll status every 5s so the
+  //      header pill flips between running/stopped without user
+  //      action. Cheap call — just reads supervisor state.
+  //   3. On project switch / null repo: stop the listener and clear
+  //      state. The supervisor's stop is idempotent (safe to call
+  //      when nothing's running), so no need to gate on
+  //      slackStatus?.running.
+  const slackOrgId = savedCreds?.orgId ?? "";
+  useEffect(() => {
+    if (!repo) {
+      setSlackConfig(null);
+      setSlackStatus(null);
+      // Best-effort: stop a listener that might still be pointed at
+      // the previous project. Errors are fine to ignore — if there
+      // was nothing running, stop is a no-op.
+      slackListenerStop().catch(() => {});
+      return;
+    }
+    let mounted = true;
+    slackConfigRead(repo)
+      .then((cfg) => {
+        if (!mounted) return;
+        setSlackConfig(cfg);
+      })
+      .catch((e) => {
+        console.warn("[app] slack config read failed:", e);
+      });
+    const refreshStatus = () =>
+      slackListenerStatus()
+        .then((s) => {
+          if (mounted) setSlackStatus(s);
+        })
+        .catch(() => {});
+    refreshStatus();
+    const id = setInterval(refreshStatus, 5_000);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, [repo]);
+
+  // Auto-start: when both repo and intakeServerUrl are known and a
+  // slack config exists, start the listener — exactly ONCE per
+  // (repo, intakeUrl) pair. We deliberately do NOT re-fire when
+  // the supervisor flips back to stopped: a listener that crashes
+  // because of a bad token would thrash-restart every 5s. After
+  // an unexpected exit, the user clicks the Slack pill to re-run
+  // /connect-slack; the canvas surfaces the captured exit error
+  // and offers a Start button via the verify-dm action.
+  const slackAutoStartedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!repo || !intakeServerUrl || !slackConfig) return;
+    const key = `${repo}|${intakeServerUrl}`;
+    if (slackAutoStartedRef.current === key) return;
+    slackAutoStartedRef.current = key;
+    let cancelled = false;
+    (async () => {
+      try {
+        await slackListenerStart({
+          repo,
+          intakeUrl: intakeServerUrl,
+          orgId: slackOrgId,
+        });
+        if (!cancelled) {
+          // Re-read status immediately so the pill flips green
+          // without waiting for the 5s interval tick.
+          slackListenerStatus()
+            .then((s) => setSlackStatus(s))
+            .catch(() => {});
+        }
+      } catch (e) {
+        console.warn("[app] slack listener auto-start failed:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, intakeServerUrl, slackConfig, slackOrgId]);
 
   useEffect(() => {
     // Stop the WebView from navigating to a dropped file when the drop
@@ -406,6 +606,51 @@ function App() {
         <span className="app-tagline">get IT done</span>
         <div className="app-header-actions">
           {intakeServerUrl && <IntakeUrlPill url={intakeServerUrl} />}
+          {repo && intakeServerUrl && (
+            <SlackPill
+              config={slackConfig}
+              status={slackStatus}
+              onClick={async () => {
+                // Pill click is the canonical entry point for the
+                // Slack flow. Two stages so Claude never has to
+                // scaffold static JSON itself (avoiding a noisy
+                // permission prompt for the user):
+                //
+                //   1. If no active canvas state exists, write the
+                //      appropriate default — setup if no slackConfig,
+                //      manage if connected. If state exists but is
+                //      inactive (user dismissed earlier), flip it
+                //      back to active without resetting progress.
+                //   2. Inject /connect-slack so Claude resumes
+                //      orchestration.
+                if (repo) {
+                  try {
+                    const existing = await skillStateRead(repo, "connect-slack");
+                    const defaults = slackConfig
+                      ? buildManageState(slackConfig)
+                      : buildSetupState();
+                    // First click → write defaults. Subsequent clicks →
+                    // merge: pull the latest content (titles, bodies,
+                    // actions, freeform) from defaults, but carry over
+                    // each step's `status` from the existing state by
+                    // matching on step id. This means iterating on
+                    // step copy never strands a user with stale text,
+                    // but mid-setup progress survives an OpenIT
+                    // update.
+                    const next = existing
+                      ? mergeSkillState(existing, defaults)
+                      : defaults;
+                    await skillStateWrite(repo, "connect-slack", next);
+                  } catch (e) {
+                    console.warn("[app] skill state scaffold failed:", e);
+                  }
+                }
+                injectIntoChat("/connect-slack").catch((e) =>
+                  console.warn("[app] inject /connect-slack failed:", e),
+                );
+              }}
+            />
+          )}
           <button
             className="icon-btn"
             onClick={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
@@ -434,6 +679,15 @@ function App() {
           cloudConnected={connected}
           onConnectRequest={() => setBypassOnboarding(false)}
           intakeUrl={intakeServerUrl}
+          skillCanvasState={skillCanvasState}
+          skillCanvasOrgId={slackOrgId}
+          onSkillCanvasClosed={() =>
+            // Soft-close fires on dismiss-button click. The canvas
+            // already wrote `active: false`; we eagerly drop our
+            // state so the Viewer comes back in the same render
+            // tick instead of waiting for the watcher to trip.
+            setSkillCanvasState((prev) => (prev ? { ...prev, active: false } : null))
+          }
         />
       </section>
     </main>

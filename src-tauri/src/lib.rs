@@ -11,7 +11,9 @@ mod pinkfish;
 mod project;
 mod pty;
 mod reports;
+mod skill_canvas;
 mod skills;
+mod slack;
 mod state;
 mod watcher;
 
@@ -35,6 +37,7 @@ pub fn run() {
         .manage(pty::PtyState::default())
         .manage(watcher::WatcherState::default())
         .manage(intake::IntakeState::default())
+        .manage(slack::SlackSupervisorState::default())
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_write,
@@ -108,6 +111,17 @@ pub fn run() {
             intake::intake_stop,
             intake::intake_url,
             agent_trace::agent_trace_latest,
+            skill_canvas::skill_state_read,
+            skill_canvas::skill_state_write,
+            skill_canvas::skill_state_clear,
+            slack::slack_connect,
+            slack::slack_validate_bot_token,
+            slack::slack_disconnect,
+            slack::slack_config_read,
+            slack::slack_listener_start,
+            slack::slack_listener_stop,
+            slack::slack_listener_status,
+            slack::slack_listener_send_intro,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

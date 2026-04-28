@@ -32,6 +32,12 @@ dist-ssr
 .env*.bak
 .env*.bak.*
 
+# Slack listener bundle is a build artifact in this repo; the
+# canonical copy lives in /web's plugin dist (committed there) and
+# is mirrored at merge time. Local builds / cargo dev runs can
+# regenerate it on demand via `npm run build:slack-listener`.
+scripts/openit-plugin/scripts/slack-listen.bundle.cjs
+
 # Ephemeral runtime state from the autonomous-dev /loop driver.
 # Machine-specific (session id, pid, start time); commits cause noise
 # and merge conflicts.

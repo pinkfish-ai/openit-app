@@ -1,5 +1,5 @@
 {
-  "version": "2026-04-27-015",
+  "version": "2026-04-27-016",
   "bubbles": [
     { "label": "Answer ticket", "skill": "/answer-ticket" }
   ],
@@ -8,6 +8,7 @@
     { "path": "skills/ai-intake.md" },
     { "path": "skills/answer-ticket.md" },
     { "path": "skills/connect-to-cloud.md" },
+    { "path": "skills/connect-slack.md" },
     { "path": "skills/report.md" },
     { "path": "schemas/tickets._schema.json" },
     { "path": "schemas/people._schema.json" },
@@ -15,6 +16,7 @@
     { "path": "scripts/kb-search.mjs" },
     { "path": "scripts/sync-resolve-conflict.mjs" },
     { "path": "scripts/sync-push.mjs" },
-    { "path": "scripts/report-overview.mjs" }
+    { "path": "scripts/report-overview.mjs" },
+    { "path": "scripts/slack-listen.bundle.cjs" }
   ]
 }

@@ -90,6 +90,27 @@
       "type": "text",
       "nullable": true,
       "comment": "Admin-only notes not surfaced in the user-facing reply. E.g. 'declined to capture as KB — one-off issue specific to this user's machine.'"
+    },
+    {
+      "id": "slackWorkspaceId",
+      "label": "Slack workspace",
+      "type": "string",
+      "nullable": true,
+      "comment": "Slack team_id (e.g. 'T012ABCDE'). Set on first turn for tickets with askerChannel: 'slack'. Used by the listener's egress polling loop to confirm the ticket originated from the same workspace it's currently connected to."
+    },
+    {
+      "id": "slackChannelId",
+      "label": "Slack DM channel",
+      "type": "string",
+      "nullable": true,
+      "comment": "Slack DM channel id (starts with 'D'). Set on first turn for tickets with askerChannel: 'slack'. The local Slack listener uses this for outbound delivery — admin replies on this ticket get DMed to the asker via this channel."
+    },
+    {
+      "id": "slackUserId",
+      "label": "Slack user",
+      "type": "string",
+      "nullable": true,
+      "comment": "Slack user id of the asker (starts with 'U'). Set on first turn for tickets with askerChannel: 'slack'. Used by the listener for the defensive 30-min ticket-resume lookup after a restart."
     }
   ]
 }
