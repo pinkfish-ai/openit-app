@@ -21,6 +21,11 @@ export async function resolvePathToSource(
   const rel = path.startsWith(repo + "/") ? path.slice(repo.length + 1) : null;
   if (!rel) return { kind: "file", path };
 
+  // `tools/` is a synthetic entity — no real directory on disk. The
+  // catalog UI lives in the viewer; the source of truth for installed
+  // servers is `.mcp.json` at the project root, parsed by ToolsPanel.
+  if (rel === "tools" || rel === "tools/") return { kind: "tools" };
+
   // .openit/agent-traces/<ticketId>/ (folder) → agent-trace-list:
   // every per-turn trace for this ticket, oldest-first, stacked
   // with separators in the viewer.

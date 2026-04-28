@@ -41,14 +41,13 @@ import { EscalatedTicketBanner } from "./EscalatedTicketBanner";
 import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
-import { ToolsPanel } from "./ToolsPanel";
 import { subscribeRestartRequested } from "./activeSession";
 import { Viewer, type ViewerSource } from "./Viewer";
 import { SkillCanvas } from "../SkillCanvas";
 import type { SkillCanvasState as SkillCanvasStateType } from "../lib/skillCanvas";
 import { resolvePathToSource } from "./entityRouting";
 
-type LeftTab = "overview" | "files" | "tools" | "source-control";
+type LeftTab = "overview" | "files" | "source-control";
 
 /// Stable id for each pane. Used to drive reordering — the user can
 /// drag a pane's grip onto another pane and the layout state tracks
@@ -742,13 +741,6 @@ export function Shell({
                 </button>
                 <button
                   type="button"
-                  className={`left-tab ${leftTab === "tools" ? "active" : ""}`}
-                  onClick={() => setLeftTab("tools")}
-                >
-                  Tools
-                </button>
-                <button
-                  type="button"
                   className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
                   onClick={() => setLeftTab("source-control")}
                 >
@@ -796,9 +788,6 @@ export function Shell({
                   fsTick={fsTick}
                   onFsChange={bumpFs}
                 />
-              </div>
-              <div className="left-tab-panel" hidden={leftTab !== "tools"}>
-                <ToolsPanel projectRoot={repo} />
               </div>
               <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
                 <SourceControl

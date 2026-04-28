@@ -9,6 +9,7 @@ import type { MemoryItem } from "../lib/skillsApi";
 import { DataTable } from "./DataTable";
 import { EntityCardGrid } from "./EntityCardGrid";
 import { EntityBadge, type EntityKind } from "./entityIcons";
+import { ToolsPanel } from "./ToolsPanel";
 import { RowEditForm } from "./RowEditForm";
 import { AttachmentList } from "./AttachmentList";
 import { ImageViewer } from "./viewers/ImageViewer";
@@ -481,6 +482,11 @@ export function Viewer({
       setContent("");
       return;
     }
+    if (source.kind === "tools") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
   }, [source]);
 
   // Re-read the single-row file from disk when fsTick fires. Lets edits
@@ -592,6 +598,7 @@ export function Viewer({
       case "people-list":        return "People";
       case "cloud-cta": return "Connect to Pinkfish Cloud";
       case "getting-started": return "Getting started";
+      case "tools": return "Tools";
       default: return "";
     }
   };
@@ -1264,6 +1271,14 @@ export function Viewer({
           />
         </div>
       );
+    }
+
+    // Tools — the MCP-servers catalog. Synthetic entity (no on-disk
+    // directory); the panel reads `.mcp.json` directly to render
+    // installed state and shells out to `claude mcp add/remove` for
+    // mutations.
+    if (source.kind === "tools") {
+      return <ToolsPanel projectRoot={repo} />;
     }
 
     // `filestores/attachments/` welcome stub + per-ticket roll-up.
