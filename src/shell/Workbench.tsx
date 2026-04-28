@@ -63,10 +63,15 @@ export function Workbench({
   repo,
   fsTick,
   onOpen,
+  onShowFiles,
 }: {
   repo: string | null;
   fsTick: number;
   onOpen: (path: string) => void;
+  /** Switch the parent to the Explorer (file tree) view. The
+   *  Explorer is no longer a top-tab, so this affordance is the
+   *  only way to reach the raw file tree from the Overview pane. */
+  onShowFiles: () => void;
 }) {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [escalatedCount, setEscalatedCount] = useState(0);
@@ -167,6 +172,16 @@ export function Workbench({
           );
         })}
       </div>
+
+      <button
+        type="button"
+        className="workbench-files-toggle"
+        onClick={onShowFiles}
+      >
+        <span className="workbench-files-caret">▸</span>
+        <span>File explorer</span>
+        <span className="workbench-files-hint">advanced</span>
+      </button>
     </div>
   );
 }
