@@ -87,6 +87,13 @@ Greet briefly based on what you find:
   Re-flip to `active: true` (the React app also does this on the
   next pill click, but if you're invoked some other way, do it
   here) and resume.
+- **File doesn't exist** (rare — happens if the admin typed
+  `/connect-slack` in chat without ever clicking the Slack pill,
+  bypassing the React-side scaffold) → reply: *"Click the dotted
+  Slack pill in the OpenIT header (top-right) to open the canvas
+  — that's the canonical entry point for this flow. The pill
+  click writes the initial canvas state and re-runs me with
+  context."* Don't try to scaffold the JSON yourself.
 
 The two default shapes live in `src/lib/connectSlackState.ts`
 (`buildSetupState()` and `buildManageState(config)`); look there
@@ -107,7 +114,7 @@ reply briefly in chat (one sentence).
 | `(canvas) intro DM sent to <email>...` | User sent the intro. | Mark `verify` as `completed`. Reply: *"Sent. Now switch to Slack and reply to the bot to confirm the round-trip."* If this is the last step, also flip `active: false` (canvas hides). |
 | `(canvas) marked '<step>' as done` | User clicked the checkbox manually. | Mirror in the state file (set that step to `completed`); pick the next pending step and set it `active`. Reply: *"Marked '<step>' done."* |
 | `(canvas) un-checked '<step>'` | User toggled it off. | Set that step back to `active`; reply: *"Re-opened '<step>'."* |
-| `(canvas) admin clicked Disconnect Slack — please run /disconnect-slack confirm` | User clicked Disconnect. | Confirm in chat (*"Sure — disconnect Slack? This stops the listener, removes tokens, deletes .openit/slack.json. Reply yes to proceed."*); on yes, walk them through the disconnect (call `slack_disconnect` via... actually you can't directly; tell the admin to use the `slack_disconnect` Tauri command via the modal — but the modal is gone now; for V1 just `rm .openit/slack.json` + tell user to use Activity Monitor for the listener. Better path: clear state file and tell admin "disconnect support is being replaced — for now, run `pkill -f slack-listen.bundle.cjs && rm .openit/slack.json` and we'll add a one-click Disconnect in the next pass."). |
+| `(canvas) admin clicked Disconnect Slack — please confirm and run the disconnect` | User clicked Disconnect on the manage canvas. | Confirm in chat: *"Sure — disconnect Slack? This stops the listener, removes both tokens from Keychain, and deletes .openit/slack.json. Reply yes to proceed."* On yes, walk the admin through the manual reset recipe in the FAQ section below ("How do I reset and start over?") — for V1 we don't have an in-canvas one-click disconnect. After they confirm it's done, clear the canvas state file (`rm .openit/skill-state/connect-slack.json`) so the next pill click bootstraps fresh. |
 
 If you see a prompt you don't recognize that starts with
 `(canvas)`, treat it as informational — log a brief note in chat
