@@ -3888,7 +3888,11 @@ button.status-chip-cmdk:hover {
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.02em;
-  line-height: 1.1;
+  /* Generous line-height so the descender on "g" / "p" isn't clipped
+     by the gradient text's bounding box (background-clip: text +
+     tight line-height crops descenders on macOS Safari/WebKit). */
+  line-height: 1.45;
+  padding-bottom: 4px;
   color: var(--text);
   background: linear-gradient(135deg, var(--text) 0%, #4a3922 100%);
   -webkit-background-clip: text;
