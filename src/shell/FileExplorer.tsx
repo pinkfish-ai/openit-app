@@ -438,11 +438,13 @@ export function FileExplorer({
   //   - `CLAUDE.md` — the agent instructions doc at repo root
   //   - `_*` files (`_welcome.md`, `_schema.json`, etc.) at any depth
   //   - `.claude/` directory and everything under it (skills source)
+  //   - `.openit/` directory (engine state: agent-traces, sync shadows)
   const isSystemEntry = (n: FileNode): boolean => {
     if (!repo) return false;
     const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.path;
     if (rel === "CLAUDE.md") return true;
     if (rel === ".claude" || rel.startsWith(".claude/")) return true;
+    if (rel === ".openit" || rel.startsWith(".openit/")) return true;
     if (n.name.startsWith("_")) return true;
     return false;
   };
