@@ -1,0 +1,47 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = "OpenIT — Claude-powered IT operations for SMBs." } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+  </head>
+  <body>
+    <header class="site">
+      <div class="container row">
+        <a href="/" class="brand">OpenIT</a>
+        <nav>
+          <a href="/download">Download</a>
+          <a href="https://github.com/pinkfish-ai/openit-app">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <div class="container">
+        <slot />
+      </div>
+    </main>
+
+    <footer class="site">
+      <div class="container row">
+        <div>© 2026 Pinkfish</div>
+        <nav>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
+          <a href="mailto:hello@pinkfish.ai">Contact</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>
