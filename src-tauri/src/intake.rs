@@ -2135,6 +2135,9 @@ const CHAT_HTML: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OpenIT — Help Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 .gate {
   flex: 1;
@@ -2188,15 +2191,25 @@ const CHAT_HTML: &str = r#"<!doctype html>
 </style>
 <style>
 :root {
-  --bg: #faf9f6;
+  /* Mirrors the desktop app's design tokens (src/App.css):
+     cream background + clay/orange accent + warm beige borders. */
+  --bg: #fbf7ec;
+  --bg-canvas: #f7f1e1;
   --surface: #ffffff;
-  --surface-soft: #f4f1eb;
-  --border: #e6e1d6;
-  --text: #2d2a25;
-  --text-muted: #6b6864;
-  --text-faint: #9b988f;
-  --accent: #1f4d2c;
-  --accent-soft: #e8f5ec;
+  --surface-soft: #f5edd8;
+  --border: #e7decb;
+  --border-strong: #cfc3a3;
+  --text: #25201a;
+  --text-muted: #67604f;
+  --text-faint: #978d76;
+  --accent: #c75a2c;
+  --accent-hover: #ad4a22;
+  --accent-soft: #f5d9c2;
+  --accent-faint: #fbeede;
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-xl: 16px;
 }
 * { box-sizing: border-box; }
 body {
@@ -2206,9 +2219,11 @@ body {
   flex-direction: column;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 header {
   padding: 12px 20px;
@@ -2235,7 +2250,7 @@ header p { margin: 4px 0 0; color: var(--text-muted); font-size: 12px; }
 .bubble.user {
   align-self: flex-end;
   background: var(--accent-soft);
-  border: 1px solid #82c39a;
+  border: 1px solid var(--accent-soft);
   border-top-right-radius: 2px;
 }
 .bubble.assistant, .bubble.admin {
@@ -2279,23 +2294,26 @@ button {
   background: var(--accent);
   color: white;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--r-md);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
+  font-family: inherit;
+  transition: background 0.1s ease, transform 0.05s ease;
 }
+button:hover:not(:disabled) { background: var(--accent-hover); transform: translateY(-1px); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .status-banner {
   padding: 8px 20px;
   font-size: 12px;
   background: var(--accent-soft);
-  border-bottom: 1px solid #82c39a;
-  color: #1f4d2c;
+  border-bottom: 1px solid var(--accent-soft);
+  color: var(--accent);
 }
 .status-banner.escalated {
-  background: #fff4e0;
-  border-color: #f0c66a;
-  color: #5c3d00;
+  background: var(--accent-faint);
+  border-color: var(--accent-soft);
+  color: var(--accent-hover);
 }
 .status-banner:empty { display: none; }
 /* --- Attachments --- */
@@ -2327,7 +2345,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .bubble .attachments a.attach-link:hover {
   background: var(--accent-soft);
-  border-color: #82c39a;
+  border-color: var(--accent-soft);
 }
 .bubble .attachments .attach-icon { font-size: 14px; }
 form {
@@ -2335,7 +2353,7 @@ form {
 }
 form.drag-over {
   background: var(--accent-soft);
-  outline: 2px dashed #82c39a;
+  outline: 2px dashed var(--accent-soft);
   outline-offset: -4px;
 }
 .compose-chips {
@@ -2354,7 +2372,7 @@ form.drag-over {
   padding: 4px 8px;
   font-size: 11px;
   background: var(--accent-soft);
-  border: 1px solid #82c39a;
+  border: 1px solid var(--accent-soft);
   border-radius: 999px;
   max-width: 200px;
 }
