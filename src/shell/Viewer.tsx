@@ -585,6 +585,7 @@ export function Viewer({
         return `Agent trace — ${source.subject}`;
       case "people-list":        return "People";
       case "cloud-cta": return "Connect to Pinkfish Cloud";
+      case "getting-started": return "Getting started";
       default: return "";
     }
   };
@@ -1149,6 +1150,58 @@ export function Viewer({
             <p className="cloud-cta-fineprint">
               Local mode keeps working — cloud just adds.
             </p>
+          </div>
+        </div>
+      );
+    }
+
+    // Getting Started — first-launch / "Getting Started" header
+    // button. Reuses the cloud-cta layout primitives (eyebrow +
+    // headline + lead + card) for a consistent React-rendered look.
+    // Replaces the old _welcome.md markdown surface so we don't
+    // have to maintain a markdown template + a regeneration policy
+    // for existing projects.
+    if (source.kind === "getting-started") {
+      const intakeHref = intakeUrl ?? null;
+      return (
+        <div className="viewer-summary cloud-cta">
+          <p className="cloud-cta-eyebrow">GETTING STARTED</p>
+          <h1 className="cloud-cta-headline">Your AI-driven IT helpdesk.</h1>
+          <p className="cloud-cta-lead">
+            OpenIT runs on your machine. Share the intake link, and an
+            AI agent triages every question — answering directly or
+            escalating to you when it can't.
+          </p>
+
+          <div className="cloud-cta-card">
+            <h2 className="cloud-cta-card-title">Try it in 30 seconds</h2>
+            <p className="cloud-cta-card-body">
+              Open the intake page and ask a question yourself —{" "}
+              <em>"I can't log in"</em>, <em>"how do I reset my VPN"</em> —
+              to see how the agent handles it.
+            </p>
+          </div>
+
+          <div className="cloud-cta-actions">
+            <button
+              type="button"
+              className="cloud-cta-primary"
+              onClick={() => {
+                if (intakeHref) {
+                  openUrl(intakeHref).catch((err) =>
+                    console.warn("[viewer] intake openUrl failed:", err),
+                  );
+                }
+              }}
+              disabled={!intakeHref}
+              title={
+                intakeHref
+                  ? "Open the intake page in your browser"
+                  : "Intake server still starting…"
+              }
+            >
+              Open the intake page
+            </button>
           </div>
         </div>
       );

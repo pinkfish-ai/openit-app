@@ -335,19 +335,15 @@ export function Shell({
   const [welcomeFlashKey, setWelcomeFlashKey] = useState(0);
   useEffect(() => {
     if (!repo) return;
-    const welcomePath = `${repo}/_welcome.md`;
     const openWelcome = () => {
-      const onWelcome =
-        source &&
-        source.kind === "file" &&
-        source.path === welcomePath;
-      if (onWelcome) {
+      // Already on the Getting Started page → flash the title to
+      // confirm the click did something (re-setting the same source
+      // wouldn't re-mount or animate anything on its own).
+      if (source && source.kind === "getting-started") {
         setWelcomeFlashKey((k) => k + 1);
         return;
       }
-      resolvePathToSource(welcomePath, repo)
-        .then(setSource)
-        .catch((e) => console.error("[shell] welcome resolution failed:", e));
+      setSource({ kind: "getting-started" });
     };
     window.addEventListener("openit:open-welcome", openWelcome);
     return () => {
@@ -458,19 +454,11 @@ export function Shell({
     };
   }, [fsTick, repo]);
 
-  // First-load auto-open of welcome (only when nothing else is loaded yet).
+  // First-load auto-open of the Getting Started page (only when
+  // nothing else is loaded yet). React surface, no fs read.
   useEffect(() => {
     if (repo && !source) {
-      const welcomePath = `${repo}/_welcome.md`;
-      console.log("[shell] opening welcome on first load:", welcomePath);
-      resolvePathToSource(welcomePath, repo)
-        .then((s) => {
-          console.log("[shell] welcome resolved:", s);
-          setSource(s);
-        })
-        .catch((e) => {
-          console.error("[shell] welcome resolution failed:", e);
-        });
+      setSource({ kind: "getting-started" });
     }
   }, [repo, source]);
 

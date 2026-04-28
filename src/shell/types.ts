@@ -167,4 +167,10 @@ export type ViewerSource =
   // explains what cloud unlocks (team sync, hosted agents, MCPs);
   // the page's primary button kicks off the actual onboarding flow.
   | { kind: "cloud-cta" }
+  // Getting Started — the auto-opened first-launch page and the
+  // target of the App-header "Getting Started" button. Replaces the
+  // markdown welcome doc with a React surface that mirrors the
+  // cloud-cta layout (eyebrow + headline + lead + a single intake
+  // CTA). The intake URL is read from Viewer's `intakeUrl` prop.
+  | { kind: "getting-started" }
   | null;
