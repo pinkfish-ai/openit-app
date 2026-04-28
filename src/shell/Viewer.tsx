@@ -40,18 +40,6 @@ const ENTITY_FOLDER_LABELS: Record<
   reports: "Reports",
 };
 
-/// Singular noun for the count pill in the title — "3 agents", "1 file".
-const ENTITY_FOLDER_NOUN: Record<
-  "agents" | "workflows" | "knowledge-base" | "library" | "reports",
-  string
-> = {
-  agents: "agent",
-  workflows: "workflow",
-  "knowledge-base": "article",
-  library: "file",
-  reports: "report",
-};
-
 /// Friendly empty-state copy per top-level entity folder, mirroring the
 /// conversations-list notice. Each message says what lives here, why it
 /// is empty, and the natural way to populate it.
@@ -574,43 +562,28 @@ export function Viewer({
       case "agent": return source.agent?.name ?? "Agent";
       case "workflow": return source.workflow?.name ?? "Workflow";
       case "conversation-thread": return `Conversation — ${source.ticketId}`;
-      case "conversations-list": return `Tickets — ${source.threads.length} thread${source.threads.length === 1 ? "" : "s"}`;
+      case "conversations-list": return "Inbox";
       case "entity-folder": {
-        const noun = ENTITY_FOLDER_NOUN[source.entity];
-        // For KB collections, surface the collection name in the
-        // title (e.g. "Knowledge base — default — 3 articles") so the
-        // admin can tell which KB they're in when more than one
-        // exists.
+        // For KB collections, surface the collection name (e.g.
+        // "Knowledge — default") so the admin can tell which KB they
+        // are in when more than one exists. Other entity-folder kinds
+        // get their bare label — the EntityBadge's tinted glyph
+        // already signals the kind and the cards below show the
+        // count.
         if (source.entity === "knowledge-base") {
           const m = source.path.match(/^knowledge-bases\/([^/]+)$/);
           const colName = m ? m[1] : "default";
-          return `Knowledge base — ${colName} — ${source.files.length} ${noun}${source.files.length === 1 ? "" : "s"}`;
+          return `Knowledge — ${colName}`;
         }
-        const label = ENTITY_FOLDER_LABELS[source.entity];
-        return `${label} — ${source.files.length} ${noun}${source.files.length === 1 ? "" : "s"}`;
+        return ENTITY_FOLDER_LABELS[source.entity];
       }
-      case "databases-list": {
-        const n = source.collections.length;
-        return `Databases — ${n} collection${n === 1 ? "" : "s"}`;
-      }
-      case "filestores-list": {
-        const n = source.collections.length;
-        return `Filestores — ${n} collection${n === 1 ? "" : "s"}`;
-      }
-      case "attachments-folder": {
-        const n = source.tickets.length;
-        return `Attachments — ${n} ticket${n === 1 ? "" : "s"}`;
-      }
-      case "knowledge-bases-list": {
-        const n = source.collections.length;
-        return `Knowledge bases — ${n} collection${n === 1 ? "" : "s"}`;
-      }
+      case "databases-list":     return "Databases";
+      case "filestores-list":    return "Files";
+      case "attachments-folder": return "Attachments";
+      case "knowledge-bases-list": return "Knowledge";
       case "agent-trace":
         return `Agent trace — ${source.subject}`;
-      case "people-list": {
-        const n = source.people.length;
-        return `People — ${n} ${n === 1 ? "person" : "people"}`;
-      }
+      case "people-list":        return "People";
       case "cloud-cta": return "Connect to Pinkfish Cloud";
       default: return "";
     }
