@@ -18,8 +18,11 @@ import {
 import {
   type SkillCanvasState,
   injectIntoChat,
+  mergeSkillState,
   skillStateRead,
+  skillStateWrite,
 } from "./lib/skillCanvas";
+import { buildManageState, buildSetupState } from "./lib/connectSlackState";
 import { onFsChanged } from "./lib/fsWatcher";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
@@ -549,11 +552,9 @@ function App() {
     <main className="app">
       <header className="app-header">
         <div className="wordmark">
-          <span className="wordmark-spark" aria-hidden="true">◆</span>
-          <div className="wordmark-text">
-            <span className="app-title">OpenIT</span>
-            <span className="app-tagline">get IT done</span>
-          </div>
+          <span className="app-title">OpenIT</span>
+          <span className="app-title-sep" aria-hidden>·</span>
+          <span className="app-tagline">get IT done</span>
         </div>
         <div className="app-header-actions">
           <button
@@ -611,10 +612,29 @@ function App() {
       open={paletteOpen}
       onClose={() => setPaletteOpen(false)}
       onConnectCloud={() => setBypassOnboarding(false)}
-      onConnectSlack={() => {
-        if (repo && intakeServerUrl) {
-          injectIntoChat("/connect-slack").catch(() => {});
+      onConnectSlack={async () => {
+        if (!repo || !intakeServerUrl) return;
+        // Same two-step flow the SlackPill click used: scaffold the
+        // skill canvas state file FIRST so the canvas pops open
+        // immediately, THEN inject /connect-slack so Claude resumes
+        // orchestration. Without step 1, the slash-command goes in
+        // but no canvas appears (Claude has to author the JSON
+        // itself, which surfaces a noisy permission prompt).
+        try {
+          const existing = await skillStateRead(repo, "connect-slack");
+          const defaults = slackConfig
+            ? buildManageState(slackConfig)
+            : buildSetupState();
+          const next = existing
+            ? mergeSkillState(existing, defaults)
+            : defaults;
+          await skillStateWrite(repo, "connect-slack", next);
+        } catch (e) {
+          console.warn("[app] slack canvas scaffold failed:", e);
         }
+        injectIntoChat("/connect-slack").catch((e) =>
+          console.warn("[app] inject /connect-slack failed:", e),
+        );
       }}
       onManualPull={() => manualPullRef.current?.()}
       onOpenWelcome={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}

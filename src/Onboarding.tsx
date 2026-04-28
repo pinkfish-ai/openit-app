@@ -164,9 +164,13 @@ export function Onboarding({
   return (
     <div className="onboard">
       <div className="onboard-card">
-        <h1 className="onboard-title">Welcome to OpenIT</h1>
+        <div className="onboard-wordmark">
+          <span className="onboard-title">OpenIT</span>
+          <span className="onboard-tagline">get IT done</span>
+        </div>
         <p className="onboard-subtitle">
-          A Claude Code powered IT solution.
+          A Claude-powered IT cockpit for small teams. Local-first,
+          cloud-optional.
         </p>
 
         <Step

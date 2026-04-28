@@ -1,3 +1,4 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { SlackConfig, SlackStatus } from "../lib/api";
 
 function basename(p: string): string {
@@ -8,7 +9,7 @@ function basename(p: string): string {
 /**
  * Bottom status rail. One quiet line of chips that surfaces the
  * "what's going on right now" state without stealing screen space.
- * Replaces the impulse to keep stacking banners for every concern.
+ * Cmd-K hint lives only in the top header — not duplicated here.
  */
 export function StatusBar({
   repo,
@@ -32,38 +33,77 @@ export function StatusBar({
   const projectName = repo ? basename(repo) : "no project";
   const slackRunning = !!slackStatus?.running;
 
+  // When the project name and the cloud-state label are the same string
+  // (e.g. fresh local-only install where basename(repo) === "local" and
+  // the cloud chip would also say "local"), collapse them so we don't
+  // render two pills both saying "local".
+  const cloudLabel = cloudConnected ? orgName ?? "connected" : "local";
+  const collapseProjectAndCloud =
+    !cloudConnected && projectName.toLowerCase() === cloudLabel.toLowerCase();
+
+  const intakeBare = intakeUrl?.replace(/^https?:\/\//, "");
+
   return (
     <div className="status-bar" role="status">
       <div className="status-bar-left">
         <button
           type="button"
-          className="status-chip status-chip-project"
-          title="Project"
+          className={`status-chip status-chip-project ${
+            collapseProjectAndCloud ? "status-chip-merged" : ""
+          }`}
+          title={
+            collapseProjectAndCloud
+              ? "Local-only project — click for the command palette"
+              : "Project — click for the command palette"
+          }
           onClick={onOpenPalette}
         >
           <span className="status-chip-glyph">◆</span>
-          <span className="status-chip-label">{projectName}</span>
+          <span className="status-chip-label">
+            {collapseProjectAndCloud ? `local · ${projectName}` : projectName}
+          </span>
         </button>
 
-        <span
-          className={`status-chip ${
-            cloudConnected ? "status-chip-ok" : "status-chip-muted"
-          }`}
-          title={cloudConnected ? "Connected to Pinkfish Cloud" : "Local only"}
-        >
-          <span className="status-led" />
-          <span className="status-chip-label">
-            {cloudConnected ? `cloud · ${orgName ?? "connected"}` : "local"}
-          </span>
-        </span>
-
-        {intakeUrl && (
-          <span className="status-chip status-chip-info" title="Intake server">
-            <span className="status-chip-glyph">↳</span>
+        {!collapseProjectAndCloud && (
+          <span
+            className={`status-chip ${
+              cloudConnected ? "status-chip-ok" : "status-chip-muted"
+            }`}
+            title={cloudConnected ? "Connected to Pinkfish Cloud" : "Local only"}
+          >
+            <span className="status-led" />
             <span className="status-chip-label">
-              intake · {intakeUrl.replace(/^https?:\/\//, "")}
+              {cloudConnected ? `cloud · ${cloudLabel}` : "local"}
             </span>
           </span>
+        )}
+
+        {intakeUrl && (
+          <button
+            type="button"
+            className="status-chip status-chip-info"
+            title={`Intake form at ${intakeBare} — click to open in your browser`}
+            onClick={() =>
+              openUrl(intakeUrl).catch((e) =>
+                console.warn("[status-bar] openUrl intake failed:", e),
+              )
+            }
+          >
+            <svg
+              className="status-chip-icon"
+              viewBox="0 0 14 14"
+              width="11"
+              height="11"
+              aria-hidden
+            >
+              <rect x="2" y="2.5" width="10" height="9" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+              <line x1="4.5" y1="5.5" x2="9.5" y2="5.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              <line x1="4.5" y1="8" x2="8" y2="8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+            <span className="status-chip-label">
+              Intake form · {intakeBare}
+            </span>
+          </button>
         )}
 
         {slackConfig && (
@@ -99,19 +139,6 @@ export function StatusBar({
             </span>
           </span>
         )}
-      </div>
-
-      <div className="status-bar-right">
-        <button
-          type="button"
-          className="status-chip status-chip-cmdk"
-          onClick={onOpenPalette}
-          title="Command palette"
-        >
-          <kbd>⌘</kbd>
-          <kbd>K</kbd>
-          <span className="status-chip-label">commands</span>
-        </button>
       </div>
     </div>
   );

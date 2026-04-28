@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import {
   agentTraceLatest,
@@ -9,7 +9,6 @@ import {
   gitStage,
   gitStatusShort,
   stateLoad,
-  stateSave,
   type AppPersistedState,
   type SlackConfig,
   type SlackStatus,
@@ -32,6 +31,8 @@ import { loadCreds } from "../lib/pinkfishAuth";
 import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
 import { startAutoCommitDriver, stopAutoCommitDriver } from "../lib/autoCommitDriver";
 import { ChatPane } from "./ChatPane";
+import { ChatShellHeader } from "./ChatShellHeader";
+import { PaneDragHandle } from "./PaneDragHandle";
 import { StatusBar } from "./StatusBar";
 import { Workbench } from "./Workbench";
 import { ConflictBanner } from "./ConflictBanner";
@@ -45,9 +46,16 @@ import { SkillCanvas } from "../SkillCanvas";
 import type { SkillCanvasState as SkillCanvasStateType } from "../lib/skillCanvas";
 import { resolvePathToSource } from "./entityRouting";
 
-const DEFAULT_SIZES = [18, 42, 40];
+type LeftTab = "overview" | "files" | "source-control";
 
-type LeftTab = "files" | "source-control";
+/// Stable id for each pane. Used to drive reordering — the user can
+/// drag a pane's grip onto another pane and the layout state tracks
+/// where each id lives. Insert-before semantics, like VS Code's tab
+/// strip.
+type PaneId = "left" | "center" | "right";
+const DEFAULT_PANE_ORDER: PaneId[] = ["left", "center", "right"];
+const PANE_MIN: Record<PaneId, number> = { left: 12, center: 20, right: 25 };
+const PANE_DEFAULT: Record<PaneId, number> = { left: 18, center: 42, right: 40 };
 
 /// Module-level reentrancy guard for Claude-triggered pushes. Hoisted
 /// out of the useEffect closure so a transient cleanup race (effect
@@ -115,23 +123,89 @@ export function Shell({
   const [state, setState] = useState<AppPersistedState | null>(null);
   const [source, setSource] = useState<ViewerSource>(null);
   const [conflictBubbles, setConflictBubbles] = useState<Bubble[]>([]);
-  const [leftTab, setLeftTab] = useState<LeftTab>("files");
+  const [leftTab, setLeftTab] = useState<LeftTab>("overview");
   const [fsTick, setFsTick] = useState(0);
   const [changeCount, setChangeCount] = useState(0);
   const [pulling, setPulling] = useState(false);
-  const [filesExpanded, setFilesExpanded] = useState(false);
+  const [paneOrder, setPaneOrder] = useState<PaneId[]>(DEFAULT_PANE_ORDER);
+  const [draggingPaneId, setDraggingPaneId] = useState<PaneId | null>(null);
+  const [dragOverPaneId, setDragOverPaneId] = useState<PaneId | null>(null);
+  const [chatSessionKey, setChatSessionKey] = useState(0);
   const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
 
-  // Workbench's "Files" toggle dispatches this event; we mirror its
-  // state so the FileExplorer collapses below the workbench by default.
-  useEffect(() => {
-    const onToggle = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { expanded: boolean };
-      setFilesExpanded(detail.expanded);
-    };
-    window.addEventListener("openit:workbench-toggle-files", onToggle);
-    return () =>
-      window.removeEventListener("openit:workbench-toggle-files", onToggle);
+  /// Drag-source / drop-target wiring. The grip in each pane's header
+  /// sets `draggingPaneId`; hovering another pane sets `dragOverPaneId`.
+  /// On drop we splice — remove the moving pane from its slot, insert
+  /// it before the target (insert-before, like VS Code's tab reorder).
+  const reorderPane = useCallback((movingId: PaneId, targetId: PaneId) => {
+    if (movingId === targetId) return;
+    setPaneOrder((prev) => {
+      const without = prev.filter((id) => id !== movingId);
+      const targetIdx = without.indexOf(targetId);
+      if (targetIdx < 0) return prev;
+      return [
+        ...without.slice(0, targetIdx),
+        movingId,
+        ...without.slice(targetIdx),
+      ];
+    });
+  }, []);
+
+  const onPaneDragStart = useCallback(
+    (paneId: PaneId, e: React.DragEvent) => {
+      e.dataTransfer.setData("application/x-openit-pane", paneId);
+      e.dataTransfer.effectAllowed = "move";
+      setDraggingPaneId(paneId);
+    },
+    [],
+  );
+
+  const onPaneDragEnd = useCallback(() => {
+    setDraggingPaneId(null);
+    setDragOverPaneId(null);
+  }, []);
+
+  const onPaneDragOver = useCallback(
+    (paneId: PaneId, e: React.DragEvent) => {
+      // Only respond to our own MIME — won't interfere with the chat
+      // pane's file-drop handlers which use x-openit-path / x-openit-ref.
+      if (!e.dataTransfer.types.includes("application/x-openit-pane")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDragOverPaneId((prev) => (prev === paneId ? prev : paneId));
+    },
+    [],
+  );
+
+  const onPaneDragLeave = useCallback(
+    (paneId: PaneId, e: React.DragEvent) => {
+      // Filter child→child transitions (dragLeave fires on every
+      // descendant boundary). Only clear when the drag is going to a
+      // node OUTSIDE the current pane.
+      const next = e.relatedTarget as Node | null;
+      const current = e.currentTarget as Node;
+      if (next && current.contains(next)) return;
+      setDragOverPaneId((prev) => (prev === paneId ? null : prev));
+    },
+    [],
+  );
+
+  const onPaneDrop = useCallback(
+    (paneId: PaneId, e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes("application/x-openit-pane")) return;
+      e.preventDefault();
+      const fromId = e.dataTransfer.getData(
+        "application/x-openit-pane",
+      ) as PaneId;
+      if (fromId && fromId !== paneId) reorderPane(fromId, paneId);
+      setDraggingPaneId(null);
+      setDragOverPaneId(null);
+    },
+    [reorderPane],
+  );
+
+  const newChatSession = useCallback(() => {
+    setChatSessionKey((k) => k + 1);
   }, []);
 
   const handleManualPull = useCallback(async () => {
@@ -565,25 +639,7 @@ export function Shell({
     };
   }, [repo, bumpFs, onSyncLine]);
 
-  const persist = useCallback(
-    (patch: Partial<AppPersistedState>) => {
-      const next: AppPersistedState = {
-        last_repo: null,
-        pane_sizes: null,
-        pinned_bubbles: null,
-        onboarding_complete: false,
-        ...(state ?? {}),
-        ...patch,
-      };
-      setState(next);
-      stateSave(next).catch(console.error);
-    },
-    [state],
-  );
-
   if (!state) return <div className="shell-loading">Loading…</div>;
-
-  const sizes = state.pane_sizes ?? DEFAULT_SIZES;
 
   return (
     <div className="shell">
@@ -615,124 +671,190 @@ export function Shell({
           setSource(resolved);
         }}
       />
-      <PanelGroup
-        direction="horizontal"
-        autoSaveId="openit-shell"
-        onLayout={(s: number[]) => persist({ pane_sizes: s })}
-      >
-        <Panel defaultSize={sizes[0]} minSize={12}>
-          <div className="left-pane">
-            <div className="left-tabs">
-              <button
-                type="button"
-                className={`left-tab ${leftTab === "files" ? "active" : ""}`}
-                onClick={() => setLeftTab("files")}
-              >
-                Explorer
-              </button>
-              <button
-                type="button"
-                className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
-                onClick={() => setLeftTab("source-control")}
-              >
-                Sync
-                {changeCount > 0 && (
-                  <span className="left-tab-badge" aria-label={`${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`}>
-                    {changeCount}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                className="left-tab-pull-btn"
-                onClick={handleManualPull}
-                disabled={!repo || pulling}
-                aria-label="Pull from Pinkfish now"
-                title={pulling ? "Pulling…" : "Pull from Pinkfish"}
-              >
-                <span className={`left-tab-pull-glyph${pulling ? " is-pulling" : ""}`}>↻</span>
-              </button>
-            </div>
-            {/* Keep both panels mounted so typed-but-uncommitted state
-                (e.g. the commit message) survives tab switches. */}
-            <div className="left-tab-panel" hidden={leftTab !== "files"}>
-              <div className="left-pane-scroll">
-                <Workbench
+      {(() => {
+        const paneClass = (id: PaneId) =>
+          `${id === "left" ? "left-pane" : id === "center" ? "center-pane" : "right-pane"} ${
+            draggingPaneId === id ? "pane-dragging" : ""
+          } ${
+            dragOverPaneId === id && draggingPaneId && draggingPaneId !== id
+              ? "pane-drop-target"
+              : ""
+          }`;
+
+        const paneContent: Record<PaneId, React.ReactNode> = {
+          left: (
+            <div
+              className={paneClass("left")}
+              onDragOver={(e) => onPaneDragOver("left", e)}
+              onDragLeave={(e) => onPaneDragLeave("left", e)}
+              onDrop={(e) => onPaneDrop("left", e)}
+            >
+              <div className="left-tabs">
+                <PaneDragHandle
+                  paneId="left"
+                  onDragStart={onPaneDragStart}
+                  onDragEnd={onPaneDragEnd}
+                />
+                <button
+                  type="button"
+                  className={`left-tab ${leftTab === "overview" ? "active" : ""}`}
+                  onClick={() => setLeftTab("overview")}
+                >
+                  Overview
+                </button>
+                <button
+                  type="button"
+                  className={`left-tab ${leftTab === "files" ? "active" : ""}`}
+                  onClick={() => setLeftTab("files")}
+                >
+                  Explorer
+                </button>
+                <button
+                  type="button"
+                  className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
+                  onClick={() => setLeftTab("source-control")}
+                >
+                  Sync
+                  {changeCount > 0 && (
+                    <span
+                      className="left-tab-badge"
+                      aria-label={`${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`}
+                    >
+                      {changeCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="left-tab-pull-btn"
+                  onClick={handleManualPull}
+                  disabled={!repo || pulling}
+                  aria-label="Pull from Pinkfish now"
+                  title={pulling ? "Pulling…" : "Pull from Pinkfish"}
+                >
+                  <span className={`left-tab-pull-glyph${pulling ? " is-pulling" : ""}`}>↻</span>
+                </button>
+              </div>
+              <div className="left-tab-panel" hidden={leftTab !== "overview"}>
+                <div className="left-pane-scroll">
+                  <Workbench
+                    repo={repo}
+                    fsTick={fsTick}
+                    onOpen={async (path) => {
+                      const resolved = await resolvePathToSource(path, repo);
+                      setSource(resolved);
+                    }}
+                    onShowFiles={() => setLeftTab("files")}
+                  />
+                </div>
+              </div>
+              <div className="left-tab-panel" hidden={leftTab !== "files"}>
+                <FileExplorer
                   repo={repo}
+                  onSelect={async (path) => {
+                    const resolved = await resolvePathToSource(path, repo);
+                    setSource(resolved);
+                  }}
                   fsTick={fsTick}
-                  onOpen={async (path) => {
+                  onFsChange={bumpFs}
+                />
+              </div>
+              <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
+                <SourceControl
+                  repo={repo}
+                  active={leftTab === "source-control"}
+                  onShowDiff={(text) => setSource({ kind: "diff", text })}
+                  onSyncLine={onSyncLine}
+                  onFsChange={bumpFs}
+                  onChangeCount={setChangeCount}
+                  cloudConnected={cloudConnected}
+                  onConnectRequest={onConnectRequest}
+                />
+              </div>
+            </div>
+          ),
+          center: (
+            <div
+              className={paneClass("center")}
+              onDragOver={(e) => onPaneDragOver("center", e)}
+              onDragLeave={(e) => onPaneDragLeave("center", e)}
+              onDrop={(e) => onPaneDrop("center", e)}
+            >
+              <div className="center-pane-header">
+                <PaneDragHandle
+                  paneId="center"
+                  onDragStart={onPaneDragStart}
+                  onDragEnd={onPaneDragEnd}
+                />
+              </div>
+              {skillCanvasState && skillCanvasState.active && repo && intakeUrl ? (
+                <SkillCanvas
+                  repo={repo}
+                  orgId={skillCanvasOrgId}
+                  intakeUrl={intakeUrl}
+                  state={skillCanvasState}
+                  onClosed={onSkillCanvasClosed}
+                />
+              ) : (
+                <Viewer
+                  source={source}
+                  repo={repo ?? ""}
+                  fsTick={fsTick}
+                  intakeUrl={intakeUrl}
+                  welcomeFlashKey={welcomeFlashKey}
+                  onOpenPath={async (path) => {
                     const resolved = await resolvePathToSource(path, repo);
                     setSource(resolved);
                   }}
                 />
-                <div className={`left-files-region ${filesExpanded ? "expanded" : "collapsed"}`}>
-                  <FileExplorer
-                    repo={repo}
-                    onSelect={async (path) => {
-                      const resolved = await resolvePathToSource(path, repo);
-                      setSource(resolved);
-                    }}
-                    fsTick={fsTick}
-                    onFsChange={bumpFs}
+              )}
+            </div>
+          ),
+          right: (
+            <div
+              className={paneClass("right")}
+              onDragOver={(e) => onPaneDragOver("right", e)}
+              onDragLeave={(e) => onPaneDragLeave("right", e)}
+              onDrop={(e) => onPaneDrop("right", e)}
+            >
+              <ChatShellHeader
+                onNewSession={newChatSession}
+                dragHandle={
+                  <PaneDragHandle
+                    paneId="right"
+                    onDragStart={onPaneDragStart}
+                    onDragEnd={onPaneDragEnd}
                   />
-                </div>
-              </div>
-            </div>
-            <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
-              <SourceControl
-                repo={repo}
-                active={leftTab === "source-control"}
-                onShowDiff={(text) => setSource({ kind: "diff", text })}
-                onSyncLine={onSyncLine}
-                onFsChange={bumpFs}
-                onChangeCount={setChangeCount}
-                cloudConnected={cloudConnected}
-                onConnectRequest={onConnectRequest}
+                }
               />
+              <div className="chat-area">
+                <ChatPane key={chatSessionKey} cwd={repo} />
+              </div>
+              <PromptBubbles extraBubbles={conflictBubbles} bubbles={bubbles} />
             </div>
-          </div>
-        </Panel>
-        <PanelResizeHandle className="resize-handle" />
-        <Panel defaultSize={sizes[1]} minSize={20}>
-          {skillCanvasState && skillCanvasState.active && repo && intakeUrl ? (
-            <SkillCanvas
-              repo={repo}
-              orgId={skillCanvasOrgId}
-              intakeUrl={intakeUrl}
-              state={skillCanvasState}
-              onClosed={onSkillCanvasClosed}
-            />
-          ) : (
-            <Viewer
-              source={source}
-              repo={repo ?? ""}
-              fsTick={fsTick}
-              intakeUrl={intakeUrl}
-              welcomeFlashKey={welcomeFlashKey}
-              onOpenPath={async (path) => {
-                const resolved = await resolvePathToSource(path, repo);
-                setSource(resolved);
-              }}
-            />
-          )}
-        </Panel>
-        <PanelResizeHandle className="resize-handle" />
-        <Panel defaultSize={sizes[2]} minSize={25}>
-          <div className="right-pane">
-            <div className="chat-shell-header">
-              <span className="chat-shell-badge" aria-hidden="true">✦</span>
-              <span className="chat-shell-title">Claude</span>
-              <span className="chat-shell-sub">your IT co-pilot</span>
-              <span className="chat-shell-spacer" />
-              <span className="chat-shell-dot" title="Live" />
-            </div>
-            <div className="chat-area">
-              <ChatPane cwd={repo} />
-            </div>
-            <PromptBubbles extraBubbles={conflictBubbles} bubbles={bubbles} />
-          </div>
-        </Panel>
-      </PanelGroup>
+          ),
+        };
+
+        return (
+          <PanelGroup direction="horizontal" autoSaveId="openit-shell">
+            {paneOrder.map((id, idx) => (
+              <Fragment key={id}>
+                <Panel
+                  id={id}
+                  order={idx}
+                  defaultSize={PANE_DEFAULT[id]}
+                  minSize={PANE_MIN[id]}
+                >
+                  {paneContent[id]}
+                </Panel>
+                {idx < paneOrder.length - 1 && (
+                  <PanelResizeHandle className="resize-handle" />
+                )}
+              </Fragment>
+            ))}
+          </PanelGroup>
+        );
+      })()}
       <StatusBar
         repo={repo}
         cloudConnected={cloudConnected}

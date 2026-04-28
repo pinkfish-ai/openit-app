@@ -91,14 +91,16 @@ export function Workbench({
   repo,
   fsTick,
   onOpen,
+  onShowFiles,
 }: {
   repo: string | null;
   fsTick: number;
   onOpen: (path: string) => void;
+  /** Switch the parent to the Explorer (file tree) tab. */
+  onShowFiles: () => void;
 }) {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [escalatedCount, setEscalatedCount] = useState(0);
-  const [filesExpanded, setFilesExpanded] = useState(false);
 
   useEffect(() => {
     if (!repo) {
@@ -137,17 +139,6 @@ export function Workbench({
       cancelled = true;
     };
   }, [repo, fsTick]);
-
-  // Emit a custom event that Shell.tsx listens for to swap the left
-  // tab to the raw file tree (mounted as a sibling, hidden by default).
-  const showFiles = () => {
-    setFilesExpanded((v) => !v);
-    window.dispatchEvent(
-      new CustomEvent("openit:workbench-toggle-files", {
-        detail: { expanded: !filesExpanded },
-      }),
-    );
-  };
 
   return (
     <div className="workbench">
@@ -190,14 +181,12 @@ export function Workbench({
 
       <button
         type="button"
-        className={`workbench-files-toggle ${filesExpanded ? "open" : ""}`}
-        onClick={showFiles}
+        className="workbench-files-toggle"
+        onClick={onShowFiles}
       >
-        <span className="workbench-files-caret">{filesExpanded ? "▾" : "▸"}</span>
-        <span>Files</span>
-        <span className="workbench-files-hint">
-          {filesExpanded ? "raw tree" : "advanced"}
-        </span>
+        <span className="workbench-files-caret">▸</span>
+        <span>Browse files</span>
+        <span className="workbench-files-hint">advanced</span>
       </button>
     </div>
   );

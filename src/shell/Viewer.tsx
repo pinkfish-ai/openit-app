@@ -7,6 +7,7 @@ import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
 import { DataTable } from "./DataTable";
+import { EntityCardGrid } from "./EntityCardGrid";
 import { RowEditForm } from "./RowEditForm";
 import { AttachmentList } from "./AttachmentList";
 import { ImageViewer } from "./viewers/ImageViewer";
@@ -1129,33 +1130,19 @@ export function Viewer({
     if (source.kind === "knowledge-bases-list") {
       return (
         <div className="viewer-summary">
-          <ul className="databases-list">
-            {source.collections.map((c) => (
-              <li key={c.path}>
-                <button
-                  type="button"
-                  className="databases-list-item"
-                  onClick={() => {
-                    if (onOpenPath) void onOpenPath(c.path);
-                  }}
-                  title={`Open ${c.name}`}
-                >
-                  <div className="databases-list-row">
-                    <span className="databases-list-name">{c.name}</span>
-                    <span className="databases-list-count">
-                      {c.itemCount} article{c.itemCount === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                  <p className="databases-list-desc">{c.description}</p>
-                  {!c.isBuiltin && (
-                    <div className="databases-list-meta">
-                      <span className="databases-list-tag">custom</span>
-                    </div>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <EntityCardGrid
+            kind="knowledge-bases"
+            cards={source.collections.map((c) => ({
+              key: c.path,
+              title: c.name,
+              description: c.description,
+              meta: `${c.itemCount} article${c.itemCount === 1 ? "" : "s"}`,
+              badge: c.isBuiltin
+                ? undefined
+                : { label: "custom", tone: "info" },
+              onClick: () => onOpenPath && void onOpenPath(c.path),
+            }))}
+          />
         </div>
       );
     }
@@ -1163,33 +1150,19 @@ export function Viewer({
     if (source.kind === "filestores-list") {
       return (
         <div className="viewer-summary">
-          <ul className="databases-list">
-            {source.collections.map((c) => (
-              <li key={c.path}>
-                <button
-                  type="button"
-                  className="databases-list-item"
-                  onClick={() => {
-                    if (onOpenPath) void onOpenPath(c.path);
-                  }}
-                  title={`Open ${c.name}`}
-                >
-                  <div className="databases-list-row">
-                    <span className="databases-list-name">{c.name}</span>
-                    <span className="databases-list-count">
-                      {c.itemCount} {c.itemNoun}{c.itemCount === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                  <p className="databases-list-desc">{c.description}</p>
-                  {!c.isBuiltin && (
-                    <div className="databases-list-meta">
-                      <span className="databases-list-tag">custom</span>
-                    </div>
-                  )}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <EntityCardGrid
+            kind="filestores"
+            cards={source.collections.map((c) => ({
+              key: c.path,
+              title: c.name,
+              description: c.description,
+              meta: `${c.itemCount} ${c.itemNoun}${c.itemCount === 1 ? "" : "s"}`,
+              badge: c.isBuiltin
+                ? undefined
+                : { label: "custom", tone: "info" },
+              onClick: () => onOpenPath && void onOpenPath(c.path),
+            }))}
+          />
         </div>
       );
     }
@@ -1204,38 +1177,27 @@ export function Viewer({
     if (source.kind === "attachments-folder") {
       return (
         <div className="viewer-summary">
-          {source.tickets.length === 0 ? (
-            <p className="summary-desc">
-              No attachments yet. Files dropped into a chat or admin reply land here, grouped by ticket.
-            </p>
-          ) : (
-            <ul className="databases-list">
-              {source.tickets.map((t) => (
-                <li key={t.ticketId}>
-                  <button
-                    type="button"
-                    className="databases-list-item"
-                    onClick={() => {
-                      // Jump to the conversation thread, not the raw
-                      // attachments folder — that's where the files
-                      // make sense.
-                      if (onOpenPath && repo) {
-                        void onOpenPath(`${repo}/databases/conversations/${t.ticketId}`);
-                      }
-                    }}
-                    title={`Open conversation for ${t.ticketId}`}
-                  >
-                    <div className="databases-list-row">
-                      <span className="databases-list-name">{t.ticketId}</span>
-                      <span className="databases-list-count">
-                        {t.fileCount} file{t.fileCount === 1 ? "" : "s"}
-                      </span>
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <EntityCardGrid
+            kind="attachments"
+            empty={
+              <p className="summary-desc">
+                No attachments yet. Files dropped into a chat or admin reply land here, grouped by ticket.
+              </p>
+            }
+            cards={source.tickets.map((t) => ({
+              key: t.ticketId,
+              title: t.ticketId,
+              meta: `${t.fileCount} file${t.fileCount === 1 ? "" : "s"}`,
+              onClick: () => {
+                // Jump to the conversation thread, not the raw
+                // attachments folder — that's where the files make
+                // sense.
+                if (onOpenPath && repo) {
+                  void onOpenPath(`${repo}/databases/conversations/${t.ticketId}`);
+                }
+              },
+            }))}
+          />
         </div>
       );
     }
@@ -1248,41 +1210,29 @@ export function Viewer({
     // expanding every folder. Click a card → onOpenPath routes into
     // the per-collection viewer.
     if (source.kind === "databases-list") {
-      if (source.collections.length === 0) {
-        return (
-          <div className="viewer-summary">
-            <p className="summary-desc">
-              No collections yet. Collections are JSON-backed tables that hold tickets,
-              people, conversations, and any custom entities you create. Ask Claude —
-              <em> "create a collection for inventory items"</em> — and it will scaffold
-              one under <code>databases/</code> with a starter schema.
-            </p>
-          </div>
-        );
-      }
       return (
         <div className="viewer-summary">
-          <ul className="databases-list">
-            {source.collections.map((c) => (
-              <li key={c.path}>
-                <button
-                  type="button"
-                  className="databases-list-item"
-                  onClick={() => {
-                    if (onOpenPath) void onOpenPath(c.path);
-                  }}
-                  title={`Open ${c.name}`}
-                >
-                  <div className="databases-list-row">
-                    <span className="databases-list-name">{c.name}</span>
-                    <span className="databases-list-count">
-                      {c.itemCount} {c.name === "conversations" ? "thread" : "row"}{c.itemCount === 1 ? "" : "s"}
-                    </span>
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <EntityCardGrid
+            kind="databases"
+            empty={
+              <p className="summary-desc">
+                No collections yet. Collections are JSON-backed tables that
+                hold tickets, people, conversations, and any custom entities
+                you create. Ask Claude —{" "}
+                <em>"create a collection for inventory items"</em> — and it
+                will scaffold one under <code>databases/</code> with a
+                starter schema.
+              </p>
+            }
+            cards={source.collections.map((c) => ({
+              key: c.path,
+              title: c.name,
+              meta: `${c.itemCount} ${
+                c.name === "conversations" ? "thread" : "row"
+              }${c.itemCount === 1 ? "" : "s"}`,
+              onClick: () => onOpenPath && void onOpenPath(c.path),
+            }))}
+          />
         </div>
       );
     }
@@ -1293,86 +1243,55 @@ export function Viewer({
     // entries route through onOpenPath so per-file viewers (agent /
     // workflow / file) take over on click.
     if (source.kind === "entity-folder") {
-      // Action buttons for the reports/ view live up in the
-      // viewer-header (same row as the title, mirroring the
-      // "Add to Claude" affordance for conversation threads). The
-      // body is just the file list / empty-state copy.
-      if (source.files.length === 0) {
-        return (
-          <div className="viewer-summary">
-            <p className="summary-desc">{ENTITY_FOLDER_EMPTY_COPY[source.entity]}</p>
-            {source.entity === "reports" && reportError && (
-              <p className="viewer-edit-error">{reportError}</p>
-            )}
-          </div>
-        );
-      }
+      const isReport = source.entity === "reports";
+      const cards = source.files.map((f) => {
+        let slug = f.displayName;
+        let dateLabel = "";
+        if (isReport) {
+          const m = f.displayName.match(
+            /^(\d{4})-(\d{2})-(\d{2})(?:-(\d{2})(\d{2}))?-(.+)$/,
+          );
+          if (m) {
+            const [, yyyy, mm, dd, hh, mi, parsedSlug] = m;
+            slug = parsedSlug;
+            const monthShort = [
+              "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+            ][Math.max(0, Math.min(11, Number(mm) - 1))];
+            const yearTail =
+              new Date().getFullYear() === Number(yyyy) ? "" : `, ${yyyy}`;
+            dateLabel =
+              hh && mi
+                ? `${monthShort} ${Number(dd)}${yearTail} · ${hh}:${mi}`
+                : `${monthShort} ${Number(dd)}${yearTail}`;
+          }
+        }
+        // Reports flip the standard layout: description (the human-
+        // readable label) becomes the title; filename + parsed date
+        // become muted metadata. Other entities keep the standard
+        // layout (filename as title, description as subtitle).
+        return {
+          key: f.path,
+          title: isReport ? f.description || slug : f.displayName,
+          description: isReport ? undefined : f.description,
+          meta: isReport ? dateLabel : undefined,
+          onClick: () => onOpenPath && void onOpenPath(f.path),
+        };
+      });
       return (
         <div className="viewer-summary">
           {source.entity === "reports" && reportError && (
             <p className="viewer-edit-error">{reportError}</p>
           )}
-          <ul className="entity-folder-list">
-            {source.files.map((f) => {
-              // Reports flip the standard `name → description` card
-              // layout: description is the primary title (it's the
-              // human-readable label — "Helpdesk overview", "Tickets
-              // by asker — all time") and the filename + parsed date
-              // become the muted metadata below. Other entities keep
-              // the standard layout (filename as title, description
-              // as subtitle).
-              const isReport = source.entity === "reports";
-              let slug = f.displayName;
-              let dateLabel = "";
-              if (isReport) {
-                const m = f.displayName.match(/^(\d{4})-(\d{2})-(\d{2})(?:-(\d{2})(\d{2}))?-(.+)$/);
-                if (m) {
-                  const [, yyyy, mm, dd, hh, mi, parsedSlug] = m;
-                  slug = parsedSlug;
-                  const monthShort = [
-                    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-                  ][Math.max(0, Math.min(11, Number(mm) - 1))];
-                  const yearTail =
-                    new Date().getFullYear() === Number(yyyy) ? "" : `, ${yyyy}`;
-                  dateLabel = hh && mi
-                    ? `${monthShort} ${Number(dd)}${yearTail} · ${hh}:${mi}`
-                    : `${monthShort} ${Number(dd)}${yearTail}`;
-                }
-              }
-              const titleText = isReport
-                ? f.description || slug
-                : f.displayName;
-              return (
-                <li key={f.path}>
-                  <button
-                    type="button"
-                    className="entity-folder-item"
-                    onClick={() => {
-                      if (onOpenPath) void onOpenPath(f.path);
-                    }}
-                    title={`Open ${f.name}`}
-                  >
-                    {isReport ? (
-                      <span className="entity-folder-name-row">
-                        <span className="entity-folder-name">{titleText}</span>
-                        {dateLabel && (
-                          <span className="entity-folder-date">{dateLabel}</span>
-                        )}
-                      </span>
-                    ) : (
-                      <>
-                        <span className="entity-folder-name">{titleText}</span>
-                        {f.description && (
-                          <span className="entity-folder-desc">{f.description}</span>
-                        )}
-                      </>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          <EntityCardGrid
+            kind={source.entity}
+            cards={cards}
+            empty={
+              <p className="summary-desc">
+                {ENTITY_FOLDER_EMPTY_COPY[source.entity]}
+              </p>
+            }
+          />
         </div>
       );
     }

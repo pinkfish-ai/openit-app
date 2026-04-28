@@ -82,7 +82,12 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
              a stable public URL anyone can use, plus channel ingest \
              (Slack/Teams/email → tickets), always-on agents, and \
              multi-device sync.\n\n\
-             [**Connect to Cloud**](openit://skill/connect-to-cloud)\n";
+             [**Connect to Cloud**](openit://skill/connect-to-cloud)\n\n\
+             ## Bring tickets in from Slack\n\n\
+             Connect a Slack bot once and DM-style support requests \
+             land in your inbox automatically — agent triages, \
+             escalates to you when it can't answer.\n\n\
+             [**Connect Slack**](openit://skill/connect-slack)\n";
         let welcome = welcome.to_string();
         fs::write(path.join("_welcome.md"), welcome)
             .map_err(|e| format!("could not write README: {}", e))?;

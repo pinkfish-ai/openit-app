@@ -88,6 +88,10 @@ export function EscalatedTicketBanner({
           onOpenPath(`${repo}/databases/conversations/${ticketId}`);
         }
       }
+      // Auto-dismiss after Answer — the admin acted on this batch.
+      // A new ticket escalating later changes ticketKey, which clears
+      // the dismissal and re-shows the toast.
+      setDismissedKey(ticketKey);
     } catch (e) {
       console.error("[escalated-banner] paste-to-Claude failed:", e);
     } finally {
@@ -100,28 +104,34 @@ export function EscalatedTicketBanner({
       <span className="escalated-ticket-banner-icon" aria-hidden>
         ✎
       </span>
-      <span className="escalated-ticket-banner-text">
-        {tickets.length} ticket{tickets.length === 1 ? "" : "s"} need{tickets.length === 1 ? "s" : ""} your help —{" "}
-        <strong>{subjectLabel}</strong>
-        {others > 0 ? ` and ${others} other${others === 1 ? "" : "s"}` : ""}.
-      </span>
-      <button
-        type="button"
-        className="escalated-ticket-banner-action"
-        onClick={onAnswer}
-        disabled={sending}
-        title="Open the queued tickets with Claude to draft a response"
-      >
-        {sending ? "Sending…" : "Answer ticket"}
-      </button>
-      <button
-        type="button"
-        className="escalated-ticket-banner-dismiss"
-        onClick={() => setDismissedKey(ticketKey)}
-        title="Hide until a new ticket escalates"
-      >
-        Dismiss
-      </button>
+      <div className="escalated-ticket-banner-body">
+        <div className="escalated-ticket-banner-eyebrow">Needs your reply</div>
+        <div className="escalated-ticket-banner-text">
+          <strong>{subjectLabel}</strong>
+          {others > 0
+            ? ` and ${others} other${others === 1 ? "" : "s"}`
+            : ""}
+        </div>
+        <div className="escalated-ticket-banner-actions">
+          <button
+            type="button"
+            className="escalated-ticket-banner-action"
+            onClick={onAnswer}
+            disabled={sending}
+            title="Open the queued tickets with Claude to draft a response"
+          >
+            {sending ? "Sending…" : "Answer ticket"}
+          </button>
+          <button
+            type="button"
+            className="escalated-ticket-banner-dismiss"
+            onClick={() => setDismissedKey(ticketKey)}
+            title="Hide until a new ticket escalates"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

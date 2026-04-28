@@ -31,7 +31,7 @@
   /* ── Typography ─────────────────────────────────────────── */
   --font-display: "Inter", "Söhne", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-serif: "Source Serif 4", "Charter", "Iowan Old Style", Georgia, serif;
+  --font-serif: "Source Serif 4 Variable", "Source Serif 4", "Charter", "Iowan Old Style", Georgia, serif;
   --font-mono: "JetBrains Mono", "Berkeley Mono", "SF Mono", Menlo, monospace;
 
   /* ── Shadows (warm-tinted, not gray) ────────────────────── */
@@ -108,59 +108,39 @@ body::before {
   gap: 8px;
 }
 
-/* Wordmark lockup — the spark glyph + OpenIT title + tagline.
-   Replaces the old inline "OpenIT — get IT done" text run. */
+/* Wordmark — typography-only lockup. No glyph, no badge — just the
+   product name and a serif-italic tagline separated by a hairline dot. */
 .wordmark {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0;
-}
-
-.wordmark-spark {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #e8804a 0%, var(--accent) 50%, #a14323 100%);
-  border-radius: 6px;
-  color: #fff8ec;
-  font-family: var(--font-display);
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.02em;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.4) inset,
-    0 1px 2px rgba(60, 30, 10, 0.30),
-    0 0 0 1px rgba(120, 50, 20, 0.20);
-}
-
-.wordmark-text {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  line-height: 1.05;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0;
 }
 
 .app-title {
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 14px;
   letter-spacing: -0.015em;
   color: var(--text);
+  line-height: 1;
 }
 
 .app-title::after { content: none; }
 
+.app-title-sep {
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1;
+}
+
 .app-tagline {
   color: var(--text-faint);
-  font-size: 10px;
+  font-size: 12px;
   font-style: italic;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   font-family: var(--font-serif);
+  line-height: 1;
 }
 
 /* Localhost ticket-intake URL pill. Click opens the form in the
@@ -438,57 +418,113 @@ body::before {
    activity banner, fires when any ticket row has
    status: "escalated". Green palette to read as "ready for you to
    handle" rather than "something's wrong". */
+/* Escalated tickets — floating notification, not a full-width stripe.
+   Slides in top-right of the viewport so it reads as a notification
+   the admin opts into, not a wall they have to walk past. */
 .escalated-ticket-banner {
+  position: fixed;
+  top: 70px;
+  right: 22px;
+  z-index: 50;
+  width: min(420px, calc(100vw - 44px));
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 16px;
-  background: var(--sage-soft);
-  color: #2c4d27;
-  border-bottom: 1px solid var(--sage);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--sage);
+  border-radius: 12px;
   font-size: 12px;
-  flex: 0 0 auto;
-  animation: banner-slide-in var(--t-base) var(--ease);
+  font-family: var(--font-body);
+  box-shadow: var(--shadow-lift);
+  animation: toast-slide-in var(--t-slow) var(--ease);
+}
+
+@keyframes toast-slide-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
 
 .escalated-ticket-banner-icon {
-  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
+  font-size: 13px;
+  background: var(--sage-soft);
+  color: #2c4d27;
+  border-radius: 8px;
+  margin-top: 1px;
+}
+
+.escalated-ticket-banner-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.escalated-ticket-banner-eyebrow {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--sage);
 }
 
 .escalated-ticket-banner-text {
-  flex: 1 1 auto;
-  min-width: 0;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .escalated-ticket-banner-text strong {
   font-weight: 600;
+  color: var(--text);
+}
+
+.escalated-ticket-banner-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
 }
 
 .escalated-ticket-banner-action,
 .escalated-ticket-banner-dismiss {
   flex: 0 0 auto;
-  padding: 3px 10px;
-  border: 1px solid #4a9d6b;
-  background: transparent;
-  color: inherit;
-  border-radius: 4px;
+  padding: 4px 12px;
+  border-radius: var(--r-sm);
   cursor: pointer;
-  font-size: 12px;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  transition: background var(--t-fast) var(--ease),
+              border-color var(--t-fast) var(--ease);
 }
 
 .escalated-ticket-banner-action {
-  background: #1f4d2c;
-  color: #e8f5ec;
-  border-color: #1f4d2c;
-  font-weight: 500;
+  background: var(--sage);
+  color: #fff8ec;
+  border-color: var(--sage);
+  font-weight: 600;
 }
 
 .escalated-ticket-banner-action:hover:not(:disabled) {
-  background: #143620;
+  background: #5a7a55;
+  border-color: #5a7a55;
 }
 
 .escalated-ticket-banner-action:disabled {
@@ -496,8 +532,15 @@ body::before {
   cursor: default;
 }
 
+.escalated-ticket-banner-dismiss {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--text-muted);
+}
+
 .escalated-ticket-banner-dismiss:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 /* Cards float with gaps; handle is a transparent gutter. A subtle
@@ -1796,16 +1839,33 @@ body::before {
   white-space: pre;
 }
 
-/* Right pane — the "dark theatre" for Claude. Inverted from the
-   warm cream world so the AI surface reads as a different room. */
+/* Right pane — the "dark theatre" for Claude. Implemented as a
+   token-scope override so any descendant component picks up the dark
+   palette automatically via existing var(--surface), var(--text), etc.
+   This keeps the chat-shell-header, prompt-bubbles, drag handle, and
+   any future right-pane content in the same theme without being
+   hand-painted. */
 .right-pane {
+  --surface: #221a12;
+  --surface-soft: #1f1810;
+  --surface-hover: #2a2018;
+  --bg: #1a140e;
+  --bg-canvas: #1a140e;
+  --border: rgba(255, 220, 180, 0.10);
+  --border-strong: rgba(255, 220, 180, 0.20);
+  --border-faint: rgba(255, 220, 180, 0.06);
+  --text: #f0e7d3;
+  --text-muted: rgba(240, 231, 211, 0.70);
+  --text-faint: rgba(240, 231, 211, 0.45);
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.30);
+  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.30), 0 6px 18px -10px rgba(0, 0, 0, 0.50);
+
   position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #1a140e;
-  border-left: none;
-  color: #f0e7d3;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .right-pane::before {
@@ -1899,19 +1959,21 @@ body::before {
 }
 
 /* Prompt bubbles — live in the dark theatre with the chat. */
+/* Prompt bubbles — pick up parent pane's surface scope so they work
+   in both the dark Claude theatre and any future light context. */
 .prompt-bubbles {
   display: flex;
   gap: 6px;
   padding: 12px 14px;
-  border-top: 1px solid rgba(255, 220, 180, 0.08);
+  border-top: 1px solid var(--border-faint);
   background: transparent;
   flex-wrap: wrap;
 }
 
 .bubble {
-  background: rgba(255, 220, 180, 0.06);
-  border: 1px solid rgba(255, 220, 180, 0.16);
-  color: #f0e7d3;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
   border-radius: 999px;
   padding: 5px 14px;
   font-size: 11px;
@@ -1924,22 +1986,21 @@ body::before {
 }
 
 .bubble:hover {
-  background: rgba(199, 90, 44, 0.20);
-  border-color: rgba(245, 217, 194, 0.45);
-  color: #fff8ec;
+  background: var(--surface-hover);
+  border-color: var(--accent-soft);
   transform: translateY(-1px);
 }
 
 .bubble-conflict {
-  border-color: rgba(231, 121, 102, 0.65);
-  color: #f3d8d2;
+  border-color: var(--clay);
+  color: var(--clay-soft);
   background: rgba(179, 74, 58, 0.20);
   font-weight: 600;
 }
 
 .bubble-conflict:hover {
   background: rgba(179, 74, 58, 0.32);
-  border-color: rgba(243, 216, 210, 0.60);
+  border-color: var(--clay);
 }
 
 /* Source Control panel */
@@ -2459,17 +2520,37 @@ body::before {
   box-shadow: 0 12px 40px rgba(45, 42, 37, 0.06);
 }
 
+.onboard-wordmark {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
 .onboard-title {
   margin: 0;
-  font-size: 22px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
   color: var(--text);
+  line-height: 1;
+}
+
+.onboard-tagline {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--text-faint);
+  letter-spacing: 0.01em;
 }
 
 .onboard-subtitle {
-  margin: 4px 0 24px;
+  margin: 12px 0 24px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .onboard-step {
@@ -3443,43 +3524,28 @@ body::before {
    Chat shell header, bottom status bar, cmd-K palette.
    ───────────────────────────────────────────────────────────────── */
 
-/* Chat shell header — small strip above the xterm with a "Claude"
-   badge so the chat surface reads as a UI, not a black-box terminal.
-   Inside the dark theatre so the chrome is dark too. */
+/* Chat shell header — small strip above the xterm. Picks up dark
+   surface tokens from .right-pane scope so it stays cohesive. */
 .chat-shell-header {
   display: flex;
   align-items: center;
   gap: 9px;
   padding: 10px 14px;
-  background: linear-gradient(180deg, rgba(255, 220, 180, 0.04) 0%, transparent 100%);
-  border-bottom: 1px solid rgba(255, 220, 180, 0.08);
+  background: linear-gradient(180deg, var(--surface) 0%, transparent 100%);
+  border-bottom: 1px solid var(--border-faint);
   font-family: var(--font-display);
   font-size: 12px;
   flex: 0 0 auto;
 }
 
-.chat-shell-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  background: linear-gradient(135deg, #f3a76a 0%, var(--accent) 70%);
-  color: #fff8ec;
-  font-size: 11px;
-  line-height: 1;
-  box-shadow: 0 1px 2px rgba(120, 50, 20, 0.3);
-}
-
 .chat-shell-title {
   font-weight: 600;
   letter-spacing: -0.01em;
-  color: #f0e7d3;
+  color: var(--text);
 }
 
 .chat-shell-sub {
-  color: rgba(240, 231, 211, 0.55);
+  color: var(--text-faint);
   font-family: var(--font-serif);
   font-style: italic;
   font-size: 11px;
@@ -3491,9 +3557,20 @@ body::before {
   width: 6px;
   height: 6px;
   border-radius: 50%;
+  transition: background var(--t-base) var(--ease),
+              box-shadow var(--t-base) var(--ease);
+}
+
+.chat-shell-dot.alive {
   background: var(--sage);
   box-shadow: 0 0 0 2px rgba(111, 143, 106, 0.18);
   animation: chat-dot-breathe 2.4s var(--ease) infinite;
+}
+
+.chat-shell-dot.idle {
+  background: var(--text-faint);
+  box-shadow: 0 0 0 2px rgba(151, 141, 118, 0.10);
+  opacity: 0.5;
 }
 
 @keyframes chat-dot-breathe {
@@ -4150,4 +4227,539 @@ button.status-chip-cmdk:hover {
   background: transparent;
   border-color: var(--border);
   box-shadow: none;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────
+   Pane drag-and-drop reorder
+   ───────────────────────────────────────────────────────────────── */
+
+/* Small grip handle that lives at the start of each pane's header. */
+.pane-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0 4px 0 2px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+  transition: color var(--t-fast) var(--ease),
+              background var(--t-fast) var(--ease);
+}
+
+.pane-drag-handle:hover {
+  color: var(--accent);
+  background: var(--accent-faint);
+}
+
+.pane-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* Center pane was previously chrome-less. Tiny header strip so the
+   drag handle has somewhere to live. */
+.center-pane {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.center-pane-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  background: transparent;
+}
+
+/* Source pane while dragging — ghosted out so the user sees what
+   they've grabbed. */
+.pane-dragging {
+  opacity: 0.45;
+  transition: opacity var(--t-fast) var(--ease);
+}
+
+/* Drop target — receiving pane during a dragover. A 2px accent
+   outline + faint accent-faint background tints the target so it's
+   unmistakable. Insert-before semantics. */
+.pane-drop-target {
+  position: relative;
+}
+
+.pane-drop-target::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--accent-faint);
+  border: 2px solid var(--accent);
+  border-radius: 14px;
+  pointer-events: none;
+  z-index: 7;
+  animation: pane-drop-pulse 1.2s var(--ease) infinite;
+}
+
+@keyframes pane-drop-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(199, 90, 44, 0.0); }
+  50%      { box-shadow: 0 0 0 6px rgba(199, 90, 44, 0.18); }
+}
+
+.right-pane.pane-drop-target::before {
+  background: rgba(199, 90, 44, 0.18);
+  border-color: #f3a76a;
+}
+
+/* Required so the drop overlay positions inside the pane. .right-pane
+   already has position:relative via its dark-theatre block; .center-
+   pane has it above. Add for .left-pane. */
+.left-pane {
+  position: relative;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Pane icon button — small icon-only button used in pane headers
+   (e.g. the new-session "+" in the chat shell header).
+   ───────────────────────────────────────────────────────────────── */
+.pane-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin-left: 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: background var(--t-fast) var(--ease),
+              border-color var(--t-fast) var(--ease),
+              color var(--t-fast) var(--ease),
+              transform var(--t-fast) var(--ease);
+}
+
+.pane-icon-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.pane-icon-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.pane-icon-btn:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+
+.pane-icon-btn-accent {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+  background: var(--accent-faint);
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+.pane-icon-btn-accent:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+/* Inside the dark theatre, the accent button needs a dark-aware tint. */
+.right-pane .pane-icon-btn-accent {
+  background: rgba(199, 90, 44, 0.20);
+  border-color: rgba(199, 90, 44, 0.45);
+  color: #f3a76a;
+}
+
+.right-pane .pane-icon-btn-accent:hover:not(:disabled) {
+  background: rgba(199, 90, 44, 0.32);
+  border-color: rgba(199, 90, 44, 0.65);
+  color: #fff8ec;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Status chip refinements — for the bottom status bar
+   ───────────────────────────────────────────────────────────────── */
+.status-chip-icon {
+  flex: 0 0 auto;
+  color: currentColor;
+  opacity: 0.85;
+}
+
+.status-chip-merged {
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+
+/* Make the intake-form chip clickable like a button. */
+button.status-chip-info {
+  cursor: pointer;
+}
+
+button.status-chip-info:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   EntityCardGrid — unified card grid for entity-list views (agents,
+   knowledge, attachments, databases, filestores, reports, workflows).
+   ───────────────────────────────────────────────────────────────── */
+.entity-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.entity-grid-empty {
+  align-items: center;
+  justify-content: flex-start;
+  padding: 12px 0;
+  gap: 14px;
+}
+
+.entity-grid-empty-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: var(--accent-faint);
+  border: 1px solid var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+  flex: 0 0 auto;
+  margin: 6px 0;
+}
+
+.entity-grid-empty-body {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  flex: 1;
+}
+
+.entity-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--t-fast) var(--ease),
+              transform var(--t-fast) var(--ease),
+              box-shadow var(--t-fast) var(--ease),
+              background var(--t-fast) var(--ease);
+}
+
+.entity-card-clickable {
+  cursor: pointer;
+}
+
+.entity-card-clickable:hover {
+  border-color: var(--accent-soft);
+  background: var(--surface);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-card);
+}
+
+.entity-card-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.entity-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.entity-card-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.entity-card-title {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.entity-card-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.entity-card-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  font-family: var(--font-body);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.entity-card-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 1px 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.entity-card-badge-ok {
+  background: var(--sage-soft);
+  border-color: var(--sage);
+  color: #2c4d27;
+}
+.entity-card-badge-warn {
+  background: var(--ochre-soft);
+  border-color: var(--ochre);
+  color: #5c3d00;
+}
+.entity-card-badge-info {
+  background: var(--accent-faint);
+  border-color: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Per-kind tone — drives the glyph badge color. */
+.entity-tone-accent .entity-card-glyph {
+  background: var(--accent-faint);
+  color: var(--accent);
+  border: 1px solid var(--accent-soft);
+}
+.entity-tone-sage .entity-card-glyph {
+  background: var(--sage-soft);
+  color: #2c4d27;
+  border: 1px solid var(--sage);
+}
+.entity-tone-ochre .entity-card-glyph {
+  background: var(--ochre-soft);
+  color: #5c3d00;
+  border: 1px solid var(--ochre);
+}
+.entity-tone-link .entity-card-glyph {
+  background: rgba(74, 92, 184, 0.10);
+  color: var(--link);
+  border: 1px solid rgba(74, 92, 184, 0.32);
+}
+.entity-tone-clay .entity-card-glyph {
+  background: var(--clay-soft);
+  color: var(--clay);
+  border: 1px solid var(--clay);
+}
+.entity-tone-neutral .entity-card-glyph {
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+}
+
+.entity-tone-accent .entity-grid-empty-glyph {
+  background: var(--accent-faint); color: var(--accent); border-color: var(--accent-soft);
+}
+.entity-tone-sage .entity-grid-empty-glyph {
+  background: var(--sage-soft); color: #2c4d27; border-color: var(--sage);
+}
+.entity-tone-ochre .entity-grid-empty-glyph {
+  background: var(--ochre-soft); color: #5c3d00; border-color: var(--ochre);
+}
+.entity-tone-link .entity-grid-empty-glyph {
+  background: rgba(74, 92, 184, 0.10); color: var(--link); border-color: rgba(74, 92, 184, 0.32);
+}
+.entity-tone-clay .entity-grid-empty-glyph {
+  background: var(--clay-soft); color: var(--clay); border-color: var(--clay);
+}
+.entity-tone-neutral .entity-grid-empty-glyph {
+  background: var(--surface-soft); color: var(--text-muted); border-color: var(--border-strong);
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Unified button family — coerce existing class names into one set
+   of tokens so the visual rhythm is consistent everywhere.
+   ───────────────────────────────────────────────────────────────── */
+.btn,
+.icon-btn,
+.deploy-btn,
+.viewer-add-btn,
+.viewer-back-btn,
+.onboard-signup-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--r-md);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  transition: background var(--t-fast) var(--ease),
+              border-color var(--t-fast) var(--ease),
+              transform var(--t-fast) var(--ease),
+              box-shadow var(--t-fast) var(--ease),
+              color var(--t-fast) var(--ease);
+}
+
+.btn:hover:not(:disabled),
+.icon-btn:hover:not(:disabled),
+.viewer-add-btn:hover:not(:disabled),
+.viewer-back-btn:hover:not(:disabled),
+.onboard-signup-btn:hover:not(:disabled) {
+  background: var(--accent-faint);
+  border-color: var(--accent-soft);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-card);
+}
+
+.btn:active:not(:disabled),
+.icon-btn:active:not(:disabled),
+.deploy-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.btn:disabled,
+.icon-btn:disabled,
+.deploy-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Primary — gradient orange CTA. */
+.btn-primary,
+.deploy-btn,
+.icon-btn-primary {
+  background: linear-gradient(180deg, #db6b39 0%, var(--accent) 100%);
+  color: #fff8ec;
+  border-color: rgba(120, 50, 20, 0.5);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.22) inset,
+    var(--shadow-sm);
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled),
+.deploy-btn:hover:not(:disabled),
+.icon-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
+  border-color: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.22) inset,
+    var(--shadow-card);
+}
+
+/* Ghost — for secondary / dismiss actions. */
+.btn-ghost,
+.icon-btn-ghost,
+.onboard-signup-btn {
+  background: transparent;
+  border-color: var(--border);
+  box-shadow: none;
+  color: var(--text-muted);
+}
+
+.btn-ghost:hover:not(:disabled),
+.icon-btn-ghost:hover:not(:disabled),
+.onboard-signup-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+  transform: none;
+}
+
+/* Success — sage palette. */
+.btn-success,
+.icon-btn.key-set {
+  background: var(--sage-soft);
+  border-color: var(--sage);
+  color: #2c4d27;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-success:hover:not(:disabled),
+.icon-btn.key-set:hover:not(:disabled) {
+  background: #cfdfc6;
+  border-color: var(--sage);
+  color: #2c4d27;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-card);
+}
+
+/* Small variant — tighter padding for inline contexts. */
+.btn-sm,
+.viewer-add-btn,
+.viewer-back-btn {
+  padding: 3px 12px;
+  font-size: 11px;
+  border-radius: var(--r-sm);
 }
