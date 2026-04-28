@@ -139,6 +139,7 @@ function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const manualPullRef = useRef<(() => void) | null>(null);
   const switchToSyncRef = useRef<(() => void) | null>(null);
+  const showCloudCtaRef = useRef<(() => void) | null>(null);
 
   // Global cmd-K / ctrl-K listener — opens the command palette from
   // anywhere in the app. We use a window listener (not document
@@ -295,6 +296,19 @@ function App() {
       window.removeEventListener("drop", stopDefault);
     };
   }, []);
+
+  // Welcome doc's "Connect to Cloud" markdown link dispatches this
+  // event (Viewer.tsx::ExternalAnchor). Route through the same
+  // connected-vs-CTA gate the header pill uses so all four entry
+  // points behave identically.
+  useEffect(() => {
+    const onShowCta = () => {
+      if (connected) setBypassOnboarding(false);
+      else showCloudCtaRef.current?.();
+    };
+    window.addEventListener("openit:show-cloud-cta", onShowCta);
+    return () => window.removeEventListener("openit:show-cloud-cta", onShowCta);
+  }, [connected]);
 
   useEffect(() => {
     Promise.all([stateLoad(), startAuth(), loadCreds()])
@@ -575,7 +589,14 @@ function App() {
           </button>
           <button
             className={`icon-btn ${connected ? "key-set" : "icon-btn-primary"}`}
-            onClick={() => setBypassOnboarding(false)}
+            onClick={() => {
+              // Connected admins click the pill to update creds —
+              // jump straight to onboarding. Local-only admins see
+              // the CTA pitch first; the page's primary button
+              // forwards to the same onboarding flow.
+              if (connected) setBypassOnboarding(false);
+              else showCloudCtaRef.current?.();
+            }}
             title={connected ? "Connected — click to update credentials" : "Connect to Cloud"}
           >
             {connected
@@ -605,13 +626,17 @@ function App() {
           onOpenPalette={() => setPaletteOpen(true)}
           registerManualPull={(fn) => { manualPullRef.current = fn; }}
           registerSwitchToSync={(fn) => { switchToSyncRef.current = fn; }}
+          registerShowCloudCta={(fn) => { showCloudCtaRef.current = fn; }}
         />
       </section>
     </main>
     <CommandPalette
       open={paletteOpen}
       onClose={() => setPaletteOpen(false)}
-      onConnectCloud={() => setBypassOnboarding(false)}
+      onConnectCloud={() => {
+        if (connected) setBypassOnboarding(false);
+        else showCloudCtaRef.current?.();
+      }}
       onConnectSlack={async () => {
         if (!repo || !intakeServerUrl) return;
         // Same two-step flow the SlackPill click used: scaffold the

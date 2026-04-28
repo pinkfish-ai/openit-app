@@ -89,6 +89,7 @@ export function Shell({
   onOpenPalette,
   registerManualPull,
   registerSwitchToSync,
+  registerShowCloudCta,
 }: {
   repo: string | null;
   syncLines: string[];
@@ -126,6 +127,11 @@ export function Shell({
   registerManualPull: (fn: () => void) => void;
   /** Register the switch-to-sync-tab handler so the command palette can call it. */
   registerSwitchToSync: (fn: () => void) => void;
+  /** Register the show-cloud-cta handler so the App header pill and the
+   *  command palette can route a "Connect to Cloud" click into the CTA
+   *  pitch page in the center pane (instead of jumping straight into
+   *  the onboarding flow). */
+  registerShowCloudCta: (fn: () => void) => void;
 }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
   const [source, setSource] = useState<ViewerSource>(null);
@@ -310,6 +316,9 @@ export function Shell({
   useEffect(() => {
     registerSwitchToSync(() => setLeftTab("source-control"));
   }, [registerSwitchToSync]);
+  useEffect(() => {
+    registerShowCloudCta(() => setSource({ kind: "cloud-cta" }));
+  }, [registerShowCloudCta]);
 
   // Auto-open _welcome.md on first load — and re-open on demand
   // when the App-header "Getting Started" button dispatches the
@@ -780,7 +789,7 @@ export function Shell({
                   onFsChange={bumpFs}
                   onChangeCount={setChangeCount}
                   cloudConnected={cloudConnected}
-                  onConnectRequest={onConnectRequest}
+                  onConnectRequest={() => setSource({ kind: "cloud-cta" })}
                 />
               </div>
             </div>
@@ -816,6 +825,7 @@ export function Shell({
                     const resolved = await resolvePathToSource(path, repo);
                     setSource(resolved);
                   }}
+                  onConnectCloud={onConnectRequest}
                 />
               )}
             </div>
