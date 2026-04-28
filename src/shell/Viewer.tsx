@@ -1004,7 +1004,7 @@ export function Viewer({
       const visibleThreads = source.threads.filter((t) => matchesFilter(t.status || ""));
       const filterCaption: Record<typeof conversationsFilter, string> = {
         all: "All tickets across every status.",
-        open: "Agent is currently working to resolve these tickets.",
+        open: "Agent is working with the person, awaiting their reply.",
         resolved: "Tickets marked as resolved.",
         escalated: "Agent needs help solving.",
       };
@@ -1393,14 +1393,17 @@ export function Viewer({
           `${msgId}.json`,
           JSON.stringify(payload, null, 2),
         );
-        // Bumping the ticket back to `open` (it might be at
-        // escalated / resolved / closed). Best-effort: missing
+        // Any manual admin turn flips the ticket to `escalated`.
+        // `open` semantically means "agent is working on it"; once an
+        // admin chimes in, the agent is no longer the sole driver, so
+        // the ticket is escalated regardless of the previous status
+        // (open, resolved, closed, escalated). Best-effort: missing
         // ticket file is logged but the reply itself stays.
         try {
           const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
           const raw = await fsRead(ticketPath);
           const parsed = JSON.parse(raw) as Record<string, unknown>;
-          parsed.status = "open";
+          parsed.status = "escalated";
           parsed.updatedAt = isoNow;
           if (typeof parsed.assignee !== "string" || !parsed.assignee) {
             parsed.assignee = sender;
@@ -1434,6 +1437,44 @@ export function Viewer({
           setReplyAttachments([]);
         } catch (err) {
           setReplyError(`Send failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setReplySending(false);
+        }
+      };
+
+      // Manual "Mark as resolved": flip the ticket to `resolved`
+      // without writing a turn, then navigate back to the
+      // conversations list (filter pill state is preserved by the
+      // parent Viewer instance).
+      const markResolved = async () => {
+        if (!repo) return;
+        // Reuse `replySending` as the in-flight guard for both the
+        // resolve and send paths. Without this, a user could click
+        // Mark-as-resolved and then Send (or ⌘↩) before the resolve
+        // write lands, racing two concurrent writes to the same
+        // ticket file with the final status determined by whichever
+        // finishes last.
+        if (replySending) return;
+        setReplySending(true);
+        setReplyError(null);
+        try {
+          const { entityWriteFile, fsRead } = await import("../lib/api");
+          const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
+          const raw = await fsRead(ticketPath);
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          parsed.status = "resolved";
+          parsed.updatedAt = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+          await entityWriteFile(
+            repo,
+            "databases/tickets",
+            `${ticketId}.json`,
+            JSON.stringify(parsed, null, 2),
+          );
+          if (onOpenPath) {
+            void onOpenPath(`${repo}/databases/conversations`);
+          }
+        } catch (err) {
+          setReplyError(`Resolve failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
           setReplySending(false);
         }
@@ -1575,6 +1616,15 @@ export function Viewer({
                 <span className="thread-reply-error">{replyError}</span>
               )}
               <span className="thread-reply-hint">⌘↩ to send · drop files to attach</span>
+              <button
+                type="button"
+                className="viewer-edit-btn"
+                onClick={() => void markResolved()}
+                disabled={replySending}
+                title="Mark this ticket as resolved and return to the inbox"
+              >
+                Mark as resolved
+              </button>
               <button
                 type="button"
                 className="viewer-edit-btn viewer-edit-btn-primary"
