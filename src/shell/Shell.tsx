@@ -690,11 +690,6 @@ export function Shell({
               onDrop={(e) => onPaneDrop("left", e)}
             >
               <div className="left-tabs">
-                <PaneDragHandle
-                  paneId="left"
-                  onDragStart={onPaneDragStart}
-                  onDragEnd={onPaneDragEnd}
-                />
                 <button
                   type="button"
                   className={`left-tab ${leftTab === "overview" ? "active" : ""}`}

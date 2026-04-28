@@ -4234,12 +4234,10 @@ button.status-chip-cmdk:hover {
    Pane drag-and-drop reorder
    ───────────────────────────────────────────────────────────────── */
 
-/* Small grip handle at the start of a pane's header. Invisible at
-   rest — fades in only when the parent pane is hovered, so the chrome
-   stays clean and the grip doesn't read as floating UI debris.
-   Inside the dark Claude theatre we keep a faint always-on hint
-   because the dark surface absorbs it cleanly (user said the chat
-   grip "blends in" already). */
+/* Drag grip lives only inside the dark Claude theatre — the cream
+   panes are drop-target-only, so dragging the chat onto either of
+   them reorders. Always-visible at 0.45 opacity (the dark surface
+   absorbs it cleanly), full accent on hover. */
 .pane-drag-handle {
   display: inline-flex;
   align-items: center;
@@ -4253,21 +4251,10 @@ button.status-chip-cmdk:hover {
   line-height: 1;
   cursor: grab;
   user-select: none;
-  opacity: 0;
+  opacity: 0.45;
   transition: color var(--t-fast) var(--ease),
               background var(--t-fast) var(--ease),
-              opacity var(--t-base) var(--ease);
-}
-
-/* Cream-pane grip: appears on pane hover. */
-.left-pane:hover .pane-drag-handle {
-  opacity: 0.55;
-}
-
-/* Dark-theatre grip: always visible at low opacity (matches the
-   chat-shell-header's existing rhythm), full on direct hover. */
-.right-pane .pane-drag-handle {
-  opacity: 0.45;
+              opacity var(--t-fast) var(--ease);
 }
 
 .pane-drag-handle:hover {
