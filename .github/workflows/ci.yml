@@ -26,10 +26,24 @@ jobs:
         working-directory: src-tauri
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      # Tauri's build.rs validates bundle.resources paths at
+      # compile time (under cargo clippy too), so we need the
+      # esbuild-generated slack-listen.bundle.cjs on disk before
+      # clippy runs. Bundle is gitignored because it's a build
+      # artifact; the canonical copy lives in /web's plugin dist
+      # and is mirrored at merge time.
+      - run: npm ci
+        working-directory: .
+      - run: npm run build:slack-listener
+        working-directory: .
       - run: cargo fmt -- --check
       - run: cargo clippy -- -D warnings
       - run: cargo test
