@@ -1352,6 +1352,14 @@ export function Viewer({
       // parent Viewer instance).
       const markResolved = async () => {
         if (!repo) return;
+        // Reuse `replySending` as the in-flight guard for both the
+        // resolve and send paths. Without this, a user could click
+        // Mark-as-resolved and then Send (or ⌘↩) before the resolve
+        // write lands, racing two concurrent writes to the same
+        // ticket file with the final status determined by whichever
+        // finishes last.
+        if (replySending) return;
+        setReplySending(true);
         setReplyError(null);
         try {
           const { entityWriteFile, fsRead } = await import("../lib/api");
@@ -1371,6 +1379,8 @@ export function Viewer({
           }
         } catch (err) {
           setReplyError(`Resolve failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          setReplySending(false);
         }
       };
       return (
