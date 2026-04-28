@@ -5047,24 +5047,3 @@ button.status-chip-unset:hover {
   color: var(--accent);
 }
 
-/* ── File search palette item polish ───────────────────────────── */
-.file-search-item {
-  align-items: center;
-  gap: 10px;
-}
-
-.file-search-glyph {
-  width: 14px;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-faint);
-  flex: 0 0 auto;
-}
-
-.file-search-dir {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-faint);
-  font-style: normal;
-}

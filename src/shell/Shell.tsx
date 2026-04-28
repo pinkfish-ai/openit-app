@@ -351,22 +351,8 @@ export function Shell({
       setSource({ kind: "getting-started" });
     };
     window.addEventListener("openit:open-welcome", openWelcome);
-
-    // Cmd-P file picker (mounted in App.tsx) dispatches this event
-    // with an absolute path; we resolve it via the existing entity
-    // routing and set the viewer source. Custom event keeps the file
-    // picker decoupled from Shell's prop signature.
-    const openPath = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { path?: string };
-      const target = detail?.path;
-      if (!target) return;
-      void resolvePathToSource(target, repo).then((s) => setSource(s));
-    };
-    window.addEventListener("openit:open-path", openPath);
-
     return () => {
       window.removeEventListener("openit:open-welcome", openWelcome);
-      window.removeEventListener("openit:open-path", openPath);
     };
   }, [repo, source]);
 

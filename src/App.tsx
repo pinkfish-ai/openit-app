@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
 import { CommandPalette } from "./shell/CommandPalette";
-import { FileSearchPalette } from "./shell/FileSearchPalette";
 import {
   fsRead,
   intakeStart,
@@ -138,7 +137,6 @@ function App() {
   const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
   const [skillCanvasState, setSkillCanvasState] = useState<SkillCanvasState | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [filePaletteOpen, setFilePaletteOpen] = useState(false);
   const manualPullRef = useRef<(() => void) | null>(null);
   const switchToSyncRef = useRef<(() => void) | null>(null);
   const showCloudCtaRef = useRef<(() => void) | null>(null);
@@ -187,27 +185,16 @@ function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isCmdK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
-      // Cmd-P / Ctrl-P → open the file/folder picker (VS Code's
-      // "Go to file"). Excludes shift to keep Cmd-Shift-P free for
-      // future use (e.g. a separate command-palette variant).
-      const isCmdP =
-        (e.metaKey || e.ctrlKey) &&
-        !e.shiftKey &&
-        e.key.toLowerCase() === "p";
       if (isCmdK) {
         e.preventDefault();
         setPaletteOpen((v) => !v);
-      } else if (isCmdP) {
-        e.preventDefault();
-        setFilePaletteOpen((v) => !v);
-      } else if (e.key === "Escape") {
-        if (paletteOpen) setPaletteOpen(false);
-        if (filePaletteOpen) setFilePaletteOpen(false);
+      } else if (e.key === "Escape" && paletteOpen) {
+        setPaletteOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paletteOpen, filePaletteOpen]);
+  }, [paletteOpen]);
 
   // Active skill canvas — currently we only support one canvas at a
   // time (V1), and the only canvas-driven skill is connect-slack.
@@ -631,15 +618,6 @@ function App() {
             <span>jump anywhere</span>
           </button>
           <button
-            className="header-cmdk-hint"
-            onClick={() => setFilePaletteOpen(true)}
-            title="Find a file or folder"
-          >
-            <kbd>⌘</kbd>
-            <kbd>P</kbd>
-            <span>find a file</span>
-          </button>
-          <button
             className="icon-btn icon-btn-ghost"
             onClick={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
             title="Open the welcome / getting-started doc"
@@ -701,20 +679,6 @@ function App() {
       onManualPull={() => manualPullRef.current?.()}
       onOpenWelcome={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
       onSwitchToSync={() => switchToSyncRef.current?.()}
-    />
-    <FileSearchPalette
-      open={filePaletteOpen}
-      repo={repo}
-      onClose={() => setFilePaletteOpen(false)}
-      onOpenPath={(path) => {
-        // Shell listens for `openit:open-path` and routes through
-        // resolvePathToSource → setSource. Custom event keeps Shell's
-        // signature unchanged (less prop-plumbing churn while Ben is
-        // also editing Shell.tsx in parallel).
-        window.dispatchEvent(
-          new CustomEvent("openit:open-path", { detail: { path } }),
-        );
-      }}
     />
     </>
   );
