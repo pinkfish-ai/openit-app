@@ -1198,19 +1198,25 @@ body::before {
 
 .thread-card-meta {
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 4px 12px;
   align-items: baseline;
   font-size: 11px;
   color: var(--text-faint);
 }
 
+.thread-card-asker,
+.thread-card-count,
+.thread-card-time {
+  /* Treat each meta entry as an unbreakable unit — when the row
+     gets narrow, the whole field wraps to a new line instead of
+     breaking the timestamp / message count mid-string. */
+  white-space: nowrap;
+}
+
 .thread-card-asker {
   color: var(--text-muted);
   font-weight: 500;
-}
-
-.thread-card-count {
-  /* default */
 }
 
 .thread-card-time {
