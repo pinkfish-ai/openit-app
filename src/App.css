@@ -1124,11 +1124,6 @@ body::before {
   flex-direction: column;
   gap: 6px;
   padding: 14px 16px;
-  /* Reserve a fixed strip on the right for the status pill. The
-     pill itself is absolute-positioned so it's anchored to the
-     card edge regardless of subject length or any flex/grid
-     behavior in nested rows. */
-  padding-right: 92px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
@@ -1156,6 +1151,12 @@ body::before {
 
 .thread-card-row {
   display: block;
+  /* Reserve a strip on the title row so the title can't run into
+     the absolute-positioned status pill. The meta row beneath
+     keeps full card width (long emails + timestamps shouldn't
+     wrap into multiple lines because of a strip they don't share
+     with the pill). */
+  padding-right: 76px;
 }
 
 .thread-card-subject {
