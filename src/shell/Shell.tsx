@@ -709,10 +709,17 @@ export function Shell({
               <div className="left-tabs">
                 <button
                   type="button"
-                  className={`left-tab ${leftTab === "overview" || leftTab === "files" ? "active" : ""}`}
+                  className={`left-tab ${leftTab === "overview" ? "active" : ""}`}
                   onClick={() => setLeftTab("overview")}
                 >
                   Overview
+                </button>
+                <button
+                  type="button"
+                  className={`left-tab ${leftTab === "files" ? "active" : ""}`}
+                  onClick={() => setLeftTab("files")}
+                >
+                  Explorer
                 </button>
                 <button
                   type="button"
