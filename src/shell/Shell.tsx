@@ -774,7 +774,9 @@ export function Shell({
                 <FileExplorer
                   repo={repo}
                   onSelect={async (path) => {
-                    const resolved = await resolvePathToSource(path, repo);
+                    const resolved = await resolvePathToSource(path, repo, {
+                      rawTickets: true,
+                    });
                     setSource(resolved);
                   }}
                   fsTick={fsTick}

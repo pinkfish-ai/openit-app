@@ -1205,6 +1205,25 @@ body::before {
   color: var(--text-faint);
 }
 
+.thread-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.thread-card-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 999px;
+  line-height: 1.4;
+}
+
 .thread-card-asker,
 .thread-card-count,
 .thread-card-time {

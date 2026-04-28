@@ -1020,6 +1020,15 @@ export function Viewer({
                       <span className="thread-card-time">{t.lastTurnAt}</span>
                     )}
                   </div>
+                  {t.tags.length > 0 && (
+                    <div className="thread-card-tags">
+                      {t.tags.map((tag) => (
+                        <span key={tag} className="thread-card-tag">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </button>
               ))}
             </div>

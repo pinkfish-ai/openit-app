@@ -11,10 +11,17 @@ import type { DataCollection } from "../lib/skillsApi";
  * Given an absolute file path, determine if it's an entity file
  * (database row, agent, workflow, schema) and return the appropriate
  * ViewerSource. Falls back to { kind: "file", path } for regular files.
+ *
+ * `opts.rawTickets` skips the `databases/tickets` → conversations-list
+ * shortcut and falls through to the generic datastore-table rule. Used
+ * by the file-explorer click so the tree node renders the underlying
+ * table, while the Inbox station (and other inbox entry points) keep
+ * the curated card list.
  */
 export async function resolvePathToSource(
   path: string,
   repo: string | null,
+  opts?: { rawTickets?: boolean },
 ): Promise<ViewerSource> {
   if (!repo) return { kind: "file", path };
 
@@ -134,7 +141,10 @@ export async function resolvePathToSource(
   // there and hide the underlying `conversations` folder elsewhere.
   // Older code paths may still hit `databases/conversations`; we
   // alias both paths through the same resolver.
-  if (rel === "databases/tickets" || rel === "databases/conversations") {
+  if (
+    !opts?.rawTickets &&
+    (rel === "databases/tickets" || rel === "databases/conversations")
+  ) {
     try {
       const ticketsDir = `${repo}/databases/tickets`;
       const conversationsDir = `${repo}/databases/conversations`;
@@ -155,6 +165,7 @@ export async function resolvePathToSource(
         let asker = "";
         let status = "";
         let createdAt = "";
+        let tags: string[] = [];
         try {
           const raw = await fsRead(node.path);
           const ticket = JSON.parse(raw);
@@ -163,6 +174,9 @@ export async function resolvePathToSource(
             asker = typeof ticket.asker === "string" ? ticket.asker : "";
             status = typeof ticket.status === "string" ? ticket.status : "";
             createdAt = typeof ticket.createdAt === "string" ? ticket.createdAt : "";
+            tags = Array.isArray(ticket.tags)
+              ? ticket.tags.filter((v: unknown): v is string => typeof v === "string")
+              : [];
           }
         } catch {
           /* unparseable — keep defaults; fall back to ticketId in subject */
@@ -212,6 +226,7 @@ export async function resolvePathToSource(
           createdAt: createdAt || lastTurnAt,
           lastTurnAt,
           turnCount,
+          tags,
         });
       }
       // Auto-escalate stale `open` tickets: if the agent is "waiting
@@ -240,6 +255,13 @@ export async function resolvePathToSource(
             if (parsed.status !== "open") return;
             parsed.status = "escalated";
             parsed.updatedAt = new Date(nowMs).toISOString().replace(/\.\d+Z$/, "Z");
+            const existingTags = Array.isArray(parsed.tags)
+              ? parsed.tags.filter((v: unknown): v is string => typeof v === "string")
+              : [];
+            if (!existingTags.includes("auto-escalated")) {
+              existingTags.push("auto-escalated");
+            }
+            parsed.tags = existingTags;
             await entityWriteFile(
               repo,
               "databases/tickets",
@@ -247,6 +269,7 @@ export async function resolvePathToSource(
               JSON.stringify(parsed, null, 2),
             );
             t.status = "escalated";
+            t.tags = existingTags;
           } catch {
             /* unparseable / missing — leave status as-is */
           }

@@ -71,6 +71,10 @@ export type ConversationThreadSummary = {
   lastTurnAt: string;
   // Number of msg-*.json files under the thread folder.
   turnCount: number;
+  // Free-form labels from the ticket. Includes `auto-escalated` when
+  // the stale-open scan flipped this ticket — the only signal on the
+  // card that "escalated" means "timed out" vs "agent gave up".
+  tags: string[];
 };
 
 export type ViewerSource =
