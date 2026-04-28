@@ -3877,6 +3877,25 @@ button.status-chip-cmdk:hover {
   line-height: 1.2;
 }
 
+/* Empty-queue celebratory state — keeps the same hero footprint
+   so the layout doesn't bounce when unresolved goes to zero. */
+.workbench-today-hero-clean {
+  align-items: center;
+}
+
+.workbench-today-clean {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text);
+  background: linear-gradient(135deg, var(--text) 0%, #4a3922 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
 .workbench-today-meta {
   margin-top: 8px;
   font-size: 11px;
