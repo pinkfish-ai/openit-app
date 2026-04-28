@@ -173,6 +173,22 @@ export function Workbench({
         })}
       </div>
 
+      {/*
+       * File-tree entry point — DO NOT REMOVE.
+       *
+       * This link is the ONLY user-facing path to the raw file
+       * explorer. The Explorer left-tab was removed deliberately;
+       * the Overview pane (Workbench + station cards) is the
+       * canonical surface, and admins who need the file tree drop
+       * into it via this "advanced" affordance.
+       *
+       * Past cleanup passes have removed this link assuming the
+       * Explorer top-tab is the canonical entry — it is not. If
+       * you're tempted to delete this, restore the Explorer
+       * top-tab in Shell.tsx FIRST. Without one of the two,
+       * `.openit/agent-traces/`, `.claude/`, and arbitrary
+       * project files become unreachable.
+       */}
       <button
         type="button"
         className="workbench-files-toggle"

@@ -722,6 +722,21 @@ export function Shell({
               onDragLeave={(e) => onPaneDragLeave("left", e)}
               onDrop={(e) => onPaneDrop("left", e)}
             >
+              {/*
+               * Left-pane tabs: Overview + Sync only.
+               *
+               * The Explorer tab was removed deliberately. The
+               * canonical entry point to the raw file tree is the
+               * "File explorer · advanced" link inside Workbench
+               * (rendered in the Overview panel below). The
+               * Overview tab stays "active" for both
+               * leftTab="overview" and leftTab="files" so the
+               * file-tree view doesn't orphan the tab strip.
+               *
+               * If you're about to add the Explorer tab back,
+               * remove the Workbench link FIRST so we don't end
+               * up with two competing entry points.
+               */}
               <div className="left-tabs">
                 <button
                   type="button"

@@ -773,7 +773,10 @@ export function FileExplorer({
                     rel === "filestores/library" ||
                     // On-demand markdown reports — sorted newest-first
                     // in the entity-folder view via filename prefix.
-                    rel === "reports"
+                    rel === "reports" ||
+                    // Per-ticket agent-traces folder → agent-trace-list
+                    // view (every turn stacked with separators).
+                    rel.match(/^\.openit\/agent-traces\/[^/]+$/)
                   ) {
                     onSelect(n.path);
                   }
