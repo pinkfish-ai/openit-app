@@ -1149,28 +1149,28 @@ body::before {
 }
 
 .thread-card-row {
-  display: flex;
+  /* Grid (1fr auto) guarantees the status pill lands at the right
+     edge regardless of subject length. Earlier flex + space-between
+     + margin-left:auto attempts didn't land consistently in the
+     wild — grid is the deterministic version of the same intent. */
+  display: grid;
+  grid-template-columns: 1fr auto;
   align-items: center;
   gap: 8px;
-  justify-content: space-between;
 }
 
 .thread-card-subject {
   font-weight: 500;
   color: var(--text);
   font-size: 13px;
-  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .thread-card-status {
-  flex: 0 0 auto;
-  /* Force the status pill to the right edge of the row regardless of
-     subject length — `space-between` on the parent isn't enough on
-     its own when the subject's flex:1 doesn't expand visibly. */
-  margin-left: auto;
+  justify-self: end;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
