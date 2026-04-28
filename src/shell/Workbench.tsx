@@ -27,7 +27,7 @@ const STATIONS: Station[] = [
   // conversations-list-style overview.
   { id: "inbox", label: "Tickets Inbox", glyph: "✉", rel: "databases/tickets", countMode: "json-rows" },
   { id: "reports", label: "Reports", glyph: "▦", rel: "reports", countMode: "files" },
-  { id: "people", label: "People", glyph: "◔", rel: "databases/people", countMode: "json-rows" },
+  { id: "people", label: "People", glyph: "♟", rel: "databases/people", countMode: "json-rows" },
   { id: "knowledge", label: "Knowledge", glyph: "❋", rel: "knowledge-bases", countMode: "dirs" },
   { id: "files", label: "Files", glyph: "▤", rel: "filestores", countMode: "dirs" },
   { id: "agents", label: "Agents", glyph: "✦", rel: "agents", countMode: "json-rows" },
