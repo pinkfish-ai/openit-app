@@ -1,11 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { fsList, type FileNode } from "../lib/api";
 import { scanEscalatedTickets } from "../lib/escalatedTickets";
+
+/// Hand-rolled minimal person silhouette — a circle head + a
+/// semicircle torso. Inline SVG (vs. a unicode glyph) because the
+/// closest text-only options either render as emoji on macOS
+/// (👤) or read as something else entirely (chess pawn, pie
+/// chart). This silhouette is monochrome via `currentColor` so it
+/// inherits the station-glyph color.
+const PersonIcon = (
+  <svg
+    viewBox="0 0 24 24"
+    width="14"
+    height="14"
+    fill="currentColor"
+    aria-hidden
+  >
+    <circle cx="12" cy="8" r="3.5" />
+    <path d="M5 21c0-4.0 3.1-7 7-7s7 3.0 7 7v1H5z" />
+  </svg>
+);
 
 type Station = {
   id: string;
   label: string;
-  glyph: string;
+  /// Either a single text glyph or a ReactNode (inline SVG). Most
+  /// stations use a unicode character for consistency; People is
+  /// SVG because no plain-text option reads as "person" cleanly.
+  glyph: ReactNode;
   /** Path relative to repo root. */
   rel: string;
   /** If set, opens this child path on click instead of `rel` (used to
@@ -27,7 +49,7 @@ const STATIONS: Station[] = [
   // conversations-list-style overview.
   { id: "inbox", label: "Tickets Inbox", glyph: "✉", rel: "databases/tickets", countMode: "json-rows" },
   { id: "reports", label: "Reports", glyph: "▦", rel: "reports", countMode: "files" },
-  { id: "people", label: "People", glyph: "♟", rel: "databases/people", countMode: "json-rows" },
+  { id: "people", label: "People", glyph: PersonIcon, rel: "databases/people", countMode: "json-rows" },
   { id: "knowledge", label: "Knowledge", glyph: "❋", rel: "knowledge-bases", countMode: "dirs" },
   { id: "files", label: "Files", glyph: "▤", rel: "filestores", countMode: "dirs" },
   { id: "agents", label: "Agents", glyph: "✦", rel: "agents", countMode: "json-rows" },
