@@ -10,6 +10,7 @@ function emit() {
 export function setActiveSession(id: string) {
   activeSessionId = id;
   emit();
+  drainPendingPostSpawnCommand(id);
 }
 
 export function clearActiveSession(id: string) {
@@ -48,4 +49,42 @@ export async function writeToActiveSession(text: string): Promise<boolean> {
   }
   await ptyWrite(activeSessionId, text);
   return true;
+}
+
+const restartListeners = new Set<() => void>();
+
+/// Subscribe to "please restart the Claude session" events. Used by Shell
+/// to bump `chatSessionKey`, which forces ChatPane to remount with a fresh
+/// PTY. The MCP install flow fires this after `claude mcp add` succeeds
+/// because Claude Code only reads `.mcp.json` at session start.
+export function subscribeRestartRequested(fn: () => void): () => void {
+  restartListeners.add(fn);
+  return () => {
+    restartListeners.delete(fn);
+  };
+}
+
+/// Optional command (e.g. `/mcp\n`) to auto-write into the freshly-spawned
+/// PTY. Cleared after one drain so it doesn't fire on subsequent restarts.
+let pendingPostSpawnCommand: string | null = null;
+
+/// Delay between PTY spawn and writing the post-spawn command. Claude
+/// Code prints a boot banner for ~1s before the prompt accepts input;
+/// writing too early gets the chars lost in that banner.
+const POST_SPAWN_DELAY_MS = 1500;
+
+export function requestSessionRestart(postSpawnCommand?: string): void {
+  pendingPostSpawnCommand = postSpawnCommand ?? null;
+  for (const l of restartListeners) l();
+}
+
+function drainPendingPostSpawnCommand(sessionId: string): void {
+  const cmd = pendingPostSpawnCommand;
+  if (!cmd) return;
+  pendingPostSpawnCommand = null;
+  setTimeout(() => {
+    ptyWrite(sessionId, cmd).catch((e) =>
+      console.error("[activeSession] post-spawn write failed:", e),
+    );
+  }, POST_SPAWN_DELAY_MS);
 }

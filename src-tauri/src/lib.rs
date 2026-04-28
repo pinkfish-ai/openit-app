@@ -65,6 +65,8 @@ pub fn run() {
             git_ops::git_diff_name_only,
             git_ops::git_global_user_email,
             claude::claude_generate_commit_message,
+            claude::claude_mcp_add,
+            claude::claude_mcp_remove,
             state::state_load,
             state::state_save,
             keychain::keychain_set,

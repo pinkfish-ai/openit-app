@@ -137,6 +137,12 @@ If the user has connected this project to Pinkfish via the **Connect to Cloud** 
 - Semantic search would be meaningfully better than reading files (large KBs).
 - The user explicitly asks for a gateway-shaped capability.
 
+## Locally-installed MCP servers
+
+If the user has installed MCP servers via OpenIT's **Tools** panel, they're listed in `.mcp.json` at the project root. Treat the tools those servers expose as first-class — when a request can be answered by an installed MCP server (e.g. a GitHub PR lookup with `github` installed), prefer the MCP tool over hand-rolled CLI calls.
+
+`.mcp.json` is a small file you can read directly to see what's available. Each top-level key under `mcpServers` is a server name; if you don't recognize a name, ask the user what it does before invoking its tools.
+
 ## Permissions
 
 Claude Code skills in this project need filesystem access. When a skill asks for `Bash` / `Read` / `Write` permission, approve once — Claude Code remembers per-project. The skills need it to:

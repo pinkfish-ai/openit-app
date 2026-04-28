@@ -154,6 +154,134 @@ Output ONLY the subject line. No quotes, no code fences, no explanation, no prea
     Ok(line)
 }
 
+/// Arguments to `claude mcp add`. Mirrors the upstream CLI's flag shape so
+/// we can pass it through verbatim and let Claude Code own the schema +
+/// approval-prompt registration.
+#[derive(serde::Deserialize)]
+pub struct McpAddArgs {
+    pub project_root: String,
+    pub name: String,
+    /// "http", "stdio", or "sse".
+    pub transport: String,
+    /// Required for http/sse.
+    pub url: Option<String>,
+    /// Required for stdio. The executable to run (e.g. "npx").
+    pub command: Option<String>,
+    /// Args to pass to `command` after the `--` separator.
+    pub command_args: Option<Vec<String>>,
+    /// Env vars to inject into the child server. Pairs of (key, value).
+    pub env: Option<Vec<(String, String)>>,
+}
+
+/// Register an MCP server in the project's `.mcp.json` by shelling out to
+/// `claude mcp add --scope project`. Spike 2 confirmed this is the
+/// supported programmatic interface — Claude Code handles schema
+/// validation and the project-scope approval-prompt registration so we
+/// don't have to re-implement either.
+#[tauri::command]
+pub async fn claude_mcp_add(args: McpAddArgs) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || mcp_add_blocking(args))
+        .await
+        .map_err(|e| format!("background task failed: {}", e))?
+}
+
+fn mcp_add_blocking(args: McpAddArgs) -> Result<(), String> {
+    let claude = which::which("claude").map_err(|_| "Claude CLI not found on PATH".to_string())?;
+
+    let mut cmd = Command::new(&claude);
+    cmd.current_dir(&args.project_root);
+    cmd.arg("mcp").arg("add");
+    cmd.arg("--scope").arg("project");
+    cmd.arg("--transport").arg(&args.transport);
+
+    if let Some(env) = &args.env {
+        for (k, v) in env {
+            cmd.arg("--env").arg(format!("{}={}", k, v));
+        }
+    }
+
+    cmd.arg(&args.name);
+
+    match args.transport.as_str() {
+        "http" | "sse" => {
+            let url = args
+                .url
+                .as_ref()
+                .ok_or_else(|| format!("{} transport requires url", args.transport))?;
+            cmd.arg(url);
+        }
+        "stdio" => {
+            let command = args
+                .command
+                .as_ref()
+                .ok_or("stdio transport requires command")?;
+            cmd.arg("--").arg(command);
+            if let Some(extra) = &args.command_args {
+                for a in extra {
+                    cmd.arg(a);
+                }
+            }
+        }
+        other => return Err(format!("unknown transport: {}", other)),
+    }
+
+    let output = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to spawn claude: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "claude mcp add failed (exit {}): {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Arguments to `claude mcp remove`. Project-scoped removal is the only
+/// shape this UI exposes — user-scoped servers stay outside our purview.
+#[derive(serde::Deserialize)]
+pub struct McpRemoveArgs {
+    pub project_root: String,
+    pub name: String,
+}
+
+/// Mirror of `claude_mcp_add` for removal. Same `which::which` lookup +
+/// `spawn_blocking` pattern; `claude mcp remove` updates `.mcp.json` and
+/// drops the entry on the next session start.
+#[tauri::command]
+pub async fn claude_mcp_remove(args: McpRemoveArgs) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || mcp_remove_blocking(args))
+        .await
+        .map_err(|e| format!("background task failed: {}", e))?
+}
+
+fn mcp_remove_blocking(args: McpRemoveArgs) -> Result<(), String> {
+    let claude = which::which("claude").map_err(|_| "Claude CLI not found on PATH".to_string())?;
+
+    let output = Command::new(&claude)
+        .current_dir(&args.project_root)
+        .args(["mcp", "remove", "--scope", "project", &args.name])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to spawn claude: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "claude mcp remove failed (exit {}): {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
