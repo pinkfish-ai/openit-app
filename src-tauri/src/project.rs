@@ -60,25 +60,12 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     let already_existed = path.exists();
     if !already_existed {
         fs::create_dir_all(&path).map_err(|e| format!("create_dir_all failed: {}", e))?;
-        // Welcome message: short, one CTA. The viewer substitutes
-        // `{{INTAKE_URL}}` with the live intake server URL at render
-        // time (the URL changes per app launch — different OS-assigned
-        // port — so we can't bake a static URL in here at bootstrap).
+        // _welcome.md used to live here as the first-launch surface;
+        // the React Getting Started page (Viewer.tsx kind:
+        // "getting-started") replaces it, so no markdown file is
+        // written. Existing projects with the legacy file on disk
+        // still work — the viewer just doesn't auto-open it anymore.
         let _ = (org_name, org_id);
-        let welcome = "# Getting started\n\n\
-             ## The big idea\n\n\
-             OpenIT is your AI-driven IT helpdesk that runs on your machine. \
-             Anyone you share the intake link with can ask a question; an AI agent \
-             triages it against your knowledge base and either answers them \
-             directly or escalates to you.\n\n\
-             ## Try it in 30 seconds\n\n\
-             Open the intake page and ask a question to test it — \
-             *\"I can't log in\"*, *\"how do I reset my VPN\"*, anything. The \
-             agent will answer or flag it for you.\n\n\
-             [**Open the intake page**]({{INTAKE_URL}})\n";
-        let welcome = welcome.to_string();
-        fs::write(path.join("_welcome.md"), welcome)
-            .map_err(|e| format!("could not write README: {}", e))?;
 
         // Create standard subdirectories so they appear in the file
         // explorer even if empty. The three core datastore dirs

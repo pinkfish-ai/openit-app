@@ -33,18 +33,18 @@ pub fn fs_list(root: String) -> Result<Vec<FileNode>, String> {
         let path = entry.path();
         let rel = path.strip_prefix(&root_path).unwrap_or(path);
         // Top-level dotdirs split into two buckets:
-        //   - Always hidden: `.git`, `.openit` (engine state),
-        //     `.vscode`, `.env*` (creds). Tooling internals — the user
-        //     never wants to see these.
-        //   - User-toggleable: `.claude` (skills source). Returned
-        //     here; the explorer filters under its "show system
-        //     files" toggle.
+        //   - Always hidden: `.git`, `.vscode`, `.env*` (creds).
+        //     Tooling internals — the user never wants to see these.
+        //   - User-toggleable: `.claude` (skills source) and
+        //     `.openit` (engine state — agent traces, sync shadows).
+        //     Returned here; the explorer filters under its "show
+        //     system files" toggle.
         let top = rel
             .components()
             .next()
             .and_then(|c| c.as_os_str().to_str())
             .unwrap_or("");
-        if top.starts_with('.') && top != ".claude" {
+        if top.starts_with('.') && top != ".claude" && top != ".openit" {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();

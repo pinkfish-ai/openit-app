@@ -1167,6 +1167,10 @@ body::before {
 
 .thread-card-status {
   flex: 0 0 auto;
+  /* Force the status pill to the right edge of the row regardless of
+     subject length — `space-between` on the parent isn't enough on
+     its own when the subject's flex:1 doesn't expand visibly. */
+  margin-left: auto;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
