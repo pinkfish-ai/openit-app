@@ -1629,7 +1629,7 @@ export function Viewer({
         headerKind = "databases";
         break;
       case "conversations-list":
-        headerKind = "tickets";
+        headerKind = "inbox";
         break;
       case "people-list":
         headerKind = "people";

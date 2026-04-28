@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
  */
 
 export type EntityKind =
-  | "tickets"
+  | "inbox"
   | "reports"
   | "people"
   | "knowledge"
@@ -31,7 +31,7 @@ export type ToneKey = "accent" | "sage" | "ochre" | "link" | "clay" | "neutral";
 // Stroke-style line icons at 1.6px, except People which is filled
 // (stroke person reads weak at 14px).
 
-const TicketsIcon: ReactNode = (
+const InboxIcon: ReactNode = (
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <rect x="3" y="6" width="18" height="13" rx="2" />
     <path d="M3 7l9 6.5L21 7" />
@@ -105,7 +105,7 @@ type EntityMetaEntry = {
 };
 
 export const ENTITY_META: Record<EntityKind, EntityMetaEntry> = {
-  tickets:           { icon: TicketsIcon,     tone: "accent",  label: "Tickets" },
+  inbox:             { icon: InboxIcon,       tone: "accent",  label: "Inbox" },
   reports:           { icon: ReportsIcon,     tone: "link",    label: "Reports" },
   people:            { icon: PersonIcon,      tone: "sage",    label: "People" },
   knowledge:         { icon: KnowledgeIcon,   tone: "ochre",   label: "Knowledge" },
@@ -125,8 +125,7 @@ export const ENTITY_META: Record<EntityKind, EntityMetaEntry> = {
 /// Map of just the icons — kept for backwards compatibility with
 /// existing imports. New code should prefer ENTITY_META directly.
 export const EntityIcons = {
-  tickets: TicketsIcon,
-  inbox: TicketsIcon,
+  inbox: InboxIcon,
   reports: ReportsIcon,
   people: PersonIcon,
   knowledge: KnowledgeIcon,

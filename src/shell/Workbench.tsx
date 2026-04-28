@@ -19,7 +19,7 @@ type Station = {
 // source the EntityCardGrid cards and Viewer headers consume, so
 // "Tickets" is "Tickets" everywhere with one icon and one color.
 const STATIONS: Station[] = [
-  { id: "tickets",   kind: "tickets",   rel: "databases/tickets", countMode: "json-rows" },
+  { id: "inbox",     kind: "inbox",     rel: "databases/tickets", countMode: "json-rows" },
   { id: "reports",   kind: "reports",   rel: "reports",           countMode: "files" },
   { id: "people",    kind: "people",    rel: "databases/people",  countMode: "json-rows" },
   { id: "knowledge", kind: "knowledge", rel: "knowledge-bases",   countMode: "dirs" },
@@ -114,7 +114,7 @@ export function Workbench({
 
   // Today card click → open the Tickets Inbox station so the admin
   // can act on the escalated set immediately.
-  const inboxStation = STATIONS.find((s) => s.id === "tickets")!;
+  const inboxStation = STATIONS.find((s) => s.id === "inbox")!;
   const openInbox = () => {
     if (repo) onOpen(`${repo}/${inboxStation.rel}`);
   };
