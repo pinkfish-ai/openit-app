@@ -135,18 +135,28 @@ export function Shell({
 
   /// Drag-source / drop-target wiring. The grip in each pane's header
   /// sets `draggingPaneId`; hovering another pane sets `dragOverPaneId`.
-  /// On drop we splice — remove the moving pane from its slot, insert
-  /// it before the target (insert-before, like VS Code's tab reorder).
+  /// On drop we splice the moving pane out of its slot and reinsert it
+  /// at the target's slot. Position-aware: when dragging rightward we
+  /// insert AFTER the target, when dragging leftward we insert BEFORE.
+  /// This is the intuitive "drop the pane where I dropped it" behavior
+  /// — without it, dragging chat from the leftmost slot onto the
+  /// rightmost pane lands chat in the middle rather than the right
+  /// (insert-before of the rightmost = middle), and dragging chat from
+  /// the middle onto the rightmost is a no-op.
   const reorderPane = useCallback((movingId: PaneId, targetId: PaneId) => {
     if (movingId === targetId) return;
     setPaneOrder((prev) => {
+      const movingIdx = prev.indexOf(movingId);
+      const targetIdx = prev.indexOf(targetId);
+      if (movingIdx < 0 || targetIdx < 0) return prev;
+      const movingRightward = movingIdx < targetIdx;
       const without = prev.filter((id) => id !== movingId);
-      const targetIdx = without.indexOf(targetId);
-      if (targetIdx < 0) return prev;
+      const targetInWithout = without.indexOf(targetId);
+      const insertAt = targetInWithout + (movingRightward ? 1 : 0);
       return [
-        ...without.slice(0, targetIdx),
+        ...without.slice(0, insertAt),
         movingId,
-        ...without.slice(targetIdx),
+        ...without.slice(insertAt),
       ];
     });
   }, []);
