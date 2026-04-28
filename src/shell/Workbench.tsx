@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fsList, fsRead, type FileNode } from "../lib/api";
+import { fsList, type FileNode } from "../lib/api";
 import { scanEscalatedTickets } from "../lib/escalatedTickets";
 
 type Station = {
@@ -47,47 +47,6 @@ function directChildren(items: FileNode[], rootAbs: string): FileNode[] {
   });
 }
 
-/// Count tickets whose `status` isn't a terminal state. Anything
-/// other than `resolved` / `closed` (or a missing status) is
-/// considered unresolved — that includes `open`, `escalated`, and
-/// the transient `agent-responding` value.
-async function countUnresolved(repo: string): Promise<number> {
-  const ticketsDir = `${repo}/databases/tickets`;
-  let rows: FileNode[];
-  try {
-    rows = await fsList(ticketsDir);
-  } catch {
-    return 0;
-  }
-  const ticketsPrefix = `${ticketsDir}/`;
-  let count = 0;
-  await Promise.all(
-    rows.map(async (n) => {
-      if (n.is_dir) return;
-      const tail = n.path.startsWith(ticketsPrefix)
-        ? n.path.slice(ticketsPrefix.length)
-        : "";
-      if (!tail || tail.includes("/")) return;
-      if (!n.name.endsWith(".json")) return;
-      if (n.name === "_schema.json") return;
-      if (n.name.includes(".server.")) return;
-      try {
-        const raw = await fsRead(n.path);
-        const parsed = JSON.parse(raw) as { status?: unknown };
-        const status = typeof parsed.status === "string" ? parsed.status : "";
-        if (status !== "resolved" && status !== "closed") {
-          count += 1;
-        }
-      } catch {
-        // unreadable / unparseable → count it as unresolved so the
-        // hero doesn't undercount during a transient race.
-        count += 1;
-      }
-    }),
-  );
-  return count;
-}
-
 function countWithMode(items: FileNode[], mode: Station["countMode"]): number {
   return items.filter((n) => {
     if (n.name.startsWith(".") || n.name === "_schema.json") return false;
@@ -117,14 +76,12 @@ export function Workbench({
 }) {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [escalatedCount, setEscalatedCount] = useState(0);
-  const [unresolvedCount, setUnresolvedCount] = useState(0);
   const [filesExpanded, setFilesExpanded] = useState(false);
 
   useEffect(() => {
     if (!repo) {
       setCounts({});
       setEscalatedCount(0);
-      setUnresolvedCount(0);
       return;
     }
     let cancelled = false;
@@ -143,21 +100,15 @@ export function Workbench({
         }),
       );
       if (!cancelled) setCounts(next);
+      // "Unresolved" === escalated for today-hero purposes. Open
+      // tickets are still being worked by the agent, resolved /
+      // closed are done; only escalated demands the admin's
+      // attention, so that's what the hero counts.
       try {
         const esc = await scanEscalatedTickets(repo);
         if (!cancelled) setEscalatedCount(esc.length);
       } catch {
         if (!cancelled) setEscalatedCount(0);
-      }
-      // "Unresolved" = anything that isn't terminal. The today-hero
-      // counts these so a clean queue (everything resolved/closed)
-      // can read as "Clean inbox. Congrats!" rather than echoing the
-      // raw ticket file count, which doesn't drop as work gets done.
-      try {
-        const unresolved = await countUnresolved(repo);
-        if (!cancelled) setUnresolvedCount(unresolved);
-      } catch {
-        if (!cancelled) setUnresolvedCount(0);
       }
     })();
     return () => {
@@ -180,22 +131,16 @@ export function Workbench({
     <div className="workbench">
       <div className="workbench-today">
         <div className="workbench-today-eyebrow">TODAY</div>
-        {unresolvedCount === 0 ? (
+        {escalatedCount === 0 ? (
           <div className="workbench-today-hero workbench-today-hero-clean">
             <span className="workbench-today-clean">Clean inbox. Congrats!</span>
           </div>
         ) : (
           <div className="workbench-today-hero">
-            <span className="workbench-today-number">{unresolvedCount}</span>
+            <span className="workbench-today-number">{escalatedCount}</span>
             <span className="workbench-today-label">
-              unresolved ticket{unresolvedCount === 1 ? "" : "s"}
+              unresolved ticket{escalatedCount === 1 ? "" : "s"}
             </span>
-          </div>
-        )}
-        {escalatedCount > 0 && (
-          <div className="workbench-today-meta">
-            <span className="workbench-today-pip" />
-            {escalatedCount} need{escalatedCount === 1 ? "s" : ""} your reply
           </div>
         )}
       </div>
