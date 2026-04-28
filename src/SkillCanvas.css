@@ -291,6 +291,29 @@
   font-style: italic;
 }
 
+/* Recovery block on the verify step when the listener is down.
+   Visually grouped (red-tinted card) so the user sees it as an
+   action item, not just a disabled-button state. */
+.skill-action-listener-down {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: #fdecea;
+  border: 1px solid #f0c2bf;
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.skill-action-listener-down .skill-action-error {
+  color: #b3261e;
+}
+
+.skill-action-listener-down .skill-action-hint {
+  color: #6b3a37;
+  font-style: normal;
+}
+
 .skill-action-unknown {
   font-style: italic;
   color: #8a8a93;

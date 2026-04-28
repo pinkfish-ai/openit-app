@@ -28,6 +28,7 @@ import {
   type SlackStatus,
   slackConnect,
   slackListenerSendIntro,
+  slackListenerStart,
   slackListenerStatus,
   slackValidateBotToken,
 } from "./lib/api";
@@ -246,12 +247,20 @@ function renderAction(
         <AppTokenInputAction
           repo={ctx.repo}
           orgId={ctx.orgId}
+          intakeUrl={ctx.intakeUrl}
           stagedBotToken={ctx.stagedBotToken}
           setStagedBotToken={ctx.setStagedBotToken}
         />
       );
     case "verify-dm":
-      return <VerifyDmAction defaultEmail={action.defaultEmail} />;
+      return (
+        <VerifyDmAction
+          defaultEmail={action.defaultEmail}
+          repo={ctx.repo}
+          orgId={ctx.orgId}
+          intakeUrl={ctx.intakeUrl}
+        />
+      );
     case "link":
       return <LinkAction label={action.label} href={action.href} />;
     case "button":
@@ -484,24 +493,38 @@ function BotTokenInputAction({
   );
 }
 
-/// Step 3's input — paste the xapp- app-level token. Combined with
-/// the staged bot token from step 2, calls slack_connect to store
-/// both in Keychain, write the slack.json pointer file, and
-/// auto-start the listener. Disabled (with a hint) until step 2's
-/// bot-token has been validated.
+/// Step 3's input — paste the xapp- app-level token. Two atomic
+/// halves so the user finds out about a bad app token immediately
+/// (not 5s later from a polling effect):
+///
+///   1. slack_connect — combines with the staged bot token, stores
+///      both in Keychain, writes .openit/slack.json. Validates
+///      the bot token (auth.test) but NOT the app token; that
+///      only fails when the SocketModeClient handshakes.
+///   2. slack_listener_start — spawns the bundled Node listener,
+///      waits for "socket-mode connected" on stderr (10s timeout).
+///      A bad app token surfaces here as a connect failure.
+///
+/// On success, inject "tokens stored AND listener up" so the skill
+/// reports truth instead of "auto-starting" optimism. On failure
+/// at the listener-start step, surface the captured error inline
+/// and tell the user to fix the app token (or use the recovery
+/// path on the verify step).
 function AppTokenInputAction({
   repo,
   orgId,
+  intakeUrl,
   stagedBotToken,
   setStagedBotToken,
 }: {
   repo: string;
   orgId: string;
+  intakeUrl: string;
   stagedBotToken: string | null;
   setStagedBotToken: (t: string | null) => void;
 }) {
   const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<null | "connecting" | "starting">(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handle() {
@@ -514,23 +537,41 @@ function AppTokenInputAction({
       setError("App token should start with xapp-");
       return;
     }
-    setBusy(true);
+    setBusy("connecting");
+    let meta;
     try {
-      const meta = await slackConnect({
+      meta = await slackConnect({
         repo,
         orgId,
         botToken: stagedBotToken,
         appToken: token.trim(),
       });
       setStagedBotToken(null); // tokens are in keychain now; drop in-memory
+    } catch (e) {
+      setBusy(null);
+      setError(`Connect failed: ${String(e)}`);
+      return;
+    }
+    setBusy("starting");
+    try {
+      await slackListenerStart({ repo, intakeUrl, orgId });
       setToken("");
       await injectIntoChat(
-        `(canvas) app token accepted; tokens stored in Keychain and listener auto-starting. Connected to ${meta.workspace_name} as @${meta.bot_name}. Please mark the app-token step done and advance to verify.`,
+        `(canvas) tokens stored in Keychain and listener confirmed up. Connected to ${meta.workspace_name} as @${meta.bot_name}. Please mark the app-token step done and advance to verify.`,
       );
     } catch (e) {
-      setError(`Connect failed: ${String(e)}`);
+      // Slack accepted the bot token (slack_connect succeeded) but
+      // the listener failed — almost always a bad app token caught
+      // by SocketModeClient on the first websocket frame. Tell the
+      // skill so the chat side reflects reality, and tell the user
+      // they can fix the token via the verify-step Start button.
+      const msg = String(e);
+      await injectIntoChat(
+        `(canvas) tokens stored in Keychain BUT listener failed to come up: ${msg}. Most likely cause: the xapp- token is wrong (typo, missing connections:write scope, or never generated). The user can either re-paste a fresh xapp- here or use the Start listener button on the verify step to retry.`,
+      );
+      setError(`Listener failed to start: ${msg}`);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
@@ -557,25 +598,39 @@ function AppTokenInputAction({
         type="button"
         className="skill-action-primary"
         onClick={handle}
-        disabled={busy || !stagedBotToken}
+        disabled={busy !== null || !stagedBotToken}
       >
-        {busy ? "Connecting…" : "Connect"}
+        {busy === "connecting"
+          ? "Validating tokens…"
+          : busy === "starting"
+            ? "Starting listener…"
+            : "Connect"}
       </button>
       {error && <p className="skill-action-error">{error}</p>}
     </div>
   );
 }
 
-function VerifyDmAction({ defaultEmail }: { defaultEmail?: string }) {
+function VerifyDmAction({
+  defaultEmail,
+  repo,
+  orgId,
+  intakeUrl,
+}: {
+  defaultEmail?: string;
+  repo: string;
+  orgId: string;
+  intakeUrl: string;
+}) {
   const [email, setEmail] = useState(defaultEmail ?? "");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<null | "sending" | "starting">(null);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<SlackStatus | null>(null);
 
   // Poll listener status while this action is on-screen so we can
   // disable the send button when the listener isn't running and
-  // tell the user why.
+  // surface the captured exit error in-canvas.
   useEffect(() => {
     let mounted = true;
     const tick = () =>
@@ -592,14 +647,14 @@ function VerifyDmAction({ defaultEmail }: { defaultEmail?: string }) {
     };
   }, []);
 
-  async function handle() {
+  async function sendIntro() {
     setError(null);
     setSent(false);
     if (!email.trim() || !email.includes("@")) {
       setError("Enter a valid email");
       return;
     }
-    setBusy(true);
+    setBusy("sending");
     try {
       await slackListenerSendIntro({
         targetEmail: email.trim(),
@@ -613,14 +668,62 @@ function VerifyDmAction({ defaultEmail }: { defaultEmail?: string }) {
     } catch (e) {
       setError(`Send failed: ${String(e)}`);
     } finally {
-      setBusy(false);
+      setBusy(null);
+    }
+  }
+
+  /// Recovery path: when the listener is down (failed to start, or
+  /// crashed mid-session), let the user retry start-up directly
+  /// from this canvas instead of having to bounce out to the
+  /// header pill (which doesn't restart anyway — pill click just
+  /// re-renders the canvas). On success, status flips to running:
+  /// true on the next poll and the Send-intro button enables.
+  async function startListener() {
+    setError(null);
+    setBusy("starting");
+    try {
+      await slackListenerStart({ repo, intakeUrl, orgId });
+      // Force an immediate status read so the UI doesn't wait 2s
+      // for the next interval tick.
+      const s = await slackListenerStatus();
+      setStatus(s);
+      await injectIntoChat(
+        `(canvas) listener started from the verify step recovery button.`,
+      );
+    } catch (e) {
+      setError(`Start failed: ${String(e)}`);
+    } finally {
+      setBusy(null);
     }
   }
 
   const listenerNotRunning = status !== null && !status.running;
+  const lastError = status?.last_error ?? null;
 
   return (
     <div className="skill-action-verify-dm">
+      {listenerNotRunning && (
+        <div className="skill-action-listener-down">
+          <p className="skill-action-error">
+            <strong>Listener isn't running.</strong>
+            {lastError ? ` Last error: ${lastError}` : ""}
+          </p>
+          <p className="skill-action-hint">
+            Most common cause is a bad app-level token (xapp-) — wrong scope,
+            typo, or never generated. Re-check the previous step's token, then
+            try starting the listener:
+          </p>
+          <button
+            type="button"
+            className="skill-action-primary"
+            onClick={startListener}
+            disabled={busy !== null}
+          >
+            {busy === "starting" ? "Starting…" : "Start listener"}
+          </button>
+        </div>
+      )}
+
       <label className="skill-action-field">
         <span>Slack user email to DM</span>
         <input
@@ -635,21 +738,15 @@ function VerifyDmAction({ defaultEmail }: { defaultEmail?: string }) {
       <button
         type="button"
         className="skill-action-primary"
-        onClick={handle}
-        disabled={busy || listenerNotRunning}
+        onClick={sendIntro}
+        disabled={busy !== null || listenerNotRunning}
         title={listenerNotRunning ? "Listener must be running to send intro" : ""}
       >
-        {busy ? "Sending…" : "Send intro DM"}
+        {busy === "sending" ? "Sending…" : "Send intro DM"}
       </button>
       {sent && (
         <p className="skill-action-success">
           Sent — check Slack DMs for the bot.
-        </p>
-      )}
-      {listenerNotRunning && (
-        <p className="skill-action-error">
-          Listener isn't running — restart it from the header pill before
-          verifying.
         </p>
       )}
       {error && <p className="skill-action-error">{error}</p>}
