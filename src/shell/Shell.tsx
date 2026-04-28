@@ -54,7 +54,14 @@ type LeftTab = "overview" | "files" | "source-control";
 /// strip.
 type PaneId = "left" | "center" | "right";
 const DEFAULT_PANE_ORDER: PaneId[] = ["left", "center", "right"];
-const PANE_MIN: Record<PaneId, number> = { left: 12, center: 20, right: 25 };
+// Per-pane minimums (percentages). Tuned against the Tauri window
+// minWidth of 1080px so even at the smallest allowed window each
+// pane keeps room for its content:
+//   left   22% of 1080 ≈ 238px — fits the 2-col Workbench stations
+//   center 28% of 1080 ≈ 302px — keeps markdown / cards readable
+//   right  26% of 1080 ≈ 281px — keeps the xterm legible
+// Sum 76, leaving 24% slack for the user to redistribute.
+const PANE_MIN: Record<PaneId, number> = { left: 22, center: 28, right: 26 };
 const PANE_DEFAULT: Record<PaneId, number> = { left: 24, center: 40, right: 36 };
 
 /// Module-level reentrancy guard for Claude-triggered pushes. Hoisted
