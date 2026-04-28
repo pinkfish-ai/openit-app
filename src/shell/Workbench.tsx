@@ -215,7 +215,7 @@ export function Workbench({
         onClick={onShowFiles}
       >
         <span className="workbench-files-caret">▸</span>
-        <span>Browse files</span>
+        <span>File explorer</span>
         <span className="workbench-files-hint">advanced</span>
       </button>
     </div>
