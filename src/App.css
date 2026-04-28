@@ -2029,11 +2029,12 @@ body::before {
   gap: 6px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  background: transparent;
 }
 
 .sc-commit-input {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   background: var(--surface-soft);
   border: 1px solid var(--border-strong);
   color: var(--text);
