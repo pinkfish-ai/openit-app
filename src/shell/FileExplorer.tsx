@@ -436,7 +436,7 @@ export function FileExplorer({
   // System / scaffolding entries hidden by default. The toggle in
   // the toolbar exposes them when the user wants to inspect:
   //   - `CLAUDE.md` — the agent instructions doc at repo root
-  //   - `_*` files (`_welcome.md`, `_schema.json`, etc.) at any depth
+  //   - `_*` files (`_schema.json`, etc.) at any depth
   //   - `.claude/` directory and everything under it (skills source)
   //   - `.openit/agent-traces/` (per-turn trace JSON; clickable)
   // Other `.openit/` siblings (plugin-version, skill-state,
@@ -697,8 +697,8 @@ export function FileExplorer({
           onClick={() => setShowSystemFiles((v) => !v)}
           title={
             showSystemFiles
-              ? "Hide system files (CLAUDE.md, _welcome.md, _schema.json, .claude/)"
-              : "Show system files (CLAUDE.md, _welcome.md, _schema.json, .claude/)"
+              ? "Hide system files (CLAUDE.md, _schema.json, .claude/)"
+              : "Show system files (CLAUDE.md, _schema.json, .claude/)"
           }
           aria-pressed={showSystemFiles}
         >

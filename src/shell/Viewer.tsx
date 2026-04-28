@@ -198,6 +198,7 @@ export function Viewer({
   welcomeFlashKey,
   onOpenPath,
   onConnectCloud,
+  onConnectSlack,
 }: {
   source: ViewerSource;
   repo: string;
@@ -218,6 +219,9 @@ export function Viewer({
   /** Kick off the Pinkfish onboarding flow. Wired by the cloud-cta
    *  primary button; ignored for every other source kind. */
   onConnectCloud?: () => void;
+  /** Kick off the Slack-connect skill. Wired by the Getting Started
+   *  page's "Connect Slack" button. */
+  onConnectSlack?: () => void;
 }) {
   const [content, setContent] = useState<string>("");
   const [binaryData, setBinaryData] = useState<Uint8Array | null>(null);
@@ -1203,6 +1207,15 @@ export function Viewer({
               }
             >
               Open the intake page
+            </button>
+            <button
+              type="button"
+              className="cloud-cta-secondary"
+              onClick={() => onConnectSlack?.()}
+              disabled={!onConnectSlack}
+              title="Connect a Slack workspace so the agent can post and read there"
+            >
+              Connect Slack
             </button>
           </div>
         </div>

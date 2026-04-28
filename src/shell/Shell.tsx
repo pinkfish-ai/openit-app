@@ -827,6 +827,7 @@ export function Shell({
                     setSource(resolved);
                   }}
                   onConnectCloud={onConnectRequest}
+                  onConnectSlack={onConnectSlack}
                 />
               )}
             </div>
