@@ -61,131 +61,35 @@ Action kinds the canvas knows how to render (V1):
 - `{ "kind": "link", "label": "...", "href": "..." }` — opens a URL.
 - `{ "kind": "button", "label": "...", "injectOnClick": "..." }` — generic; injects text into chat on click.
 
-## Step 0 — On invocation, check for existing state
+## Step 0 — On invocation, read the existing state file
 
-Always start here, regardless of why you were invoked.
+The state file at `.openit/skill-state/connect-slack.json` is
+**always already written** when you're invoked — the React app
+scaffolds it from a typed default in `src/lib/connectSlackState.ts`
+when the admin clicks the Slack pill (the canonical entry point).
+You don't need to write it; just read it and orchestrate.
 
 ```bash
-ls .openit/skill-state/connect-slack.json 2>/dev/null
+cat .openit/skill-state/connect-slack.json
 ```
 
-- **File exists** and `active: true` → resume; read the file, look
-  at `currentStep`, drive forward from there. Greet briefly:
-  *"Resuming Slack setup at step '<active step title>'."*
-- **File exists** but `active: false` (was dismissed earlier) → set
-  `active: true` and continue from the same step.
-- **File does not exist** → check whether Slack is already
-  connected by reading `.openit/slack.json`:
-  - **Slack already connected** → write the **manage** state (see
-    below). Greet: *"You're already connected as @<bot> in
-    <workspace>. The canvas above shows current status and lets
-    you stop / restart / disconnect."*
-  - **Not connected** → write the **setup** state (see below).
-    Greet: *"Setting up the Slack canvas — follow the checklist on
-    the left."*
+Greet briefly based on what you find:
 
-## Setup state (initial write — not connected)
+- File has the **setup** shape (steps include `workspace-check`,
+  `create-app`, …, `verify`) → *"Setting up the Slack canvas —
+  follow the checklist on the left."*
+- File has the **manage** shape (steps include `status`,
+  `verify`, `disconnect`) → *"You're already connected. The
+  canvas on the left lets you re-verify or disconnect."*
+- File has `active: false` → user dismissed the canvas earlier.
+  Re-flip to `active: true` (the React app also does this on the
+  next pill click, but if you're invoked some other way, do it
+  here) and resume.
 
-Write this exactly to `.openit/skill-state/connect-slack.json`:
-
-```json
-{
-  "skill": "connect-slack",
-  "title": "Connect Slack",
-  "subtitle": "Bring the OpenIT bot to your workspace",
-  "active": true,
-  "steps": [
-    {
-      "id": "workspace-check",
-      "title": "Have a Slack workspace ready",
-      "status": "active",
-      "body": "You'll need a Slack workspace where you can install custom apps (workspace admin, or admin permission to install)."
-    },
-    {
-      "id": "create-app",
-      "title": "Create the Slack app from manifest",
-      "status": "pending",
-      "body": "Click Copy below, then in your browser go to api.slack.com/apps → Create New App → From an app manifest → pick your workspace → paste → Next → Create.",
-      "action": { "kind": "copy-manifest" }
-    },
-    {
-      "id": "install",
-      "title": "Install + grab the bot token",
-      "status": "pending",
-      "body": "Click Install to Workspace and approve. The Bot User OAuth Token (xoxb-…) appears on the Install App page right after install. Copy it."
-    },
-    {
-      "id": "app-token",
-      "title": "Generate the app-level token (Socket Mode)",
-      "status": "pending",
-      "body": "Basic Information → App-Level Tokens → Generate Token and Scopes. Add the connections:write scope, click Generate, copy the xapp-… token."
-    },
-    {
-      "id": "paste-tokens",
-      "title": "Paste both tokens here",
-      "status": "pending",
-      "body": "Paste the bot token (xoxb-) and app token (xapp-) below. They go straight to macOS Keychain — never typed in the chat.",
-      "action": { "kind": "token-input" }
-    },
-    {
-      "id": "verify",
-      "title": "Verify roundtrip",
-      "status": "pending",
-      "body": "Send yourself an intro DM. Reply with a question to confirm the bot answers. The bot will treat your DMs the same as any employee's — that's the point.",
-      "action": { "kind": "verify-dm" }
-    }
-  ],
-  "freeform": "Heads-up: the bot is online while OpenIT is running. Force-quitting OpenIT can leave the listener orphaned — see the FAQ below if you hit that."
-}
-```
-
-## Manage state (already connected)
-
-When `.openit/slack.json` exists, write a different state — no
-setup steps, just status + actions for the running bot:
-
-```json
-{
-  "skill": "connect-slack",
-  "title": "Slack",
-  "subtitle": "Connected to <workspace> as @<bot>",
-  "active": true,
-  "steps": [
-    {
-      "id": "status",
-      "title": "Listener status",
-      "status": "active",
-      "body": "Click the Slack pill in the header to see live counts. Stop / start the listener from there.",
-      "action": {
-        "kind": "button",
-        "label": "Send another intro DM",
-        "injectOnClick": "(canvas) admin wants to re-verify; please render the verify-dm action again"
-      }
-    },
-    {
-      "id": "verify",
-      "title": "Re-verify roundtrip",
-      "status": "pending",
-      "body": "DM yourself an intro again to test the full loop.",
-      "action": { "kind": "verify-dm" }
-    },
-    {
-      "id": "disconnect",
-      "title": "Disconnect",
-      "status": "pending",
-      "body": "Removes tokens from Keychain, stops the listener, deletes .openit/slack.json. You'll need to reconnect to use Slack again.",
-      "action": {
-        "kind": "button",
-        "label": "Disconnect Slack",
-        "injectOnClick": "(canvas) admin clicked Disconnect Slack — please run /disconnect-slack confirm"
-      }
-    }
-  ]
-}
-```
-
-(For now the Disconnect button just nudges the admin to confirm in
-chat. A future iteration can add a `confirm` action kind.)
+The two default shapes live in `src/lib/connectSlackState.ts`
+(`buildSetupState()` and `buildManageState(config)`); look there
+for the canonical step ids and bodies if you need to reference
+them by name.
 
 ## Driving forward — what each `(canvas)` prompt means
 

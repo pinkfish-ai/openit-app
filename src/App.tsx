@@ -19,7 +19,9 @@ import {
   type SkillCanvasState,
   injectIntoChat,
   skillStateRead,
+  skillStateWrite,
 } from "./lib/skillCanvas";
+import { buildManageState, buildSetupState } from "./lib/connectSlackState";
 import { onFsChanged } from "./lib/fsWatcher";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
@@ -607,14 +609,37 @@ function App() {
             <SlackPill
               config={slackConfig}
               status={slackStatus}
-              onClick={() => {
+              onClick={async () => {
                 // Pill click is the canonical entry point for the
-                // Slack flow now that the modal is gone. Injects the
-                // slash command into Claude; the skill writes the
-                // canvas state file; the canvas renders in the
-                // center pane. Idempotent — safe to click while
-                // already connected (skill renders the "manage"
-                // canvas instead of the setup one).
+                // Slack flow. Two stages so Claude never has to
+                // scaffold static JSON itself (avoiding a noisy
+                // permission prompt for the user):
+                //
+                //   1. If no active canvas state exists, write the
+                //      appropriate default — setup if no slackConfig,
+                //      manage if connected. If state exists but is
+                //      inactive (user dismissed earlier), flip it
+                //      back to active without resetting progress.
+                //   2. Inject /connect-slack so Claude resumes
+                //      orchestration.
+                if (repo) {
+                  try {
+                    const existing = await skillStateRead(repo, "connect-slack");
+                    if (!existing) {
+                      const fresh = slackConfig
+                        ? buildManageState(slackConfig)
+                        : buildSetupState();
+                      await skillStateWrite(repo, "connect-slack", fresh);
+                    } else if (!existing.active) {
+                      await skillStateWrite(repo, "connect-slack", {
+                        ...existing,
+                        active: true,
+                      });
+                    }
+                  } catch (e) {
+                    console.warn("[app] skill state scaffold failed:", e);
+                  }
+                }
                 injectIntoChat("/connect-slack").catch((e) =>
                   console.warn("[app] inject /connect-slack failed:", e),
                 );
