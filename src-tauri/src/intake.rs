@@ -2183,6 +2183,19 @@ const CHAT_HTML: &str = r#"<!doctype html>
   font-size: 12px;
   margin: 0;
 }
+.gate-not-you {
+  background: transparent;
+  border: 0;
+  padding: 4px 0 0;
+  margin: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: underline;
+  cursor: pointer;
+  align-self: center;
+}
+.gate-not-you:hover { color: var(--text); }
 /* Make the HTML `hidden` attribute win against display:flex on
    chat/form/banner — those have explicit display rules in the main
    stylesheet that would otherwise override the user agent's hidden
@@ -2621,6 +2634,65 @@ function setBanner(status) {
   }
 }
 
+// --- Email persistence (returning-visitor convenience) ---
+//
+// Remember the asker's email in a long-lived cookie so a second
+// visit doesn't re-prompt. Cookie is scoped to the intake server
+// origin only; SameSite=Lax keeps it out of cross-site requests.
+const EMAIL_COOKIE = 'openit_intake_email';
+const EMAIL_COOKIE_DAYS = 365;
+function setCookie(name, val, days) {
+  const exp = new Date(Date.now() + days * 86400000).toUTCString();
+  document.cookie = name + '=' + encodeURIComponent(val) +
+    ';path=/;expires=' + exp + ';SameSite=Lax';
+}
+function getCookie(name) {
+  const m = document.cookie.match(
+    new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'),
+  );
+  return m ? decodeURIComponent(m[1]) : null;
+}
+function clearCookie(name) {
+  document.cookie = name + '=;path=/;expires=Thu, 01 Jan 1970 00:00:00 GMT;SameSite=Lax';
+}
+
+// On load: if a remembered email exists, rewrite the gate to a
+// "Welcome back" surface with one-click continue + an opt-out link.
+function applyRememberedEmail() {
+  const remembered = getCookie(EMAIL_COOKIE);
+  if (!remembered) return;
+  emailInput.value = remembered;
+  // Swap the gate copy for a returning-visitor flow without
+  // restructuring the form (so the existing submit handler still
+  // works — it just reads the prefilled value).
+  const heading = gateForm.querySelector('h2');
+  const lead = gateForm.querySelector('p:not(.gate-error)');
+  const submit = gateForm.querySelector('button[type=submit]');
+  if (heading) heading.textContent = 'Welcome back';
+  if (lead) {
+    lead.innerHTML = 'Continuing as <strong></strong>.';
+    lead.querySelector('strong').textContent = remembered;
+  }
+  if (submit) submit.textContent = 'Continue';
+  // Hide the label + input — the email is already known, and the
+  // "not you?" link below covers the change-of-mind case.
+  emailInput.type = 'hidden';
+  const label = gateForm.querySelector('label[for=email]');
+  if (label) label.hidden = true;
+  // Add a small secondary affordance to forget the cookie.
+  if (!gateForm.querySelector('.gate-not-you')) {
+    const notYou = document.createElement('button');
+    notYou.type = 'button';
+    notYou.className = 'gate-not-you';
+    notYou.textContent = 'Use a different email';
+    notYou.addEventListener('click', () => {
+      clearCookie(EMAIL_COOKIE);
+      window.location.reload();
+    });
+    gateForm.appendChild(notYou);
+  }
+}
+
 async function start(email) {
   const r = await fetch('/chat/start', {
     method: 'POST',
@@ -2635,6 +2707,8 @@ async function start(email) {
   sessionId = j.session_id;
   ticketId = j.ticket_id;
   userEmail = email;
+  // Persist for next visit.
+  setCookie(EMAIL_COOKIE, email, EMAIL_COOKIE_DAYS);
   // Hide the gate, show the chat surface.
   gate.hidden = true;
   chat.hidden = false;
@@ -2643,6 +2717,8 @@ async function start(email) {
   input.focus();
   startPolling();
 }
+
+applyRememberedEmail();
 
 async function poll() {
   if (!sessionId) return;
