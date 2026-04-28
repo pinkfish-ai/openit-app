@@ -1213,15 +1213,18 @@ body::before {
 }
 
 .thread-card-tag {
+  /* Secondary to the status pill: lowercase + no border + softer
+     background so it reads as metadata, not state. Status pill keeps
+     uppercase + bordered surface-soft as the dominant signal. */
   font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-faint);
-  background: var(--surface-soft);
-  border: 1px solid var(--border);
-  padding: 1px 6px;
+  text-transform: lowercase;
+  letter-spacing: 0;
+  color: rgba(0, 0, 0, 0.42);
+  background: rgba(0, 0, 0, 0.035);
+  border: none;
+  padding: 1px 7px;
   border-radius: 999px;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .thread-card-asker,
