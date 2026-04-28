@@ -1,17 +1,37 @@
 import type { ReactNode } from "react";
 
 /**
- * Shared inline SVGs for each entity kind. Used by both the Workbench
- * stations (left pane) and the EntityCardGrid (center pane viewer)
- * so the icons match across the app. All monochrome via
- * `currentColor` so each surface inherits the local accent color.
+ * Shared visual identity for every entity kind.
  *
- * Stroke width 1.6 keeps the line-icon weight consistent. People is
- * the one filled-style exception because a stroke person silhouette
- * reads weaker than a filled one at 14px.
+ * One source of truth that the Workbench stations, the EntityCardGrid
+ * cards, and the Viewer headers all consume — so when the user clicks
+ * "Tickets" in the Workbench, the resulting page header shows the
+ * same icon, the same tone, and the same label. No more orange-tile
+ * Workbench fighting a multicolor card grid.
  */
 
-const InboxIcon: ReactNode = (
+export type EntityKind =
+  | "tickets"
+  | "reports"
+  | "people"
+  | "knowledge"
+  | "knowledge-base"
+  | "knowledge-bases"
+  | "files"
+  | "filestores"
+  | "library"
+  | "attachments"
+  | "agents"
+  | "databases"
+  | "workflows";
+
+export type ToneKey = "accent" | "sage" | "ochre" | "link" | "clay" | "neutral";
+
+// ── Inline SVGs ────────────────────────────────────────────────────
+// Stroke-style line icons at 1.6px, except People which is filled
+// (stroke person reads weak at 14px).
+
+const TicketsIcon: ReactNode = (
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <rect x="3" y="6" width="18" height="13" rx="2" />
     <path d="M3 7l9 6.5L21 7" />
@@ -76,17 +96,37 @@ const WorkflowsIcon: ReactNode = (
   </svg>
 );
 
-const TicketsIcon: ReactNode = (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z" />
-    <line x1="12" y1="6" x2="12" y2="9" strokeDasharray="0 3" />
-    <line x1="12" y1="15" x2="12" y2="18" strokeDasharray="0 3" />
-  </svg>
-);
+// ── Per-kind metadata (icon + tone + label) ───────────────────────
 
+type EntityMetaEntry = {
+  icon: ReactNode;
+  tone: ToneKey;
+  label: string;
+};
+
+export const ENTITY_META: Record<EntityKind, EntityMetaEntry> = {
+  tickets:           { icon: TicketsIcon,     tone: "accent",  label: "Tickets" },
+  reports:           { icon: ReportsIcon,     tone: "link",    label: "Reports" },
+  people:            { icon: PersonIcon,      tone: "sage",    label: "People" },
+  knowledge:         { icon: KnowledgeIcon,   tone: "ochre",   label: "Knowledge" },
+  "knowledge-base":  { icon: KnowledgeIcon,   tone: "ochre",   label: "Knowledge base" },
+  "knowledge-bases": { icon: KnowledgeIcon,   tone: "ochre",   label: "Knowledge" },
+  files:             { icon: FilesIcon,       tone: "neutral", label: "Files" },
+  filestores:        { icon: FilesIcon,       tone: "neutral", label: "Files" },
+  library:           { icon: FilesIcon,       tone: "neutral", label: "Library" },
+  attachments:       { icon: AttachmentsIcon, tone: "neutral", label: "Attachments" },
+  agents:            { icon: AgentsIcon,      tone: "accent",  label: "Agents" },
+  databases:         { icon: DatabasesIcon,   tone: "link",    label: "Databases" },
+  workflows:         { icon: WorkflowsIcon,   tone: "sage",    label: "Workflows" },
+};
+
+// ── Convenience accessors used by call sites ──────────────────────
+
+/// Map of just the icons — kept for backwards compatibility with
+/// existing imports. New code should prefer ENTITY_META directly.
 export const EntityIcons = {
-  inbox: InboxIcon,
   tickets: TicketsIcon,
+  inbox: TicketsIcon,
   reports: ReportsIcon,
   people: PersonIcon,
   knowledge: KnowledgeIcon,
@@ -100,3 +140,30 @@ export const EntityIcons = {
   databases: DatabasesIcon,
   workflows: WorkflowsIcon,
 };
+
+// ── EntityBadge component (used in viewer headers) ────────────────
+
+/// Small tinted badge: tone-colored glyph square + label text.
+/// Rendered at the top of an entity-list view so the page header
+/// matches the station/card icon that opened it.
+export function EntityBadge({
+  kind,
+  size = "md",
+  showLabel = true,
+}: {
+  kind: EntityKind;
+  size?: "sm" | "md";
+  showLabel?: boolean;
+}) {
+  const meta = ENTITY_META[kind];
+  return (
+    <span
+      className={`entity-badge entity-badge-${size} entity-tone-${meta.tone}`}
+    >
+      <span className="entity-badge-glyph" aria-hidden>
+        {meta.icon}
+      </span>
+      {showLabel && <span className="entity-badge-label">{meta.label}</span>}
+    </span>
+  );
+}

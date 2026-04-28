@@ -4095,8 +4095,13 @@ button.status-chip-cmdk:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--accent-faint) 0%, var(--accent-soft) 100%);
-  color: var(--accent);
+  /* Tone-tinted: parent (.station with .entity-tone-*) sets the
+     --tone-* vars; we consume them here so each station's badge is
+     colored by its EntityKind, matching the EntityCardGrid + viewer
+     header treatment. */
+  background: var(--tone-bg, var(--accent-faint));
+  color: var(--tone-color, var(--accent));
+  border: 1px solid var(--tone-border, var(--accent-soft));
   border-radius: 7px;
   font-family: var(--font-display);
   font-size: 13px;
@@ -4602,55 +4607,83 @@ button.status-chip-info:hover {
   color: var(--accent);
 }
 
-/* Per-kind tone — drives the glyph badge color. */
-.entity-tone-accent .entity-card-glyph {
-  background: var(--accent-faint);
-  color: var(--accent);
-  border: 1px solid var(--accent-soft);
+/* Per-kind tone — defined once at the parent level via CSS vars, so
+   any glyph child (.station-glyph in the Workbench, .entity-card-glyph
+   in the EntityCardGrid, .entity-badge-glyph in the viewer header)
+   reads from the same source of truth. Add a tone? Add it here once. */
+.entity-tone-accent {
+  --tone-bg: var(--accent-faint);
+  --tone-color: var(--accent);
+  --tone-border: var(--accent-soft);
 }
-.entity-tone-sage .entity-card-glyph {
-  background: var(--sage-soft);
-  color: #2c4d27;
-  border: 1px solid var(--sage);
+.entity-tone-sage {
+  --tone-bg: var(--sage-soft);
+  --tone-color: #2c4d27;
+  --tone-border: var(--sage);
 }
-.entity-tone-ochre .entity-card-glyph {
-  background: var(--ochre-soft);
-  color: #5c3d00;
-  border: 1px solid var(--ochre);
+.entity-tone-ochre {
+  --tone-bg: var(--ochre-soft);
+  --tone-color: #5c3d00;
+  --tone-border: var(--ochre);
 }
-.entity-tone-link .entity-card-glyph {
-  background: rgba(74, 92, 184, 0.10);
-  color: var(--link);
-  border: 1px solid rgba(74, 92, 184, 0.32);
+.entity-tone-link {
+  --tone-bg: rgba(74, 92, 184, 0.10);
+  --tone-color: var(--link);
+  --tone-border: rgba(74, 92, 184, 0.32);
 }
-.entity-tone-clay .entity-card-glyph {
-  background: var(--clay-soft);
-  color: var(--clay);
-  border: 1px solid var(--clay);
+.entity-tone-clay {
+  --tone-bg: var(--clay-soft);
+  --tone-color: var(--clay);
+  --tone-border: var(--clay);
 }
-.entity-tone-neutral .entity-card-glyph {
-  background: var(--surface-soft);
-  color: var(--text-muted);
-  border: 1px solid var(--border-strong);
+.entity-tone-neutral {
+  --tone-bg: var(--surface-soft);
+  --tone-color: var(--text-muted);
+  --tone-border: var(--border-strong);
 }
 
-.entity-tone-accent .entity-grid-empty-glyph {
-  background: var(--accent-faint); color: var(--accent); border-color: var(--accent-soft);
+/* Glyph carriers consume the tone vars — add a new one and it
+   automatically picks up the active tone. */
+.entity-card-glyph,
+.entity-grid-empty-glyph {
+  background: var(--tone-bg, var(--accent-faint));
+  color: var(--tone-color, var(--accent));
+  border: 1px solid var(--tone-border, var(--accent-soft));
 }
-.entity-tone-sage .entity-grid-empty-glyph {
-  background: var(--sage-soft); color: #2c4d27; border-color: var(--sage);
+
+/* ── EntityBadge (used in viewer headers) ──────────────────────── */
+.entity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
 }
-.entity-tone-ochre .entity-grid-empty-glyph {
-  background: var(--ochre-soft); color: #5c3d00; border-color: var(--ochre);
+
+.entity-badge-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--tone-bg, var(--accent-faint));
+  color: var(--tone-color, var(--accent));
+  border: 1px solid var(--tone-border, var(--accent-soft));
+  flex: 0 0 auto;
 }
-.entity-tone-link .entity-grid-empty-glyph {
-  background: rgba(74, 92, 184, 0.10); color: var(--link); border-color: rgba(74, 92, 184, 0.32);
+
+.entity-badge-sm .entity-badge-glyph {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
 }
-.entity-tone-clay .entity-grid-empty-glyph {
-  background: var(--clay-soft); color: var(--clay); border-color: var(--clay);
-}
-.entity-tone-neutral .entity-grid-empty-glyph {
-  background: var(--surface-soft); color: var(--text-muted); border-color: var(--border-strong);
+
+.entity-badge-label {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--tone-color, var(--text));
 }
 
 /* ─────────────────────────────────────────────────────────────────

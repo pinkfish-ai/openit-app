@@ -1,18 +1,7 @@
 import type { ReactNode } from "react";
-import { EntityIcons } from "./entityIcons";
+import { ENTITY_META, type EntityKind } from "./entityIcons";
 
-export type EntityKind =
-  | "agents"
-  | "knowledge-base"
-  | "knowledge-bases"
-  | "library"
-  | "attachments"
-  | "people"
-  | "tickets"
-  | "databases"
-  | "filestores"
-  | "reports"
-  | "workflows";
+export type { EntityKind };
 
 export type EntityCard = {
   /** Stable React key. */
@@ -49,7 +38,7 @@ export function EntityCardGrid({
     return (
       <div className={`entity-grid entity-grid-empty entity-tone-${meta.tone}`}>
         <div className="entity-grid-empty-glyph" aria-hidden>
-          {meta.glyph}
+          {meta.icon}
         </div>
         {empty && <div className="entity-grid-empty-body">{empty}</div>}
       </div>
@@ -68,7 +57,7 @@ export function EntityCardGrid({
             onClick={c.onClick}
           >
             <span className="entity-card-glyph" aria-hidden>
-              {meta.glyph}
+              {meta.icon}
             </span>
             <div className="entity-card-body">
               <div className="entity-card-row">
@@ -97,25 +86,3 @@ export function EntityCardGrid({
   );
 }
 
-type EntityMeta = {
-  glyph: ReactNode;
-  /** Drives the glyph background tint and the accent highlight. */
-  tone: "accent" | "sage" | "ochre" | "link" | "clay" | "neutral";
-};
-
-// Same SVGs the Workbench stations use, so card glyphs in the viewer
-// match the station icons in the left pane (per-kind tone still
-// varies, but the symbol is identical).
-const ENTITY_META: Record<EntityKind, EntityMeta> = {
-  agents: { glyph: EntityIcons.agents, tone: "accent" },
-  "knowledge-base": { glyph: EntityIcons.knowledge, tone: "ochre" },
-  "knowledge-bases": { glyph: EntityIcons.knowledge, tone: "ochre" },
-  library: { glyph: EntityIcons.library, tone: "neutral" },
-  attachments: { glyph: EntityIcons.attachments, tone: "neutral" },
-  people: { glyph: EntityIcons.people, tone: "sage" },
-  tickets: { glyph: EntityIcons.tickets, tone: "accent" },
-  databases: { glyph: EntityIcons.databases, tone: "link" },
-  filestores: { glyph: EntityIcons.filestores, tone: "neutral" },
-  reports: { glyph: EntityIcons.reports, tone: "link" },
-  workflows: { glyph: EntityIcons.workflows, tone: "sage" },
-};

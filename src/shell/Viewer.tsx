@@ -8,6 +8,7 @@ import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
 import { DataTable } from "./DataTable";
 import { EntityCardGrid } from "./EntityCardGrid";
+import { EntityBadge, type EntityKind } from "./entityIcons";
 import { RowEditForm } from "./RowEditForm";
 import { AttachmentList } from "./AttachmentList";
 import { ImageViewer } from "./viewers/ImageViewer";
@@ -1606,6 +1607,36 @@ export function Viewer({
     return <pre className="viewer-content">{content}</pre>;
   };
 
+  // Map the active source.kind onto the entity meta key so the header
+  // can render the matching tinted icon next to the title — closes the
+  // loop with the Workbench station / EntityCardGrid card icons.
+  let headerKind: EntityKind | null = null;
+  if (source) {
+    switch (source.kind) {
+      case "entity-folder":
+        headerKind = source.entity as EntityKind;
+        break;
+      case "knowledge-bases-list":
+        headerKind = "knowledge-bases";
+        break;
+      case "filestores-list":
+        headerKind = "filestores";
+        break;
+      case "attachments-folder":
+        headerKind = "attachments";
+        break;
+      case "databases-list":
+        headerKind = "databases";
+        break;
+      case "conversations-list":
+        headerKind = "tickets";
+        break;
+      case "people-list":
+        headerKind = "people";
+        break;
+    }
+  }
+
   return (
     <div className="viewer">
       <div className="viewer-header">
@@ -1628,6 +1659,7 @@ export function Viewer({
             ←
           </button>
         )}
+        {headerKind && <EntityBadge kind={headerKind} showLabel={false} />}
         <span className="viewer-title">{title}</span>
         {source && source.kind === "conversation-thread" && (
           <button

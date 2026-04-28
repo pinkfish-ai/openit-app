@@ -1,43 +1,30 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { fsList, type FileNode } from "../lib/api";
 import { scanEscalatedTickets } from "../lib/escalatedTickets";
-import { EntityIcons } from "./entityIcons";
+import { ENTITY_META, type EntityKind } from "./entityIcons";
 
 type Station = {
   id: string;
-  label: string;
-  /// Either a single text glyph or a ReactNode (inline SVG). Most
-  /// stations use a unicode character for consistency; People is
-  /// SVG because no plain-text option reads as "person" cleanly.
-  glyph: ReactNode;
+  /** Which entry in ENTITY_META drives the icon, tone, and label. */
+  kind: EntityKind;
   /** Path relative to repo root. */
   rel: string;
-  /** If set, opens this child path on click instead of `rel` (used to
-   *  jump into the canonical sub-folder when an entity has just one). */
+  /** If set, opens this child path on click instead of `rel`. */
   openRel?: string;
-  /** What to count among direct children. `dirs` = subdir count
-   *  (e.g. KB collections, filestore collections); `json-rows` =
-   *  direct `.json` files excluding schema + conflict shadows;
-   *  `files` = any non-dir, non-dotfile, non-conflict-shadow file
-   *  (reports / library entries — typically `.md`). */
+  /** What to count among direct children. */
   countMode: "dirs" | "json-rows" | "files";
 };
 
+// Each station's icon, tone, and label come from ENTITY_META — same
+// source the EntityCardGrid cards and Viewer headers consume, so
+// "Tickets" is "Tickets" everywhere with one icon and one color.
 const STATIONS: Station[] = [
-  // "Tickets Inbox" reads from databases/tickets/ rather than
-  // databases/conversations/, so the count matches the ticket-list
-  // view (one card per ticket, regardless of how many turns each has).
-  // Click still opens databases/tickets which is wired to the
-  // conversations-list-style overview.
-  // Use the shared EntityIcons map so the station glyphs match the
-  // EntityCardGrid icons in the center pane viewer. Upstream renamed
-  // this label to "Inbox" — keep that change.
-  { id: "inbox", label: "Inbox", glyph: EntityIcons.inbox, rel: "databases/tickets", countMode: "json-rows" },
-  { id: "reports", label: "Reports", glyph: EntityIcons.reports, rel: "reports", countMode: "files" },
-  { id: "people", label: "People", glyph: EntityIcons.people, rel: "databases/people", countMode: "json-rows" },
-  { id: "knowledge", label: "Knowledge", glyph: EntityIcons.knowledge, rel: "knowledge-bases", countMode: "dirs" },
-  { id: "files", label: "Files", glyph: EntityIcons.files, rel: "filestores", countMode: "dirs" },
-  { id: "agents", label: "Agents", glyph: EntityIcons.agents, rel: "agents", countMode: "json-rows" },
+  { id: "tickets",   kind: "tickets",   rel: "databases/tickets", countMode: "json-rows" },
+  { id: "reports",   kind: "reports",   rel: "reports",           countMode: "files" },
+  { id: "people",    kind: "people",    rel: "databases/people",  countMode: "json-rows" },
+  { id: "knowledge", kind: "knowledge", rel: "knowledge-bases",   countMode: "dirs" },
+  { id: "files",     kind: "files",     rel: "filestores",        countMode: "dirs" },
+  { id: "agents",    kind: "agents",    rel: "agents",            countMode: "json-rows" },
 ];
 
 /** fs_list walks recursively (depth 6), so a naive `.length` over its
@@ -127,7 +114,7 @@ export function Workbench({
 
   // Today card click → open the Tickets Inbox station so the admin
   // can act on the escalated set immediately.
-  const inboxStation = STATIONS.find((s) => s.id === "inbox")!;
+  const inboxStation = STATIONS.find((s) => s.id === "tickets")!;
   const openInbox = () => {
     if (repo) onOpen(`${repo}/${inboxStation.rel}`);
   };
@@ -162,23 +149,26 @@ export function Workbench({
 
       <div className="workbench-section-label">Stations</div>
       <div className="workbench-stations">
-        {STATIONS.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            className="station"
-            onClick={() => repo && onOpen(`${repo}/${s.openRel ?? s.rel}`)}
-            title={s.label}
-          >
-            <span className="station-glyph" aria-hidden>
-              {s.glyph}
-            </span>
-            <span className="station-body">
-              <span className="station-label">{s.label}</span>
-              <span className="station-count">{counts[s.id] ?? "·"}</span>
-            </span>
-          </button>
-        ))}
+        {STATIONS.map((s) => {
+          const meta = ENTITY_META[s.kind];
+          return (
+            <button
+              key={s.id}
+              type="button"
+              className={`station entity-tone-${meta.tone}`}
+              onClick={() => repo && onOpen(`${repo}/${s.openRel ?? s.rel}`)}
+              title={meta.label}
+            >
+              <span className="station-glyph" aria-hidden>
+                {meta.icon}
+              </span>
+              <span className="station-body">
+                <span className="station-label">{meta.label}</span>
+                <span className="station-count">{counts[s.id] ?? "·"}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <button
