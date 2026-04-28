@@ -168,10 +168,30 @@
 }
 
 .skill-step-text {
-  margin: 0;
   color: #4d4d57;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.55;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skill-step-text p {
+  margin: 0;
+}
+
+.skill-step-text code {
+  background: #f4f4f6;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: ui-monospace, "SFMono-Regular", "Menlo", monospace;
+  color: #2c2d72;
+}
+
+.skill-step-text strong {
+  color: #1a1a1f;
+  font-weight: 600;
 }
 
 .skill-step-action {

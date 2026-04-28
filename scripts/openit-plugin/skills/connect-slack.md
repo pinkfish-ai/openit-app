@@ -75,9 +75,10 @@ cat .openit/skill-state/connect-slack.json
 
 Greet briefly based on what you find:
 
-- File has the **setup** shape (steps include `workspace-check`,
-  `create-app`, …, `verify`) → *"Setting up the Slack canvas —
-  follow the checklist on the left."*
+- File has the **setup** shape (steps include `create-app`,
+  `install`, `app-token`, `paste-tokens`, `verify`) →
+  *"Setting up the Slack canvas — follow the checklist on the
+  left."*
 - File has the **manage** shape (steps include `status`,
   `verify`, `disconnect`) → *"You're already connected. The
   canvas on the left lets you re-verify or disconnect."*

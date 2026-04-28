@@ -172,7 +172,11 @@ function StepRow({
             2?" loses the body — but the title carries the gist and
             they can click the checkbox to toggle the step active
             again if they want details. */}
-        {isActive && step.body && <p className="skill-step-text">{step.body}</p>}
+        {isActive && step.body && (
+          <div className="skill-step-text">
+            <RichText markdown={step.body} />
+          </div>
+        )}
         {isActive && step.action && (
           <div className="skill-step-action">
             {renderAction(step.action, { repo, orgId, intakeUrl, skill, currentState })}
@@ -460,42 +464,86 @@ function ButtonAction({
 }
 
 // ---------------------------------------------------------------------------
-// Freeform body — minimal markdown rendering. The full
-// react-markdown setup is overkill for skill state freeform text;
-// we render paragraphs split on blank lines and respect basic
-// inline `code` spans. Anything richer can graduate to
-// react-markdown later (it's already a project dep for the file
-// viewer).
+// RichText — minimal markdown rendering shared between step bodies
+// and the freeform footer. Splits paragraphs on blank lines,
+// preserves intra-paragraph newlines (so `1. step\n2. step` reads
+// as a list), and renders `inline code`, **bold**, and basic links
+// `[text](url)`. The full react-markdown setup is overkill for
+// short instruction strings; if a skill ever needs lists / tables /
+// images we can graduate to react-markdown (already a project
+// dep for the file viewer).
 // ---------------------------------------------------------------------------
 
 function FreeformBody({ markdown }: { markdown: string }) {
+  return <RichText markdown={markdown} paragraphClassName="skill-canvas-freeform-p" />;
+}
+
+function RichText({
+  markdown,
+  paragraphClassName,
+}: {
+  markdown: string;
+  paragraphClassName?: string;
+}) {
   const paragraphs = markdown.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
   return (
     <>
       {paragraphs.map((p, i) => (
-        <p key={i} className="skill-canvas-freeform-p">
-          {renderInlineCode(p)}
+        <p key={i} className={paragraphClassName}>
+          {renderInlineWithLineBreaks(p)}
         </p>
       ))}
     </>
   );
 }
 
-function renderInlineCode(text: string): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  const re = /`([^`]+)`/g;
+/// Render one paragraph: preserve intra-paragraph `\n` as <br/>
+/// so numbered sub-steps (`1. ...\n2. ...`) render line-by-line,
+/// then run inline-code / bold parsing per line.
+function renderInlineWithLineBreaks(text: string): React.ReactNode[] {
+  const lines = text.split(/\n/);
+  const out: React.ReactNode[] = [];
+  lines.forEach((line, i) => {
+    if (i > 0) out.push(<br key={`br-${i}`} />);
+    out.push(...renderInline(line, `${i}-`));
+  });
+  return out;
+}
+
+/// Tokenize one line for inline `code` and **bold**. Order matters:
+/// code first (so backticks inside bold don't get re-parsed), then
+/// bold over what's left.
+function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
+  // Tokenize on `code` first.
+  const codeRe = /`([^`]+)`/g;
+  const out: React.ReactNode[] = [];
+  let lastEnd = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  while ((m = codeRe.exec(text)) !== null) {
+    if (m.index > lastEnd) {
+      pushBoldOrText(text.slice(lastEnd, m.index), out, `${keyPrefix}t${key++}`);
+    }
+    out.push(<code key={`${keyPrefix}c${key++}`}>{m[1]}</code>);
+    lastEnd = m.index + m[0].length;
+  }
+  if (lastEnd < text.length) {
+    pushBoldOrText(text.slice(lastEnd), out, `${keyPrefix}t${key++}`);
+  }
+  return out;
+}
+
+function pushBoldOrText(text: string, out: React.ReactNode[], baseKey: string) {
+  const boldRe = /\*\*([^*]+)\*\*/g;
   let lastEnd = 0;
   let m: RegExpExecArray | null;
   let key = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > lastEnd) {
-      parts.push(text.slice(lastEnd, m.index));
-    }
-    parts.push(<code key={`c-${key++}`}>{m[1]}</code>);
+  while ((m = boldRe.exec(text)) !== null) {
+    if (m.index > lastEnd) out.push(text.slice(lastEnd, m.index));
+    out.push(<strong key={`${baseKey}b${key++}`}>{m[1]}</strong>);
     lastEnd = m.index + m[0].length;
   }
-  if (lastEnd < text.length) parts.push(text.slice(lastEnd));
-  return parts;
+  if (lastEnd < text.length) out.push(text.slice(lastEnd));
 }
 
 // Re-export so callers can also clear the state file when the skill
