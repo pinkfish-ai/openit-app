@@ -1,4 +1,4 @@
-import { fsRead, fsList } from "../lib/api";
+import { fsRead, fsList, entityWriteFile } from "../lib/api";
 import type {
   ConversationThreadSummary,
   ConversationTurn,
@@ -146,6 +146,44 @@ export async function resolvePathToSource(
           turnCount,
         });
       }
+      // Auto-escalate stale `open` tickets: if the agent is "waiting
+      // on the person" but no turn has landed in 24h, the agent has
+      // effectively stalled, so we flip status to `escalated` so it
+      // surfaces to the admin. Passive-on-view: rewriting the JSON
+      // here means the on-disk truth changes the next time the list
+      // renders, which keeps the rule consistent across reloads
+      // without a separate cron. Skip tickets with no turns yet —
+      // the agent hasn't started, so there's nothing to escalate.
+      const STALE_OPEN_MS = 24 * 60 * 60 * 1000;
+      const nowMs = Date.now();
+      await Promise.all(
+        threads.map(async (t) => {
+          if (t.status !== "open") return;
+          if (!t.lastTurnAt) return;
+          const lastMs = Date.parse(t.lastTurnAt);
+          if (Number.isNaN(lastMs)) return;
+          if (nowMs - lastMs < STALE_OPEN_MS) return;
+          try {
+            const ticketPath = `${ticketsDir}/${t.ticketId}.json`;
+            const raw = await fsRead(ticketPath);
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
+            // Re-check on disk to avoid racing a concurrent write
+            // (e.g. an admin reply that just escalated this ticket).
+            if (parsed.status !== "open") return;
+            parsed.status = "escalated";
+            parsed.updatedAt = new Date(nowMs).toISOString().replace(/\.\d+Z$/, "Z");
+            await entityWriteFile(
+              repo,
+              "databases/tickets",
+              `${t.ticketId}.json`,
+              JSON.stringify(parsed, null, 2),
+            );
+            t.status = "escalated";
+          } catch {
+            /* unparseable / missing — leave status as-is */
+          }
+        }),
+      );
       threads.sort((a, b) => b.lastTurnAt.localeCompare(a.lastTurnAt));
       return { kind: "conversations-list", threads };
     } catch {
