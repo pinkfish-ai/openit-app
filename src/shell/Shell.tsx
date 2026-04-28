@@ -55,7 +55,7 @@ type LeftTab = "overview" | "files" | "source-control";
 type PaneId = "left" | "center" | "right";
 const DEFAULT_PANE_ORDER: PaneId[] = ["left", "center", "right"];
 const PANE_MIN: Record<PaneId, number> = { left: 12, center: 20, right: 25 };
-const PANE_DEFAULT: Record<PaneId, number> = { left: 18, center: 42, right: 40 };
+const PANE_DEFAULT: Record<PaneId, number> = { left: 24, center: 40, right: 36 };
 
 /// Module-level reentrancy guard for Claude-triggered pushes. Hoisted
 /// out of the useEffect closure so a transient cleanup race (effect
