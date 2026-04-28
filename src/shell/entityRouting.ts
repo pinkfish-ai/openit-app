@@ -21,6 +21,34 @@ export async function resolvePathToSource(
   const rel = path.startsWith(repo + "/") ? path.slice(repo.length + 1) : null;
   if (!rel) return { kind: "file", path };
 
+  // .openit/agent-traces/<ticketId>/<isoStamp>.json → agent-trace
+  // Lets admins click a per-turn trace file in the file explorer
+  // and land on the same timeline visualization the activity-banner
+  // click-through uses. Subject is best-effort: read the ticket
+  // file for its `subject`, fall back to ticketId.
+  const traceMatch = rel.match(
+    /^\.openit\/agent-traces\/([^/]+)\/([^/]+)\.json$/,
+  );
+  if (traceMatch) {
+    const ticketId = traceMatch[1];
+    let doc: import("./types").TraceDoc | null = null;
+    try {
+      const raw = await fsRead(path);
+      doc = JSON.parse(raw) as import("./types").TraceDoc;
+    } catch {
+      /* unparseable — viewer renders the placeholder */
+    }
+    let subject = ticketId;
+    try {
+      const ticketRaw = await fsRead(`${repo}/databases/tickets/${ticketId}.json`);
+      const ticket = JSON.parse(ticketRaw);
+      if (ticket && typeof ticket.subject === "string" && ticket.subject) {
+        subject = ticket.subject;
+      }
+    } catch { /* missing ticket file — keep ticketId fallback */ }
+    return { kind: "agent-trace", ticketId, subject, doc };
+  }
+
   // databases/<collection>/_schema.json → datastore-schema
   const schemaMatch = rel.match(/^databases\/([^/]+)\/_schema\.json$/);
   if (schemaMatch) {
