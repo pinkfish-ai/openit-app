@@ -544,7 +544,7 @@ export function Viewer({
       case "agent": return source.agent?.name ?? "Agent";
       case "workflow": return source.workflow?.name ?? "Workflow";
       case "conversation-thread": return `Conversation — ${source.ticketId}`;
-      case "conversations-list": return `Conversations — ${source.threads.length} thread${source.threads.length === 1 ? "" : "s"}`;
+      case "conversations-list": return `Tickets — ${source.threads.length} thread${source.threads.length === 1 ? "" : "s"}`;
       case "entity-folder": {
         const noun = ENTITY_FOLDER_NOUN[source.entity];
         // For KB collections, surface the collection name in the

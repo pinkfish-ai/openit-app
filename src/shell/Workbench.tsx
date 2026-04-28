@@ -77,7 +77,7 @@ const STATIONS: Station[] = [
   // view (one card per ticket, regardless of how many turns each has).
   // Click still opens databases/tickets which is wired to the
   // conversations-list-style overview.
-  { id: "inbox", label: "Tickets Inbox", glyph: InboxIcon, rel: "databases/tickets", countMode: "json-rows" },
+  { id: "inbox", label: "Inbox", glyph: InboxIcon, rel: "databases/tickets", countMode: "json-rows" },
   { id: "reports", label: "Reports", glyph: ReportsIcon, rel: "reports", countMode: "files" },
   { id: "people", label: "People", glyph: PersonIcon, rel: "databases/people", countMode: "json-rows" },
   { id: "knowledge", label: "Knowledge", glyph: KnowledgeIcon, rel: "knowledge-bases", countMode: "dirs" },
