@@ -93,13 +93,20 @@
   color: #8a8a93;
 }
 
+/* The checkbox is a 22px circle — its visual fill (or lack of it)
+   carries the step's status. Three distinct shapes so a reader
+   isn't confused between "active" and "completed":
+     pending   → thin grey ring, empty
+     active    → thicker accent-color ring, empty, pulsing
+     completed → solid green fill with white checkmark
+   The pulse on active is the load-bearing "in motion" signal. */
 .skill-step-checkbox {
   width: 22px;
   height: 22px;
   border-radius: 50%;
   border: 1.5px solid #c8c8cf;
   background: #fff;
-  color: transparent;
+  color: #fff;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -108,7 +115,9 @@
   justify-content: center;
   padding: 0;
   margin-top: 1px;
-  transition: all 120ms ease;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease;
 }
 
 .skill-step-checkbox:hover {
@@ -118,12 +127,31 @@
 .skill-step-completed .skill-step-checkbox {
   background: #1d7d3a;
   border-color: #1d7d3a;
-  color: #fff;
 }
 
 .skill-step-active .skill-step-checkbox {
   border-color: #2c2d72;
-  color: #2c2d72;
+  border-width: 2px;
+  background: #fff;
+  animation: skill-step-active-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes skill-step-active-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(44, 45, 114, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(44, 45, 114, 0);
+  }
+}
+
+/* Respect users who've asked the OS to skip animation. */
+@media (prefers-reduced-motion: reduce) {
+  .skill-step-active .skill-step-checkbox {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(44, 45, 114, 0.2);
+  }
 }
 
 .skill-step-body {

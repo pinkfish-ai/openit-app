@@ -158,11 +158,21 @@ function StepRow({
         }`}
         title="Click to manually toggle this step"
       >
-        {step.status === "completed" ? "✓" : step.status === "active" ? "●" : "○"}
+        {/* Only the completed state renders a glyph (✓). Active and
+            pending rely on the bordered/pulsing circle in CSS so the
+            three states don't all read as filled radios. */}
+        {step.status === "completed" ? "✓" : ""}
       </button>
       <div className="skill-step-body">
         <div className="skill-step-title">{step.title}</div>
-        {step.body && <p className="skill-step-text">{step.body}</p>}
+        {/* Only the active step gets its body. Completed and pending
+            collapse to title-only so the canvas doesn't drown the
+            user in instructions for steps they're not on. The trade
+            is that a user looking back at "what did I do in step
+            2?" loses the body — but the title carries the gist and
+            they can click the checkbox to toggle the step active
+            again if they want details. */}
+        {isActive && step.body && <p className="skill-step-text">{step.body}</p>}
         {isActive && step.action && (
           <div className="skill-step-action">
             {renderAction(step.action, { repo, orgId, intakeUrl, skill, currentState })}
