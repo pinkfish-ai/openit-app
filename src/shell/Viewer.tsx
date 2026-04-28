@@ -1750,13 +1750,12 @@ export function Viewer({
                   : isText
                     ? "Thinking"
                     : verb || e.kind;
-                // For text/result events, show the model's wording
-                // truncated to one line so the timeline stays scannable.
-                const snippet = (() => {
-                  if (!e.text) return null;
-                  const first = e.text.split("\n")[0]?.trim() ?? "";
-                  return first.length > 140 ? `${first.slice(0, 137)}…` : first;
-                })();
+                // For text/result events, show the model's full wording.
+                // Earlier versions truncated to first line + 140 chars
+                // for "scannable" timelines, but admins explicitly want
+                // to see what the agent said and what tools it called.
+                // CSS handles wrapping; the row grows to fit.
+                const snippet = e.text ? e.text.trim() : null;
                 return (
                   <li
                     key={`${e.ts}-${idx}`}

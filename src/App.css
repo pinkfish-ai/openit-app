@@ -3556,9 +3556,9 @@ body::before {
 
 .agent-trace-step {
   display: grid;
-  grid-template-columns: 80px 180px 1fr;
+  grid-template-columns: 80px minmax(160px, max-content) 1fr;
   gap: 12px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-radius: 4px;
   font-size: 13px;
   align-items: baseline;
@@ -3577,17 +3577,24 @@ body::before {
 .agent-trace-step-label {
   color: var(--text);
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Allow long verbs / tool names to wrap so admins can read the
+     full action without truncation. The minmax() on the column
+     keeps short labels (e.g. "Replied") from making the column
+     overly wide. */
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .agent-trace-step-snippet {
   color: var(--text-muted);
   font-style: italic;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Show the full agent text — wrap onto multiple lines, preserve
+     newlines so paragraphs stay distinct. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .agent-trace-step-result .agent-trace-step-label,
