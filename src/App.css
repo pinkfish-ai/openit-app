@@ -1023,10 +1023,13 @@ body::before {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 14px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
+  padding: 10px 14px;
+  font-size: 13px;
+  /* Display (Inter) — was mono. Page titles aren't terminal output;
+     they're UI titles. Aligns with the left-pane tabs and the
+     workbench, so the whole shell reads as one app. */
+  font-family: var(--font-display);
+  color: var(--text);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -1036,32 +1039,70 @@ body::before {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: var(--text);
 }
 
+/* Segmented control — used for view-mode toggles (View/Edit/Raw),
+   people-list Cards/Table, conversation filter pills, etc. One visual
+   for every "switch within this surface" control. Container has the
+   recessed look; the active item lifts with surface bg + shadow. */
 .viewer-tabs {
-  display: flex;
-  gap: 4px;
-  font-family: -apple-system, sans-serif;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-body);
 }
 
 .viewer-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
-  border-radius: 5px;
-  padding: 3px 10px;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-family: var(--font-body);
   font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background var(--t-fast) var(--ease),
+              color var(--t-fast) var(--ease),
+              box-shadow var(--t-fast) var(--ease);
 }
 
 .viewer-tab:hover {
-  background: var(--surface-soft);
+  color: var(--text);
 }
 
 .viewer-tab.active {
-  background: transparent;
+  background: var(--surface);
   color: var(--text);
-  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Count badges next to a viewer-tab label (filter pills). */
+.viewer-tab-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-tab.active .viewer-tab-count {
+  background: var(--accent-faint);
+  color: var(--accent);
 }
 
 /* Conversation thread list — one clickable card per ticket. Shown
