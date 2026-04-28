@@ -780,13 +780,11 @@ export function Shell({
               onDragLeave={(e) => onPaneDragLeave("center", e)}
               onDrop={(e) => onPaneDrop("center", e)}
             >
-              <div className="center-pane-header">
-                <PaneDragHandle
-                  paneId="center"
-                  onDragStart={onPaneDragStart}
-                  onDragEnd={onPaneDragEnd}
-                />
-              </div>
+              {/* Center pane has no drag handle — its only chrome
+                  would be a stray strip floating in the cream gutter
+                  above the viewer card. The left and right grips
+                  reach all six permutations in ≤2 moves, so dropping
+                  this is purely a visual cleanup. */}
               {skillCanvasState && skillCanvasState.active && repo && intakeUrl ? (
                 <SkillCanvas
                   repo={repo}

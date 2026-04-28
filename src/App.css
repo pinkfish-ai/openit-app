@@ -4234,8 +4234,12 @@ button.status-chip-cmdk:hover {
    Pane drag-and-drop reorder
    ───────────────────────────────────────────────────────────────── */
 
-/* Small grip handle that lives at the start of each pane's header.
-   Subtle by default (low opacity), pops to full accent on hover. */
+/* Small grip handle at the start of a pane's header. Invisible at
+   rest — fades in only when the parent pane is hovered, so the chrome
+   stays clean and the grip doesn't read as floating UI debris.
+   Inside the dark Claude theatre we keep a faint always-on hint
+   because the dark surface absorbs it cleanly (user said the chat
+   grip "blends in" already). */
 .pane-drag-handle {
   display: inline-flex;
   align-items: center;
@@ -4249,10 +4253,21 @@ button.status-chip-cmdk:hover {
   line-height: 1;
   cursor: grab;
   user-select: none;
-  opacity: 0.45;
+  opacity: 0;
   transition: color var(--t-fast) var(--ease),
               background var(--t-fast) var(--ease),
-              opacity var(--t-fast) var(--ease);
+              opacity var(--t-base) var(--ease);
+}
+
+/* Cream-pane grip: appears on pane hover. */
+.left-pane:hover .pane-drag-handle {
+  opacity: 0.55;
+}
+
+/* Dark-theatre grip: always visible at low opacity (matches the
+   chat-shell-header's existing rhythm), full on direct hover. */
+.right-pane .pane-drag-handle {
+  opacity: 0.45;
 }
 
 .pane-drag-handle:hover {
@@ -4269,22 +4284,14 @@ button.status-chip-cmdk:hover {
   display: block;
 }
 
-/* Center pane was previously chrome-less. Tiny header strip so the
-   drag handle has somewhere to live. */
+/* Center pane is chrome-less by design — no drag grip, just the
+   viewer at full height. The left and right grips reach all
+   permutations in ≤ 2 moves. */
 .center-pane {
   position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
-}
-
-.center-pane-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 8px;
-  background: transparent;
 }
 
 /* Source pane while dragging — ghosted out so the user sees what
