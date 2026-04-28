@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { fsList } from "../lib/api";
+import { fsList, type FileNode } from "../lib/api";
 import { scanEscalatedTickets } from "../lib/escalatedTickets";
 
 type Station = {
@@ -11,16 +11,51 @@ type Station = {
   /** If set, opens this child path on click instead of `rel` (used to
    *  jump into the canonical sub-folder when an entity has just one). */
   openRel?: string;
+  /** What to count among direct children. `dirs` = subdir count (e.g.
+   *  inbox's per-ticket folders, KB collections); `json-rows` = direct
+   *  `.json` files excluding schema + conflict shadows; `any` = every
+   *  non-dotfile direct child (for filestores). */
+  countMode: "dirs" | "json-rows" | "any";
 };
 
 const STATIONS: Station[] = [
-  { id: "inbox", label: "Inbox", glyph: "✉", rel: "databases/conversations" },
-  { id: "tickets", label: "Tickets", glyph: "◉", rel: "databases/tickets" },
-  { id: "people", label: "People", glyph: "◔", rel: "databases/people" },
-  { id: "knowledge", label: "Knowledge", glyph: "❋", rel: "knowledge-bases" },
-  { id: "files", label: "Files", glyph: "▤", rel: "filestores" },
-  { id: "agents", label: "Agents", glyph: "✦", rel: "agents" },
+  { id: "inbox", label: "Inbox", glyph: "✉", rel: "databases/conversations", countMode: "dirs" },
+  { id: "tickets", label: "Tickets", glyph: "◉", rel: "databases/tickets", countMode: "json-rows" },
+  { id: "people", label: "People", glyph: "◔", rel: "databases/people", countMode: "json-rows" },
+  { id: "knowledge", label: "Knowledge", glyph: "❋", rel: "knowledge-bases", countMode: "dirs" },
+  { id: "files", label: "Files", glyph: "▤", rel: "filestores", countMode: "dirs" },
+  { id: "agents", label: "Agents", glyph: "✦", rel: "agents", countMode: "json-rows" },
 ];
+
+/** fs_list walks recursively (depth 6), so a naive `.length` over its
+ *  result over-counts every station that has nested data — most
+ *  egregiously inbox, where it returns Σ(msg-*.json across all
+ *  threads) instead of one per thread. Restrict to the direct
+ *  children of `rootRel`. */
+function directChildren(items: FileNode[], rootAbs: string): FileNode[] {
+  const prefix = `${rootAbs}/`;
+  return items.filter((n) => {
+    if (!n.path.startsWith(prefix)) return false;
+    const tail = n.path.slice(prefix.length);
+    return tail.length > 0 && !tail.includes("/");
+  });
+}
+
+function countWithMode(items: FileNode[], mode: Station["countMode"]): number {
+  return items.filter((n) => {
+    if (n.name.startsWith(".")) return false;
+    if (mode === "dirs") return n.is_dir;
+    if (mode === "json-rows") {
+      if (n.is_dir) return false;
+      if (!n.name.endsWith(".json")) return false;
+      if (n.name === "_schema.json") return false;
+      if (n.name.includes(".server.")) return false;
+      return true;
+    }
+    // "any": every non-dotfile direct child counts.
+    return true;
+  }).length;
+}
 
 /**
  * Workbench — the curated front door to the project. Sits above the
@@ -53,9 +88,10 @@ export function Workbench({
       await Promise.all(
         STATIONS.map(async (s) => {
           try {
-            const items = await fsList(`${repo}/${s.rel}`);
-            // Filter out hidden/system files for the count.
-            next[s.id] = items.filter((i) => !i.name.startsWith(".")).length;
+            const rootAbs = `${repo}/${s.rel}`;
+            const items = await fsList(rootAbs);
+            const direct = directChildren(items, rootAbs);
+            next[s.id] = countWithMode(direct, s.countMode);
           } catch {
             next[s.id] = 0;
           }
