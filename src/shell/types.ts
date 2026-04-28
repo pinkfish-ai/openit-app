@@ -110,6 +110,17 @@ export type ViewerSource =
       subject: string;
       doc: TraceDoc | null;
     }
+  // All traces for a single ticket, oldest-first. Surfaced when the
+  // admin clicks `.openit/agent-traces/<ticketId>/` in the file
+  // explorer — the viewer renders each turn's trace stacked with a
+  // separator. Each entry carries the source filename so the header
+  // can show "turn 3 (2026-04-28T20:09:43Z)".
+  | {
+      kind: "agent-trace-list";
+      ticketId: string;
+      subject: string;
+      docs: { name: string; doc: TraceDoc | null }[];
+    }
   // Top-level entity folder (agents/, workflows/, knowledge-base/, filestore/).
   // Carries the files inside so the viewer can either show a list or a
   // friendly empty-state notice — the same affordance the conversations-

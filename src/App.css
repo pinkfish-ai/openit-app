@@ -3452,6 +3452,41 @@ body::before {
   overflow-y: auto;
 }
 
+/* agent-trace-list — multi-turn stack rendered when the user
+   clicks the per-ticket folder under .openit/agent-traces/. Each
+   turn gets a labeled divider so the boundaries between turns are
+   obvious without separate panes. */
+.agent-trace-list-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+.agent-trace-list-turn:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+.agent-trace-list-divider {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.agent-trace-list-turn-num {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+}
+
 .agent-trace-header {
   display: flex;
   flex-direction: column;

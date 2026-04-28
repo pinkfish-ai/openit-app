@@ -765,6 +765,7 @@ export function Shell({
                       const resolved = await resolvePathToSource(path, repo);
                       setSource(resolved);
                     }}
+                    onShowFiles={() => setLeftTab("files")}
                   />
                 </div>
               </div>

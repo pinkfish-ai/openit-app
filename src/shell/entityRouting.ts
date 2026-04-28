@@ -21,6 +21,46 @@ export async function resolvePathToSource(
   const rel = path.startsWith(repo + "/") ? path.slice(repo.length + 1) : null;
   if (!rel) return { kind: "file", path };
 
+  // .openit/agent-traces/<ticketId>/ (folder) → agent-trace-list:
+  // every per-turn trace for this ticket, oldest-first, stacked
+  // with separators in the viewer.
+  const traceFolderMatch = rel.match(/^\.openit\/agent-traces\/([^/]+)$/);
+  if (traceFolderMatch) {
+    const ticketId = traceFolderMatch[1];
+    let subject = ticketId;
+    try {
+      const ticketRaw = await fsRead(`${repo}/databases/tickets/${ticketId}.json`);
+      const ticket = JSON.parse(ticketRaw);
+      if (ticket && typeof ticket.subject === "string" && ticket.subject) {
+        subject = ticket.subject;
+      }
+    } catch { /* missing ticket file — keep ticketId fallback */ }
+    let docs: { name: string; doc: import("./types").TraceDoc | null }[] = [];
+    try {
+      const nodes = await fsList(path);
+      const prefix = `${path}/`;
+      const direct = nodes
+        .filter((n) => {
+          if (n.is_dir) return false;
+          const tail = n.path.startsWith(prefix) ? n.path.slice(prefix.length) : "";
+          if (!tail || tail.includes("/")) return false;
+          return n.name.endsWith(".json");
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      docs = await Promise.all(
+        direct.map(async (n) => {
+          try {
+            const raw = await fsRead(n.path);
+            return { name: n.name, doc: JSON.parse(raw) as import("./types").TraceDoc };
+          } catch {
+            return { name: n.name, doc: null };
+          }
+        }),
+      );
+    } catch { /* folder vanished — empty list */ }
+    return { kind: "agent-trace-list", ticketId, subject, docs };
+  }
+
   // .openit/agent-traces/<ticketId>/<isoStamp>.json → agent-trace
   // Lets admins click a per-turn trace file in the file explorer
   // and land on the same timeline visualization the activity-banner
