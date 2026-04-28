@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { EntityIcons } from "./entityIcons";
 
 export type EntityKind =
   | "agents"
@@ -97,21 +98,24 @@ export function EntityCardGrid({
 }
 
 type EntityMeta = {
-  glyph: string;
+  glyph: ReactNode;
   /** Drives the glyph background tint and the accent highlight. */
   tone: "accent" | "sage" | "ochre" | "link" | "clay" | "neutral";
 };
 
+// Same SVGs the Workbench stations use, so card glyphs in the viewer
+// match the station icons in the left pane (per-kind tone still
+// varies, but the symbol is identical).
 const ENTITY_META: Record<EntityKind, EntityMeta> = {
-  agents: { glyph: "✦", tone: "accent" },
-  "knowledge-base": { glyph: "❋", tone: "ochre" },
-  "knowledge-bases": { glyph: "❋", tone: "ochre" },
-  library: { glyph: "▤", tone: "neutral" },
-  attachments: { glyph: "◫", tone: "neutral" },
-  people: { glyph: "◔", tone: "sage" },
-  tickets: { glyph: "◉", tone: "accent" },
-  databases: { glyph: "▦", tone: "link" },
-  filestores: { glyph: "▤", tone: "neutral" },
-  reports: { glyph: "❍", tone: "link" },
-  workflows: { glyph: "↻", tone: "sage" },
+  agents: { glyph: EntityIcons.agents, tone: "accent" },
+  "knowledge-base": { glyph: EntityIcons.knowledge, tone: "ochre" },
+  "knowledge-bases": { glyph: EntityIcons.knowledge, tone: "ochre" },
+  library: { glyph: EntityIcons.library, tone: "neutral" },
+  attachments: { glyph: EntityIcons.attachments, tone: "neutral" },
+  people: { glyph: EntityIcons.people, tone: "sage" },
+  tickets: { glyph: EntityIcons.tickets, tone: "accent" },
+  databases: { glyph: EntityIcons.databases, tone: "link" },
+  filestores: { glyph: EntityIcons.filestores, tone: "neutral" },
+  reports: { glyph: EntityIcons.reports, tone: "link" },
+  workflows: { glyph: EntityIcons.workflows, tone: "sage" },
 };

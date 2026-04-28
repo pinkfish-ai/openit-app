@@ -1,55 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { fsList, type FileNode } from "../lib/api";
 import { scanEscalatedTickets } from "../lib/escalatedTickets";
-
-/// Inline SVGs for each station glyph. Replaces the previous unicode
-/// characters (✉ ▦ ❋ ▤ ✦) which rendered too heavy / placeholder-ish
-/// on the cream pane. Each icon is monochrome via `currentColor` so
-/// it inherits the station-glyph color; 1.6px stroke gives a clean
-/// line-icon feel that matches the rest of the cream-on-cream
-/// identity.
-
-const InboxIcon = (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect x="3" y="6" width="18" height="13" rx="2" />
-    <path d="M3 7l9 6.5L21 7" />
-  </svg>
-);
-
-const ReportsIcon = (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <line x1="6" y1="20" x2="6" y2="14" />
-    <line x1="12" y1="20" x2="12" y2="9" />
-    <line x1="18" y1="20" x2="18" y2="4" />
-  </svg>
-);
-
-const PersonIcon = (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden>
-    <circle cx="12" cy="8" r="3.5" />
-    <path d="M5 21c0-4.0 3.1-7 7-7s7 3.0 7 7v1H5z" />
-  </svg>
-);
-
-const KnowledgeIcon = (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M5 4a2 2 0 0 1 2-2h12v20H7a2 2 0 0 1-2-2z" />
-    <line x1="9" y1="8" x2="15" y2="8" />
-    <line x1="9" y1="12" x2="15" y2="12" />
-  </svg>
-);
-
-const FilesIcon = (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-  </svg>
-);
-
-const AgentsIcon = (
-  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M12 3l1.8 5.4L19.5 10l-5.7 1.6L12 17l-1.8-5.4L4.5 10l5.7-1.6z" />
-  </svg>
-);
+import { EntityIcons } from "./entityIcons";
 
 type Station = {
   id: string;
@@ -77,12 +29,15 @@ const STATIONS: Station[] = [
   // view (one card per ticket, regardless of how many turns each has).
   // Click still opens databases/tickets which is wired to the
   // conversations-list-style overview.
-  { id: "inbox", label: "Inbox", glyph: InboxIcon, rel: "databases/tickets", countMode: "json-rows" },
-  { id: "reports", label: "Reports", glyph: ReportsIcon, rel: "reports", countMode: "files" },
-  { id: "people", label: "People", glyph: PersonIcon, rel: "databases/people", countMode: "json-rows" },
-  { id: "knowledge", label: "Knowledge", glyph: KnowledgeIcon, rel: "knowledge-bases", countMode: "dirs" },
-  { id: "files", label: "Files", glyph: FilesIcon, rel: "filestores", countMode: "dirs" },
-  { id: "agents", label: "Agents", glyph: AgentsIcon, rel: "agents", countMode: "json-rows" },
+  // Use the shared EntityIcons map so the station glyphs match the
+  // EntityCardGrid icons in the center pane viewer. Upstream renamed
+  // this label to "Inbox" — keep that change.
+  { id: "inbox", label: "Inbox", glyph: EntityIcons.inbox, rel: "databases/tickets", countMode: "json-rows" },
+  { id: "reports", label: "Reports", glyph: EntityIcons.reports, rel: "reports", countMode: "files" },
+  { id: "people", label: "People", glyph: EntityIcons.people, rel: "databases/people", countMode: "json-rows" },
+  { id: "knowledge", label: "Knowledge", glyph: EntityIcons.knowledge, rel: "knowledge-bases", countMode: "dirs" },
+  { id: "files", label: "Files", glyph: EntityIcons.files, rel: "filestores", countMode: "dirs" },
+  { id: "agents", label: "Agents", glyph: EntityIcons.agents, rel: "agents", countMode: "json-rows" },
 ];
 
 /** fs_list walks recursively (depth 6), so a naive `.length` over its
@@ -170,23 +125,40 @@ export function Workbench({
     };
   }, [repo, fsTick]);
 
+  // Today card click → open the Tickets Inbox station so the admin
+  // can act on the escalated set immediately.
+  const inboxStation = STATIONS.find((s) => s.id === "inbox")!;
+  const openInbox = () => {
+    if (repo) onOpen(`${repo}/${inboxStation.rel}`);
+  };
+
   return (
     <div className="workbench">
-      <div className="workbench-today">
-        <div className="workbench-today-eyebrow">TODAY</div>
+      <button
+        type="button"
+        className="workbench-today"
+        onClick={openInbox}
+        disabled={!repo}
+        title={
+          escalatedCount > 0
+            ? "Open the Tickets Inbox"
+            : "Open the Tickets Inbox (nothing waiting)"
+        }
+      >
+        <span className="workbench-today-eyebrow">TODAY</span>
         {escalatedCount === 0 ? (
-          <div className="workbench-today-hero workbench-today-hero-clean">
+          <span className="workbench-today-hero workbench-today-hero-clean">
             <span className="workbench-today-clean">Clean inbox. Congrats!</span>
-          </div>
+          </span>
         ) : (
-          <div className="workbench-today-hero">
+          <span className="workbench-today-hero">
             <span className="workbench-today-number">{escalatedCount}</span>
             <span className="workbench-today-label">
               unresolved ticket{escalatedCount === 1 ? "" : "s"}
             </span>
-          </div>
+          </span>
         )}
-      </div>
+      </button>
 
       <div className="workbench-section-label">Stations</div>
       <div className="workbench-stations">
