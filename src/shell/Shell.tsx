@@ -11,6 +11,8 @@ import {
   stateLoad,
   stateSave,
   type AppPersistedState,
+  type SlackConfig,
+  type SlackStatus,
 } from "../lib/api";
 import { pushAllEntities } from "../lib/pushAll";
 import { clearConflictsForPrefix } from "../lib/syncEngine";
@@ -30,6 +32,8 @@ import { loadCreds } from "../lib/pinkfishAuth";
 import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
 import { startAutoCommitDriver, stopAutoCommitDriver } from "../lib/autoCommitDriver";
 import { ChatPane } from "./ChatPane";
+import { StatusBar } from "./StatusBar";
+import { Workbench } from "./Workbench";
 import { ConflictBanner } from "./ConflictBanner";
 import { FileExplorer } from "./FileExplorer";
 import { EscalatedTicketBanner } from "./EscalatedTicketBanner";
@@ -64,6 +68,12 @@ export function Shell({
   skillCanvasState,
   skillCanvasOrgId,
   onSkillCanvasClosed,
+  slackConfig,
+  slackStatus,
+  orgName,
+  onOpenPalette,
+  registerManualPull,
+  registerSwitchToSync,
 }: {
   repo: string | null;
   syncLines: string[];
@@ -90,6 +100,17 @@ export function Shell({
   /** Called when the canvas's dismiss button flips active=false; used to
    *  let App.tsx clear the watched state. */
   onSkillCanvasClosed: () => void;
+  /** Slack config + status — surfaced in the bottom status bar. */
+  slackConfig: SlackConfig | null;
+  slackStatus: SlackStatus | null;
+  /** Cloud org name — surfaced in the bottom status bar. */
+  orgName: string | null;
+  /** Open the cmd-K command palette. */
+  onOpenPalette: () => void;
+  /** Register the manual-pull handler so the command palette can call it. */
+  registerManualPull: (fn: () => void) => void;
+  /** Register the switch-to-sync-tab handler so the command palette can call it. */
+  registerSwitchToSync: (fn: () => void) => void;
 }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
   const [source, setSource] = useState<ViewerSource>(null);
@@ -98,7 +119,20 @@ export function Shell({
   const [fsTick, setFsTick] = useState(0);
   const [changeCount, setChangeCount] = useState(0);
   const [pulling, setPulling] = useState(false);
+  const [filesExpanded, setFilesExpanded] = useState(false);
   const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
+
+  // Workbench's "Files" toggle dispatches this event; we mirror its
+  // state so the FileExplorer collapses below the workbench by default.
+  useEffect(() => {
+    const onToggle = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { expanded: boolean };
+      setFilesExpanded(detail.expanded);
+    };
+    window.addEventListener("openit:workbench-toggle-files", onToggle);
+    return () =>
+      window.removeEventListener("openit:workbench-toggle-files", onToggle);
+  }, []);
 
   const handleManualPull = useCallback(async () => {
     if (!repo || pulling) return;
@@ -175,6 +209,16 @@ export function Shell({
   useEffect(() => {
     stateLoad().then(setState).catch(console.error);
   }, []);
+
+  // Expose the manual-pull and tab-switch handlers up to App so the
+  // command palette can call them. Re-register on every render so the
+  // closure captures the current dependencies (cheap; React refs).
+  useEffect(() => {
+    registerManualPull(() => void handleManualPull());
+  }, [registerManualPull, handleManualPull]);
+  useEffect(() => {
+    registerSwitchToSync(() => setLeftTab("source-control"));
+  }, [registerSwitchToSync]);
 
   // Auto-open _welcome.md on first load — and re-open on demand
   // when the App-header "Getting Started" button dispatches the
@@ -612,15 +656,27 @@ export function Shell({
             {/* Keep both panels mounted so typed-but-uncommitted state
                 (e.g. the commit message) survives tab switches. */}
             <div className="left-tab-panel" hidden={leftTab !== "files"}>
-              <FileExplorer
-                repo={repo}
-                onSelect={async (path) => {
-                  const resolved = await resolvePathToSource(path, repo);
-                  setSource(resolved);
-                }}
-                fsTick={fsTick}
-                onFsChange={bumpFs}
-              />
+              <div className="left-pane-scroll">
+                <Workbench
+                  repo={repo}
+                  fsTick={fsTick}
+                  onOpen={async (path) => {
+                    const resolved = await resolvePathToSource(path, repo);
+                    setSource(resolved);
+                  }}
+                />
+                <div className={`left-files-region ${filesExpanded ? "expanded" : "collapsed"}`}>
+                  <FileExplorer
+                    repo={repo}
+                    onSelect={async (path) => {
+                      const resolved = await resolvePathToSource(path, repo);
+                      setSource(resolved);
+                    }}
+                    fsTick={fsTick}
+                    onFsChange={bumpFs}
+                  />
+                </div>
+              </div>
             </div>
             <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
               <SourceControl
@@ -663,6 +719,13 @@ export function Shell({
         <PanelResizeHandle className="resize-handle" />
         <Panel defaultSize={sizes[2]} minSize={25}>
           <div className="right-pane">
+            <div className="chat-shell-header">
+              <span className="chat-shell-badge" aria-hidden="true">✦</span>
+              <span className="chat-shell-title">Claude</span>
+              <span className="chat-shell-sub">your IT co-pilot</span>
+              <span className="chat-shell-spacer" />
+              <span className="chat-shell-dot" title="Live" />
+            </div>
             <div className="chat-area">
               <ChatPane cwd={repo} />
             </div>
@@ -670,6 +733,16 @@ export function Shell({
           </div>
         </Panel>
       </PanelGroup>
+      <StatusBar
+        repo={repo}
+        cloudConnected={cloudConnected}
+        orgName={orgName}
+        intakeUrl={intakeUrl}
+        slackConfig={slackConfig}
+        slackStatus={slackStatus}
+        changeCount={changeCount}
+        onOpenPalette={onOpenPalette}
+      />
     </div>
   );
 }
