@@ -35,44 +35,29 @@ export function ChatPane({ cwd }: { cwd: string | null }) {
       // distinct lightness too, so they're separable without hue
       // alone. Each value targets ≥7:1 contrast on cream.
       theme: {
-        background: "#faf9f6",
-        foreground: "#2d2a25",
-        cursor: "#d96e3e",
-        selectionBackground: "#f4dccd",
-        // black + brightBlack collapsed to the cream bg so any
-        // ANSI-bg-black banner (Claude Code's header chrome) doesn't
-        // render as a dark slab on the otherwise-light theme. Side
-        // effect: ANSI fg-black text becomes invisible — but Claude
-        // Code rarely uses fg-black-on-default-bg, and when it does
-        // it falls back to `foreground` anyway since the term default
-        // dominates.
-        black: "#faf9f6",
-        // Diff "removed" / errors — deep red, low lightness (~8%).
-        red: "#6b1010",
-        // Diff "added" / success — medium-dark green, lightness ~24%.
-        // Pairing lightness 8% (red) vs 24% (green) gives separation
-        // even when hue is indistinguishable.
-        green: "#1f6e3e",
-        // Tool-block headers + "thinking" status text. Mid-gray (#666)
-        // reads on both the cream default bg and any residual dark bg
-        // — the prior dark-brown-on-cream had too little contrast on
-        // the dark Claude Code banner.
-        yellow: "#666666",
-        blue: "#2d3d8a",
-        magenta: "#5c2a5c",
-        cyan: "#1a4a4a",
-        // Dim helper text — readable mid-gray.
-        white: "#4a4844",
-        brightBlack: "#faf9f6",
-        // Bright variants stay slightly more saturated than their
-        // base for genuine emphasis distinguishable for colorblind.
-        brightRed: "#a8281a",
-        brightGreen: "#2c8a4f",
-        brightYellow: "#666666",
-        brightBlue: "#4555b8",
-        brightMagenta: "#8a3d8a",
-        brightCyan: "#2c8a8a",
-        brightWhite: "#2d2a25",
+        // Dark theatre — the right pane lives in a warm-black room
+        // so Claude reads as a different surface from the cream
+        // workbench. Foreground is warm cream so text stays familiar.
+        background: "#1a140e",
+        foreground: "#f0e7d3",
+        cursor: "#e8804a",
+        selectionBackground: "rgba(199, 90, 44, 0.32)",
+        black: "#1a140e",
+        red: "#e07a6a",
+        green: "#a8c89e",
+        yellow: "#d4b878",
+        blue: "#9aa8e0",
+        magenta: "#c89ac0",
+        cyan: "#9ac8c0",
+        white: "#d8cdb5",
+        brightBlack: "#544a3a",
+        brightRed: "#f0907e",
+        brightGreen: "#b8d8ae",
+        brightYellow: "#e0c888",
+        brightBlue: "#aab8f0",
+        brightMagenta: "#d8aad0",
+        brightCyan: "#aad8d0",
+        brightWhite: "#fff8ec",
       },
       allowProposedApi: true,
     });

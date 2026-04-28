@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Onboarding } from "./Onboarding";
 import { Shell } from "./shell/Shell";
+import { CommandPalette } from "./shell/CommandPalette";
 import {
   fsRead,
   intakeStart,
@@ -18,11 +18,8 @@ import {
 import {
   type SkillCanvasState,
   injectIntoChat,
-  mergeSkillState,
   skillStateRead,
-  skillStateWrite,
 } from "./lib/skillCanvas";
-import { buildManageState, buildSetupState } from "./lib/connectSlackState";
 import { onFsChanged } from "./lib/fsWatcher";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
@@ -123,79 +120,6 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, orgName: string): v
   );
 }
 
-/// Small pill in the header showing the localhost intake URL. Click
-/// opens the form in the user's default browser. Surfaced here as a
-/// temporary home until the Phase 3b settings panel lands.
-function IntakeUrlPill({ url }: { url: string }) {
-  const onOpen = () => {
-    openUrl(url).catch((e) => console.warn("[app] openUrl failed:", e));
-  };
-  return (
-    <button
-      type="button"
-      className="intake-url-pill"
-      onClick={onOpen}
-      title="Open the intake form in your browser"
-    >
-      <span className="intake-url-pill-label">Intake</span>
-      <code className="intake-url-pill-value">{url.replace(/^https?:\/\//, "")}</code>
-      <span className="intake-url-pill-action">OPEN</span>
-    </button>
-  );
-}
-
-/// Slack status pill in the header. Three visual states:
-///   - not configured  → "Connect Slack" (dotted)
-///   - configured + listener running → "Slack: @<bot> · Nses" green dot
-///   - configured + listener stopped/erroring → "Slack: @<bot>" amber dot
-/// Click always opens the connect/manage modal.
-function SlackPill({
-  config,
-  status,
-  onClick,
-}: {
-  config: SlackConfig | null;
-  status: SlackStatus | null;
-  onClick: () => void;
-}) {
-  if (!config) {
-    return (
-      <button
-        type="button"
-        className="intake-url-pill slack-pill slack-pill-unset"
-        onClick={onClick}
-        title="Set up the OpenIT Slack bot for this project"
-      >
-        <span className="intake-url-pill-label">Slack</span>
-        <span className="intake-url-pill-action">CONNECT</span>
-      </button>
-    );
-  }
-  const running = !!status?.running;
-  const sessions = status?.last_heartbeat?.sessions ?? 0;
-  return (
-    <button
-      type="button"
-      className={`intake-url-pill slack-pill ${
-        running ? "slack-pill-running" : "slack-pill-stopped"
-      }`}
-      onClick={onClick}
-      title={
-        running
-          ? `Slack listener running for @${config.bot_name}. Click to manage.`
-          : `Slack configured but listener not running. Click to start.`
-      }
-    >
-      <span className="slack-pill-dot" />
-      <span className="intake-url-pill-label">Slack</span>
-      <code className="intake-url-pill-value">
-        @{config.bot_name}
-        {running && ` · ${sessions}s`}
-      </code>
-    </button>
-  );
-}
-
 function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -209,6 +133,27 @@ function App() {
   const [slackConfig, setSlackConfig] = useState<SlackConfig | null>(null);
   const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
   const [skillCanvasState, setSkillCanvasState] = useState<SkillCanvasState | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const manualPullRef = useRef<(() => void) | null>(null);
+  const switchToSyncRef = useRef<(() => void) | null>(null);
+
+  // Global cmd-K / ctrl-K listener — opens the command palette from
+  // anywhere in the app. We use a window listener (not document
+  // capture) so xterm's own input still works; we just preventDefault
+  // when the chord matches so the terminal doesn't see the K.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const isCmdK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
+      if (isCmdK) {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (e.key === "Escape" && paletteOpen) {
+        setPaletteOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [paletteOpen]);
 
   // Active skill canvas — currently we only support one canvas at a
   // time (V1), and the only canvas-driven skill is connect-slack.
@@ -600,71 +545,40 @@ function App() {
   }
 
   return (
+    <>
     <main className="app">
       <header className="app-header">
-        <span className="app-title">OpenIT</span>
-        <span className="app-tagline">get IT done</span>
+        <div className="wordmark">
+          <span className="wordmark-spark" aria-hidden="true">◆</span>
+          <div className="wordmark-text">
+            <span className="app-title">OpenIT</span>
+            <span className="app-tagline">get IT done</span>
+          </div>
+        </div>
         <div className="app-header-actions">
-          {intakeServerUrl && <IntakeUrlPill url={intakeServerUrl} />}
-          {repo && intakeServerUrl && (
-            <SlackPill
-              config={slackConfig}
-              status={slackStatus}
-              onClick={async () => {
-                // Pill click is the canonical entry point for the
-                // Slack flow. Two stages so Claude never has to
-                // scaffold static JSON itself (avoiding a noisy
-                // permission prompt for the user):
-                //
-                //   1. If no active canvas state exists, write the
-                //      appropriate default — setup if no slackConfig,
-                //      manage if connected. If state exists but is
-                //      inactive (user dismissed earlier), flip it
-                //      back to active without resetting progress.
-                //   2. Inject /connect-slack so Claude resumes
-                //      orchestration.
-                if (repo) {
-                  try {
-                    const existing = await skillStateRead(repo, "connect-slack");
-                    const defaults = slackConfig
-                      ? buildManageState(slackConfig)
-                      : buildSetupState();
-                    // First click → write defaults. Subsequent clicks →
-                    // merge: pull the latest content (titles, bodies,
-                    // actions, freeform) from defaults, but carry over
-                    // each step's `status` from the existing state by
-                    // matching on step id. This means iterating on
-                    // step copy never strands a user with stale text,
-                    // but mid-setup progress survives an OpenIT
-                    // update.
-                    const next = existing
-                      ? mergeSkillState(existing, defaults)
-                      : defaults;
-                    await skillStateWrite(repo, "connect-slack", next);
-                  } catch (e) {
-                    console.warn("[app] skill state scaffold failed:", e);
-                  }
-                }
-                injectIntoChat("/connect-slack").catch((e) =>
-                  console.warn("[app] inject /connect-slack failed:", e),
-                );
-              }}
-            />
-          )}
           <button
-            className="icon-btn"
+            className="header-cmdk-hint"
+            onClick={() => setPaletteOpen(true)}
+            title="Command palette"
+          >
+            <kbd>⌘</kbd>
+            <kbd>K</kbd>
+            <span>jump anywhere</span>
+          </button>
+          <button
+            className="icon-btn icon-btn-ghost"
             onClick={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
             title="Open the welcome / getting-started doc"
           >
             Getting Started
           </button>
           <button
-            className={`icon-btn ${connected ? "key-set" : ""}`}
+            className={`icon-btn ${connected ? "key-set" : "icon-btn-primary"}`}
             onClick={() => setBypassOnboarding(false)}
             title={connected ? "Connected — click to update credentials" : "Connect to Cloud"}
           >
             {connected
-              ? `Cloud: ${orgName ?? "connected"}`
+              ? `Cloud · ${orgName ?? "connected"}`
               : "Connect to Cloud"}
           </button>
         </div>
@@ -682,15 +596,31 @@ function App() {
           skillCanvasState={skillCanvasState}
           skillCanvasOrgId={slackOrgId}
           onSkillCanvasClosed={() =>
-            // Soft-close fires on dismiss-button click. The canvas
-            // already wrote `active: false`; we eagerly drop our
-            // state so the Viewer comes back in the same render
-            // tick instead of waiting for the watcher to trip.
             setSkillCanvasState((prev) => (prev ? { ...prev, active: false } : null))
           }
+          slackConfig={slackConfig}
+          slackStatus={slackStatus}
+          orgName={orgName}
+          onOpenPalette={() => setPaletteOpen(true)}
+          registerManualPull={(fn) => { manualPullRef.current = fn; }}
+          registerSwitchToSync={(fn) => { switchToSyncRef.current = fn; }}
         />
       </section>
     </main>
+    <CommandPalette
+      open={paletteOpen}
+      onClose={() => setPaletteOpen(false)}
+      onConnectCloud={() => setBypassOnboarding(false)}
+      onConnectSlack={() => {
+        if (repo && intakeServerUrl) {
+          injectIntoChat("/connect-slack").catch(() => {});
+        }
+      }}
+      onManualPull={() => manualPullRef.current?.()}
+      onOpenWelcome={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
+      onSwitchToSync={() => switchToSyncRef.current?.()}
+    />
+    </>
   );
 }
 
