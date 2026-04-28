@@ -438,15 +438,37 @@ export function FileExplorer({
   //   - `CLAUDE.md` — the agent instructions doc at repo root
   //   - `_*` files (`_welcome.md`, `_schema.json`, etc.) at any depth
   //   - `.claude/` directory and everything under it (skills source)
-  //   - `.openit/` directory (engine state: agent-traces, sync shadows)
+  //   - `.openit/agent-traces/` (per-turn trace JSON; clickable)
+  // Other `.openit/` siblings (plugin-version, skill-state,
+  // slack-*.json, chat sessions) are pure engine state with no
+  // viewer affordance and would just add noise to the tree.
   const isSystemEntry = (n: FileNode): boolean => {
     if (!repo) return false;
     const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.path;
     if (rel === "CLAUDE.md") return true;
     if (rel === ".claude" || rel.startsWith(".claude/")) return true;
-    if (rel === ".openit" || rel.startsWith(".openit/")) return true;
+    if (
+      rel === ".openit" ||
+      rel === ".openit/agent-traces" ||
+      rel.startsWith(".openit/agent-traces/")
+    ) {
+      return true;
+    }
     if (n.name.startsWith("_")) return true;
     return false;
+  };
+
+  // Always-hidden entries inside `.openit/` that the toggle should
+  // NOT reveal. Anything under .openit that isn't agent-traces is
+  // pure engine state and shouldn't surface even in advanced view.
+  const isOpenitNoise = (n: FileNode): boolean => {
+    if (!repo) return false;
+    const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.path;
+    if (!rel.startsWith(".openit/")) return false;
+    if (rel === ".openit/agent-traces" || rel.startsWith(".openit/agent-traces/")) {
+      return false;
+    }
+    return true;
   };
 
   const visible = useMemo(() => {
@@ -458,6 +480,7 @@ export function FileExplorer({
       // conflictPaths). Shadows reappear if the user wants to inspect
       // via Reveal in Finder.
       if (!n.is_dir && n.name.includes(".server.")) return false;
+      if (isOpenitNoise(n)) return false;
       if (!showSystemFiles && isSystemEntry(n)) return false;
       // Hide `databases/conversations/` and everything under it.
       // Conversations are a per-ticket implementation detail (the
