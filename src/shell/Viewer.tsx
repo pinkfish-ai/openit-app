@@ -971,8 +971,15 @@ export function Viewer({
         return true;
       };
       const visibleThreads = source.threads.filter((t) => matchesFilter(t.status || ""));
+      const filterCaption: Record<typeof conversationsFilter, string> = {
+        all: "All tickets across every status.",
+        open: "Agent is currently working to resolve these tickets.",
+        resolved: "Tickets marked as resolved.",
+        escalated: "Agent needs help solving.",
+      };
       return (
         <div className="viewer-summary viewer-conversations">
+          <p className="viewer-list-caption">{filterCaption[conversationsFilter]}</p>
           {visibleThreads.length === 0 ? (
             <p className="summary-desc">No threads match this filter.</p>
           ) : (
