@@ -110,3 +110,39 @@ export async function injectIntoChat(text: string): Promise<boolean> {
   const trimmed = text.endsWith("\n") || text.endsWith("\r") ? text : `${text}\r`;
   return writeToActiveSession(trimmed);
 }
+
+/// Refresh a skill canvas's content (titles, bodies, actions) from
+/// the latest defaults while preserving the user's per-step status
+/// from the existing on-disk state. Called on every pill click so
+/// admins always see the current default content without manual
+/// state-file cleanup, but mid-flow progress survives FE updates.
+///
+/// Matching is by step `id`. Steps in defaults but not in existing
+/// → pending. Steps in existing but not in defaults → dropped
+/// (ids no longer exist; we trust defaults as the source of
+/// truth for which steps are real). The `active` flag and the
+/// freeform footer come from defaults; everything else copy-only
+/// for matched ids.
+export function mergeSkillState(
+  existing: SkillCanvasState,
+  defaults: SkillCanvasState,
+): SkillCanvasState {
+  const existingStatusById = new Map(
+    existing.steps.map((s) => [s.id, s.status]),
+  );
+  return {
+    ...defaults,
+    steps: defaults.steps.map((step) => {
+      const previousStatus = existingStatusById.get(step.id);
+      if (previousStatus) {
+        return { ...step, status: previousStatus };
+      }
+      return step;
+    }),
+    // Re-flip to active on refresh (caller already does this for
+    // the dismissed-then-reclicked path; doing it here too is a
+    // belt-and-suspenders so a stale active:false state never
+    // strands the user with a hidden canvas after an update).
+    active: true,
+  };
+}

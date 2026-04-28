@@ -18,6 +18,7 @@ import {
 import {
   type SkillCanvasState,
   injectIntoChat,
+  mergeSkillState,
   skillStateRead,
   skillStateWrite,
 } from "./lib/skillCanvas";
@@ -625,17 +626,21 @@ function App() {
                 if (repo) {
                   try {
                     const existing = await skillStateRead(repo, "connect-slack");
-                    if (!existing) {
-                      const fresh = slackConfig
-                        ? buildManageState(slackConfig)
-                        : buildSetupState();
-                      await skillStateWrite(repo, "connect-slack", fresh);
-                    } else if (!existing.active) {
-                      await skillStateWrite(repo, "connect-slack", {
-                        ...existing,
-                        active: true,
-                      });
-                    }
+                    const defaults = slackConfig
+                      ? buildManageState(slackConfig)
+                      : buildSetupState();
+                    // First click → write defaults. Subsequent clicks →
+                    // merge: pull the latest content (titles, bodies,
+                    // actions, freeform) from defaults, but carry over
+                    // each step's `status` from the existing state by
+                    // matching on step id. This means iterating on
+                    // step copy never strands a user with stale text,
+                    // but mid-setup progress survives an OpenIT
+                    // update.
+                    const next = existing
+                      ? mergeSkillState(existing, defaults)
+                      : defaults;
+                    await skillStateWrite(repo, "connect-slack", next);
                   } catch (e) {
                     console.warn("[app] skill state scaffold failed:", e);
                   }
