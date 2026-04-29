@@ -1043,12 +1043,9 @@ mod tests {
 
     #[test]
     fn kb_path_with_optional_subdir_routes_to_supplied_subdir() {
-        let p = kb_path_with_optional_subdir(
-            "/tmp/repo",
-            "notes.md",
-            Some("knowledge-bases/runbooks"),
-        )
-        .unwrap();
+        let p =
+            kb_path_with_optional_subdir("/tmp/repo", "notes.md", Some("knowledge-bases/runbooks"))
+                .unwrap();
         assert!(p.ends_with("knowledge-bases/runbooks/notes.md"));
     }
 

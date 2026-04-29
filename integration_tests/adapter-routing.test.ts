@@ -30,8 +30,24 @@ vi.mock("../src/lib/api", () => ({
   fsStoreDownloadToLocal: vi.fn(),
   fsStoreListLocal: vi.fn(),
   entityListLocal: vi.fn().mockResolvedValue([]),
+  kbDownloadToLocal: vi.fn(),
   kbListRemote: vi.fn(),
   entityWriteFile: vi.fn(),
+  // nestedManifest.ts (transitively imported by entities/{filestore,kb}.ts)
+  // routes through these state wrappers. Stub with empty defaults so
+  // adapter-routing tests don't trip the load/save paths.
+  fsStoreStateLoad: vi.fn().mockResolvedValue({
+    collection_id: "",
+    collection_name: "",
+    files: {},
+  }),
+  fsStoreStateSave: vi.fn(),
+  kbStateLoad: vi.fn().mockResolvedValue({
+    collection_id: "",
+    collection_name: "",
+    files: {},
+  }),
+  kbStateSave: vi.fn(),
 }));
 
 vi.mock("../src/lib/pinkfishAuth", () => ({

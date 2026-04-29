@@ -59,7 +59,10 @@ function collectionLocalDir(collection: KbCollection): string {
 const handle = createCollectionEntitySync<KbCollection>({
   entityName: "kb",
   displayName: "kb",
-  collectionType: "knowledge-base",
+  // REST DataCollectionType is snake_case `knowledge_base`. The MCP
+  // server name uses the hyphenated form (`knowledge-base`); the REST
+  // endpoint does not.
+  collectionType: "knowledge_base",
   defaultNames: ["openit-default"],
   describeDefault: (name) =>
     `OpenIT knowledge base — ${displayKbName(name)}.`,
