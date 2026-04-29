@@ -5,6 +5,8 @@ import { CommandPalette } from "./shell/CommandPalette";
 import {
   fsRead,
   intakeStart,
+  tunnelStart,
+  tunnelStop,
   projectBootstrap,
   projectBindToCloud,
   projectGetCloudBinding,
@@ -135,6 +137,7 @@ function App() {
   const [bypassOnboarding, setBypassOnboarding] = useState(false);
   const [bubbles, setBubbles] = useState<PromptBubble[]>(DEFAULT_BUBBLES);
   const [intakeServerUrl, setIntakeServerUrl] = useState<string | null>(null);
+  const [tunnelPublicUrl, setTunnelPublicUrl] = useState<string | null>(null);
   const [slackConfig, setSlackConfig] = useState<SlackConfig | null>(null);
   const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
   const [skillCanvasState, setSkillCanvasState] = useState<SkillCanvasState | null>(null);
@@ -572,21 +575,42 @@ function App() {
     const myGen = ++intakeGenRef.current;
     if (!repo) {
       setIntakeServerUrl(null);
+      setTunnelPublicUrl(null);
+      // Best-effort tear down — fire and forget. If a later
+      // tunnelStart races us, the Rust side serializes via cmd_lock.
+      tunnelStop().catch((e) =>
+        console.warn("[app] tunnel stop failed:", e),
+      );
       return;
     }
     intakeStart(repo)
-      .then((url) => {
+      .then(async (url) => {
         // Only commit the URL if no later effect has superseded us. A
         // stale resolve setting an old URL would leave the header
         // pointing at a dead server.
         if (intakeGenRef.current !== myGen) return;
         console.log("[app] intake server up at", url);
         setIntakeServerUrl(url);
+
+        // Chain the public tunnel onto the local server. Failure here
+        // is non-fatal — the local URL still works, we just don't get
+        // a shareable link this session.
+        try {
+          const publicUrl = await tunnelStart(url);
+          if (intakeGenRef.current !== myGen) return;
+          console.log("[app] tunnel up at", publicUrl);
+          setTunnelPublicUrl(publicUrl);
+        } catch (e) {
+          if (intakeGenRef.current !== myGen) return;
+          console.warn("[app] tunnel start failed:", e);
+          setTunnelPublicUrl(null);
+        }
       })
       .catch((e) => {
         if (intakeGenRef.current !== myGen) return;
         console.error("[app] intake start failed:", e);
         setIntakeServerUrl(null);
+        setTunnelPublicUrl(null);
       });
   }, [repo]);
 
@@ -768,6 +792,7 @@ function App() {
           cloudConnected={connected}
           onConnectRequest={() => browserConnect.start()}
           intakeUrl={intakeServerUrl}
+          tunnelUrl={tunnelPublicUrl}
           skillCanvasState={skillCanvasState}
           skillCanvasOrgId={slackOrgId}
           onSkillCanvasClosed={() =>

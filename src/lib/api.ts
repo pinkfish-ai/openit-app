@@ -275,6 +275,25 @@ export async function intakeStart(repo: string): Promise<string> {
   return invoke("intake_start", { repo });
 }
 
+/// Open a public HTTPS tunnel (via localhost.run, no signup) pointing
+/// at the local intake server. Returns the public URL (e.g.
+/// `https://abc123.lhr.life`). Pair with `intakeStart`: after the
+/// local server is up, hand its URL to this command. Tunnel dies
+/// when the SSH session ends — laptop sleep, app close, network
+/// loss. That ephemerality is intentional; it's the upgrade-to-cloud
+/// pitch.
+export async function tunnelStart(localUrl: string): Promise<string> {
+  return invoke("tunnel_start", { localUrl });
+}
+
+export async function tunnelStop(): Promise<void> {
+  return invoke("tunnel_stop");
+}
+
+export async function tunnelUrl(): Promise<string | null> {
+  return invoke("tunnel_url");
+}
+
 // ---------------------------------------------------------------------------
 // Slack — local listener supervisor (V1: DM-only, runs while OpenIT is open).
 // ---------------------------------------------------------------------------

@@ -81,6 +81,7 @@ export function Shell({
   cloudConnected,
   onConnectRequest,
   intakeUrl,
+  tunnelUrl,
   skillCanvasState,
   skillCanvasOrgId,
   onSkillCanvasClosed,
@@ -107,6 +108,10 @@ export function Shell({
    *  into `{{INTAKE_URL}}` placeholders in markdown content (e.g. the
    *  welcome doc). */
   intakeUrl: string | null;
+  /** Public HTTPS URL pointing at the local intake server, when an
+   *  outbound tunnel is up. Null when the tunnel hasn't connected
+   *  (yet) or has disconnected (e.g. laptop sleep). */
+  tunnelUrl: string | null;
   /** Active Skill Canvas state, if any. When non-null AND active, the
    *  center pane swaps from Viewer to SkillCanvas. App.tsx watches the
    *  state file under .openit/skill-state/<skill>.json and passes the
@@ -904,6 +909,7 @@ export function Shell({
         cloudConnected={cloudConnected}
         orgName={orgName}
         intakeUrl={intakeUrl}
+        tunnelUrl={tunnelUrl}
         slackConfig={slackConfig}
         slackStatus={slackStatus}
         changeCount={changeCount}

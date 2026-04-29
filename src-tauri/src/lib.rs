@@ -17,6 +17,7 @@ mod skills;
 mod slack;
 mod state;
 mod tools;
+mod tunnel;
 mod watcher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -41,6 +42,7 @@ pub fn run() {
         .manage(pty::PtyState::default())
         .manage(watcher::WatcherState::default())
         .manage(intake::IntakeState::default())
+        .manage(tunnel::TunnelState::default())
         .manage(oauth_callback::OauthCallbackState::default())
         .manage(slack::SlackSupervisorState::default())
         .invoke_handler(tauri::generate_handler![
@@ -125,6 +127,9 @@ pub fn run() {
             intake::intake_start,
             intake::intake_stop,
             intake::intake_url,
+            tunnel::tunnel_start,
+            tunnel::tunnel_stop,
+            tunnel::tunnel_url,
             oauth_callback::oauth_callback_start,
             oauth_callback::oauth_callback_await,
             oauth_callback::oauth_callback_cancel,
