@@ -30,30 +30,8 @@ const weekOne: [string, string][] = [
   ["Week 2", "You're spending mornings on hard problems, not the queue."],
 ];
 ---
-<BaseLayout title="OpenIT — An IT helpdesk that runs on Claude Code">
-  <div class="min-h-screen bg-cream text-ink selection:bg-terracotta selection:text-cream">
-    {/* NAV */}
-    <header class="mx-auto flex max-w-7xl items-center justify-between px-6 py-6 md:px-10">
-      <a href={url("/")} class="flex items-center gap-2 no-underline">
-        <div class="grid h-7 w-7 place-items-center rounded-md bg-ink text-cream">
-          <span class="font-display text-[13px] leading-none">O</span>
-        </div>
-        <span class="font-display text-lg tracking-tight">OpenIT</span>
-      </a>
-      <nav class="hidden items-center gap-8 font-mono-tag text-[11px] text-ink/60 md:flex">
-        <a href="#thesis" class="hover:text-ink no-underline">Thesis</a>
-        <a href="#week-one" class="hover:text-ink no-underline">Week One</a>
-        <a href="#status" class="hover:text-ink no-underline">Status</a>
-        <a href={githubUrl} class="inline-flex items-center gap-1 hover:text-ink no-underline">
-          GitHub
-          <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
-        </a>
-      </nav>
-      <a href="#download" class="hidden rounded-full bg-ink px-4 py-2 font-mono-tag text-[10px] text-cream hover:bg-terracotta md:inline-flex no-underline">
-        Download
-      </a>
-    </header>
-
+<BaseLayout title="OpenIT — An IT helpdesk that runs on Claude Code" bare={true}>
+  <div>
     {/* HERO */}
     <section class="mx-auto max-w-7xl px-6 pb-20 pt-10 md:px-10 md:pb-32 md:pt-16">
       <span class="inline-flex items-center gap-2 rounded-full border border-ink/15 bg-cream px-4 py-1.5 font-mono-tag text-[11px] text-ink/70">
@@ -372,23 +350,5 @@ const weekOne: [string, string][] = [
       </div>
     </section>
 
-    {/* FOOTER */}
-    <footer class="border-t border-ink/10 bg-cream">
-      <div class="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-6 py-10 md:flex-row md:items-center md:px-10">
-        <div class="flex items-center gap-2">
-          <div class="grid h-7 w-7 place-items-center rounded-md bg-ink text-cream">
-            <span class="font-display text-[13px] leading-none">O</span>
-          </div>
-          <span class="font-display text-lg tracking-tight">OpenIT</span>
-          <span class="ml-3 font-mono-tag text-[10px] text-ink/40">© 2026 · Apache 2.0</span>
-        </div>
-        <div class="flex items-center gap-6 font-mono-tag text-[11px] text-ink/60">
-          <a href={githubUrl} class="hover:text-ink no-underline">GitHub ↗</a>
-          <a href="https://pinkfish.ai" class="hover:text-ink no-underline">Pinkfish ↗</a>
-          <a href={url("/privacy")} class="hover:text-ink no-underline">Privacy</a>
-          <a href={url("/terms")} class="hover:text-ink no-underline">Terms</a>
-        </div>
-      </div>
-    </footer>
   </div>
 </BaseLayout>

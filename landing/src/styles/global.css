@@ -86,3 +86,121 @@
   .text-ink { color: hsl(var(--ink)); }
   .border-ink { border-color: hsl(var(--ink)); }
 }
+
+/* ─────────────────────────────────────────────────────────────────
+   Prose typography for /download, /privacy, /terms.
+   The homepage uses Tailwind classes inline; these utility classes
+   give the bare-prose pages a consistent editorial look.
+   ───────────────────────────────────────────────────────────────── */
+
+.prose {
+  color: hsl(var(--foreground));
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.6;
+}
+.prose h1 {
+  font-family: "Inter", system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 0.95;
+  font-size: clamp(40px, 5vw, 64px);
+  margin: 0 0 24px;
+  color: hsl(var(--ink));
+}
+.prose h2 {
+  font-family: "Inter", system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-size: 24px;
+  margin: 48px 0 12px;
+  color: hsl(var(--ink));
+}
+.prose p {
+  margin: 0 0 18px;
+  color: hsl(var(--ink) / 0.78);
+  max-width: 64ch;
+}
+.prose a {
+  color: hsl(var(--ink));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--ink) / 0.25);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  transition: text-decoration-color 120ms ease, color 120ms ease;
+}
+.prose a:hover {
+  text-decoration-color: hsl(var(--terracotta));
+  color: hsl(var(--terracotta));
+}
+.prose strong {
+  font-weight: 600;
+  color: hsl(var(--ink));
+}
+.prose code {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.9em;
+  background: hsl(var(--cream-deep));
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: hsl(var(--ink));
+}
+.prose .lede {
+  font-size: clamp(19px, 1.6vw, 22px);
+  line-height: 1.5;
+  color: hsl(var(--ink));
+  font-weight: 400;
+  margin: 0 0 36px;
+  max-width: 56ch;
+}
+.prose .cta-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 0 0 24px;
+  align-items: center;
+}
+.prose .btn {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 22px;
+  background: hsl(var(--ink));
+  color: hsl(var(--cream));
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 15px;
+  border: 0;
+  transition: background 140ms ease;
+}
+.prose .btn:hover {
+  background: hsl(var(--terracotta));
+  color: hsl(var(--cream));
+  text-decoration: none;
+}
+.prose .btn .sub {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.prose .btn.secondary {
+  background: transparent;
+  color: hsl(var(--ink));
+  border: 1px solid hsl(var(--ink) / 0.2);
+}
+.prose .btn.secondary:hover {
+  background: hsl(var(--ink));
+  color: hsl(var(--cream));
+  border-color: hsl(var(--ink));
+}
+.prose .btn[aria-disabled="true"] {
+  background: hsl(var(--cream-deep));
+  color: hsl(var(--ink) / 0.4);
+  cursor: not-allowed;
+  pointer-events: none;
+}

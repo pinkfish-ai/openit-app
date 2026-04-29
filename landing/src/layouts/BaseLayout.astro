@@ -4,12 +4,20 @@ import "../styles/global.css";
 interface Props {
   title: string;
   description?: string;
+  /** Pass true on the homepage so the layout doesn't wrap the slot in a prose
+   *  container — the homepage owns its full layout (sections, dark bands, etc). */
+  bare?: boolean;
 }
 
 const {
   title,
   description = "OpenIT is an open-source IT helpdesk powered by Claude Code. Handles tickets, provisions access, and learns how you work.",
+  bare = false,
 } = Astro.props;
+
+const base = import.meta.env.BASE_URL;
+const url = (p: string) => `${base.replace(/\/$/, "")}/${p.replace(/^\//, "")}`;
+const githubUrl = "https://github.com/pinkfish-ai/openit-app";
 ---
 <!doctype html>
 <html lang="en">
@@ -25,7 +33,54 @@ const {
       rel="stylesheet"
     />
   </head>
-  <body>
-    <slot />
+  <body class="bg-cream text-ink selection:bg-terracotta selection:text-cream">
+    <header class="mx-auto flex max-w-7xl items-center justify-between px-6 py-6 md:px-10">
+      <a href={url("/")} class="flex items-center gap-2 no-underline">
+        <div class="grid h-7 w-7 place-items-center rounded-md bg-ink text-cream">
+          <span class="font-display text-[13px] leading-none">O</span>
+        </div>
+        <span class="font-display text-lg tracking-tight">OpenIT</span>
+      </a>
+      <nav class="hidden items-center gap-8 font-mono-tag text-[11px] text-ink/60 md:flex">
+        <a href={url("/") + "#thesis"} class="hover:text-ink no-underline">Thesis</a>
+        <a href={url("/") + "#week-one"} class="hover:text-ink no-underline">Week One</a>
+        <a href={url("/") + "#status"} class="hover:text-ink no-underline">Status</a>
+        <a href={githubUrl} class="inline-flex items-center gap-1 hover:text-ink no-underline">
+          GitHub
+          <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
+        </a>
+      </nav>
+      <a href={url("/download")} class="hidden rounded-full bg-ink px-4 py-2 font-mono-tag text-[10px] text-cream hover:bg-terracotta md:inline-flex no-underline">
+        Download
+      </a>
+    </header>
+
+    {bare ? (
+      <slot />
+    ) : (
+      <main class="mx-auto max-w-3xl px-6 pb-24 pt-12 md:px-10 md:pb-32 md:pt-16">
+        <article class="prose">
+          <slot />
+        </article>
+      </main>
+    )}
+
+    <footer class="border-t border-ink/10 bg-cream">
+      <div class="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-6 py-10 md:flex-row md:items-center md:px-10">
+        <div class="flex items-center gap-2">
+          <div class="grid h-7 w-7 place-items-center rounded-md bg-ink text-cream">
+            <span class="font-display text-[13px] leading-none">O</span>
+          </div>
+          <span class="font-display text-lg tracking-tight">OpenIT</span>
+          <span class="ml-3 font-mono-tag text-[10px] text-ink/40">© 2026 · Apache 2.0</span>
+        </div>
+        <div class="flex items-center gap-6 font-mono-tag text-[11px] text-ink/60">
+          <a href={githubUrl} class="hover:text-ink no-underline">GitHub ↗</a>
+          <a href="https://pinkfish.ai" class="hover:text-ink no-underline">Pinkfish ↗</a>
+          <a href={url("/privacy")} class="hover:text-ink no-underline">Privacy</a>
+          <a href={url("/terms")} class="hover:text-ink no-underline">Terms</a>
+        </div>
+      </div>
+    </footer>
   </body>
 </html>
