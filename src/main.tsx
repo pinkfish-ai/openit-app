@@ -11,11 +11,14 @@ import "@fontsource/jetbrains-mono/500.css";
 import "@fontsource-variable/source-serif-4/standard.css";
 import "@fontsource-variable/source-serif-4/standard-italic.css";
 import App from "./App";
+import { ToastProvider } from "./Toast";
 import { checkForUpdatesOnLaunch } from "./lib/updater";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <ToastProvider>
+      <App />
+    </ToastProvider>
   </React.StrictMode>,
 );
 

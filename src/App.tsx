@@ -20,14 +20,13 @@ import {
   type SlackStatus,
 } from "./lib/api";
 import {
-  type SkillCanvasState,
+  type DockKind,
+  type SkillState,
   injectIntoChat,
-  mergeSkillState,
   skillStateRead,
-  skillStateWrite,
-} from "./lib/skillCanvas";
-import { buildManageState, buildSetupState } from "./lib/connectSlackState";
+} from "./lib/skillState";
 import { onFsChanged } from "./lib/fsWatcher";
+import { useToast } from "./Toast";
 import { clearCreds, loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { useBrowserConnect } from "./lib/useBrowserConnect";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
@@ -140,7 +139,17 @@ function App() {
   const [tunnelPublicUrl, setTunnelPublicUrl] = useState<string | null>(null);
   const [slackConfig, setSlackConfig] = useState<SlackConfig | null>(null);
   const [slackStatus, setSlackStatus] = useState<SlackStatus | null>(null);
-  const [skillCanvasState, setSkillCanvasState] = useState<SkillCanvasState | null>(null);
+  // Which secret-paste affordance the chat-anchored SkillActionDock
+  // should surface, if any. Driven by the connect-slack skill via
+  // `.openit/skill-state/connect-slack.json` — Claude writes
+  // `{"skill":"connect-slack","dock":"bot-token-paste"|null}` and the
+  // fs-watcher below picks it up.
+  const [dock, setDock] = useState<DockKind | undefined>(undefined);
+  // xoxb- token staged in App-level state between the bot-token-paste
+  // and app-token-paste moments. Survives re-renders / unmounts of
+  // the SkillActionDock. In-memory only — Keychain takes over after
+  // slackConnect succeeds.
+  const [stagedSlackBotToken, setStagedSlackBotToken] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const manualPullRef = useRef<(() => void) | null>(null);
   const switchToSyncRef = useRef<(() => void) | null>(null);
@@ -153,35 +162,19 @@ function App() {
   // Used by the cmd-K palette AND the bottom-bar Slack pill so both
   // surfaces behave identically. Also handles the no-canvas-prereq
   // guard (needs repo + intake server up).
+  // Kick off the chat-only connect-slack walkthrough. The skill is
+  // the source of truth for everything visible to the user — there's
+  // no canvas to scaffold. We just inject the slash command and let
+  // Claude take it from there. The dock surfaces (and the toast
+  // breadcrumbs) come through the side channels Claude / scripts
+  // write to (`.openit/skill-state/connect-slack.json` for the dock,
+  // `.openit/flash.json` for toasts).
   const triggerSlackFlow = useCallback(async () => {
-    if (!repo || !intakeServerUrl) return;
-    try {
-      const defaults = slackConfig
-        ? buildManageState(slackConfig)
-        : buildSetupState();
-      // Only merge with existing canvas state when slack.json actually
-      // exists on disk. Without that guard, a half-finished prior run
-      // (e.g. user marked verify as "completed" but slack.json was
-      // later deleted) replays stale "completed" checks on top of
-      // setup state — confusing because the user reads it as "I'm
-      // already connected" when they aren't. When slackConfig is null
-      // we know the connection is gone, so reset the canvas to a
-      // clean setup view.
-      const next =
-        slackConfig
-          ? mergeSkillState(
-              (await skillStateRead(repo, "connect-slack")) ?? defaults,
-              defaults,
-            )
-          : defaults;
-      await skillStateWrite(repo, "connect-slack", next);
-    } catch (e) {
-      console.warn("[app] slack canvas scaffold failed:", e);
-    }
+    if (!repo) return;
     injectIntoChat("/connect-slack").catch((e) =>
       console.warn("[app] inject /connect-slack failed:", e),
     );
-  }, [repo, intakeServerUrl, slackConfig]);
+  }, [repo]);
 
   // Global cmd-K / ctrl-K listener — opens the command palette from
   // anywhere in the app. We use a window listener (not document
@@ -201,30 +194,79 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [paletteOpen]);
 
-  // Active skill canvas — currently we only support one canvas at a
-  // time (V1), and the only canvas-driven skill is connect-slack.
-  // Watch its state file under .openit/skill-state/connect-slack.json
-  // and re-render whenever it changes. The skill is the orchestrator
-  // (writes state); React is the renderer (this state read fans out
-  // through Shell → SkillCanvas).
-  const ACTIVE_CANVAS_SKILL = "connect-slack";
+  const toast = useToast();
+
+  // Watch `.openit/flash.json` for ephemeral confirmations posted by
+  // plugin scripts ("✓ Manifest copied", "✓ Slack disconnected", etc).
+  // The script overwrites the file with a fresh `{message, ts}`; we
+  // de-dupe by `ts` so a re-render doesn't replay the same toast.
+  const lastFlashTsRef = useRef<number>(0);
+  useEffect(() => {
+    if (!repo) return;
+    let mounted = true;
+    const flashPath = `${repo}/.openit/flash.json`;
+    const consume = async () => {
+      try {
+        const raw = await fsRead(flashPath);
+        const parsed = JSON.parse(raw) as { message?: string; ts?: number };
+        const ts = typeof parsed.ts === "number" ? parsed.ts : 0;
+        if (!parsed.message || ts <= lastFlashTsRef.current) return;
+        lastFlashTsRef.current = ts;
+        if (mounted) toast.show(parsed.message);
+      } catch {
+        // File missing / unparseable — nothing to flash.
+      }
+    };
+    // Don't fire on initial mount — only react to NEW flashes after
+    // the user is in-session. Initialize lastFlashTsRef with the
+    // current file's ts (if any) so a stale flash from a previous
+    // session doesn't pop up as soon as you launch.
+    fsRead(flashPath)
+      .then((raw) => {
+        try {
+          const parsed = JSON.parse(raw) as { ts?: number };
+          if (typeof parsed.ts === "number") lastFlashTsRef.current = parsed.ts;
+        } catch {}
+      })
+      .catch(() => {});
+    let unlistenFn: (() => void) | null = null;
+    onFsChanged((paths) => {
+      if (paths.some((p) => p.endsWith("/.openit/flash.json"))) {
+        consume();
+      }
+    })
+      .then((un) => {
+        if (mounted) unlistenFn = un;
+        else un();
+      })
+      .catch((e) => console.warn("[app] flash watcher init failed:", e));
+    return () => {
+      mounted = false;
+      unlistenFn?.();
+    };
+  }, [repo, toast]);
+
+  // Watch the connect-slack skill side-channel for dock state. The
+  // skill writes `{"skill":"connect-slack","dock":"bot-token-paste"|...}`
+  // when it reaches a paste step in chat; the dock under the chat
+  // surfaces the matching button. When dock is null/absent, the dock
+  // renders nothing.
+  const ACTIVE_DOCK_SKILL = "connect-slack";
   useEffect(() => {
     if (!repo) {
-      setSkillCanvasState(null);
+      setDock(undefined);
       return;
     }
     let mounted = true;
     const refresh = () =>
-      skillStateRead(repo, ACTIVE_CANVAS_SKILL)
-        .then((s) => {
-          if (mounted) setSkillCanvasState(s);
+      skillStateRead(repo, ACTIVE_DOCK_SKILL)
+        .then((s: SkillState | null) => {
+          if (mounted) setDock(s?.dock ?? null);
         })
-        .catch((e) => console.warn("[app] skill state read failed:", e));
+        .catch((e) => console.warn("[app] dock state read failed:", e));
     refresh();
     let unlistenFn: (() => void) | null = null;
     onFsChanged((paths) => {
-      // Cheap match — re-read whenever any path under
-      // .openit/skill-state/ changes. Worst case: spurious read.
       if (paths.some((p) => p.includes("/.openit/skill-state/"))) {
         refresh();
       }
@@ -233,7 +275,7 @@ function App() {
         if (mounted) unlistenFn = un;
         else un();
       })
-      .catch((e) => console.warn("[app] skill state watcher init failed:", e));
+      .catch((e) => console.warn("[app] dock watcher init failed:", e));
     return () => {
       mounted = false;
       unlistenFn?.();
@@ -254,6 +296,11 @@ function App() {
   //      when nothing's running), so no need to gate on
   //      slackStatus?.running.
   const slackOrgId = savedCreds?.orgId ?? "";
+  // Declared up here (rather than next to the auto-start effect
+  // below) because the slack-config effect's fs-watcher resets it
+  // when slack.json disappears, so the next reconnect can re-arm
+  // auto-start. Both effects close over the same ref.
+  const slackAutoStartedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!repo) {
       setSlackConfig(null);
@@ -265,14 +312,13 @@ function App() {
       return;
     }
     let mounted = true;
-    slackConfigRead(repo)
-      .then((cfg) => {
-        if (!mounted) return;
-        setSlackConfig(cfg);
-      })
-      .catch((e) => {
-        console.warn("[app] slack config read failed:", e);
-      });
+    const refreshConfig = () =>
+      slackConfigRead(repo)
+        .then((cfg) => {
+          if (mounted) setSlackConfig(cfg);
+        })
+        .catch((e) => console.warn("[app] slack config read failed:", e));
+    refreshConfig();
     const refreshStatus = () =>
       slackListenerStatus()
         .then((s) => {
@@ -281,9 +327,29 @@ function App() {
         .catch(() => {});
     refreshStatus();
     const id = setInterval(refreshStatus, 5_000);
+    // Re-read slack.json whenever it changes on disk — covers the
+    // disconnect-script path, where the script removes the file
+    // (and tokens, and listener) without going through the FE. The
+    // refresh flips slackConfig to null, which in turn flips the
+    // status pill from "connected" back to the unconnected pill.
+    let unlistenFn: (() => void) | null = null;
+    onFsChanged((paths) => {
+      if (paths.some((p) => p.endsWith("/.openit/slack.json"))) {
+        refreshConfig();
+        // Reset the auto-start latch so the next reconnect (if any)
+        // is allowed to bring the listener back up.
+        slackAutoStartedRef.current = null;
+      }
+    })
+      .then((un) => {
+        if (mounted) unlistenFn = un;
+        else un();
+      })
+      .catch((e) => console.warn("[app] slack.json watcher init failed:", e));
     return () => {
       mounted = false;
       clearInterval(id);
+      unlistenFn?.();
     };
   }, [repo]);
 
@@ -293,9 +359,8 @@ function App() {
   // the supervisor flips back to stopped: a listener that crashes
   // because of a bad token would thrash-restart every 5s. After
   // an unexpected exit, the user clicks the Slack pill to re-run
-  // /connect-slack; the canvas surfaces the captured exit error
-  // and offers a Start button via the verify-dm action.
-  const slackAutoStartedRef = useRef<string | null>(null);
+  // /connect-slack; Claude surfaces the captured exit error in
+  // chat and the dock's app-token field lets the user re-paste.
   useEffect(() => {
     if (!repo || !intakeServerUrl || !slackConfig) return;
     const key = `${repo}|${intakeServerUrl}`;
@@ -793,11 +858,10 @@ function App() {
           onConnectRequest={() => browserConnect.start()}
           intakeUrl={intakeServerUrl}
           tunnelUrl={tunnelPublicUrl}
-          skillCanvasState={skillCanvasState}
-          skillCanvasOrgId={slackOrgId}
-          onSkillCanvasClosed={() =>
-            setSkillCanvasState((prev) => (prev ? { ...prev, active: false } : null))
-          }
+          dock={dock}
+          slackOrgId={slackOrgId}
+          stagedSlackBotToken={stagedSlackBotToken}
+          onStagedSlackBotTokenChange={setStagedSlackBotToken}
           slackConfig={slackConfig}
           slackStatus={slackStatus}
           orgName={orgName}

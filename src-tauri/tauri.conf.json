@@ -34,6 +34,7 @@
       "../scripts/openit-plugin/schemas/*.json": "openit-plugin/schemas/",
       "../scripts/openit-plugin/agents/*.json": "openit-plugin/agents/",
       "../scripts/openit-plugin/scripts/*.mjs": "openit-plugin/scripts/",
+      "../scripts/openit-plugin/scripts/*.yml": "openit-plugin/scripts/",
       "../scripts/openit-plugin/scripts/slack-listen.bundle.cjs": "openit-plugin/scripts/slack-listen.bundle.cjs"
     },
     "icon": [

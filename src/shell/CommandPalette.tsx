@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { injectIntoChat } from "../lib/skillCanvas";
+import { injectIntoChat } from "../lib/skillState";
 
 type Action = {
   id: string;

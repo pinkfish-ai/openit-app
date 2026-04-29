@@ -175,7 +175,7 @@ pub async fn intake_start(
         .local_addr()
         .map_err(|e| format!("local_addr failed: {}", e))?;
 
-    let app = build_router(repo_path);
+    let app = build_router(repo_path.clone());
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let handle = tokio::spawn(async move {
@@ -189,14 +189,36 @@ pub async fn intake_start(
         }
     });
 
-    let mut guard = state.inner.lock();
-    *guard = Some(RunningServer {
-        addr,
-        shutdown: Some(shutdown_tx),
-        handle,
-    });
+    {
+        let mut guard = state.inner.lock();
+        *guard = Some(RunningServer {
+            addr,
+            shutdown: Some(shutdown_tx),
+            handle,
+        });
+    }
 
-    Ok(format!("http://{}", addr))
+    let url = format!("http://{}", addr);
+
+    // Persist the URL so plugin scripts run by Claude (which don't
+    // have access to OPENIT_INTAKE_URL the way the spawned listener
+    // does) can discover it. Best-effort: a write failure here is
+    // logged but doesn't fail intake_start — the chat-intake server
+    // is up and the FE has the URL via the return value.
+    if let Err(e) = persist_intake_url(&repo_path, &url).await {
+        eprintln!("[intake] failed to write .openit/intake.json: {}", e);
+    }
+
+    Ok(url)
+}
+
+async fn persist_intake_url(repo: &Path, url: &str) -> std::io::Result<()> {
+    let dir = repo.join(".openit");
+    tokio::fs::create_dir_all(&dir).await?;
+    let body = serde_json::json!({ "url": url });
+    let json = serde_json::to_string_pretty(&body)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    tokio::fs::write(dir.join("intake.json"), json).await
 }
 
 #[tauri::command]
@@ -246,8 +268,87 @@ fn build_router(repo: PathBuf) -> Router {
         // session's ticket folder.
         .route("/chat/upload", post(chat_upload))
         .route("/chat/file", get(chat_file))
+        // Skill-driven endpoints. Plugin scripts (run by Claude in the
+        // user's project via Bash) POST here to ask the running app
+        // to perform work that needs in-process state — e.g. the
+        // Slack listener's bot token. The script discovers the URL
+        // by reading `.openit/intake.json`.
+        .route("/skill/slack-send-intro", post(skill_slack_send_intro))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct SlackSendIntroBody {
+    /// Email of the Slack user to DM. Resolved to a user id via
+    /// users.lookupByEmail.
+    email: String,
+    /// Optional override; defaults to the canonical intro line so
+    /// every test DM reads the same.
+    text: Option<String>,
+}
+
+const DEFAULT_INTRO_TEXT: &str =
+    "Hi! I'm the OpenIT triage bot. Try asking me a question — e.g. \"how do I reset my Mac password?\" — and I'll either answer from your knowledge base or escalate to your IT team.";
+
+async fn skill_slack_send_intro(
+    Json(body): Json<SlackSendIntroBody>,
+) -> Response {
+    // Bot token lives in a process-global Arc that `slack.rs`
+    // updates on listener bring-up / exit. No AppHandle needed —
+    // we just lock the global, clone the string, and call the
+    // shared HTTP helpers.
+    let bot_token = match crate::slack::current_bot_token() {
+        Some(t) => t,
+        None => {
+            return (
+                StatusCode::FAILED_DEPENDENCY,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "slack listener not running — connect Slack first",
+                })),
+            )
+                .into_response();
+        }
+    };
+    let http = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": format!("http client init: {}", e),
+                })),
+            )
+                .into_response();
+        }
+    };
+    let user_id =
+        match crate::slack::slack_lookup_user_id(&http, &bot_token, body.email.trim()).await {
+            Ok(id) => id,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"ok": false, "error": e})),
+                )
+                    .into_response();
+            }
+        };
+    let text = body.text.unwrap_or_else(|| DEFAULT_INTRO_TEXT.to_string());
+    if let Err(e) =
+        crate::slack::slack_post_message(&http, &bot_token, &user_id, text.trim()).await
+    {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({"ok": false, "error": e})),
+        )
+            .into_response();
+    }
+    (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
 }
 
 /// Hard cap on a single uploaded attachment. 25 MB is plenty for the
