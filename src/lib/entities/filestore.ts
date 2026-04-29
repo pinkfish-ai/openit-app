@@ -1,15 +1,17 @@
 // Filestore adapter for syncEngine. The remote API is the same `kb_list_remote`
 // shape (skills `/datacollection/{id}/items`) but the working-tree dir is
-// `filestores/library/` and downloads use `fs_store_download_to_local`.
+// `filestores/<collection-name>/` and downloads use `fs_store_download_to_local`.
 // Filestore had no shadow handling pre-engine; engine now provides it for
 // free, with the shadow filename mirroring KB's `<base>.server.<ext>`
 // convention.
 //
-// Layout split (2026-04-27): `filestores/library/` holds curated docs/scripts
-// and is what this adapter maps to. `filestores/attachments/<ticketId>/` is a
-// separate, server-managed surface for chat-intake uploads — those live
-// under conversations operationally and aren't routed through this
-// adapter (no shadow needed; auto-commit driver handles them).
+// Layout (Phase 1, 2026-04-29): Each openit-* collection maps to a local folder.
+// - openit-library → filestores/library/
+// - openit-attachments → filestores/attachments/
+// - (Phase 2: custom user-named collections)
+//
+// Each adapter gets its own prefix and manifest so multi-collection sync
+// doesn't cross-pollinate files.
 
 import {
   entityDeleteFile,
@@ -29,7 +31,7 @@ import {
   type RemoteItem,
 } from "../syncEngine";
 
-const DIR = "filestores/library";
+const OPENIT_PREFIX = "openit-";
 
 export type FilestoreCollection = {
   id: string;
@@ -37,16 +39,62 @@ export type FilestoreCollection = {
   description?: string;
 };
 
+/// Load manifest for a specific filestore collection, validating it's for this collection.
+/// Each collection tracks its own files independently. If the loaded manifest is for
+/// a different collection, we treat it as a fresh start (return default).
+async function loadFilestoreManifest(repo: string, collectionId: string) {
+  try {
+    const manifest = await fsStoreStateLoad(repo);
+    // If the manifest is for a different collection, treat as fresh
+    // This prevents one collection's files from appearing in another's manifest
+    if (manifest.collection_id && manifest.collection_id !== collectionId) {
+      console.log(
+        `[filestore] manifest is for different collection (${manifest.collection_id} vs ${collectionId}), starting fresh`,
+      );
+      return { collection_id: collectionId, collection_name: "", files: {} };
+    }
+    return { ...manifest, collection_id: collectionId };
+  } catch (e) {
+    // Default manifest for fresh start
+    return { collection_id: collectionId, collection_name: "", files: {} };
+  }
+}
+
+/// Save manifest for a specific filestore collection with its collection ID.
+/// This ensures each collection's manifest is marked with its ID so we can
+/// validate on load that we're reading the right manifest.
+async function saveFilestoreManifest(
+  repo: string,
+  collectionId: string,
+  collectionName: string,
+  state: Awaited<ReturnType<typeof fsStoreStateLoad>>,
+) {
+  return fsStoreStateSave(repo, {
+    ...state,
+    collection_id: collectionId,
+    collection_name: collectionName,
+  });
+}
+
 export function filestoreAdapter(args: {
   creds: PinkfishCreds;
   collection: FilestoreCollection;
 }): EntityAdapter {
   const { creds, collection } = args;
+  
+  // Derive local folder name from collection name by stripping openit- prefix
+  // openit-library → filestores/library
+  // openit-attachments → filestores/attachments
+  const collectionFolderName = collection.name.startsWith(OPENIT_PREFIX)
+    ? collection.name.slice(OPENIT_PREFIX.length)
+    : collection.name; // Fallback for non-openit collections (Phase 2)
+  const DIR = `filestores/${collectionFolderName}`;
+  
   return {
-    prefix: "filestores/library",
+    prefix: DIR,
 
-    loadManifest: (repo) => fsStoreStateLoad(repo),
-    saveManifest: (repo, m) => fsStoreStateSave(repo, m),
+    loadManifest: (repo) => loadFilestoreManifest(repo, collection.id),
+    saveManifest: (repo, m) => saveFilestoreManifest(repo, collection.id, collection.name, m),
 
     async listRemote(_repo) {
       const token = getToken();
