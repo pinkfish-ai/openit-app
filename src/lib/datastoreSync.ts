@@ -16,13 +16,11 @@
 
 import {
   datastoreListLocal,
-  datastoreStateLoad,
-  datastoreStateSave,
   entityWriteFile,
   fsList,
   fsRead,
-  type KbStatePersisted,
 } from "./api";
+import { loadCollectionManifest, saveCollectionManifest } from "./nestedManifest";
 import {
   type CollectionSchema,
   type DataCollection,
@@ -472,12 +470,17 @@ async function pushAllToDatastoreImpl(args: {
 
   let pushed = 0;
   let failed = 0;
-  const persisted: KbStatePersisted = await datastoreStateLoad(repo);
-  // Per-collection bucket lookup. With the nested manifest, we don't
-  // mutate the flat `persisted.files` directly; the engine's
-  // saveCollectionManifest does the bucket merge. Here we just track
-  // which keys we pushed in this cycle so the post-push reconcile can
-  // refresh their `remote_version`.
+  // Load THIS collection's bucket from the nested manifest. The pull
+  // path saves via `saveCollectionManifest("datastore", collection.id, …)`;
+  // using the raw `datastoreStateLoad/Save` here would deserialize the
+  // nested file as a flat KbState (empty `files`), then the
+  // post-push save would overwrite the entire nested manifest with a
+  // flat one — destroying every other collection's bucket.
+  const persisted = await loadCollectionManifest(
+    repo,
+    "datastore",
+    collection.id,
+  );
   const pushedKeys = new Set<string>();
 
   for (const { key, absPath } of localFiles) {
@@ -606,9 +609,17 @@ async function pushAllToDatastoreImpl(args: {
       console.warn(`[datastoreSync] post-push reconcile for ${folderName} failed:`, e);
     }
   }
-  // The orchestrator's pushOne wrapper handles status transitions; we
-  // persist via the same nested-manifest path the adapter uses on pull.
-  await datastoreStateSave(repo, persisted);
+  // Save THIS collection's bucket back into the nested manifest. The
+  // helper does a load-modify-write under a per-(repo, entity) lock so
+  // concurrent collection pushes never overlap on the shared
+  // .openit/datastore-state.json file.
+  await saveCollectionManifest(
+    repo,
+    "datastore",
+    collection.id,
+    collection.name,
+    persisted,
+  );
 
   return { pushed, failed };
 }
