@@ -13,9 +13,11 @@ import { getActiveSession, subscribeActiveSession } from "./activeSession";
  */
 export function ChatShellHeader({
   onNewSession,
+  onResumeSession,
   dragHandle,
 }: {
   onNewSession: () => void;
+  onResumeSession?: () => void;
   dragHandle?: ReactNode;
 }) {
   const [alive, setAlive] = useState<boolean>(
@@ -34,6 +36,17 @@ export function ChatShellHeader({
         className={`chat-shell-dot ${alive ? "alive" : "idle"}`}
         title={alive ? "Session connected" : "No active session"}
       />
+      {onResumeSession && (
+        <button
+          type="button"
+          className="pane-icon-btn pane-icon-btn-accent"
+          onClick={onResumeSession}
+          title="Resume previous Claude session"
+          aria-label="Resume a previous Claude session"
+        >
+          ↺
+        </button>
+      )}
       <button
         type="button"
         className="pane-icon-btn pane-icon-btn-accent"

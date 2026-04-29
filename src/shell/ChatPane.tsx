@@ -11,7 +11,7 @@ function shellEscape(p: string): string {
   return `'${p.replace(/'/g, "'\\''")}'`;
 }
 
-export function ChatPane({ cwd }: { cwd: string | null }) {
+export function ChatPane({ cwd, resume }: { cwd: string | null; resume?: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -101,7 +101,13 @@ export function ChatPane({ cwd }: { cwd: string | null }) {
     (async () => {
       const { cols, rows } = term;
       try {
-        await ptySpawn({ sessionId: SESSION_ID, cols, rows, cwd });
+        await ptySpawn({
+          sessionId: SESSION_ID,
+          cols,
+          rows,
+          cwd,
+          args: resume ? ["--resume"] : [],
+        });
       } catch (e) {
         term.writeln(`\x1b[31mfailed to spawn pty: ${String(e)}\x1b[0m`);
         return;
