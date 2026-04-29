@@ -339,3 +339,16 @@ Plus from this plan's investigation:
 - Renaming `databases/` → `datastores/` on disk (would touch every existing user folder; out of scope).
 - Migrating legacy `openit-<x>-<orgId>` datastores from existing test orgs — engineer confirmed brand-new code, no migration needed.
 - **CSV import path** (`POST /datacollection/{id}/import-csv`). Useful for bulk-loading a fresh datastore from a CSV, but bypasses the per-row sync semantics (conflict detection, `pulled_at_mtime_ms`, `.server.json` shadows). Phase 3's per-row JSON path round-trips correctly for the typical OpenIT shape (tens-to-hundreds of rows per datastore, mostly single-author edits). If bulk-load perf becomes a real problem on large datastores, file a separate ticket — likely a UX entry point ("Import this CSV into a new datastore") distinct from the sync hot path.
+
+---
+
+## BugBot Review Log
+
+### Iteration 1 (2026-04-29)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Post-push manifest save clobbers nested per-collection state | **High** | Fixed | `426d31d` — push impl was using raw `datastoreStateLoad/Save` (deserialised nested file as flat KbState with empty `files`); post-push save then overwrote the entire nested manifest with a flat one, destroying every other collection's bucket. Switched to `loadCollectionManifest("datastore", collection.id)` / `saveCollectionManifest(...)` — same pattern filestore + KB use. Per-(repo, entity) lock + bucket merge preserves siblings. |
+| 2 | Discovery scans recursively, creating spurious cloud collections | Medium | Fixed | `39e6bca` — `discoverLocalDatastores` called `fsList(databasesPath)` which walks depth-6 recursively. A nested dir like `databases/tickets/archived/` would pass the system-folder + existing-names checks and get auto-created on the cloud as `openit-archived`. Filtered to direct children only via the same shape Workbench.tsx uses. |
+| 3 | Pull count always returns zero, suppressing log messages | Low | Fixed | `4bea849` — `pullAllNow` now returns aggregate `{ pulled, total }` across every collection (`runPullWithAdapter` already returned per-collection counts; just sum them). `pullDatastoresOnce` captures and surfaces the real value; the `pulled > 0` log branch in pushAll.ts is no longer dead code. Filestore + KB wrappers benefit too if they wire it up. |
+| 4 | Empty collection name produces confusing conflict messages | Low | Fixed | `8965f85` — extended `CollectionConflictFile` with `collectionId` (the orchestrator's `recordConflictsFor` already had it as an arg). `pullDatastoresOnce` builds an id→displayName lookup from `status.collections` and hydrates each conflict's `collectionName`. pushAll.ts now renders `tickets/CS123.json: reason` instead of `/CS123.json: reason`. |
