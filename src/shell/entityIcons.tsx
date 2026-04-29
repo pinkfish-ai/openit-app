@@ -24,7 +24,7 @@ export type EntityKind =
   | "agents"
   | "databases"
   | "workflows"
-  | "tools";
+  | "cli";
 
 export type ToneKey = "accent" | "sage" | "ochre" | "link" | "clay" | "neutral";
 
@@ -97,8 +97,8 @@ const WorkflowsIcon: ReactNode = (
   </svg>
 );
 
-// Wrench — for the Tools entity (CLI tools the agent can call via Bash).
-const ToolsIcon: ReactNode = (
+// Wrench — for the CLI entity (CLI tools the agent can call via Bash).
+const CliIcon: ReactNode = (
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <path d="M14.7 6.3a4 4 0 0 0 5 5l-9.4 9.4a2.1 2.1 0 0 1-3-3z" />
     <path d="M14.7 6.3a4 4 0 0 1 5 5" />
@@ -127,7 +127,7 @@ export const ENTITY_META: Record<EntityKind, EntityMetaEntry> = {
   agents:            { icon: AgentsIcon,      tone: "accent",  label: "Agents" },
   databases:         { icon: DatabasesIcon,   tone: "link",    label: "Databases" },
   workflows:         { icon: WorkflowsIcon,   tone: "sage",    label: "Workflows" },
-  tools:             { icon: ToolsIcon,       tone: "accent",  label: "Tools" },
+  cli:               { icon: CliIcon,         tone: "accent",  label: "CLI" },
 };
 
 // ── Convenience accessors used by call sites ──────────────────────
@@ -148,7 +148,7 @@ export const EntityIcons = {
   attachments: AttachmentsIcon,
   databases: DatabasesIcon,
   workflows: WorkflowsIcon,
-  tools: ToolsIcon,
+  cli: CliIcon,
 };
 
 // ── EntityBadge component (used in viewer headers) ────────────────

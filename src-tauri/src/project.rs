@@ -103,12 +103,6 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
             // /report skill. Always create so the sidebar entry isn't
             // empty on a fresh project.
             "reports",
-            // CLI-tools catalog. Install state lives in PATH (detected
-            // via `which`); Claude-facing hints live in the project's
-            // CLAUDE.md. The directory itself is just a placeholder so
-            // the file explorer surfaces `tools/` alongside the other
-            // entity directories.
-            "tools",
         ] {
             fs::create_dir_all(path.join(dir))
                 .map_err(|e| format!("create_dir failed for {}: {}", dir, e))?;
@@ -126,10 +120,6 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     // Same idempotent guard for `reports/` so projects bootstrapped
     // before the reports feature shipped get the dir on next open.
     let _ = fs::create_dir_all(path.join("reports"));
-    // And the same for `tools/` so projects bootstrapped before the
-    // CLI-tools catalog shipped pick it up on next open without
-    // requiring a reconnect.
-    let _ = fs::create_dir_all(path.join("tools"));
 
     // One-time migration: legacy `filestore/<file>` content moves into
     // the new `filestores/library/<file>` location. Idempotent — runs

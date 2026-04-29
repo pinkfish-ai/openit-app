@@ -1,10 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import {
-  CATALOG,
-  PINKFISH_CONNECTIONS_URL,
-  type CatalogEntry,
-} from "../lib/cliCatalog";
+import { CATALOG, type CatalogEntry } from "../lib/cliCatalog";
 import {
   installCli,
   listInstalled,
@@ -13,15 +8,15 @@ import {
   UninstallError,
 } from "../lib/cliInstall";
 import { requestSessionRestart } from "./activeSession";
-import styles from "./ToolsPanel.module.css";
+import styles from "./CliPanel.module.css";
 
-/// CLI-tools catalog rendered into the center pane via the Tools entity
+/// CLI catalog rendered into the center pane via the `cli` entity
 /// route. Each card runs `brew install`/`brew uninstall` on click and
 /// updates the project's CLAUDE.md so Claude knows the tool exists.
-/// Detection of installed-vs-not is `which`-based, so tools the user
+/// Detection of installed-vs-not is `which`-based, so binaries the user
 /// installed manually (or via prior brew) flip to "Installed" without
 /// any tracking on our side.
-export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
+export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
   const [installed, setInstalled] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -34,7 +29,7 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
     try {
       setInstalled(await listInstalled());
     } catch (e) {
-      console.error("[ToolsPanel] listInstalled failed:", e);
+      console.error("[CliPanel] listInstalled failed:", e);
     }
   };
 
@@ -98,8 +93,8 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
     } catch (e) {
       // brew uninstall failed (probably not brew-managed). The
       // CLAUDE.md hint is already gone — refresh + restart anyway,
-      // but surface the error with a no-op-acknowledge button so the
-      // user knows the binary is still on disk.
+      // but surface the error with a recovery affordance so the user
+      // knows the binary is still on disk.
       const msg = e instanceof UninstallError ? e.message : String(e);
       setErrors((prev) => ({
         ...prev,
@@ -128,22 +123,10 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
     }
   };
 
-  const onPinkfishClick = (entry: CatalogEntry) => {
-    openUrl(
-      `${PINKFISH_CONNECTIONS_URL}?provider=${encodeURIComponent(entry.id)}`,
-    ).catch(console.error);
-  };
-
-  const onMoreViaPinkfish = () => {
-    openUrl(PINKFISH_CONNECTIONS_URL).catch(console.error);
-  };
-
   if (!projectRoot) {
     return (
       <div className={styles.panel}>
-        <p className={styles.empty}>
-          Connect a project to install CLI tools.
-        </p>
+        <p className={styles.empty}>Connect a project to install CLI tools.</p>
       </div>
     );
   }
@@ -153,8 +136,8 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
       <h2 className={styles.heading}>Give your agent hands</h2>
       <p className={styles.tagline}>
         Install CLI tools so Claude can act on your IT systems via Bash. Zero
-        token cost until used — installed tools surface in the project's
-        <code> CLAUDE.md </code>so Claude knows when to reach for them.
+        token cost until used — installed tools surface in the project's{" "}
+        <code>CLAUDE.md</code> so Claude knows when to reach for them.
       </p>
       <input
         type="text"
@@ -165,7 +148,7 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
       />
       <div className={styles.grid}>
         {sortedFiltered.map((entry) => (
-          <ToolCard
+          <CliCard
             key={entry.id}
             entry={entry}
             installed={installed.has(entry.id)}
@@ -173,30 +156,21 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
             error={errors[entry.id]}
             onInstall={() => onInstall(entry)}
             onUninstall={() => onUninstall(entry)}
-            onPinkfish={() => onPinkfishClick(entry)}
             onRemoveHintOnly={() => onRemoveHintOnly(entry)}
           />
         ))}
-        <button
-          type="button"
-          className={styles.pinkfishMore}
-          onClick={onMoreViaPinkfish}
-        >
-          + 243 more via Pinkfish →
-        </button>
       </div>
     </div>
   );
 }
 
-function ToolCard({
+function CliCard({
   entry,
   installed,
   pending,
   error,
   onInstall,
   onUninstall,
-  onPinkfish,
   onRemoveHintOnly,
 }: {
   entry: CatalogEntry;
@@ -205,7 +179,6 @@ function ToolCard({
   error?: { msg: string; canRecover?: boolean };
   onInstall: () => void;
   onUninstall: () => void;
-  onPinkfish: () => void;
   onRemoveHintOnly: () => void;
 }) {
   return (
@@ -239,14 +212,6 @@ function ToolCard({
             {pending ? "Installing…" : "Install locally"}
           </button>
         )}
-        <button
-          type="button"
-          className={`${styles.btn} ${styles.btnSecondary}`}
-          onClick={onPinkfish}
-          title="15+ vetted tools, audit-ready policies"
-        >
-          Connect via Pinkfish
-        </button>
         <a
           className={styles.docsLink}
           href={entry.docsUrl}

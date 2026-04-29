@@ -28,11 +28,12 @@ export async function resolvePathToSource(
   const rel = path.startsWith(repo + "/") ? path.slice(repo.length + 1) : null;
   if (!rel) return { kind: "file", path };
 
-  // `tools/` is a synthetic entity — the project bootstrap creates an
-  // empty directory so the file explorer surfaces it, but the catalog
-  // UI's source of truth is `which` detection of each binary plus the
-  // marker block in CLAUDE.md.
-  if (rel === "tools" || rel === "tools/") return { kind: "tools" };
+  // `cli` is a synthetic entity — no on-disk directory at all (so it
+  // doesn't show up in the file explorer). The Workbench station calls
+  // onOpen with this synthetic path; we route it to the catalog
+  // viewer. Source of truth for installed state is `which` detection
+  // per catalog entry.
+  if (rel === "cli" || rel === "cli/") return { kind: "cli" };
 
   // .openit/agent-traces/<ticketId>/ (folder) → agent-trace-list:
   // every per-turn trace for this ticket, oldest-first, stacked

@@ -1,13 +1,13 @@
 /// Hardcoded v1 catalog of CLI tools an IT admin can install into their
-/// machine. Each entry maps to a brew install (with curl as the fallback
-/// when brew isn't available) and a one-line CLAUDE.md hint that tells
-/// Claude the tool exists. Claude already knows the popular CLIs from
-/// training; for less-common tools the hint includes a `<tool> --help`
-/// nudge so Claude can self-discover surface area on demand.
+/// machine. Each entry maps to a brew install and a one-line CLAUDE.md
+/// hint that tells Claude the tool exists. Claude already knows the
+/// popular CLIs from training; for less-common tools the hint includes
+/// a `<tool> --help` nudge so Claude can self-discover surface area on
+/// demand.
 ///
 /// Why CLI instead of MCP servers: zero token cost until the tool is
 /// actually invoked (no schemas in baseline context), no per-session
-/// tool cap, and IT admins already know the brew/curl install pattern.
+/// tool cap, and IT admins already know the brew install pattern.
 
 export type CatalogEntry = {
   /// Short stable id used as the entry key in the marker block.
@@ -19,10 +19,6 @@ export type CatalogEntry = {
   /// Brew install command (preferred). Run as `brew install <pkg>` so
   /// the wrapper just substitutes <pkg>.
   brewPkg: string;
-  /// Curl-based install fallback when brew is missing. Single shell
-  /// command. Optional — if not supplied and brew is unavailable, the
-  /// UI surfaces a "see vendor docs" link instead.
-  curlInstall?: string;
   /// One-line guidance dropped into the project CLAUDE.md when the tool
   /// is installed. Should explain WHAT the tool is plus a HOW-TO nudge
   /// (e.g. "run `<tool> --help`") for less-known tools.
@@ -103,8 +99,6 @@ export const CATALOG: CatalogEntry[] = [
     docsUrl: "https://developer.1password.com/docs/cli/",
   },
 ];
-
-export const PINKFISH_CONNECTIONS_URL = "https://app.pinkfish.ai/connections";
 
 export function findEntry(id: string): CatalogEntry | undefined {
   return CATALOG.find((e) => e.id === id);

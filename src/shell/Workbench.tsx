@@ -26,10 +26,10 @@ const STATIONS: Station[] = [
   { id: "knowledge", kind: "knowledge", rel: "knowledge-bases",   countMode: "dirs" },
   { id: "files",     kind: "files",     rel: "filestores",        countMode: "dirs" },
   { id: "agents",    kind: "agents",    rel: "agents",            countMode: "json-rows" },
-  // Tools is synthetic — count comes from `which`-detected CLIs, not
-  // from a real directory. The empty `tools/` dir created at
-  // bootstrap is just a placeholder for the file explorer.
-  { id: "tools",     kind: "tools",     rel: "tools",             countMode: "files" },
+  // CLI is synthetic — no on-disk directory at all (so it doesn't
+  // appear in the file explorer; only reachable via this station).
+  // Count comes from `which`-detected CLIs.
+  { id: "cli",       kind: "cli",       rel: "cli",               countMode: "files" },
 ];
 
 /** fs_list walks recursively (depth 6), so a naive `.length` over its
@@ -92,9 +92,9 @@ export function Workbench({
       const next: Record<string, number> = {};
       await Promise.all(
         STATIONS.map(async (s) => {
-          // Tools is a synthetic station — counted from `which`
+          // CLI is a synthetic station — counted from `which`
           // detection per catalog entry, not from a real directory.
-          if (s.id === "tools") {
+          if (s.id === "cli") {
             try {
               const ids = await listInstalledCli();
               next[s.id] = ids.size;

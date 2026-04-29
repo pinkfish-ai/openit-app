@@ -176,25 +176,6 @@
   text-decoration: underline;
 }
 
-.pinkfishMore {
-  border: 1px dashed var(--border-strong);
-  border-radius: 8px;
-  padding: 14px;
-  text-align: center;
-  font-size: 13px;
-  cursor: pointer;
-  background: transparent;
-  color: var(--text-muted);
-  font-family: inherit;
-  width: 100%;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.pinkfishMore:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
 .empty {
   font-size: 13px;
   color: var(--text-muted);

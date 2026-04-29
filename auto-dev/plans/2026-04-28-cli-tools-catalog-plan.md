@@ -1,10 +1,10 @@
-# CLI Tools Catalog — v1
+# CLI CLI Catalog — v1
 
 **Date:** 2026-04-28
 **Branch:** `cli-tools-catalog` (off `main`)
 **Supersedes:** the closed-unmerged MCP-tools branch (PR #57). See "Why CLI not MCP" below for the pivot rationale; the spike work that informed this plan (sync exclusion, Workbench-station entity model, restart pub/sub) carries forward.
 
-**Scope:** ship a curated catalog of IT-admin CLI tools the user can install with one click. Each install runs `brew install <pkg>` and adds a one-line hint to the project CLAUDE.md so Claude knows the tool is available. Install state surfaces in the Workbench's Tools station and the file explorer.
+**Scope:** ship a curated catalog of IT-admin CLI tools the user can install with one click. Each install runs `brew install <pkg>` and adds a one-line hint to the project CLAUDE.md so Claude knows the tool is available. The catalog is reachable via the Workbench **CLI** station — there's no on-disk `cli/` directory, so it doesn't appear in the file explorer (CLIs aren't user-edited project content; they're system state).
 
 ---
 
@@ -69,43 +69,33 @@ Per-entry sub-markers (`<!-- entry:ID -->`) make parsing reliable and idempotent
 
 - **`src/lib/cliCatalog.ts`** — hardcoded 7-entry catalog with `binary`, `brewPkg`, `claudeMdHint`, `docsUrl`.
 - **`src/lib/cliInstall.ts`** — TS bridge: `listInstalled()` (calls `cli_is_installed` for every catalog entry in parallel), `installCli(...)`, `uninstallCli(...)`, `removeHintOnly(...)`. Wraps brew uninstall failures in `UninstallError` carrying a `hintRemoved` flag the UI keys off for the recovery affordance.
-- **`src/shell/ToolsPanel.tsx`** + scoped `ToolsPanel.module.css` — the catalog UI rendered into the center pane.
+- **`src/shell/CLIPanel.tsx`** + scoped `CLIPanel.module.css` — the catalog UI rendered into the center pane.
 - **`src/shell/activeSession.ts`** — extended with a restart pub/sub (no post-spawn command queue this time; CLI installs don't need an `/mcp` panel).
 
 ### Entity-model integration
 
-Tools is a first-class entity alongside agents/workflows/databases:
+CLI is a first-class entity alongside agents/workflows/databases:
 
 - `entityIcons.tsx` — `tools` added to `EntityKind` + `ENTITY_META` with a wrench icon and the accent tone.
 - `types.ts` — `{ kind: "tools" }` ViewerSource.
 - `entityRouting.ts` — `rel === "tools"` → `{ kind: "tools" }`.
-- `Viewer.tsx` — load-effect branch (`setMode("rendered")`) + render branch (`<ToolsPanel projectRoot={repo} />`) + header title.
+- `Viewer.tsx` — load-effect branch (`setMode("rendered")`) + render branch (`<CLIPanel projectRoot={repo} />`) + header title.
 - `Workbench.tsx` — `tools` station with custom counter via `listInstalledCli`.
-- `project.rs` — empty `tools/` dir created on bootstrap so the file explorer surfaces it (idempotent maintenance block ensures existing projects pick it up next launch without reconnect).
+- `project.rs` — no on-disk dir created. CLI is purely a synthetic Workbench-routed entity.
 - `Shell.tsx` — subscribes to `subscribeRestartRequested` to bump `chatSessionKey` after install/uninstall.
 
 ---
 
 ## UX
 
-1. **File explorer** shows `tools/` alongside `agents/`, `databases/`, `reports/`, etc.
-2. **Workbench** shows a Tools station with the count of currently-detected CLIs (from `which`).
-3. **Click Tools (either path)** → Viewer renders the catalog grid in the center pane.
-4. **Install** → button flips to "Installing…" → `brew install` runs → green "Installed" pill on success, inline error on failure.
-5. **Uninstall** → `window.confirm` (kills active chat) → `brew uninstall` + CLAUDE.md strip → restart. If brew fails (CLI was installed out-of-band), the error renders inline with a "Already removed — just dismiss the CLAUDE.md hint" recovery button.
-6. **Auto-restart after install/uninstall** so the freshly-spawned Claude session reads the updated CLAUDE.md hint section.
-7. **Per-card "docs ↗" link** to the vendor docs.
-8. **Pinkfish CTA on each card** — secondary, ghost-bordered. "+ 243 more via Pinkfish →" tile at the bottom.
+1. **Workbench** shows a **CLI** station with the count of currently-detected CLIs (from `which`). It does *not* appear in the file explorer — the catalog is system state, not project content.
+2. **Click CLI** → Viewer renders the catalog grid in the center pane.
+3. **Install** → button flips to "Installing…" → `brew install` runs → green "Installed" pill on success, inline error on failure.
+4. **Uninstall** → `window.confirm` (kills active chat) → `brew uninstall` + CLAUDE.md strip → restart. If brew fails (CLI was installed out-of-band), the error renders inline with a "Already removed — just dismiss the CLAUDE.md hint" recovery button.
+5. **Auto-restart after install/uninstall** so the freshly-spawned Claude session reads the updated CLAUDE.md hint section.
+6. **Per-card "docs ↗" link** to the vendor docs.
 
----
-
-## Pinkfish-upsell framing
-
-Local CLI install gives Claude raw access to the tool's full surface — for `gh` that's hundreds of subcommands, including footguns. Pinkfish's value:
-
-1. **Vetted tools** — 15+ curated tools per connection, audit-ready, no `delete_repo`-style sharp edges by default.
-2. **Connection breadth** — 250 connections vs our 7. The "+ 243 more" tile makes this concrete.
-3. **No machine setup** — Pinkfish runs in the cloud. CLI tools assume the user has brew and is willing to install software locally.
+No Pinkfish CTA on the cards — Pinkfish doesn't have a parallel CLI offering, so the comparison was forced. The cloud upsell lives elsewhere in the app (the existing Connect-to-Cloud flow), not on this surface.
 
 ---
 
@@ -118,12 +108,12 @@ Local CLI install gives Claude raw access to the tool's full surface — for `gh
 ### Backend
 - [x] `src-tauri/src/cli_tools.rs` with the four commands + Rust unit tests for splicing
 - [x] Register in `src-tauri/src/lib.rs`
-- [x] `project.rs` creates empty `tools/` dir on bootstrap (both new-project list and idempotent maintenance block)
+- [x] `project.rs` left untouched — no on-disk dir for CLI, since the catalog is system state rather than project content
 
 ### Frontend
 - [x] `src/lib/cliCatalog.ts` — 7 entries
 - [x] `src/lib/cliInstall.ts` — TS bridge
-- [x] `src/shell/ToolsPanel.tsx` + `ToolsPanel.module.css`
+- [x] `src/shell/CLIPanel.tsx` + `CLIPanel.module.css`
 - [x] `src/shell/activeSession.ts` — restart pub/sub
 - [x] Entity wiring: `entityIcons.tsx`, `types.ts`, `entityRouting.ts`, `Viewer.tsx`, `Workbench.tsx`, `Shell.tsx`
 
