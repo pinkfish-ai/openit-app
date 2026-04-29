@@ -2,14 +2,12 @@
 // 1. Creating defaults locally without duplicates
 // 2. Creating remote collections locally and syncing their files
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import type { FilestoreCollection } from "./filestoreSync";
 import type { DataCollection } from "./skillsApi";
-import type { PinkfishCreds } from "./pinkfishAuth";
 
 // Mock types for testing
 type MockListResponse = DataCollection[];
-type MockCreateResponse = { id: string; name: string };
 
 /**
  * Test scenario 1: Create defaults if not on local (without dupes)
@@ -130,7 +128,6 @@ describe("Filestore sync: Create defaults without duplicates", () => {
 
     // Simulate first startFilestoreSync call
     const collections1: FilestoreCollection[] = [];
-    const localFolderNames = ["library"];
     const remoteName = "openit-library";
 
     // Both calls do LIST first
@@ -365,10 +362,10 @@ describe("Filestore sync: Create remotes locally and sync files", () => {
 describe("Filestore sync: Filter non-openit collections", () => {
   it("filters out collections without openit- prefix", () => {
     const allRemoteCollections: DataCollection[] = [
-      { id: "1", name: "customer-feedback", type: "filestorage", description: "" },
-      { id: "2", name: "openit-library", type: "filestorage", description: "" },
-      { id: "3", name: "my-docs", type: "filestorage", description: "" },
-      { id: "4", name: "openit-attachments", type: "filestorage", description: "" },
+      { id: "1", name: "customer-feedback", type: "filestorage", description: "", numItems: 0 },
+      { id: "2", name: "openit-library", type: "filestorage", description: "", numItems: 0 },
+      { id: "3", name: "my-docs", type: "filestorage", description: "", numItems: 0 },
+      { id: "4", name: "openit-attachments", type: "filestorage", description: "", numItems: 0 },
     ];
 
     const openitOnly = allRemoteCollections.filter((c) => c.name.startsWith("openit-"));
@@ -381,8 +378,8 @@ describe("Filestore sync: Filter non-openit collections", () => {
 
   it("ensures unrelated collections are never synced locally", () => {
     const allRemoteCollections: DataCollection[] = [
-      { id: "1", name: "customer-feedback", type: "filestorage", description: "" },
-      { id: "2", name: "openit-library", type: "filestorage", description: "" },
+      { id: "1", name: "customer-feedback", type: "filestorage", description: "", numItems: 0 },
+      { id: "2", name: "openit-library", type: "filestorage", description: "", numItems: 0 },
     ];
 
     const openitOnly = allRemoteCollections.filter((c) => c.name.startsWith("openit-"));

@@ -534,32 +534,50 @@ export function FileExplorer({
 
     // Determine which directory was the drop target
     const targetRel = targetPath ? relPath(repo, targetPath) : null;
-    // The 2026-04-27 split made `filestores/` the parent and
-    // `filestores/library/` the canonical drop target for curated
-    // files. Drops on the legacy `filestore` path are remapped to
-    // library so any stale UI references still land somewhere useful.
-    const isFilestoreTarget =
-      (targetRel?.startsWith("filestores/library") ?? false) ||
-      (targetRel?.startsWith("filestores/attachments") ?? false) ||
-      (targetRel?.startsWith("filestores") ?? false) ||
-      (targetRel?.startsWith("filestore") ?? false);
+    // Resolve the target's specific filestore subdirectory.
+    // - `filestores/library`        → write to library/
+    // - `filestores/docs-123`       → write to docs-123/
+    // - `filestores/<any>`          → write to that collection's folder
+    // - `filestores/`               → fall through to library as the
+    //                                 canonical "curated" default
+    // - `filestore` (legacy)        → fall through to library
+    // We deliberately do NOT route drops on `filestores/attachments` or
+    // its per-ticket subfolders here: that surface is server-managed
+    // chat-intake uploads, not a curated drop target.
+    let filestoreSubdir: string | null = null;
+    if (targetRel) {
+      const collectionMatch = targetRel.match(/^filestores\/([^/]+)/);
+      if (collectionMatch) {
+        const collection = collectionMatch[1];
+        // Block drops on attachments — it's a server-managed surface.
+        // Library and any other openit-* collection are valid targets.
+        if (collection !== "attachments") {
+          filestoreSubdir = `filestores/${collection}`;
+        }
+      } else if (targetRel === "filestores" || targetRel === "filestore") {
+        filestoreSubdir = "filestores/library";
+      }
+    }
 
-    if (isFilestoreTarget) {
-      // Drop into filestore — no file type restriction. All filestore
-      // drops route to `filestores/library/` regardless of which
-      // subfolder the user hovered: that's the curated surface admins
-      // populate manually. The `filestores/attachments/` collection is
-      // server-managed (chat-intake uploads) and admins shouldn't
-      // mix curated docs into per-ticket folders by accident.
+    if (filestoreSubdir) {
+      // Drop into the resolved collection subdir — no file type
+      // restriction. Each collection writes only to its own folder, so
+      // the per-collection sync engine pushes only what was actually
+      // dropped there. Pre-fix: every drop went to filestores/library/
+      // and the push iterated every collection from the same dir,
+      // replicating the file across every openit-* collection.
       for (let i = 0; i < files.length; i += 1) {
         const f = files[i];
         const filename = friendlyDroppedFilename(f.name, dragUrls[i]);
         try {
           const buf = await f.arrayBuffer();
           const { fsStoreWriteFileBytes } = await import("../lib/api");
-          await fsStoreWriteFileBytes(repo, filename, buf);
+          await fsStoreWriteFileBytes(repo, filename, buf, filestoreSubdir);
         } catch (err) {
-          console.error(`failed to import ${filename} to filestore:`, err);
+          console.error(
+            `failed to import ${filename} to ${filestoreSubdir}:`,
+            err,
+          );
         }
       }
       reload();
@@ -771,7 +789,12 @@ export function FileExplorer({
                     rel === "filestores" ||
                     rel === "filestores/attachments" ||
                     rel.match(/^filestores\/attachments\/[^/]+$/) ||
-                    rel === "filestores/library" ||
+                    // Any direct child of filestores/ (library, docs-*, or
+                    // any user-created collection) renders as an
+                    // entity-folder file list. Without this, dynamic openit-*
+                    // collections (e.g., filestores/docs-653713545258/)
+                    // would just toggle expansion without opening the viewer.
+                    rel.match(/^filestores\/[^/]+$/) ||
                     // On-demand markdown reports — sorted newest-first
                     // in the entity-folder view via filename prefix.
                     rel === "reports" ||

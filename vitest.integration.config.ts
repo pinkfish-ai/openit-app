@@ -8,8 +8,8 @@ export default defineConfig({
     exclude: ["node_modules"],
     globals: true,
     environment: "node",
-    testTimeout: 30000, // 30 seconds for real API calls
-    hookTimeout: 30000,
+    testTimeout: 60000, // 60 seconds for real API calls (uploads can be slow)
+    hookTimeout: 60000,
     setupFiles: [],
   },
   resolve: {

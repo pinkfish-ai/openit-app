@@ -13,13 +13,16 @@
 //   - Server-side deletion now drops the manifest entry (didn't before).
 // All three are improvements per the plan; flagged here for review.
 
-import { kbListRemote, type KbStatePersisted, fsStoreUploadFile } from "./api";
+import { kbListRemote, fsStoreUploadFile, entityListLocal } from "./api";
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
-import { fsStoreStateLoad, fsStoreStateSave } from "./api";
-import { fsStoreInit, fsStoreListLocal } from "./api";
+import { fsStoreInit } from "./api";
 import { filestoreAdapter, type FilestoreCollection } from "./entities/filestore";
+import {
+  loadCollectionManifest,
+  saveCollectionManifest,
+} from "./filestoreManifest";
 import {
   classifyAsShadow,
   clearConflictsForPrefix,
@@ -27,6 +30,20 @@ import {
   startPolling,
   withRepoLock,
 } from "./syncEngine";
+
+const OPENIT_PREFIX = "openit-";
+
+/// Map a collection name to its local filestore subdirectory.
+/// `openit-library` → `filestores/library`
+/// `openit-docs-123` → `filestores/docs-123`
+/// Mirror of the same logic in entities/filestore.ts so push and pull
+/// agree on which directory to read/write.
+function collectionLocalDir(collectionName: string): string {
+  const folder = collectionName.startsWith(OPENIT_PREFIX)
+    ? collectionName.slice(OPENIT_PREFIX.length)
+    : collectionName;
+  return `filestores/${folder}`;
+}
 
 export type { FilestoreCollection };
 
@@ -419,14 +436,13 @@ export async function startFilestoreSync(args: {
 
   resolvedRepos.add(repo);
 
-  const persisted = await fsStoreStateLoad(repo);
-  if (collections.length > 0 && persisted.collection_id !== collections[0].id) {
-    await fsStoreStateSave(repo, {
-      ...persisted,
-      collection_id: collections[0].id,
-      collection_name: collections[0].name,
-    });
-  }
+  // Pre-multi-collection code wrote the first collection's id to a
+  // top-level collection_id/collection_name field. With the nested
+  // per-collection manifest the top-level fields are obsolete; writing
+  // them re-corrupts the format and forces every adapter through the
+  // migration path on the next load. Don't touch the manifest here —
+  // each adapter loads/saves its own slot via loadCollectionManifest /
+  // saveCollectionManifest.
 
   if (collections.length > 0) {
     // Sync all collections, not just the first one
@@ -544,8 +560,14 @@ async function pushAllToFilestoreInner(args: {
   }
   const urls = derivedUrls(creds.tokenUrl);
 
-  const local = await fsStoreListLocal(repo);
-  const persisted: KbStatePersisted = await fsStoreStateLoad(repo);
+  // Each collection has its own local subdir AND its own manifest entry.
+  // The pre-multi-collection version listed from the hardcoded
+  // filestores/library and shared one manifest, so dropping a file in
+  // library would result in it being uploaded to every other collection
+  // (replication bug) and tracked as if every collection had it.
+  const dir = collectionLocalDir(collection.name);
+  const local = await entityListLocal(repo, dir);
+  const persisted = await loadCollectionManifest(repo, collection.id);
 
   // Sibling-aware shadow exclusion. Pass the full filename set; see
   // classifyAsShadow doc for why pre-filtering is wrong.
@@ -559,7 +581,7 @@ async function pushAllToFilestoreInner(args: {
   });
 
   if (toPush.length === 0) {
-    onLine?.("filestore push: nothing new to upload");
+    onLine?.(`filestore push (${collection.name}): nothing new to upload`);
     update({ phase: "ready" });
     return { pushed: 0, failed: 0 };
   }
@@ -570,23 +592,55 @@ async function pushAllToFilestoreInner(args: {
 
   for (const f of toPush) {
     try {
-      onLine?.(`uploading ${f.filename}`);
-      await fsStoreUploadFile({
+      onLine?.(`uploading ${dir}/${f.filename}`);
+      const result = await fsStoreUploadFile({
         repo,
         filename: f.filename,
         collectionId: collection.id,
         skillsBaseUrl: urls.skillsBaseUrl,
         accessToken: token.accessToken,
+        // Read from THIS collection's subdir, not the legacy library dir.
+        subdir: dir,
       });
-      persisted.files[f.filename] = {
+      // The skills API may sanitize filenames on upload (spaces become
+      // dashes, etc.). When that happens, rename the local file to
+      // match the server's canonical name so the next pull doesn't
+      // download the sanitized version as a "new" file alongside the
+      // original. Pre-fix: dropping `Foo Bar.png` left both
+      // `Foo Bar.png` and `Foo-Bar.png` in the local folder forever.
+      let canonical = f.filename;
+      if (
+        result?.filename &&
+        result.filename !== f.filename &&
+        !result.filename.includes("/") &&
+        !result.filename.includes("\\")
+      ) {
+        try {
+          const { entityRenameFile } = await import("./api");
+          await entityRenameFile(repo, dir, f.filename, result.filename);
+          onLine?.(
+            `  renamed locally: ${f.filename} → ${result.filename}`,
+          );
+          canonical = result.filename;
+        } catch (renameErr) {
+          console.warn(
+            `[filestoreSync] rename ${f.filename}→${result.filename} failed:`,
+            renameErr,
+          );
+          // Fall through using the original name; the next pull will
+          // download the sanitized version as a duplicate. Logged so
+          // the surface is visible during BugBot review.
+        }
+      }
+      persisted.files[canonical] = {
         remote_version: new Date().toISOString(),
         pulled_at_mtime_ms: f.mtime_ms ?? Date.now(),
       };
-      pushedNames.add(f.filename);
+      pushedNames.add(canonical);
       pushed += 1;
     } catch (e) {
       failed += 1;
-      onLine?.(`x ${f.filename}: ${String(e)}`);
+      onLine?.(`x ${dir}/${f.filename}: ${String(e)}`);
     }
   }
 
@@ -609,7 +663,12 @@ async function pushAllToFilestoreInner(args: {
     }
   }
 
-  await fsStoreStateSave(repo, persisted);
+  await saveCollectionManifest(
+    repo,
+    collection.id,
+    collection.name,
+    persisted,
+  );
   update({ phase: "ready" });
   return { pushed, failed };
 }

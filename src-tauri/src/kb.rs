@@ -494,10 +494,12 @@ pub fn fs_store_write_file_bytes(
     repo: String,
     filename: String,
     bytes: Vec<u8>,
+    subdir: Option<String>,
 ) -> Result<(), String> {
-    let dir = fs_dir(&repo);
-    ensure_dir(&dir)?;
-    let path = dir.join(&filename);
+    let path = fs_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
+    if let Some(parent) = path.parent() {
+        ensure_dir(parent)?;
+    }
     fs::write(&path, &bytes).map_err(|e| e.to_string())
 }
 
@@ -571,8 +573,9 @@ pub async fn fs_store_upload_file(
     collection_id: String,
     skills_base_url: String,
     access_token: String,
+    subdir: Option<String>,
 ) -> Result<KbUploadResult, String> {
-    let path = safe_fs_path(&repo, &filename)?;
+    let path = fs_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
     if !path.exists() {
         return Err(format!("file not found: {}", path.display()));
     }
@@ -802,6 +805,45 @@ pub fn entity_delete_file(repo: String, subdir: String, filename: String) -> Res
         fs::remove_file(&path).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// Rename a file within a subdir. Used by filestore push to reconcile
+/// when the server sanitizes a filename (e.g. spaces → dashes) so the
+/// local working tree matches what comes back on the next pull and we
+/// don't end up with both the original and the sanitized version.
+#[tauri::command]
+pub fn entity_rename_file(
+    repo: String,
+    subdir: String,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    if from == to {
+        return Ok(());
+    }
+    if from.is_empty() || to.is_empty() {
+        return Err("filenames must not be empty".into());
+    }
+    if from.contains('/')
+        || from.contains('\\')
+        || to.contains('/')
+        || to.contains('\\')
+    {
+        return Err("filenames must not contain path separators".into());
+    }
+    let dir = Path::new(&repo).join(&subdir);
+    let from_path = dir.join(&from);
+    let to_path = dir.join(&to);
+    if !from_path.exists() {
+        return Ok(());
+    }
+    let repo_canon = fs::canonicalize(&repo).map_err(|e| e.to_string())?;
+    if let Ok(parent_canon) = fs::canonicalize(&dir) {
+        if !parent_canon.starts_with(&repo_canon) {
+            return Err(format!("refusing to rename outside repo: {}", subdir));
+        }
+    }
+    fs::rename(&from_path, &to_path).map_err(|e| e.to_string())
 }
 
 /// Remove all files in `<repo>/<subdir>` then recreate it empty.

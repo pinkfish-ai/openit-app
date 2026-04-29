@@ -564,9 +564,10 @@ export async function fsStoreWriteFileBytes(
   repo: string,
   filename: string,
   bytes: ArrayBuffer | Uint8Array,
+  subdir?: string,
 ): Promise<void> {
   const arr = bytes instanceof Uint8Array ? Array.from(bytes) : Array.from(new Uint8Array(bytes));
-  return invoke("fs_store_write_file_bytes", { repo, filename, bytes: arr });
+  return invoke("fs_store_write_file_bytes", { repo, filename, bytes: arr, subdir: subdir ?? null });
 }
 
 export async function fsStoreStateLoad(repo: string): Promise<KbStatePersisted> {
@@ -622,6 +623,7 @@ export async function fsStoreUploadFile(args: {
   collectionId: string;
   skillsBaseUrl: string;
   accessToken: string;
+  subdir?: string;
 }): Promise<KbUploadResult> {
   return invoke("fs_store_upload_file", {
     repo: args.repo,
@@ -629,6 +631,7 @@ export async function fsStoreUploadFile(args: {
     collectionId: args.collectionId,
     skillsBaseUrl: args.skillsBaseUrl,
     accessToken: args.accessToken,
+    subdir: args.subdir ?? null,
   });
 }
 
@@ -638,6 +641,19 @@ export async function entityWriteFile(repo: string, subdir: string, filename: st
 
 export async function entityDeleteFile(repo: string, subdir: string, filename: string): Promise<void> {
   return invoke("entity_delete_file", { repo, subdir, filename });
+}
+
+/// Rename a file within a subdir. Used to reconcile when the filestore
+/// server sanitizes a filename on upload (e.g. spaces → dashes) so the
+/// local working tree matches the canonical name and the next pull
+/// doesn't create a duplicate.
+export async function entityRenameFile(
+  repo: string,
+  subdir: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  return invoke("entity_rename_file", { repo, subdir, from, to });
 }
 
 export async function entityClearDir(repo: string, subdir: string): Promise<void> {

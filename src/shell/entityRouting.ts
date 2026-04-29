@@ -520,6 +520,16 @@ export async function resolvePathToSource(
   //   reports/      → on-demand generated markdown reports;
   //                  newest sorts to top by filename.
   const kbCollectionMatch = rel.match(/^knowledge-bases\/([^/]+)$/);
+  // Match any direct child of filestores/ that isn't `attachments` (which
+  // has its own per-ticket routing further down). `library`, `docs-<orgId>`,
+  // and any user-created openit-* collection all render as a generic
+  // entity-folder file list. Without this branch, dynamic collections
+  // like `filestores/docs-653713545258/` fall through and get treated as
+  // an unknown directory, which surfaces as the "Is a directory" error
+  // when the viewer tries to read them as files.
+  const filestoreCollectionMatch = rel.match(/^filestores\/([^/]+)$/);
+  const isAttachmentsParent =
+    filestoreCollectionMatch && filestoreCollectionMatch[1] === "attachments";
   const entityFolderEntry: {
     entity: "agents" | "workflows" | "knowledge-base" | "library" | "reports";
   } | null =
@@ -529,7 +539,7 @@ export async function resolvePathToSource(
         ? { entity: "workflows" }
         : kbCollectionMatch
           ? { entity: "knowledge-base" }
-          : rel === "filestores/library"
+          : filestoreCollectionMatch && !isAttachmentsParent
             ? { entity: "library" }
             : rel === "reports"
               ? { entity: "reports" }
