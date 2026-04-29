@@ -1,0 +1,92 @@
+PIN-5775 PHASE 1 — QUICK TESTING REFERENCE
+==========================================
+
+BEFORE YOU START:
+- Open 2 terminal windows
+- Window 1: Run the dev server
+- Window 2: Keep ready for file/directory inspection commands
+
+---
+
+WINDOW 1 — START DEV SERVER:
+
+cd /Users/benrigby/Documents/GitHub/openit-app
+npm run tauri dev
+
+This will:
+  1. Start Vite dev server (http://localhost:5173)
+  2. Start Tauri app window
+  3. Show console output for both processes
+
+WINDOW 2 — INSPECT STATE:
+
+# Check folder structure
+ls -la ~/OpenIT/local/
+
+# Check cloud.json
+cat ~/OpenIT/local/.openit/cloud.json | jq .
+
+# Check fs-state.json
+cat ~/OpenIT/local/.openit/fs-state.json | jq .
+
+# Monitor logs in real-time
+tail -f ~/OpenIT/local/.openit/state.json
+
+---
+
+KEY LOGS TO WATCH (in app console or DevTools):
+
+Look for these patterns to confirm behavior:
+
+[filestoreSync] start – {repo: "..."}
+  → Indicates sync started for a folder
+
+[filestoreSync] Creating remote collection openit-library...
+  → Auto-creating a remote collection from local folder
+
+[filestoreSync] ✓ Created openit-library with id: ...
+  → Collection successfully created
+
+[filestoreSync] Remote collection openit-library already exists
+  → Collection already exists, no creation needed
+
+[filestoreSync] Collection openit-library cached as recently created
+  → Org-scoped cache preventing duplicate creation
+
+---
+
+TESTING FLOW:
+
+1. Delete old state: rm -rf ~/OpenIT/
+2. Start app (WINDOW 1): npm run tauri dev
+3. Watch console for initial bootstrap
+4. Open DevTools: View → Developer → Toggle DevTools
+5. Perform scenario steps
+6. Check logs and file state
+7. Record results in the testing checklist
+
+---
+
+COMMON ISSUES & FIXES:
+
+Issue: "app won't start, port already in use"
+Fix: Kill existing process: pkill -f "tauri"
+
+Issue: "cloud.json not appearing"
+Fix: Check console for bind errors; may be hitting the "already bound to different org" guard
+
+Issue: "collections created twice"
+Fix: This should be fixed by the org-scoped cache. If still happening, check that
+     getOrgCache() is being called and consulted correctly
+
+Issue: "openit-* filter not working"
+Fix: Verify resolveProjectFilestoresImpl filters collection names to start with "openit-"
+
+---
+
+RESET STATE:
+
+To completely reset between scenarios:
+
+rm -rf ~/OpenIT/
+# Then restart app in WINDOW 1
