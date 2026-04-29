@@ -18,12 +18,11 @@ export function ChatShellHeader({
   onNewSession: () => void;
   dragHandle?: ReactNode;
 }) {
-  const [alive, setAlive] = useState<boolean>(() => getActiveSession() !== null);
-
-  useEffect(
-    () => subscribeActiveSession((id) => setAlive(id !== null)),
-    [],
+  const [alive, setAlive] = useState<boolean>(
+    () => getActiveSession() !== null,
   );
+
+  useEffect(() => subscribeActiveSession((id) => setAlive(id !== null)), []);
 
   return (
     <div className="chat-shell-header">

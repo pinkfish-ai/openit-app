@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { claudeDetect, pinkfishListConnections, type UserConnection } from "./lib/api";
+import {
+  claudeDetect,
+  pinkfishListConnections,
+  type UserConnection,
+} from "./lib/api";
 import { PinkfishOauthModal } from "./PinkfishOauthModal";
 import { stopFilestoreSync } from "./lib/filestoreSync";
 import { stopKbSync } from "./lib/kbSync";
@@ -15,6 +19,7 @@ import {
   subscribeToken,
   type PinkfishCreds,
 } from "./lib/pinkfishAuth";
+import type { BrowserConnectState } from "./lib/useBrowserConnect";
 
 const CLAUDE_INSTALL_DOCS = "https://docs.anthropic.com/claude/docs/claude-code";
 const CONNECTIONS_NEW_URL = "https://app.pinkfish.ai/tools/connections/new";
@@ -90,12 +95,20 @@ export function Onboarding({
   initialCreds,
   onPinkfishConnected,
   onContinue,
+  browserConnect,
+  startBrowserConnect,
+  cancelBrowserConnect,
 }: {
   pinkfishConnected: boolean;
   pinkfishOrgName: string | null;
   initialCreds: Partial<PinkfishCreds> | null;
   onPinkfishConnected: (orgName: string | null) => void;
   onContinue: () => void;
+  // Browser-handoff state hoisted to App so the in-shell cloud-cta and
+  // the onboarding screen drive the same flow with shared state.
+  browserConnect: BrowserConnectState;
+  startBrowserConnect: () => void;
+  cancelBrowserConnect: () => void;
 }) {
   const [claudePath, setClaudePath] = useState<string | null | "loading">("loading");
   const [authOpen, setAuthOpen] = useState(false);
@@ -177,24 +190,65 @@ export function Onboarding({
           n={1}
           title={
             pinkfishConnected
-              ? `Connected to ${pinkfishOrgName ?? "Pinkfish"}`
-              : "Connect Pinkfish"
+              ? `Connected to ${pinkfishOrgName ?? "Pinkfish"}. Sync coming soon.`
+              : "Connect to Cloud"
           }
           state={pinkfishConnected ? "done" : "active"}
           detail={
-            pinkfishConnected ? null : (
+            pinkfishConnected ? null : browserConnect.kind === "waiting" ? (
               <>
-                Sign in or create an account to get OAuth credentials, then paste them here.
+                Authorize OpenIT in the browser tab that just opened.
+                We'll detect the response automatically.
+              </>
+            ) : browserConnect.kind === "validating" ? (
+              <>Validating credentials…</>
+            ) : browserConnect.kind === "starting" ? (
+              <>Opening your browser…</>
+            ) : browserConnect.kind === "error" ? (
+              <span style={{ color: "#b91c1c" }}>
+                {browserConnect.message}
+              </span>
+            ) : (
+              <>
+                Open the browser to sign in to Pinkfish and authorize this
+                machine. Or use{" "}
+                <a
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setAuthOpen(true);
+                  }}
+                >
+                  advanced (paste credentials)
+                </a>
+                .
               </>
             )
           }
           action={
-            <button
-              className={pinkfishConnected ? "icon-btn key-set" : "deploy-btn"}
-              onClick={() => setAuthOpen(true)}
-            >
-              {pinkfishConnected ? "Update" : "Connect"}
-            </button>
+            pinkfishConnected ? (
+              <button
+                className="icon-btn key-set"
+                onClick={() => setAuthOpen(true)}
+              >
+                Update
+              </button>
+            ) : browserConnect.kind === "waiting" ||
+              browserConnect.kind === "starting" ||
+              browserConnect.kind === "validating" ? (
+              <button className="icon-btn" onClick={cancelBrowserConnect}>
+                Cancel
+              </button>
+            ) : (
+              <button
+                className="deploy-btn"
+                onClick={startBrowserConnect}
+                disabled={browserConnect.kind !== "idle" &&
+                  browserConnect.kind !== "error"}
+              >
+                Connect
+              </button>
+            )
           }
         />
 

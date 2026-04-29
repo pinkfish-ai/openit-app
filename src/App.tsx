@@ -25,6 +25,7 @@ import {
 import { buildManageState, buildSetupState } from "./lib/connectSlackState";
 import { onFsChanged } from "./lib/fsWatcher";
 import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
+import { useBrowserConnect } from "./lib/useBrowserConnect";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
 import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
@@ -544,7 +545,7 @@ function App() {
 
   const onSyncLine = (line: string) => setSyncLines((prev) => [...prev, line]);
 
-  const onPinkfishConnected = async (incoming: string | null) => {
+  const onPinkfishConnected = useCallback(async (incoming: string | null) => {
     setConnected(true);
     setOrgName(incoming);
     setSavedCreds(await loadCreds());
@@ -578,7 +579,28 @@ function App() {
     } catch (e) {
       console.error("[app] project bootstrap failed:", e);
     }
-  };
+  }, []);
+
+  // Browser-handoff state machine for Connect to Cloud. Hoisted so the
+  // Onboarding screen, the in-shell cloud-cta button, and the header
+  // pill all drive the same flow with shared state. The
+  // ConnectStatusBanner below renders progress regardless of which
+  // screen is currently mounted.
+  //
+  // `onConnected` is wrapped in useCallback so its identity is stable
+  // across renders; otherwise `useBrowserConnect.start` would recreate
+  // every render (its [onConnected] dep), which churns child re-renders
+  // and breaks reference equality on the props passed to Onboarding.
+  const onBrowserConnected = useCallback(
+    (incoming: string | null) => {
+      onPinkfishConnected(incoming);
+      // Drop back into the shell on success — don't bounce the user
+      // to onboarding when they triggered this from the cloud-cta.
+      setBypassOnboarding(true);
+    },
+    [onPinkfishConnected],
+  );
+  const browserConnect = useBrowserConnect({ onConnected: onBrowserConnected });
 
   const showOnboarding = loaded && !bypassOnboarding;
 
@@ -594,6 +616,9 @@ function App() {
         initialCreds={savedCreds}
         onPinkfishConnected={onPinkfishConnected}
         onContinue={() => setBypassOnboarding(true)}
+        browserConnect={browserConnect.state}
+        startBrowserConnect={browserConnect.start}
+        cancelBrowserConnect={browserConnect.cancel}
       />
     );
   }
@@ -628,17 +653,23 @@ function App() {
             className={`icon-btn ${connected ? "key-set" : "icon-btn-primary"}`}
             onClick={() => {
               // Connected admins click the pill to update creds —
-              // jump straight to onboarding. Local-only admins see
-              // the CTA pitch first; the page's primary button
-              // forwards to the same onboarding flow.
+              // jump straight to onboarding. Local-only admins go
+              // through the CTA pitch first (their click on its
+              // primary button triggers the browser handoff).
               if (connected) setBypassOnboarding(false);
               else showCloudCtaRef.current?.();
             }}
+            disabled={browserConnect.state.kind !== "idle" &&
+              browserConnect.state.kind !== "error"}
             title={connected ? "Connected — click to update credentials" : "Connect to Cloud"}
           >
             {connected
               ? `Cloud · ${orgName ?? "connected"}`
-              : "Connect to Cloud"}
+              : browserConnect.state.kind === "waiting"
+                ? "Authorize in browser…"
+                : browserConnect.state.kind === "validating"
+                  ? "Validating…"
+                  : "Connect to Cloud"}
           </button>
         </div>
       </header>
@@ -650,7 +681,7 @@ function App() {
           onSyncLine={onSyncLine}
           bubbles={bubbles}
           cloudConnected={connected}
-          onConnectRequest={() => setBypassOnboarding(false)}
+          onConnectRequest={() => browserConnect.start()}
           intakeUrl={intakeServerUrl}
           skillCanvasState={skillCanvasState}
           skillCanvasOrgId={slackOrgId}
