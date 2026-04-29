@@ -273,8 +273,10 @@ export async function pullDatastoresOnce(args: {
   pulled: number;
   conflicts: DatastoreConflict[];
 }> {
+  let pulledTotal = 0;
   try {
-    await handle.pullAllNow(args);
+    const r = await handle.pullAllNow(args);
+    pulledTotal = r.pulled;
   } catch (e) {
     return { ok: false, error: String(e), pulled: 0, conflicts: [] };
   }
@@ -294,7 +296,7 @@ export async function pullDatastoresOnce(args: {
     key: c.filename,
     reason: c.reason,
   }));
-  return { ok: true, pulled: 0, conflicts: collected };
+  return { ok: true, pulled: pulledTotal, conflicts: collected };
 }
 
 /// Push every locally-edited datastore. Iterates over status.collections

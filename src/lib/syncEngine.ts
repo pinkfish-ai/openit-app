@@ -1122,7 +1122,12 @@ export type CollectionSyncHandle<C extends CollectionLike> = {
   stop: () => void;
 
   // Manual operations — same lock + status discipline as the polling loop.
-  pullAllNow: (args: { creds: PinkfishCreds; repo: string }) => Promise<void>;
+  pullAllNow: (args: { creds: PinkfishCreds; repo: string }) => Promise<{
+    /** Total rows/files pulled across every collection in this run. */
+    pulled: number;
+    /** Total remote rows/files seen across every collection (pre-diff). */
+    total: number;
+  }>;
   pullOne: (args: {
     creds: PinkfishCreds;
     repo: string;
@@ -1574,15 +1579,20 @@ export function createCollectionEntitySync<C extends CollectionLike>(
   async function pullAllNow(args: {
     creds: PinkfishCreds;
     repo: string;
-  }): Promise<void> {
+  }): Promise<{ pulled: number; total: number }> {
+    let pulled = 0;
+    let total = 0;
     for (const collection of status.collections) {
       const adapter = config.buildAdapter({ creds: args.creds, collection });
       try {
-        await runPullWithAdapter({ repo: args.repo, collection, adapter });
+        const r = await runPullWithAdapter({ repo: args.repo, collection, adapter });
+        pulled += r.pulled;
+        total += r.total;
       } catch (e) {
         console.error(`[${tag}:${collection.id}] pullAllNow failed:`, e);
       }
     }
+    return { pulled, total };
   }
 
   async function pullOne(args: {
