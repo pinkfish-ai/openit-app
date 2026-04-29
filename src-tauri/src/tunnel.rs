@@ -218,26 +218,33 @@ where
     })
 }
 
-/// Find the first `https://<sub>.lhr.life` token in a line.
-/// Manual parse to avoid pulling in `regex`.
+/// Find the first `https://<sub>.lhr.life` token in a line. Iterates
+/// over every `https://` so a docs / status URL elsewhere on the line
+/// (which localhost.run could plausibly add to their banner some day)
+/// doesn't make us miss the real tunnel URL after it. Manual parse to
+/// avoid pulling in `regex`.
 fn extract_lhr_url(line: &str) -> Option<String> {
-    let start = line.find("https://")?;
-    // Scan forward until we hit a character that can't appear in a
-    // tunnel hostname. lhr.life subdomains are hex-ish today but the
-    // service has shipped both alphanumeric and dash forms over the
-    // years, so accept the same character class as DNS labels.
-    let tail = &line[start..];
-    let end = tail
-        .char_indices()
-        .find(|(_, c)| !is_url_host_char(*c))
-        .map(|(i, _)| i)
-        .unwrap_or(tail.len());
-    let candidate = &tail[..end];
-    if candidate.ends_with(".lhr.life") {
-        Some(candidate.to_string())
-    } else {
-        None
+    let mut search_from = 0;
+    while let Some(rel) = line[search_from..].find("https://") {
+        let abs = search_from + rel;
+        // Scan forward until we hit a character that can't appear in a
+        // tunnel hostname. lhr.life subdomains are hex-ish today but
+        // the service has shipped both alphanumeric and dash forms
+        // over the years, so accept the same character class as DNS
+        // labels.
+        let tail = &line[abs..];
+        let end = tail
+            .char_indices()
+            .find(|(_, c)| !is_url_host_char(*c))
+            .map(|(i, _)| i)
+            .unwrap_or(tail.len());
+        let candidate = &tail[..end];
+        if candidate.ends_with(".lhr.life") {
+            return Some(candidate.to_string());
+        }
+        search_from = abs + "https://".len();
     }
+    None
 }
 
 fn is_url_host_char(c: char) -> bool {
@@ -268,6 +275,15 @@ mod tests {
     #[test]
     fn ignores_non_lhr_https() {
         assert_eq!(extract_lhr_url("see https://example.com for docs"), None);
+    }
+
+    #[test]
+    fn finds_lhr_url_after_unrelated_https() {
+        let line = "docs at https://localhost.run/docs/ — your URL: https://abc123.lhr.life";
+        assert_eq!(
+            extract_lhr_url(line).as_deref(),
+            Some("https://abc123.lhr.life"),
+        );
     }
 
     #[test]
