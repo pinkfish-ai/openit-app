@@ -34,3 +34,6 @@ Implementation plans live in `auto-dev/plans/`. Current focus is the PIN-5775 ph
 - `auto-dev/plans/2026-04-29-PIN-5775-architecture-fix-summary.md` — architecture notes
 
 Sync-engine architecture and channel strategy: `auto-dev/plans/2026-04-25-bidirectional-sync-plan.md`.
+
+
+To get rid of keychain pop-ups. Follow the steps in openit-app/blob/main/src-tauri/scripts/README.md (need you to do somethings too) to circumvent it.
