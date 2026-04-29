@@ -358,7 +358,6 @@ export function Viewer({
   welcomeFlashKey,
   onOpenPath,
   onConnectCloud,
-  onConnectSlack,
   onGoBack,
   onGoForward,
   canGoBack,
@@ -383,9 +382,6 @@ export function Viewer({
   /** Kick off the Pinkfish onboarding flow. Wired by the cloud-cta
    *  primary button; ignored for every other source kind. */
   onConnectCloud?: () => void;
-  /** Kick off the Slack-connect skill. Wired by the Getting Started
-   *  page's "Connect Slack" button. */
-  onConnectSlack?: () => void;
   /** Browser-style back/forward across the center-pane view history.
    *  Wired by Shell so every page gets the same pair of arrows in
    *  the viewer header instead of relying on per-page back buttons. */
@@ -748,7 +744,7 @@ export function Viewer({
   // --- Title ---
   const getTitle = (): string => {
     switch (source.kind) {
-      case "file": return source.path;
+      case "file": return source.path.split("/").pop() ?? source.path;
       case "sync": return "Sync output";
       case "diff": return "Git diff";
       case "datastore-table": return source.collection?.name ?? "Datastore";
@@ -782,7 +778,6 @@ export function Viewer({
         return `Agent traces — ${source.subject} (${source.docs.length} turn${source.docs.length === 1 ? "" : "s"})`;
       case "people-list":        return "People";
       case "cloud-cta": return "Connect to Pinkfish Cloud";
-      case "getting-started": return "Getting started";
       case "tools": return "Tools";
       default: return "";
     }
@@ -1506,67 +1501,6 @@ export function Viewer({
             <p className="cloud-cta-fineprint">
               Local mode keeps working — cloud just adds.
             </p>
-          </div>
-        </div>
-      );
-    }
-
-    // Getting Started — first-launch / "Getting Started" header
-    // button. Reuses the cloud-cta layout primitives (eyebrow +
-    // headline + lead + card) for a consistent React-rendered look.
-    // Replaces the old _welcome.md markdown surface so we don't
-    // have to maintain a markdown template + a regeneration policy
-    // for existing projects.
-    if (source.kind === "getting-started") {
-      const intakeHref = intakeUrl ?? null;
-      return (
-        <div className="viewer-summary cloud-cta">
-          <p className="cloud-cta-eyebrow">GETTING STARTED</p>
-          <h1 className="cloud-cta-headline">Your AI-driven IT helpdesk.</h1>
-          <p className="cloud-cta-lead">
-            OpenIT runs on your machine. Share the intake link, and an
-            AI agent triages every question — answering directly or
-            escalating to you when it can't.
-          </p>
-
-          <div className="cloud-cta-card">
-            <h2 className="cloud-cta-card-title">Try it in 30 seconds</h2>
-            <p className="cloud-cta-card-body">
-              Open the intake page and ask a question yourself —{" "}
-              <em>"I can't log in"</em>, <em>"how do I reset my VPN"</em> —
-              to see how the agent handles it.
-            </p>
-          </div>
-
-          <div className="cloud-cta-actions">
-            <button
-              type="button"
-              className="cloud-cta-primary"
-              onClick={() => {
-                if (intakeHref) {
-                  openUrl(intakeHref).catch((err) =>
-                    console.warn("[viewer] intake openUrl failed:", err),
-                  );
-                }
-              }}
-              disabled={!intakeHref}
-              title={
-                intakeHref
-                  ? "Open the intake page in your browser"
-                  : "Intake server still starting…"
-              }
-            >
-              Open the intake page
-            </button>
-            <button
-              type="button"
-              className="cloud-cta-secondary"
-              onClick={() => onConnectSlack?.()}
-              disabled={!onConnectSlack}
-              title="Connect a Slack workspace so the agent can post and read there"
-            >
-              Connect Slack
-            </button>
           </div>
         </div>
       );

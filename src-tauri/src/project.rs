@@ -58,14 +58,9 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     let path: PathBuf = [&home, "OpenIT", &org_id].iter().collect();
 
     let already_existed = path.exists();
+    let _ = (org_name, org_id);
     if !already_existed {
         fs::create_dir_all(&path).map_err(|e| format!("create_dir_all failed: {}", e))?;
-        // _welcome.md used to live here as the first-launch surface;
-        // the React Getting Started page (Viewer.tsx kind:
-        // "getting-started") replaces it, so no markdown file is
-        // written. Existing projects with the legacy file on disk
-        // still work — the viewer just doesn't auto-open it anymore.
-        let _ = (org_name, org_id);
 
         // Create standard subdirectories so they appear in the file
         // explorer even if empty. The three core datastore dirs
@@ -120,6 +115,27 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     // Same idempotent guard for `reports/` so projects bootstrapped
     // before the reports feature shipped get the dir on next open.
     let _ = fs::create_dir_all(path.join("reports"));
+
+    // First-launch Getting Started page. Idempotent: only writes when
+    // the file is missing, so user edits survive across app launches.
+    // `{{INTAKE_URL}}` is substituted by the markdown viewer at render
+    // time (the URL changes per app launch — different OS-assigned
+    // port — so a static URL can't be baked in here).
+    let getting_started_path = path.join("getting-started.md");
+    if !getting_started_path.exists() {
+        let getting_started = "# Getting started\n\n\
+             ## Your AI-driven IT helpdesk.\n\n\
+             OpenIT runs on your machine. Share the intake link, and an \
+             AI agent triages every question — answering directly or \
+             escalating to you when it can't.\n\n\
+             ## Try it in 30 seconds\n\n\
+             Open the intake page and ask a question yourself — \
+             *\"I can't log in\"*, *\"how do I reset my VPN\"* — to see \
+             how the agent handles it.\n\n\
+             [**Open the intake page**]({{INTAKE_URL}})\n\n\
+             [**Connect Slack**](openit://skill/connect-slack)\n";
+        let _ = fs::write(&getting_started_path, getting_started);
+    }
 
     // One-time migration: legacy `filestore/<file>` content moves into
     // the new `filestores/library/<file>` location. Idempotent — runs
