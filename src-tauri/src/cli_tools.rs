@@ -28,6 +28,24 @@ pub fn cli_is_installed(binary: String) -> bool {
     which::which(&binary).is_ok()
 }
 
+/// Returns the target OS as a stable string the frontend can branch on:
+/// "macos", "windows", "linux", or "unknown". macOS keeps the
+/// programmatic brew install path; everywhere else routes through
+/// Claude (which knows the right per-OS install method and avoids us
+/// maintaining a per-tool, per-OS install matrix).
+#[tauri::command]
+pub fn cli_target_os() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "unknown"
+    }
+}
+
 #[derive(serde::Deserialize)]
 pub struct CliInstallArgs {
     pub project_root: String,

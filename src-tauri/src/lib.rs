@@ -72,6 +72,7 @@ pub fn run() {
             git_ops::git_global_user_email,
             claude::claude_generate_commit_message,
             cli_tools::cli_is_installed,
+            cli_tools::cli_target_os,
             cli_tools::cli_install,
             cli_tools::cli_uninstall,
             cli_tools::cli_remove_hint_only,

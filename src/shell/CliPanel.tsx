@@ -1,21 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 import { CATALOG, type CatalogEntry } from "../lib/cliCatalog";
 import {
+  getTargetOs,
   installCli,
   listInstalled,
   removeHintOnly,
-  requestInstallDebug,
-  requestUninstallDebug,
+  requestAgentInstall,
+  requestAgentUninstall,
   uninstallCli,
   UninstallError,
+  type TargetOs,
 } from "../lib/cliInstall";
 import styles from "./CliPanel.module.css";
 
 /// CLI catalog rendered into the center pane via the `cli` entity
-/// route. Programmatic install runs `brew install` directly (fast
-/// happy path, deterministic UI state); on brew failure we surface the
-/// captured stderr with an "Ask Claude to debug" button that hands
-/// off to the agent with the actual error.
+/// route.
+///
+/// **macOS:** programmatic `brew install` runs directly so the UI sees
+/// deterministic state. On brew failure the inline error block surfaces
+/// the captured stderr and offers an "Ask Claude to debug" handoff.
+///
+/// **Windows / Linux:** there's no programmatic happy path — too much
+/// per-OS, per-tool variation to maintain. Click Install hands off to
+/// Claude immediately with the target OS as context; the card flips to
+/// "Sent to Claude →" and the user watches the agent work.
 
 type CardStatus =
   | { kind: "idle" }
@@ -24,9 +32,6 @@ type CardStatus =
       kind: "failed";
       verb: "install" | "uninstall";
       stderr: string;
-      /// Set when the user clicked "Ask Claude to debug" but no PTY
-      /// session was active. Lets the inline error append a hint
-      /// telling them to start Claude.
       claudeSessionMissing?: boolean;
     }
   | { kind: "handed-off" };
@@ -35,6 +40,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
   const [installed, setInstalled] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [statuses, setStatuses] = useState<Record<string, CardStatus>>({});
+  const [targetOs, setTargetOs] = useState<TargetOs | null>(null);
 
   const refreshInstalled = async () => {
     if (!projectRoot) return;
@@ -44,6 +50,10 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
       console.error("[CliPanel] listInstalled failed:", e);
     }
   };
+
+  useEffect(() => {
+    void getTargetOs().then(setTargetOs);
+  }, []);
 
   useEffect(() => {
     refreshInstalled();
@@ -70,8 +80,44 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
   const setStatus = (id: string, status: CardStatus) =>
     setStatuses((prev) => ({ ...prev, [id]: status }));
 
+  /// Fire the "Sent to Claude" feedback transient. After 4s the card
+  /// drops back to its baseline state — the user's eye is in the chat
+  /// watching Claude work, and the catalog will reflect reality on
+  /// next `listInstalled` refresh.
+  const flashHandedOff = (id: string) => {
+    setStatus(id, { kind: "handed-off" });
+    setTimeout(() => {
+      setStatuses((prev) => {
+        if (prev[id]?.kind !== "handed-off") return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }, 4000);
+  };
+
   const onInstall = async (entry: CatalogEntry) => {
-    if (!projectRoot) return;
+    if (!projectRoot || !targetOs) return;
+    if (targetOs !== "macos") {
+      // Non-mac: hand off to Claude immediately. No brew on this box.
+      const sent = await requestAgentInstall(entry, {
+        kind: "non-macos",
+        targetOs,
+      });
+      if (!sent) {
+        setStatus(entry.id, {
+          kind: "failed",
+          verb: "install",
+          stderr: "No active Claude session.",
+          claudeSessionMissing: true,
+        });
+        return;
+      }
+      flashHandedOff(entry.id);
+      return;
+    }
+
+    // macOS happy path: programmatic brew install.
     setStatus(entry.id, { kind: "busy", verb: "install" });
     try {
       await installCli(projectRoot, entry);
@@ -84,7 +130,29 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
   };
 
   const onUninstall = async (entry: CatalogEntry) => {
-    if (!projectRoot) return;
+    if (!projectRoot || !targetOs) return;
+    if (targetOs !== "macos") {
+      const ok = window.confirm(
+        `Hand off uninstall of ${entry.name} to Claude? It'll pick the right uninstall method for ${targetOs}.`,
+      );
+      if (!ok) return;
+      const sent = await requestAgentUninstall(entry, {
+        kind: "non-macos",
+        targetOs,
+      });
+      if (!sent) {
+        setStatus(entry.id, {
+          kind: "failed",
+          verb: "uninstall",
+          stderr: "No active Claude session.",
+          claudeSessionMissing: true,
+        });
+        return;
+      }
+      flashHandedOff(entry.id);
+      return;
+    }
+
     const ok = window.confirm(
       `Uninstall ${entry.name}? This will run \`brew uninstall ${entry.brewPkg}\`.`,
     );
@@ -95,9 +163,6 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
       setStatus(entry.id, { kind: "idle" });
       await refreshInstalled();
     } catch (e) {
-      // brew uninstall failed (probably not brew-managed). The
-      // CLAUDE.md hint is already gone — refresh installed state and
-      // surface the error with a debug-handoff button.
       const stderr = e instanceof UninstallError ? e.message : String(e);
       setStatus(entry.id, { kind: "failed", verb: "uninstall", stderr });
       await refreshInstalled();
@@ -106,25 +171,23 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
 
   const onAskClaude = async (entry: CatalogEntry, status: CardStatus) => {
     if (status.kind !== "failed") return;
+    // Brew-failed handoff carries the captured stderr. Same agent
+    // path as the non-mac install, different context.
     const sent =
       status.verb === "install"
-        ? await requestInstallDebug(entry, status.stderr)
-        : await requestUninstallDebug(entry, status.stderr);
+        ? await requestAgentInstall(entry, {
+            kind: "brew-failed",
+            stderr: status.stderr,
+          })
+        : await requestAgentUninstall(entry, {
+            kind: "brew-failed",
+            stderr: status.stderr,
+          });
     if (!sent) {
-      // No active Claude session — surface that on the existing
-      // failure block instead of letting the click look broken.
       setStatus(entry.id, { ...status, claudeSessionMissing: true });
       return;
     }
-    setStatus(entry.id, { kind: "handed-off" });
-    setTimeout(() => {
-      setStatuses((prev) => {
-        if (prev[entry.id]?.kind !== "handed-off") return prev;
-        const next = { ...prev };
-        delete next[entry.id];
-        return next;
-      });
-    }, 4000);
+    flashHandedOff(entry.id);
   };
 
   const onRemoveHintOnly = async (entry: CatalogEntry) => {
@@ -174,6 +237,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
             entry={entry}
             installed={installed.has(entry.id)}
             status={statuses[entry.id] ?? { kind: "idle" }}
+            targetOs={targetOs}
             onInstall={() => onInstall(entry)}
             onUninstall={() => onUninstall(entry)}
             onAskClaude={(s) => onAskClaude(entry, s)}
@@ -190,6 +254,7 @@ function CliCard({
   entry,
   installed,
   status,
+  targetOs,
   onInstall,
   onUninstall,
   onAskClaude,
@@ -199,6 +264,7 @@ function CliCard({
   entry: CatalogEntry;
   installed: boolean;
   status: CardStatus;
+  targetOs: TargetOs | null;
   onInstall: () => void;
   onUninstall: () => void;
   onAskClaude: (s: CardStatus) => void;
@@ -207,6 +273,7 @@ function CliCard({
 }) {
   const busy = status.kind === "busy";
   const handedOff = status.kind === "handed-off";
+  const isMac = targetOs === "macos";
 
   let primaryLabel: string;
   let primaryHandler: () => void;
@@ -218,11 +285,11 @@ function CliCard({
     primaryLabel = status.verb === "install" ? "Installing…" : "Uninstalling…";
     primaryHandler = () => {};
   } else if (installed) {
-    primaryLabel = "Uninstall";
+    primaryLabel = isMac ? "Uninstall" : "Uninstall via Claude →";
     primaryHandler = onUninstall;
     primaryDanger = true;
   } else {
-    primaryLabel = "Install locally";
+    primaryLabel = isMac ? "Install locally" : "Install via Claude →";
     primaryHandler = onInstall;
   }
 
@@ -242,7 +309,7 @@ function CliCard({
           type="button"
           className={`${styles.btn} ${primaryDanger ? styles.btnDanger : styles.btnPrimary}`}
           onClick={primaryHandler}
-          disabled={busy || handedOff}
+          disabled={busy || handedOff || targetOs === null}
         >
           {primaryLabel}
         </button>
@@ -261,7 +328,7 @@ function CliCard({
             {status.verb === "install" ? "Install failed." : "Uninstall failed."}
           </span>
           <pre className={styles.errorStderr}>{status.stderr}</pre>
-          {status.verb === "uninstall" && (
+          {status.verb === "uninstall" && isMac && (
             <span className={styles.errorHelper}>
               The CLAUDE.md hint may still be present — use "Just dismiss the
               hint" if you want to clean it up without retrying brew.
@@ -281,7 +348,7 @@ function CliCard({
             >
               Ask Claude to debug ↗
             </button>
-            {status.verb === "uninstall" && (
+            {status.verb === "uninstall" && isMac && (
               <button
                 type="button"
                 className={styles.errorRecovery}

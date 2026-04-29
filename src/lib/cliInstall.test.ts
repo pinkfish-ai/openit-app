@@ -12,13 +12,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { writeToActiveSession } from "../shell/activeSession";
 import { CATALOG, findEntry } from "./cliCatalog";
 import {
-  buildInstallDebugPrompt,
-  buildUninstallDebugPrompt,
+  buildAgentInstallPrompt,
+  buildAgentUninstallPrompt,
   installCli,
   listInstalled,
   removeHintOnly,
-  requestInstallDebug,
-  requestUninstallDebug,
+  requestAgentInstall,
+  requestAgentUninstall,
   uninstallCli,
   UninstallError,
 } from "./cliInstall";
@@ -51,7 +51,7 @@ describe("listInstalled", () => {
   });
 });
 
-describe("installCli", () => {
+describe("installCli (macOS programmatic path)", () => {
   it("invokes cli_install with the entry's brew_pkg, id, and CLAUDE.md hint", async () => {
     mockedInvoke.mockResolvedValueOnce(undefined);
     const entry = findEntry("gh")!;
@@ -89,7 +89,7 @@ describe("uninstallCli", () => {
     });
   });
 
-  it("wraps brew failures in UninstallError with hintRemoved=true", async () => {
+  it("wraps brew failures in UninstallError", async () => {
     mockedInvoke.mockRejectedValueOnce(new Error("brew uninstall failed"));
     const entry = CATALOG[0];
     try {
@@ -97,7 +97,6 @@ describe("uninstallCli", () => {
       expect.fail("expected UninstallError");
     } catch (e) {
       expect(e).toBeInstanceOf(UninstallError);
-      expect((e as UninstallError).hintRemoved).toBe(true);
     }
   });
 });
@@ -114,11 +113,14 @@ describe("removeHintOnly", () => {
   });
 });
 
-describe("buildInstallDebugPrompt", () => {
-  it("includes the brew command, the captured stderr, the docs URL, and the marker line", () => {
+describe("buildAgentInstallPrompt — brew-failed context", () => {
+  it("includes the brew command, captured stderr, docs URL, and marker line", () => {
     const entry = findEntry("gh")!;
     const stderr = "Error: No formula with name 'gh' found";
-    const prompt = buildInstallDebugPrompt(entry, stderr);
+    const prompt = buildAgentInstallPrompt(entry, {
+      kind: "brew-failed",
+      stderr,
+    });
     expect(prompt).toContain(`brew install ${entry.brewPkg}`);
     expect(prompt).toContain(stderr);
     expect(prompt).toContain(entry.docsUrl);
@@ -127,39 +129,85 @@ describe("buildInstallDebugPrompt", () => {
   });
 });
 
-describe("buildUninstallDebugPrompt", () => {
-  it("includes the brew uninstall command and the captured stderr", () => {
-    const entry = CATALOG[0];
-    const stderr = "Error: No such keg";
-    const prompt = buildUninstallDebugPrompt(entry, stderr);
-    expect(prompt).toContain(`brew uninstall ${entry.brewPkg}`);
-    expect(prompt).toContain(stderr);
-    expect(prompt).toContain(entry.id);
+describe("buildAgentInstallPrompt — non-macos context", () => {
+  it("identifies the target OS, gives the brew package as a hint, and includes the marker line", () => {
+    const entry = findEntry("aws")!;
+    const prompt = buildAgentInstallPrompt(entry, {
+      kind: "non-macos",
+      targetOs: "windows",
+    });
+    expect(prompt).toContain("windows");
+    expect(prompt).toContain(entry.brewPkg);
+    expect(prompt).toContain(entry.docsUrl);
+    expect(prompt).toContain(`<!-- entry:${entry.id} -->`);
+    expect(prompt).not.toContain("brew install"); // not the right command on windows
+  });
+
+  it("works for linux too", () => {
+    const entry = findEntry("gh")!;
+    const prompt = buildAgentInstallPrompt(entry, {
+      kind: "non-macos",
+      targetOs: "linux",
+    });
+    expect(prompt).toContain("linux");
+    expect(prompt).toContain(entry.binary);
   });
 });
 
-describe("requestInstallDebug / requestUninstallDebug", () => {
-  it("writes the install-debug prompt to the active session", async () => {
+describe("buildAgentUninstallPrompt", () => {
+  it("brew-failed context includes the brew uninstall command and stderr", () => {
+    const entry = CATALOG[0];
+    const prompt = buildAgentUninstallPrompt(entry, {
+      kind: "brew-failed",
+      stderr: "Error: No such keg",
+    });
+    expect(prompt).toContain(`brew uninstall ${entry.brewPkg}`);
+    expect(prompt).toContain("No such keg");
+  });
+
+  it("non-macos context identifies the OS and the marker entry to remove", () => {
+    const entry = CATALOG[0];
+    const prompt = buildAgentUninstallPrompt(entry, {
+      kind: "non-macos",
+      targetOs: "linux",
+    });
+    expect(prompt).toContain("linux");
+    expect(prompt).toContain(`<!-- entry:${entry.id} -->`);
+    expect(prompt).not.toContain("brew uninstall");
+  });
+});
+
+describe("requestAgentInstall / requestAgentUninstall", () => {
+  it("writes the prompt to the active session", async () => {
     mockedWrite.mockResolvedValueOnce(true);
     const entry = findEntry("gh")!;
-    const ok = await requestInstallDebug(entry, "Some error");
+    const ok = await requestAgentInstall(entry, {
+      kind: "non-macos",
+      targetOs: "linux",
+    });
     expect(ok).toBe(true);
     const written = mockedWrite.mock.calls[0][0];
     expect(written.endsWith("\r")).toBe(true);
-    expect(written).toContain("Some error");
+    expect(written).toContain("linux");
   });
 
   it("returns false when no Claude session is active", async () => {
     mockedWrite.mockResolvedValueOnce(false);
     const entry = findEntry("gh")!;
-    const ok = await requestInstallDebug(entry, "stderr");
+    const ok = await requestAgentInstall(entry, {
+      kind: "brew-failed",
+      stderr: "boom",
+    });
     expect(ok).toBe(false);
   });
 
-  it("uninstall debug writes the uninstall prompt", async () => {
+  it("uninstall variant writes the uninstall prompt", async () => {
     mockedWrite.mockResolvedValueOnce(true);
     const entry = CATALOG[0];
-    await requestUninstallDebug(entry, "uninstall stderr");
+    await requestAgentUninstall(entry, {
+      kind: "brew-failed",
+      stderr: "uninstall stderr",
+    });
     const written = mockedWrite.mock.calls[0][0];
     expect(written).toContain("uninstall stderr");
     expect(written).toContain(`brew uninstall ${entry.brewPkg}`);
