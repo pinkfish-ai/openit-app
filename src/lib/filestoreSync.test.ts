@@ -11,6 +11,7 @@ import type { DataCollection } from "./skillsApi";
 import {
   OPENIT_FILESTORE_PREFIX,
   dedupeByName,
+  dedupeOpenitByName,
   displayFilestoreName,
   getDefaultFilestores,
 } from "./filestoreSync";
@@ -128,6 +129,60 @@ describe("dedupeByName", () => {
       defaults,
     );
     expect(result[0].description).toBe("remote desc");
+  });
+});
+
+describe("dedupeOpenitByName", () => {
+  // Permissive variant: the runtime resolver wants every openit-* collection
+  // (defaults + per-org dynamic ones), not just the hardcoded defaults. These
+  // tests pin the divergence from `dedupeByName` so the two helpers can't
+  // silently re-converge.
+
+  it("keeps every openit-* collection, not just the defaults", () => {
+    const result = dedupeOpenitByName([
+      row({ id: "1", name: "openit-library" }),
+      row({ id: "2", name: "openit-attachments" }),
+      row({ id: "3", name: "openit-experimental" }),
+      row({ id: "4", name: "openit-docs-653713545258" }),
+    ]);
+    expect(result.map((c) => c.name).sort()).toEqual([
+      "openit-attachments",
+      "openit-docs-653713545258",
+      "openit-experimental",
+      "openit-library",
+    ]);
+  });
+
+  it("filters out collections without the openit- prefix", () => {
+    const result = dedupeOpenitByName([
+      row({ id: "1", name: "customer-feedback" }),
+      row({ id: "2", name: "openit-library" }),
+      row({ id: "3", name: "internal-archive" }),
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("openit-library");
+  });
+
+  it("returns the lexicographically smallest id when duplicates exist", () => {
+    const result = dedupeOpenitByName([
+      row({ id: "Z", name: "openit-library" }),
+      row({ id: "A", name: "openit-library" }),
+      row({ id: "M", name: "openit-library" }),
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("A");
+  });
+
+  it("returns an empty list for an empty input", () => {
+    expect(dedupeOpenitByName([])).toEqual([]);
+  });
+
+  it("preserves description from the winning row", () => {
+    const result = dedupeOpenitByName([
+      row({ id: "1", name: "openit-library", description: "winner" }),
+      row({ id: "2", name: "openit-library", description: "loser" }),
+    ]);
+    expect(result[0].description).toBe("winner");
   });
 });
 

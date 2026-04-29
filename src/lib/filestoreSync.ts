@@ -144,6 +144,25 @@ function update(patch: Partial<FilestoreSyncStatus>) {
 // single scalar that the loop kept overwriting, leaking earlier pollers.
 let stopPolls: Array<() => void> = [];
 
+// Per-collection conflict tracking. Pre-fix, every poll callback set
+// `status.conflicts` to only the firing collection's conflicts, so the
+// last poll to complete clobbered every other collection's entries. We
+// now keep one slot per collection and rebuild status.conflicts from
+// the union on every update.
+const conflictsByCollection = new Map<string, ConflictFile[]>();
+function flattenConflicts(): ConflictFile[] {
+  const out: ConflictFile[] = [];
+  for (const list of conflictsByCollection.values()) out.push(...list);
+  return out;
+}
+
+// Track every adapter prefix this run created so stopFilestoreSync can
+// drop their entries from the engine's per-prefix conflict aggregate.
+// Pre-fix the wrapper called clearConflictsForPrefix("filestore"), but
+// the actual prefixes are filestores/<folder>, so the call cleared
+// nothing.
+const activePrefixes = new Set<string>();
+
 // ---------------------------------------------------------------------------
 // Resolve helpers — REST API via skillsApi. Unchanged from pre-engine; the
 // resolve flow is filestore-specific and doesn't fit the engine.
@@ -194,20 +213,15 @@ export function dedupeByName(
   return Array.from(byName.values());
 }
 
-async function resolveProjectFilestoresImpl(
-  creds: PinkfishCreds,
-  onLog?: (msg: string) => void,
-): Promise<FilestoreCollection[]> {
-  console.log("[filestore] resolveProjectFilestores called for org:", creds.orgId);
-  const token = getToken();
-  if (!token) throw new Error("not authenticated");
-
-  const all = await listFilestoreCollections(creds);
-  // Return ALL openit-* collections, not just hardcoded defaults.
-  // Dedupe by name — if the API returned multiple collections with the
-  // same name, two adapters would point at the same `filestores/<x>/`
-  // folder and clobber each other. Keep the lex-smallest id so every
-  // caller in the same session converges on the same collection.
+/// Permissive variant: dedupe by name across **all** openit-* collections
+/// without filtering to the hardcoded defaults. Phase 1 returns every
+/// openit-* collection (defaults + per-org dynamic ones); the tighter
+/// `dedupeByName` is kept for callers that explicitly want defaults-only
+/// behavior. Both helpers share the same lex-smallest-id tie-break so a
+/// session converges on the same collection across every callsite.
+export function dedupeOpenitByName(
+  all: DataCollection[],
+): FilestoreCollection[] {
   const byName = new Map<string, FilestoreCollection>();
   for (const c of all) {
     if (!c.name.startsWith(OPENIT_FILESTORE_PREFIX)) continue;
@@ -217,7 +231,22 @@ async function resolveProjectFilestoresImpl(
       byName.set(c.name, candidate);
     }
   }
-  const openit = Array.from(byName.values());
+  return Array.from(byName.values());
+}
+
+async function resolveProjectFilestoresImpl(
+  creds: PinkfishCreds,
+  onLog?: (msg: string) => void,
+): Promise<FilestoreCollection[]> {
+  console.log("[filestore] resolveProjectFilestores called for org:", creds.orgId);
+  const token = getToken();
+  if (!token) throw new Error("not authenticated");
+
+  const all = await listFilestoreCollections(creds);
+  // Return every openit-* collection, deduped by name (lex-smallest id
+  // wins). Implementation lives in `dedupeOpenitByName` so unit tests
+  // pin the exact behavior the runtime uses.
+  const openit = dedupeOpenitByName(all);
 
   console.log(
     `[filestore] ✓ Found ${all.length} filestore collections, ${openit.length} with openit-* prefix`,
@@ -277,6 +306,7 @@ async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataColle
 async function runPull(args: {
   repo: string;
   adapter: ReturnType<typeof filestoreAdapter>;
+  collectionId: string;
 }): Promise<{ downloaded: number; total: number }> {
   // All status updates fire inside the engine's per-repo lock — see the
   // matching comment in kbSync.runPull for rationale.
@@ -285,13 +315,16 @@ async function runPull(args: {
       if (phase === "pulling") update({ phase: "pulling" });
     },
     onResult: (r) => {
-      const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
-        filename: c.manifestKey,
-        reason: "local-and-remote-changed",
-      }));
+      conflictsByCollection.set(
+        args.collectionId,
+        r.conflicts.map((c) => ({
+          filename: c.manifestKey,
+          reason: "local-and-remote-changed",
+        })),
+      );
       update({
         phase: "ready",
-        conflicts,
+        conflicts: flattenConflicts(),
         lastPullAt: Date.now(),
         lastError: null,
       });
@@ -314,6 +347,9 @@ export async function startFilestoreSync(args: {
 
   for (const stop of stopPolls) stop();
   stopPolls = [];
+  conflictsByCollection.clear();
+  for (const prefix of activePrefixes) clearConflictsForPrefix(prefix);
+  activePrefixes.clear();
 
   update({ phase: "resolving", lastError: null });
 
@@ -461,14 +497,15 @@ export async function startFilestoreSync(args: {
     for (const collection of collections) {
       console.log(`[filestoreSync] starting pull for collection: ${collection.name} (id: ${collection.id})`);
       const adapter = filestoreAdapter({ creds, collection });
+      activePrefixes.add(adapter.prefix);
       try {
         console.log(`[filestoreSync] calling runPull for ${collection.name}...`);
-        const result = await runPull({ repo, adapter });
+        const result = await runPull({ repo, adapter, collectionId: collection.id });
         console.log(`[filestoreSync] runPull completed for ${collection.name}: ${result.downloaded}/${result.total} files`);
       } catch (e) {
         console.error(`[filestoreSync] initial pull failed for ${collection.name}:`, e);
       }
-      
+
       console.log(`[filestoreSync] starting polling for ${collection.name}...`);
       stopPolls.push(startPolling(adapter, repo, {
         onPhase: (phase) => {
@@ -477,13 +514,16 @@ export async function startFilestoreSync(args: {
         },
         onResult: (r) => {
           console.log(`[filestoreSync] poll result for ${collection.name}: ${r.pulled} pulled, ${r.remoteCount} remote, ${r.conflicts.length} conflicts`);
-          const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
-            filename: c.manifestKey,
-            reason: "local-and-remote-changed",
-          }));
+          conflictsByCollection.set(
+            collection.id,
+            r.conflicts.map((c) => ({
+              filename: c.manifestKey,
+              reason: "local-and-remote-changed",
+            })),
+          );
           update({
             phase: "ready",
-            conflicts,
+            conflicts: flattenConflicts(),
             lastPullAt: Date.now(),
             lastError: null,
           });
@@ -503,6 +543,12 @@ export async function startFilestoreSync(args: {
 export function stopFilestoreSync() {
   for (const stop of stopPolls) stop();
   stopPolls = [];
+  conflictsByCollection.clear();
+  // Clear each adapter's contribution to the engine's conflict aggregate.
+  // Pre-fix this called clearConflictsForPrefix("filestore"), but the
+  // actual prefixes are filestores/<folder> so the call cleared nothing.
+  for (const prefix of activePrefixes) clearConflictsForPrefix(prefix);
+  activePrefixes.clear();
   update({
     phase: "idle",
     collections: [],
@@ -510,7 +556,6 @@ export function stopFilestoreSync() {
     lastError: null,
   });
   resolvedRepos.clear();
-  clearConflictsForPrefix("filestore");
 }
 
 /// Manual single-shot pull. Used by Shell.tsx's ↻ button and the modal
@@ -532,7 +577,7 @@ export async function pullOnce(args: {
 }> {
   const adapter = filestoreAdapter({ creds: args.creds, collection: args.collection });
   try {
-    const r = await runPull({ repo: args.repo, adapter });
+    const r = await runPull({ repo: args.repo, adapter, collectionId: args.collection.id });
     return { ok: true, ...r };
   } catch (e) {
     console.error("[filestoreSync] pullOnce failed:", e);

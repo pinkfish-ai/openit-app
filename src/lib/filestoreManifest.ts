@@ -18,11 +18,36 @@ export type FilestoreManifestRoot = {
   [collectionId: string]: KbStatePersisted;
 };
 
+// Per-repo serialization for the manifest read-modify-write.
+// The engine's withRepoLock keys on adapter.prefix, which is unique per
+// collection (filestores/library, filestores/attachments, …). That gives
+// each collection its own lock — fine for the per-collection working
+// tree, but two pollers can still race on the *shared* root manifest at
+// .openit/fs-state.json. Without this queue, both reads see the same
+// snapshot, each writes only its own slot, and the second write silently
+// drops the first's update. Promise chain keyed by repo path keeps every
+// load/save pair atomic across all collections in that repo.
+const repoManifestLocks = new Map<string, Promise<unknown>>();
+
+function withRepoManifestLock<T>(repo: string, fn: () => Promise<T>): Promise<T> {
+  const previous = repoManifestLocks.get(repo) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(fn);
+  repoManifestLocks.set(repo, next.catch(() => undefined));
+  return next;
+}
+
 /// Load the manifest for a specific collection from the shared root manifest.
 /// If the root doesn't exist, returns default for this collection.
 /// If root exists but this collection isn't in it, returns default for this collection.
 /// Preserves all other collections' state in the file.
 export async function loadCollectionManifest(
+  repo: string,
+  collectionId: string,
+): Promise<KbStatePersisted> {
+  return withRepoManifestLock(repo, () => loadCollectionManifestImpl(repo, collectionId));
+}
+
+async function loadCollectionManifestImpl(
   repo: string,
   collectionId: string,
 ): Promise<KbStatePersisted> {
@@ -64,6 +89,17 @@ export async function loadCollectionManifest(
 /// Save the manifest for a specific collection, preserving all other collections.
 /// Loads the root, updates this collection's entry, saves root.
 export async function saveCollectionManifest(
+  repo: string,
+  collectionId: string,
+  collectionName: string,
+  manifest: KbStatePersisted,
+): Promise<void> {
+  return withRepoManifestLock(repo, () =>
+    saveCollectionManifestImpl(repo, collectionId, collectionName, manifest),
+  );
+}
+
+async function saveCollectionManifestImpl(
   repo: string,
   collectionId: string,
   collectionName: string,
