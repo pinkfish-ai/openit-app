@@ -448,26 +448,6 @@ fn fs_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(FS_DIR)
 }
 
-fn safe_fs_path(repo: &str, filename: &str) -> Result<PathBuf, String> {
-    if filename.is_empty() {
-        return Err("filename is empty".into());
-    }
-    if filename.contains('/') || filename.contains('\\') {
-        return Err(format!(
-            "filename must not contain path separators: {}",
-            filename
-        ));
-    }
-    let as_path = Path::new(filename);
-    if as_path.is_absolute() || as_path.components().count() != 1 {
-        return Err(format!("invalid filename: {}", filename));
-    }
-    if filename == "." || filename == ".." {
-        return Err(format!("invalid filename: {}", filename));
-    }
-    Ok(fs_dir(repo).join(filename))
-}
-
 #[tauri::command]
 pub fn fs_store_init(repo: String) -> Result<String, String> {
     let dir = fs_dir(&repo);
