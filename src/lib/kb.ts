@@ -1,132 +1,29 @@
-import { pinkfishMcpCall } from "./api";
-import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
+// KB collection resolution. Phase 2 of V2 sync (PIN-5775) shifts this
+// off the `knowledge-base` MCP and onto the same REST `/datacollection/`
+// endpoint the filestore engine uses. Pinkfish-entity CRUD goes REST per
+// the project's auth/decision tree (see auto-dev/00-autodev-overview.md).
+//
+// The actual resolver (REST list + openit-* prefix filter + dedupe +
+// auto-create defaults) lives inside the shared
+// `createCollectionEntitySync` helper in syncEngine.ts. This file owns
+// the small public types and a couple of helpers (display-name strip,
+// the OPENIT_KB_PREFIX constant) that consumer code references.
 
-export type KbCollection = { id: string; name: string; description?: string };
-
-export type KbFile = {
+export type KbCollection = {
   id: string;
-  filename: string;
-  /// ISO timestamp of last server-side update — used as the "remote version"
-  /// in the local manifest.
-  updatedAt: string;
-  /// Server-provided link for download. Pinkfish's filestorage API returns
-  /// short-lived URLs.
-  downloadUrl?: string;
-  size?: number;
+  name: string;
+  description?: string;
 };
 
-function kbName(orgSlug: string): string {
-  return `openit-${orgSlug}`;
-}
+/// Prefix every OpenIT-managed KB carries on the cloud. Used to filter
+/// the user's full collection list down to the ones we own. Mirrors
+/// `OPENIT_FILESTORE_PREFIX` from filestoreSync.ts.
+export const OPENIT_KB_PREFIX = "openit-";
 
-async function call(
-  creds: PinkfishCreds,
-  server: string,
-  tool: string,
-  args: unknown,
-): Promise<unknown> {
-  const token = getToken();
-  if (!token) throw new Error("not authenticated");
-  const urls = derivedUrls(creds.tokenUrl);
-  const resp = await pinkfishMcpCall({
-    accessToken: token.accessToken,
-    orgId: creds.orgId,
-    server,
-    tool,
-    arguments: args,
-    baseUrl: urls.mcpBaseUrl,
-  });
-  const r = resp as { result?: { structuredContent?: unknown }; error?: unknown };
-  if (r.error) throw new Error(`${tool}: ${JSON.stringify(r.error)}`);
-  const sc = r.result?.structuredContent ?? null;
-  console.log(`[kb] ${tool} →`, sc);
-  // Pinkfish MCPs surface application-level failures as { error: "..." }
-  // inside structuredContent — the JSON-RPC envelope still says success.
-  if (sc && typeof sc === "object" && "error" in (sc as Record<string, unknown>)) {
-    const errMsg = (sc as { error: unknown }).error;
-    throw new Error(`${tool}: ${typeof errMsg === "string" ? errMsg : JSON.stringify(errMsg)}`);
-  }
-  return sc;
-}
-
-export async function listCollections(creds: PinkfishCreds): Promise<KbCollection[]> {
-  const out = (await call(creds, "knowledge-base", "knowledge-base_list_collections", {})) as {
-    collections?: KbCollection[];
-  } | null;
-  return out?.collections ?? [];
-}
-
-export async function createCollection(
-  creds: PinkfishCreds,
-  name: string,
-  description: string,
-): Promise<KbCollection> {
-  // The MCP tool requires createdBy + createdByName. We don't have a Pinkfish
-  // user id from client_credentials so we tag with the org and a stable
-  // OpenIT label.
-  const out = (await call(creds, "knowledge-base", "knowledge-base_create_collection", {
-    name,
-    description,
-    createdBy: creds.orgId,
-    createdByName: "OpenIT",
-  })) as { id?: string; name?: string };
-  if (!out?.id) throw new Error("create_collection returned no id");
-  return { id: out.id, name: out.name ?? name };
-}
-
-/// Find or create the OpenIT-managed KB for this project. Naming convention:
-/// `openit-<orgSlug>`. Description includes the slug for traceability.
-export async function resolveProjectKb(
-  creds: PinkfishCreds,
-  orgSlug: string,
-  orgName: string,
-  onLog?: (msg: string) => void,
-): Promise<KbCollection> {
-  const expected = kbName(orgSlug);
-  const collections = await listCollections(creds);
-  const existing = collections.find((c) => c.name === expected);
-  if (existing) {
-    onLog?.(`  ✓ ${existing.name}  (id: ${existing.id})`);
-    return existing;
-  }
-  const created = await createCollection(
-    creds,
-    expected,
-    `OpenIT knowledge base for ${orgName}. Synced from local 'knowledge-base/' folder.`,
-  );
-  onLog?.(`  + ${created.name}  (id: ${created.id})  [created]`);
-  return created;
-}
-
-export async function listFiles(
-  creds: PinkfishCreds,
-  collectionId: string,
-): Promise<KbFile[]> {
-  // `full` format returns signedUrl per file — required for our pull path.
-  // `light` omits URLs entirely, so the puller had nothing to fetch.
-  const out = (await call(creds, "filestorage", "filestorage_list_items", {
-    fileLinksExpireInDays: 1,
-    format: "full",
-    collectionId,
-  })) as { items?: Array<Record<string, unknown>> } | null;
-  return (out?.items ?? []).map((it) => ({
-    id: String(it.id ?? ""),
-    filename: String(it.filename ?? it.name ?? ""),
-    updatedAt: String(it.updatedAt ?? it.updated_at ?? it.modifiedAt ?? ""),
-    downloadUrl: typeof it.signedUrl === "string" ? it.signedUrl : undefined,
-    size: typeof it.file_size === "number" ? it.file_size : undefined,
-  }));
-}
-
-export async function uploadFile(
-  creds: PinkfishCreds,
-  collectionId: string,
-  filename: string,
-  content: string,
-): Promise<void> {
-  await call(creds, "knowledge-base", "knowledge-base_upload_file", {
-    collectionId,
-    filename,
-    fileContent: content,
-  });
+/// Strip the `openit-` prefix for display in the UI / log lines.
+/// Returns the input unchanged when the prefix is absent.
+export function displayKbName(name: string): string {
+  return name.startsWith(OPENIT_KB_PREFIX)
+    ? name.slice(OPENIT_KB_PREFIX.length)
+    : name;
 }

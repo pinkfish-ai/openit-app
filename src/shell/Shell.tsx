@@ -19,7 +19,7 @@ import {
   buildKbConflictPrompt,
   getSyncStatus,
   kbHasServerShadowFiles,
-  pullNow,
+  pullAllKbNow,
   subscribeSync,
 } from "../lib/kbSync";
 import {
@@ -263,18 +263,20 @@ export function Shell({
       // the streaming output too.
 
       // KB pull
-      const kbStatus = getSyncStatus();
-      if (kbStatus.collection) {
-        onSyncLine("▸ pull: kb");
+      const kbCollections = getSyncStatus().collections;
+      if (kbCollections.length === 0) {
+        onSyncLine("▸ pull: kb skipped (no collections)");
+      } else {
+        onSyncLine(
+          `▸ pull: kb (${kbCollections.length} collection${kbCollections.length === 1 ? "" : "s"})`,
+        );
         try {
-          await pullNow({ creds, repo, collection: kbStatus.collection });
+          await pullAllKbNow({ creds, repo });
           onSyncLine("  ✓ kb pull complete");
         } catch (e) {
           console.error("[manual pull] kb failed:", e);
           onSyncLine(`  ✗ kb pull failed: ${String(e)}`);
         }
-      } else {
-        onSyncLine("▸ pull: kb skipped (no collection)");
       }
 
       // Filestore pull

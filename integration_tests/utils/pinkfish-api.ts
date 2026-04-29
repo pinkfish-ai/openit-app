@@ -136,6 +136,17 @@ export class PinkfishClient {
   }
 
   /**
+   * Get all openit-* knowledge-base collections.
+   * Phase 2 of V2 sync (PIN-5775): KB resolver moved to REST. The valid
+   * `?type=` value is the snake_case `knowledge_base` (matches
+   * DataCollectionType.KnowledgeBase from /firebase-helpers).
+   */
+  async listOpenitKbs(): Promise<DataCollection[]> {
+    const all = await this.listCollections("knowledge_base");
+    return all.filter((c) => c.name.startsWith("openit-"));
+  }
+
+  /**
    * Upload a file to a filestorage collection. Multipart form upload to
    * the same endpoint the Tauri backend uses.
    * Endpoint: POST /filestorage/items/upload?collectionId={id}

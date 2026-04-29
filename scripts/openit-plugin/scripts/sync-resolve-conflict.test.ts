@@ -114,12 +114,24 @@ describe("sync-resolve-conflict.mjs", () => {
   });
 
   it("is a no-op when the key isn't tracked (idempotent)", async () => {
+    // Nested manifest, default bucket present but empty files.
     await writeFile(
       path.join(tmpDir, ".openit", "kb-state.json"),
-      JSON.stringify({ collection_id: null, collection_name: null, files: {} }),
+      JSON.stringify({
+        "kb-default-id": {
+          collection_id: "kb-default-id",
+          collection_name: "openit-default",
+          files: {},
+        },
+      }),
     );
 
-    const { stdout } = await runScript(["--prefix", "kb", "--key", "missing.md"]);
+    const { stdout } = await runScript([
+      "--prefix",
+      "knowledge-bases/default",
+      "--key",
+      "missing.md",
+    ]);
     const result = JSON.parse(stdout.trim());
     expect(result.ok).toBe(true);
     expect(result.action).toBe("noop");
@@ -127,7 +139,12 @@ describe("sync-resolve-conflict.mjs", () => {
 
   it("treats a missing manifest file as a successful no-op", async () => {
     // No filestore manifest written.
-    const { stdout } = await runScript(["--prefix", "filestore", "--key", "foo.pdf"]);
+    const { stdout } = await runScript([
+      "--prefix",
+      "filestores/library",
+      "--key",
+      "foo.pdf",
+    ]);
     const result = JSON.parse(stdout.trim());
     expect(result).toMatchObject({ ok: true, removed: false, note: "manifest not found" });
   });

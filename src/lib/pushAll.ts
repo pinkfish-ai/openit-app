@@ -6,7 +6,14 @@
 // pushAllToDatastores. We pre-pull each entity to surface conflicts
 // before clobbering teammate edits, then push and stream results.
 
-import { getSyncStatus, kbHasServerShadowFiles, pullNow, pushAllToKb, startKbSync } from "./kbSync";
+import {
+  getSyncStatus,
+  kbHasServerShadowFiles,
+  pullAllKbNow,
+  pushAllToKb,
+  startKbSync,
+} from "./kbSync";
+import { displayKbName } from "./kb";
 import {
   pushAllToFilestore,
   getFilestoreSyncStatus,
@@ -27,31 +34,36 @@ export async function pushAllEntities(
 
   onLine("▸ sync: starting push to Pinkfish");
 
-  // KB requires a resolved collection; if sync hasn't run yet (e.g. user
-  // commits before the initial pull completes), kick it off inline.
-  let kbCollection = getSyncStatus().collection;
-  if (!kbCollection) {
+  // KB requires a resolved collection list; if sync hasn't run yet
+  // (e.g. user commits before the initial pull completes), kick it off
+  // inline. Phase 2: multi-collection.
+  let kbCollections = getSyncStatus().collections;
+  if (kbCollections.length === 0) {
     onLine("▸ sync: resolving knowledge base");
     try {
-      const slug = (repo.split("/").pop() ?? "").trim();
-      await startKbSync({ creds, repo, orgSlug: slug, orgName: slug });
-      kbCollection = getSyncStatus().collection;
+      await startKbSync({ creds, repo });
+      kbCollections = getSyncStatus().collections;
     } catch (e) {
       onLine(`✗ sync: kb resolve failed: ${String(e)}`);
     }
   }
 
-  // KB: pre-pull to detect remote/local conflicts before we clobber anything.
-  if (kbCollection) {
+  // KB: pre-pull every collection to detect remote/local conflicts
+  // before we clobber anything. A conflict in any collection blocks
+  // the push for ALL of them — half-applied state is worse than
+  // surfacing the conflict and asking the user to resolve.
+  if (kbCollections.length > 0) {
     const shadowBefore = await kbHasServerShadowFiles(repo);
     if (shadowBefore) {
       onLine(
         "✗ sync: kb has unresolved merge shadow (.server.) files — resolve and commit again",
       );
     } else {
-      onLine("▸ sync: kb pre-push pull");
+      onLine(
+        `▸ sync: kb pre-push pull (${kbCollections.length} collection${kbCollections.length === 1 ? "" : "s"})`,
+      );
       try {
-        await pullNow({ creds, repo, collection: kbCollection });
+        await pullAllKbNow({ creds, repo });
         const conflicts = getSyncStatus().conflicts;
         const hasShadow = await kbHasServerShadowFiles(repo);
         if (conflicts.length > 0 || hasShadow) {
@@ -60,20 +72,27 @@ export async function pushAllEntities(
           );
           for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
           if (hasShadow && conflicts.length === 0) {
-            onLine("  • server shadow files present under knowledge-bases/default/");
+            onLine(
+              "  • server shadow files present under one or more knowledge-bases/<name>/ folders",
+            );
           }
         } else {
-          onLine("▸ sync: kb pushing");
-          try {
-            const { pushed, failed } = await pushAllToKb({
-              creds,
-              repo,
-              collection: kbCollection,
-              onLine,
-            });
-            onLine(`▸ sync: kb push complete — ${pushed} ok, ${failed} failed`);
-          } catch (e) {
-            onLine(`✗ sync: kb push failed: ${String(e)}`);
+          for (const collection of kbCollections) {
+            const displayName = displayKbName(collection.name);
+            onLine(`▸ sync: kb (${displayName}) pushing`);
+            try {
+              const { pushed, failed } = await pushAllToKb({
+                creds,
+                repo,
+                collection,
+                onLine,
+              });
+              onLine(
+                `▸ sync: kb push (${displayName}) — ${pushed} ok, ${failed} failed`,
+              );
+            } catch (e) {
+              onLine(`✗ sync: kb push (${displayName}) failed: ${String(e)}`);
+            }
           }
         }
       } catch (e) {
@@ -81,7 +100,7 @@ export async function pushAllEntities(
       }
     }
   } else {
-    onLine("▸ sync: kb skipped (no collection)");
+    onLine("▸ sync: kb skipped (no collections)");
   }
 
   // Filestore: pre-push pull to detect remote-side edits before we
