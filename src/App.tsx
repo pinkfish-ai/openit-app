@@ -616,6 +616,15 @@ function App() {
         initialCreds={savedCreds}
         onPinkfishConnected={onPinkfishConnected}
         onPinkfishDisconnected={async () => {
+          // Stop the 5 sync engines BEFORE clearing creds. Their 60-s
+          // pollers would otherwise keep firing with a null token —
+          // each tick logs a failed HTTP request, no upside. Mirror
+          // the cleanup that the unmount effect runs.
+          stopKbSync();
+          stopFilestoreSync();
+          stopDatastoreSync();
+          stopAgentSync();
+          stopWorkflowSync();
           // Wipe the keychain creds + in-memory token. subscribeToken
           // catches the null and flips `connected` to false; we still
           // need to manually reset orgName + savedCreds since neither
