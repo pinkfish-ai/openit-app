@@ -188,8 +188,19 @@ export async function claudeDetect(): Promise<string | null> {
 /// (`curl -fsSL https://claude.ai/install.sh | bash`) and return the resolved
 /// binary path. Throws on installer failure. Idempotent: returns the existing
 /// path if `claude` is already on PATH or in a known install dir.
-export async function claudeInstall(): Promise<string> {
-  return invoke("claude_install");
+///
+/// Concurrent callers share a single in-flight install promise — re-mounts of
+/// the onboarding view (or any other caller) won't kick off a parallel
+/// `curl | bash`. Cleared once the promise settles so a Retry click after
+/// failure can run a fresh attempt.
+let claudeInstallInflight: Promise<string> | null = null;
+export function claudeInstall(): Promise<string> {
+  if (claudeInstallInflight) return claudeInstallInflight;
+  const p = invoke<string>("claude_install").finally(() => {
+    if (claudeInstallInflight === p) claudeInstallInflight = null;
+  });
+  claudeInstallInflight = p;
+  return p;
 }
 
 /// Ask the user's Claude CLI (`claude -p`) to summarize the staged diff into
