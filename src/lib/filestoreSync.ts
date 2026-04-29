@@ -89,7 +89,6 @@ let resolvedRepos = new Set<string>();
 
 // Org-scoped cache to prevent collections from one org leaking into another.
 let createdCollections = new Map<string, Map<string, FilestoreCollection>>();
-let lastCreationAttemptTime = new Map<string, number>();
 
 // Per-org in-flight resolve promise — concurrent callers share the same
 // operation so we never race two list-then-create sequences.
@@ -100,14 +99,6 @@ function getOrgCache(orgId: string): Map<string, FilestoreCollection> {
     createdCollections.set(orgId, new Map());
   }
   return createdCollections.get(orgId)!;
-}
-
-function getLastCreationTime(orgId: string): number {
-  return lastCreationAttemptTime.get(orgId) ?? 0;
-}
-
-function setLastCreationTime(orgId: string, time: number): void {
-  lastCreationAttemptTime.set(orgId, time);
 }
 
 export function subscribeFilestoreSync(
@@ -133,8 +124,6 @@ let stopPoll: (() => void) | null = null;
 // Resolve helpers — REST API via skillsApi. Unchanged from pre-engine; the
 // resolve flow is filestore-specific and doesn't fit the engine.
 // ---------------------------------------------------------------------------
-
-const CREATION_COOLDOWN_MS = 10_000;
 
 export async function resolveProjectFilestores(
   creds: PinkfishCreds,
@@ -188,111 +177,28 @@ async function resolveProjectFilestoresImpl(
   console.log("[filestore] resolveProjectFilestores called for org:", creds.orgId);
   const token = getToken();
   if (!token) throw new Error("not authenticated");
-  const urls = derivedUrls(creds.tokenUrl);
 
   const all = await listFilestoreCollections(creds);
-  const defaults = getDefaultFilestores(creds.orgId);
-  const matching = dedupeByName(all, defaults);
+  // Return ALL openit-* collections, not just hardcoded defaults
+  const openit = all
+    .filter((c) => c.name.startsWith(OPENIT_FILESTORE_PREFIX))
+    .map((c) => ({ id: String(c.id), name: c.name, description: c.description }));
 
-  const rawMatchCount = all.filter((c) => defaults.some((d) => d.name === c.name)).length;
   console.log(
-    `[filestore] ✓ Found ${all.length} filestore collections, ${rawMatchCount} matching defaults` +
-      (rawMatchCount > matching.length ? ` (deduped to ${matching.length})` : ""),
+    `[filestore] ✓ Found ${all.length} filestore collections, ${openit.length} with openit-* prefix`,
   );
-  if (rawMatchCount > matching.length) {
-    console.warn(
-      `[filestore] WARNING: ${rawMatchCount - matching.length} duplicate default filestore(s) detected on remote. Using id ${matching.map((m) => m.id).join(", ")}.`,
-    );
-  }
+  openit.forEach((c) => {
+    console.log(`  • ${c.name} (id: ${c.id})`);
+    onLog?.(`  ✓ ${c.name} (id: ${c.id})`);
+  });
 
+  // Cache all discovered remote collections
   const orgCache = getOrgCache(creds.orgId);
-
-  if (matching.length > 0) {
-    for (const m of matching) {
-      orgCache.set(m.name, m);
-      onLog?.(`  ✓ ${m.name}  (id: ${m.id})`);
-    }
-    return matching;
+  for (const c of openit) {
+    orgCache.set(c.name, c);
   }
 
-  const now = Date.now();
-  const lastCreationTime = getLastCreationTime(creds.orgId);
-  if (orgCache.size > 0 && now - lastCreationTime < CREATION_COOLDOWN_MS) {
-    console.log("[filestore] collections not yet visible in API list, returning cached collections");
-    return Array.from(orgCache.values());
-  }
-  if (now - lastCreationTime < CREATION_COOLDOWN_MS) {
-    console.log("[filestore] skipping creation (cooldown active)");
-    return Array.from(orgCache.values());
-  }
-
-  console.log("[filestore] no openit-* filestores found — creating defaults");
-  // Past the eventual-consistency window — any cached entries are stale.
-  // Wipe before creating so we actually POST.
-  orgCache.clear();
-  setLastCreationTime(creds.orgId, now);
-  const created: FilestoreCollection[] = [];
-  let conflictHit = false;
-  for (const def of defaults) {
-    try {
-      const fetchFn = makeSkillsFetch(token.accessToken);
-      const url = new URL("/datacollection/", urls.skillsBaseUrl);
-      const response = await fetchFn(url.toString(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: def.name,
-          type: "filestorage",
-          description: def.description,
-          createdBy: creds.orgId,
-          createdByName: "OpenIT",
-        }),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error("[filestore] response error:", errText);
-        if (response.status === 409) {
-          console.log(`[filestore] collection ${def.name} already exists (409) — will refetch`);
-          conflictHit = true;
-          continue;
-        }
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const result = (await response.json()) as { id?: string | number } | null;
-      if (result?.id) {
-        const col = { id: String(result.id), name: def.name, description: def.description };
-        created.push(col);
-        orgCache.set(def.name, col);
-        console.log(`[filestore] created ${def.name} with id: ${result.id}`);
-        onLog?.(`  + ${def.name}  (id: ${result.id})  [created]`);
-      } else {
-        console.warn(`[filestore] no id found in response for ${def.name}. Response keys:`, Object.keys(result || {}));
-      }
-    } catch (e) {
-      console.warn(`[filestore] failed to create ${def.name}:`, e);
-    }
-  }
-
-  if (created.length > 0 || conflictHit) {
-    try {
-      await new Promise((r) => setTimeout(r, 3000));
-      const refetched = await listFilestoreCollections(creds);
-      const verified = dedupeByName(refetched, defaults);
-      if (verified.length > 0) {
-        for (const m of verified) orgCache.set(m.name, m);
-        return verified;
-      }
-      if (conflictHit && created.length === 0) {
-        console.warn("[filestore] 409 conflict but refetch still returned no matches — API may be lagging");
-      }
-    } catch (e) {
-      console.warn("[filestore] post-create refetch failed:", e);
-    }
-  }
-
-  return created;
+  return openit;
 }
 
 async function listFilestoreCollections(creds: PinkfishCreds): Promise<DataCollection[]> {
@@ -397,6 +303,66 @@ export async function startFilestoreSync(args: {
   }
   update({ collections });
 
+  // Auto-create remote collections for local folders that don't exist yet.
+  // Scan filestores/ for folders and ensure each has a corresponding openit-* collection on remote.
+  try {
+    const token = getToken();
+    const urls = derivedUrls(creds.tokenUrl);
+    if (!token) throw new Error("not authenticated");
+    
+    const localFolderNames = ["library", "attachments"]; // Known default folders
+    for (const folderName of localFolderNames) {
+      const remoteName = `${OPENIT_FILESTORE_PREFIX}${folderName}`;
+      
+      // Check if remote collection exists
+      if (collections.some((c) => c.name === remoteName)) {
+        console.log(`[filestoreSync] Remote collection ${remoteName} already exists`);
+        continue;
+      }
+      
+      // Create missing remote collection
+      try {
+        console.log(`[filestoreSync] Creating remote collection ${remoteName}...`);
+        const fetchFn = makeSkillsFetch(token.accessToken);
+        const url = new URL("/datacollection/", urls.skillsBaseUrl);
+        const response = await fetchFn(url.toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: remoteName,
+            type: "filestorage",
+            description: `OpenIT filestore: ${folderName}`,
+            createdBy: creds.orgId,
+            createdByName: "OpenIT",
+          }),
+        });
+
+        if (!response.ok) {
+          if (response.status === 409) {
+            console.log(`[filestoreSync] Collection ${remoteName} already exists (409)`);
+            continue;
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const result = (await response.json()) as { id?: string | number } | null;
+        if (result?.id) {
+          const newCollection = {
+            id: String(result.id),
+            name: remoteName,
+            description: `OpenIT filestore: ${folderName}`,
+          } as FilestoreCollection;
+          collections.push(newCollection);
+          console.log(`[filestoreSync] ✓ Created ${remoteName} with id: ${result.id}`);
+        }
+      } catch (e) {
+        console.warn(`[filestoreSync] Failed to create ${remoteName}:`, e);
+      }
+    }
+  } catch (e) {
+    console.warn(`[filestoreSync] Error during auto-create phase:`, e);
+  }
+
   resolvedRepos.add(repo);
 
   const persisted = await fsStoreStateLoad(repo);
@@ -409,42 +375,37 @@ export async function startFilestoreSync(args: {
   }
 
   if (collections.length > 0) {
-    const collection = collections[0];
-    // Build the adapter once and share for initial pull + 60s poll —
-    // saves the redundant construction and makes it obvious both paths
-    // run on the same configuration.
-    const adapter = filestoreAdapter({ creds, collection });
-    // Catch initial-pull failures so we still start the poller. runPull
-    // already updates status on failure; without this catch a transient
-    // network blip on connect would leave the user without auto-recovery.
-    try {
-      await runPull({ repo, adapter });
-    } catch (e) {
-      console.error("[filestoreSync] initial pull failed (poll will still start):", e);
+    // Sync all collections, not just the first one
+    for (const collection of collections) {
+      const adapter = filestoreAdapter({ creds, collection });
+      try {
+        await runPull({ repo, adapter });
+      } catch (e) {
+        console.error(`[filestoreSync] initial pull failed for ${collection.name} (poll will still start):`, e);
+      }
+      
+      stopPoll = startPolling(adapter, repo, {
+        onPhase: (phase) => {
+          if (phase === "pulling") update({ phase: "pulling" });
+        },
+        onResult: (r) => {
+          const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
+            filename: c.manifestKey,
+            reason: "local-and-remote-changed",
+          }));
+          update({
+            phase: "ready",
+            conflicts,
+            lastPullAt: Date.now(),
+            lastError: null,
+          });
+        },
+        onError: (e) => {
+          console.error(`[filestoreSync] pull failed for ${collection.name}:`, e);
+          update({ phase: "error", lastError: String(e) });
+        },
+      });
     }
-    stopPoll = startPolling(adapter, repo, {
-      onPhase: (phase) => {
-        if (phase === "pulling") update({ phase: "pulling" });
-      },
-      onResult: (r) => {
-        const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
-          filename: c.manifestKey,
-          reason: "local-and-remote-changed",
-        }));
-        update({
-          phase: "ready",
-          conflicts,
-          lastPullAt: Date.now(),
-          lastError: null,
-        });
-      },
-      onError: (e) => {
-        // Same reason as KB: onPhase("pulling") fired before the failure,
-        // so we have to surface the error here or the UI stays stuck.
-        console.error("filestore pull failed:", e);
-        update({ phase: "error", lastError: String(e) });
-      },
-    });
   } else {
     update({ phase: "ready" });
   }
