@@ -139,7 +139,10 @@ function update(patch: Partial<FilestoreSyncStatus>) {
   for (const l of listeners) l(status);
 }
 
-let stopPoll: (() => void) | null = null;
+// Each call to startPolling spawns its own 60s interval; we need to stop
+// every collection's interval, not just the last one. Pre-fix this was a
+// single scalar that the loop kept overwriting, leaking earlier pollers.
+let stopPolls: Array<() => void> = [];
 
 // ---------------------------------------------------------------------------
 // Resolve helpers — REST API via skillsApi. Unchanged from pre-engine; the
@@ -200,10 +203,21 @@ async function resolveProjectFilestoresImpl(
   if (!token) throw new Error("not authenticated");
 
   const all = await listFilestoreCollections(creds);
-  // Return ALL openit-* collections, not just hardcoded defaults
-  const openit = all
-    .filter((c) => c.name.startsWith(OPENIT_FILESTORE_PREFIX))
-    .map((c) => ({ id: String(c.id), name: c.name, description: c.description }));
+  // Return ALL openit-* collections, not just hardcoded defaults.
+  // Dedupe by name — if the API returned multiple collections with the
+  // same name, two adapters would point at the same `filestores/<x>/`
+  // folder and clobber each other. Keep the lex-smallest id so every
+  // caller in the same session converges on the same collection.
+  const byName = new Map<string, FilestoreCollection>();
+  for (const c of all) {
+    if (!c.name.startsWith(OPENIT_FILESTORE_PREFIX)) continue;
+    const candidate = { id: String(c.id), name: c.name, description: c.description };
+    const existing = byName.get(c.name);
+    if (!existing || candidate.id < existing.id) {
+      byName.set(c.name, candidate);
+    }
+  }
+  const openit = Array.from(byName.values());
 
   console.log(
     `[filestore] ✓ Found ${all.length} filestore collections, ${openit.length} with openit-* prefix`,
@@ -298,10 +312,8 @@ export async function startFilestoreSync(args: {
   const { creds, repo } = args;
   console.log("[filestoreSync] start", { repo });
 
-  if (stopPoll) {
-    stopPoll();
-    stopPoll = null;
-  }
+  for (const stop of stopPolls) stop();
+  stopPolls = [];
 
   update({ phase: "resolving", lastError: null });
 
@@ -458,7 +470,7 @@ export async function startFilestoreSync(args: {
       }
       
       console.log(`[filestoreSync] starting polling for ${collection.name}...`);
-      stopPoll = startPolling(adapter, repo, {
+      stopPolls.push(startPolling(adapter, repo, {
         onPhase: (phase) => {
           console.log(`[filestoreSync] poll phase for ${collection.name}: ${phase}`);
           if (phase === "pulling") update({ phase: "pulling" });
@@ -480,7 +492,7 @@ export async function startFilestoreSync(args: {
           console.error(`[filestoreSync] poll failed for ${collection.name}:`, e);
           update({ phase: "error", lastError: String(e) });
         },
-      });
+      }));
     }
   } else {
     console.log(`[filestoreSync] no collections to sync`);
@@ -489,10 +501,8 @@ export async function startFilestoreSync(args: {
 }
 
 export function stopFilestoreSync() {
-  if (stopPoll) {
-    stopPoll();
-    stopPoll = null;
-  }
+  for (const stop of stopPolls) stop();
+  stopPolls = [];
   update({
     phase: "idle",
     collections: [],

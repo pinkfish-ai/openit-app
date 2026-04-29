@@ -824,11 +824,7 @@ pub fn entity_rename_file(
     if from.is_empty() || to.is_empty() {
         return Err("filenames must not be empty".into());
     }
-    if from.contains('/')
-        || from.contains('\\')
-        || to.contains('/')
-        || to.contains('\\')
-    {
+    if from.contains('/') || from.contains('\\') || to.contains('/') || to.contains('\\') {
         return Err("filenames must not contain path separators".into());
     }
     let dir = Path::new(&repo).join(&subdir);
