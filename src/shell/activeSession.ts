@@ -1,39 +1,15 @@
 import { ptyWrite } from "../lib/pty";
 
 let activeSessionId: string | null = null;
-const listeners = new Set<(id: string | null) => void>();
-
-function emit() {
-  for (const l of listeners) l(activeSessionId);
-}
 
 export function setActiveSession(id: string) {
   activeSessionId = id;
-  emit();
 }
 
 export function clearActiveSession(id: string) {
   if (activeSessionId === id) {
     activeSessionId = null;
-    emit();
   }
-}
-
-export function getActiveSession(): string | null {
-  return activeSessionId;
-}
-
-/// Subscribe to active-session lifecycle changes. Fires with the new
-/// id (or null) whenever it transitions. Used by ChatShellHeader's
-/// live-dot to flip its state instead of pretending Claude is always
-/// connected.
-export function subscribeActiveSession(
-  fn: (id: string | null) => void,
-): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
 }
 
 /// Write text into whatever PTY is currently active (the visible Claude session).

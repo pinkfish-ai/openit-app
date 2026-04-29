@@ -150,6 +150,7 @@ export function Shell({
   const [draggingPaneId, setDraggingPaneId] = useState<PaneId | null>(null);
   const [dragOverPaneId, setDragOverPaneId] = useState<PaneId | null>(null);
   const [chatSessionKey, setChatSessionKey] = useState(0);
+  const [chatResume, setChatResume] = useState(false);
   const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
 
   /// Drag-source / drop-target wiring. The grip in each pane's header
@@ -234,6 +235,12 @@ export function Shell({
   );
 
   const newChatSession = useCallback(() => {
+    setChatResume(false);
+    setChatSessionKey((k) => k + 1);
+  }, []);
+
+  const resumeChatSession = useCallback(() => {
+    setChatResume(true);
     setChatSessionKey((k) => k + 1);
   }, []);
 
@@ -847,6 +854,7 @@ export function Shell({
             >
               <ChatShellHeader
                 onNewSession={newChatSession}
+                onResumeSession={resumeChatSession}
                 dragHandle={
                   <PaneDragHandle
                     paneId="right"
@@ -856,7 +864,7 @@ export function Shell({
                 }
               />
               <div className="chat-area">
-                <ChatPane key={chatSessionKey} cwd={repo} />
+                <ChatPane key={chatSessionKey} cwd={repo} resume={chatResume} />
               </div>
               <PromptBubbles extraBubbles={conflictBubbles} bubbles={bubbles} />
             </div>
