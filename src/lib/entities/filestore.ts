@@ -17,8 +17,6 @@ import {
   entityDeleteFile,
   fsStoreDownloadToLocal,
   fsStoreListLocal,
-  fsStoreStateLoad,
-  fsStoreStateSave,
   kbListRemote,
 } from "../api";
 import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
@@ -30,6 +28,7 @@ import {
   type LocalItem,
   type RemoteItem,
 } from "../syncEngine";
+import { loadCollectionManifest, saveCollectionManifest } from "../filestoreManifest";
 
 const OPENIT_PREFIX = "openit-";
 
@@ -39,49 +38,12 @@ export type FilestoreCollection = {
   description?: string;
 };
 
-/// Load manifest for a specific filestore collection, validating it's for this collection.
-/// Each collection tracks its own files independently. If the loaded manifest is for
-/// a different collection, we treat it as a fresh start (return default).
-async function loadFilestoreManifest(repo: string, collectionId: string) {
-  try {
-    const manifest = await fsStoreStateLoad(repo);
-    // If the manifest is for a different collection, treat as fresh
-    // This prevents one collection's files from appearing in another's manifest
-    if (manifest.collection_id && manifest.collection_id !== collectionId) {
-      console.log(
-        `[filestore] manifest is for different collection (${manifest.collection_id} vs ${collectionId}), starting fresh`,
-      );
-      return { collection_id: collectionId, collection_name: "", files: {} };
-    }
-    return { ...manifest, collection_id: collectionId };
-  } catch (e) {
-    // Default manifest for fresh start
-    return { collection_id: collectionId, collection_name: "", files: {} };
-  }
-}
-
-/// Save manifest for a specific filestore collection with its collection ID.
-/// This ensures each collection's manifest is marked with its ID so we can
-/// validate on load that we're reading the right manifest.
-async function saveFilestoreManifest(
-  repo: string,
-  collectionId: string,
-  collectionName: string,
-  state: Awaited<ReturnType<typeof fsStoreStateLoad>>,
-) {
-  return fsStoreStateSave(repo, {
-    ...state,
-    collection_id: collectionId,
-    collection_name: collectionName,
-  });
-}
-
 export function filestoreAdapter(args: {
   creds: PinkfishCreds;
   collection: FilestoreCollection;
 }): EntityAdapter {
   const { creds, collection } = args;
-  
+
   // Derive local folder name from collection name by stripping openit- prefix
   // openit-library → filestores/library
   // openit-attachments → filestores/attachments
@@ -89,12 +51,12 @@ export function filestoreAdapter(args: {
     ? collection.name.slice(OPENIT_PREFIX.length)
     : collection.name; // Fallback for non-openit collections (Phase 2)
   const DIR = `filestores/${collectionFolderName}`;
-  
+
   return {
     prefix: DIR,
 
-    loadManifest: (repo) => loadFilestoreManifest(repo, collection.id),
-    saveManifest: (repo, m) => saveFilestoreManifest(repo, collection.id, collection.name, m),
+    loadManifest: (repo) => loadCollectionManifest(repo, collection.id),
+    saveManifest: (repo, m) => saveCollectionManifest(repo, collection.id, collection.name, m),
 
     async listRemote(_repo) {
       const token = getToken();
