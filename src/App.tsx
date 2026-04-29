@@ -586,14 +586,21 @@ function App() {
   // pill all drive the same flow with shared state. The
   // ConnectStatusBanner below renders progress regardless of which
   // screen is currently mounted.
-  const browserConnect = useBrowserConnect({
-    onConnected: (incoming) => {
+  //
+  // `onConnected` is wrapped in useCallback so its identity is stable
+  // across renders; otherwise `useBrowserConnect.start` would recreate
+  // every render (its [onConnected] dep), which churns child re-renders
+  // and breaks reference equality on the props passed to Onboarding.
+  const onBrowserConnected = useCallback(
+    (incoming: string | null) => {
       onPinkfishConnected(incoming);
       // Drop back into the shell on success — don't bounce the user
       // to onboarding when they triggered this from the cloud-cta.
       setBypassOnboarding(true);
     },
-  });
+    [onPinkfishConnected],
+  );
+  const browserConnect = useBrowserConnect({ onConnected: onBrowserConnected });
 
   const showOnboarding = loaded && !bypassOnboarding;
 

@@ -56,12 +56,15 @@ export function useBrowserConnect({
 }) {
   const [state, setState] = useState<BrowserConnectState>({ kind: "idle" });
 
-  // Set when the user clicks Cancel mid-flow. The in-flight `start`
-  // task's catch checks this before transitioning to error — otherwise
-  // it would overwrite the clean idle state with the rejection from
-  // the now-shut-down listener (a confusing user-visible "listener
-  // shut down before callback" message after a deliberate cancel).
-  const cancelledRef = useRef(false);
+  // Generation counter, bumped each time `start` is invoked or `cancel`
+  // is called. Each invocation captures its own generation; if it
+  // doesn't match the current value when the invocation resolves /
+  // rejects, the invocation has been superseded (or cancelled) and
+  // shouldn't touch state. Replaces an earlier shared `cancelledRef`
+  // approach which raced when two `start`s overlapped — the second
+  // would reset the flag, and the first's catch would briefly flash
+  // an error to the user before the second invocation overwrote it.
+  const generationRef = useRef(0);
 
   // Cancel any in-flight handoff when the host component unmounts so
   // the Rust listener doesn't sit there until its 5-min timeout.
@@ -74,11 +77,14 @@ export function useBrowserConnect({
   }, []);
 
   const start = useCallback(async () => {
-    cancelledRef.current = false;
+    const myGen = ++generationRef.current;
+    const isCurrent = () => generationRef.current === myGen;
+
     setState({ kind: "starting" });
     try {
       const stateToken = crypto.randomUUID();
       const { url: cbUrl } = await oauthCallbackStart(stateToken);
+      if (!isCurrent()) return;
       const params = new URLSearchParams({
         cb: cbUrl,
         state: stateToken,
@@ -86,10 +92,11 @@ export function useBrowserConnect({
       });
       const target = `${pinkfishWebUrl()}/openit/connect?${params}`;
       await openUrl(target);
+      if (!isCurrent()) return;
       setState({ kind: "waiting" });
 
       const creds = await oauthCallbackAwait();
-      if (cancelledRef.current) return;
+      if (!isCurrent()) return;
       setState({ kind: "validating" });
 
       const { orgName } = await connectAndValidate({
@@ -98,11 +105,11 @@ export function useBrowserConnect({
         orgId: creds.org_id,
         tokenUrl: creds.token_url || DEFAULT_TOKEN_URL,
       });
-      if (cancelledRef.current) return;
+      if (!isCurrent()) return;
       onConnected(orgName);
       setState({ kind: "idle" });
     } catch (e) {
-      if (cancelledRef.current) return;
+      if (!isCurrent()) return;
       const message =
         e instanceof Error ? e.message : typeof e === "string" ? e : String(e);
       setState({ kind: "error", message });
@@ -110,7 +117,7 @@ export function useBrowserConnect({
   }, [onConnected]);
 
   const cancel = useCallback(async () => {
-    cancelledRef.current = true;
+    generationRef.current++;
     try {
       await oauthCallbackCancel();
     } catch {
