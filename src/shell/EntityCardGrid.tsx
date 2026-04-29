@@ -181,11 +181,14 @@ function EntityCardItem({
         },
         onDragLeave: () => setDragOver(false),
         onDrop: async (e: React.DragEvent) => {
+          // preventDefault MUST run before any early return — without
+          // it the Tauri webview falls back to its default drop
+          // behavior (navigate to the file URL) and the SPA unloads.
+          e.preventDefault();
+          e.stopPropagation();
           setDragOver(false);
           const files = Array.from(e.dataTransfer.files ?? []);
           if (files.length === 0) return;
-          e.preventDefault();
-          e.stopPropagation();
           await c.onFilesDropped?.(files);
         },
       }

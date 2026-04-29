@@ -1805,16 +1805,18 @@ export function Viewer({
             if (acceptsDrop) setFolderDragOver(false);
           }}
           onDrop={async (e) => {
-            // Reset the drag highlight first, before any early
-            // returns. Otherwise an empty-files drop (or a drop on
-            // a non-acceptsDrop folder) leaves the dashed outline
-            // stuck until the user navigates away.
+            // preventDefault MUST run before any early return —
+            // without it the Tauri webview falls back to its default
+            // drop behavior (navigate to the file URL) and unloads
+            // the SPA. Stop / reset state up-front for the same
+            // reason: the dashed outline must clear regardless of
+            // payload or accepts-drop check.
+            e.preventDefault();
+            e.stopPropagation();
             setFolderDragOver(false);
             if (!acceptsDrop || !repo) return;
             const files = Array.from(e.dataTransfer.files ?? []);
             if (files.length === 0) return;
-            e.preventDefault();
-            e.stopPropagation();
             await uploadFilesToSubdir(repo, subdir, files, setFolderUploadError, showToast);
           }}
         >
