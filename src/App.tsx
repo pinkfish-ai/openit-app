@@ -6,6 +6,8 @@ import {
   fsRead,
   intakeStart,
   projectBootstrap,
+  projectBindToCloud,
+  projectGetCloudBinding,
   slackConfigRead,
   slackListenerStart,
   slackListenerStatus,
@@ -371,33 +373,58 @@ function App() {
 
         if (creds && lastRepo) {
           // Cloud-connected relaunch — skip onboarding and resume syncs.
-          // We don't have orgName cached on relaunch — use the slug as
-          // the user-facing label until something better is fetched.
-          // Re-run bootstrap so idempotent layout guards in project.rs
-          // (e.g. creating new top-level dirs added in later versions)
-          // can fire on existing projects without requiring a re-init.
-          // The Rust side gates first-run side effects (welcome doc,
-          // initial subdir creation) on `!already_existed`, so this is
-          // safe to call on every launch.
-          try {
-            await projectBootstrap({ orgName: creds.orgId || "default", orgId: creds.orgId });
-          } catch (e) {
-            console.warn("[app] cloud-relaunch bootstrap failed (non-fatal):", e);
+          //
+          // Phase 1 of V2 sync (PIN-5775): the bound folder is now
+          // identified by `.openit/cloud.json`, not by the old
+          // `~/OpenIT/<orgId>/` folder convention. Read the marker. If
+          // it matches the saved creds, run idempotent layout
+          // maintenance on `~/OpenIT/local/` (the canonical bound
+          // folder for new bindings) and resume syncs against
+          // `lastRepo`. If the marker is missing (V1 legacy folder) or
+          // points at a different org, fall through to the
+          // first-run-with-creds branch which re-binds against
+          // `~/OpenIT/local/`.
+          const binding = await projectGetCloudBinding(lastRepo).catch(() => null);
+          if (binding && binding.orgId === creds.orgId) {
+            try {
+              await projectBootstrap({ orgName: LOCAL_ORG_NAME, orgId: LOCAL_ORG_ID });
+            } catch (e) {
+              console.warn("[app] cloud-relaunch bootstrap failed (non-fatal):", e);
+            }
+            setBypassOnboarding(true);
+            startCloudSyncs(creds, lastRepo, binding.orgName);
+            finish();
+            return;
           }
-          setBypassOnboarding(true);
-          startCloudSyncs(creds, lastRepo, basename(lastRepo));
-          finish();
-          return;
+          console.log(
+            "[app] lastRepo has no matching cloud.json — re-binding via first-run-with-creds branch",
+          );
         }
 
-        if (creds && !lastRepo && !stale) {
-          // First run with dev creds — auto-bootstrap into the cloud-keyed folder.
+        if (creds && (!lastRepo || stale)) {
+          // First run with dev creds (or stale legacy lastRepo discarded
+          // above). Land in `~/OpenIT/local/`, write the cloud.json
+          // marker, then start syncs. Phase 1 deliberately drops the
+          // old `~/OpenIT/<orgId>/` folder — the user's existing data
+          // (if any) is preserved on disk but no longer auto-opened.
           try {
             console.log("[app] bootstrap on startup with dev creds");
             const result = await projectBootstrap({
-              orgName: creds.orgId || "default",
-              orgId: creds.orgId,
+              orgName: LOCAL_ORG_NAME,
+              orgId: LOCAL_ORG_ID,
             });
+            try {
+              await projectBindToCloud({
+                repo: result.path,
+                orgId: creds.orgId,
+                orgName: creds.orgId,
+              });
+            } catch (e) {
+              console.warn(
+                "[app] startup cloud bind failed (non-fatal — sync will still run):",
+                e,
+              );
+            }
             setRepo(result.path);
             setConnected(true);
             setBypassOnboarding(true);
@@ -553,11 +580,31 @@ function App() {
     try {
       const creds = await loadCreds();
       console.log("[app] bootstrapping project", { orgName: incoming, orgId: creds?.orgId });
+      // Phase 1 of V2 sync (PIN-5775): bind to `~/OpenIT/local/` (the
+      // canonical local folder), then write `.openit/cloud.json` to
+      // record the org binding. Replaces the V1 behaviour of creating
+      // (and switching to) `~/OpenIT/<orgId>/`.
       const result = await projectBootstrap({
-        orgName: incoming,
-        orgId: creds?.orgId ?? "",
+        orgName: LOCAL_ORG_NAME,
+        orgId: LOCAL_ORG_ID,
       });
       console.log("[app] bootstrap result", result);
+      if (creds?.orgId) {
+        try {
+          await projectBindToCloud({
+            repo: result.path,
+            orgId: creds.orgId,
+            orgName: incoming,
+          });
+        } catch (e) {
+          // Bind failure: most likely "folder already bound to another
+          // org". Surface to console; sync will still run against the
+          // existing binding (which is the conservative behaviour). A
+          // proper UX for the bound-elsewhere case lands in a later
+          // phase.
+          console.warn("[app] cloud bind failed (non-fatal — sync will still run):", e);
+        }
+      }
       setRepo(result.path);
       const current = await stateLoad().catch(() => null);
       await stateSave({

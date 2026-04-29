@@ -25,6 +25,7 @@ import {
 import {
   getFilestoreSyncStatus,
   pullOnce as filestorePullOnce,
+  displayFilestoreName,
 } from "../lib/filestoreSync";
 import { pullDatastoresOnce } from "../lib/datastoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
@@ -276,12 +277,15 @@ export function Shell({
       } else {
         onSyncLine(`▸ pull: filestore (${fsCollections.length} collection${fsCollections.length === 1 ? "" : "s"})`);
         for (const c of fsCollections) {
+          // Strip the `openit-` prefix for the user-facing line — internal
+          // logs and error reports keep the canonical name.
+          const displayName = displayFilestoreName(c.name);
           try {
             const r = await filestorePullOnce({ creds, repo, collection: c });
-            onSyncLine(`  ✓ ${c.name} — ${r.downloaded}/${r.total} downloaded`);
+            onSyncLine(`  ✓ ${displayName} — ${r.downloaded}/${r.total} downloaded`);
           } catch (e) {
             console.error(`[manual pull] filestore (${c.name}) failed:`, e);
-            onSyncLine(`  ✗ ${c.name} failed: ${String(e)}`);
+            onSyncLine(`  ✗ ${displayName} failed: ${String(e)}`);
           }
         }
       }
