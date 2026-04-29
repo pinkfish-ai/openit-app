@@ -161,7 +161,30 @@ Four coupled pieces:
 
 3. **Local-folder-driven creation.** When a user drops a new folder into `databases/<foldername>/` (manually or via Claude in the terminal), on next connect (or 60s poll if we wire it in) the orchestrator auto-creates `openit-<foldername>` on cloud. **If the local folder contains a `_schema.json`, the cloud datastore is created STRUCTURED with that schema.** Otherwise, UNSTRUCTURED (freeform JSON rows). Conversations (`databases/conversations/`) is excluded — it's a local-only system folder and never gets mirrored to cloud.
 
-4. **Overview UX** — conditional `databases` Workbench station + listing view that reuses the existing FileExplorer collection-card pattern.
+4. **Push-time schema validation for structured datastores.** Before POSTing a row to the cloud, read the local `_schema.json` and validate the row's JSON against it. If the row is invalid (missing required field, wrong type, value not in `select` options), block the push for that row and surface the error inline in the sync log: `✗ databases/tickets/CS123.json — required field "status" missing`. The server would reject anyway; doing it locally catches the mistake earlier with a clearer message. Unstructured datastores skip validation. Validation is required-fields + type-match (string / number / boolean / date / select) — a small ~50-LOC validator against the existing `CollectionSchema` shape in `skillsApi.ts`. Extra fields not in the schema warn-log but don't block (server accepts in some cases; let it decide).
+
+5. **Bidirectional schema sync.** Today schema is read-only on local — `writeDatastoreSchemas` writes `_schema.json` from cloud → local on every connect. Phase 3 makes it bidirectional: when the user edits `_schema.json` locally (directly or via Claude in the terminal), the change pushes back to cloud via `PUT /datacollection/:collectionId/schema`.
+
+   **REST contract (verified against skills-stage):**
+
+   ```
+   PUT https://skills-stage.pinkfish.ai/datacollection/{collectionId}/schema
+   auth-token: Bearer <accessToken>
+   content-type: application/json
+
+   { "schema": { "fields": [...], "nextFieldId": N, "sortConfig": {...} } }
+   ```
+
+   The body wraps the schema in a `{ schema: ... }` envelope (NOT a bare schema object). Response is `{ message: "Schema updated successfully", schema: <updated schema> }`. Routes through `makeSkillsFetch` (already uses the `Auth-Token: Bearer` header convention).
+
+   **Mechanics:**
+   - The manifest's per-collection bucket tracks the schema like any other file: `manifest[collectionId].files["_schema.json"] = { remote_version, pulled_at_mtime_ms }`.
+   - On pull (existing path): write `_schema.json`, record its mtime + a content hash as `remote_version`.
+   - On push: detect drift the same way row pushes do (`mtime > pulled_at_mtime_ms` or content differs). If `_schema.json` is dirty, send `PUT /datacollection/{id}/schema` with the parsed schema wrapped in `{ schema }` BEFORE pushing rows (so a row push that depends on a new field doesn't fail).
+   - Server-side validation owns the policy (e.g. "can't remove a required field while rows exist without that field" — server rejects with a clear error). Local code surfaces the error in the sync log and does NOT push rows for that collection that cycle (don't compound the failure).
+   - Conflict case (both sides edited schema between polls): last-writer-wins on push. Schema changes are infrequent + usually single-author, so no shadow-file flow yet. If this becomes a real problem, add proper conflict detection in a later phase.
+
+6. **Overview UX** — conditional `databases` Workbench station + listing view that reuses the existing FileExplorer collection-card pattern.
 
 ### Files to modify
 
@@ -201,6 +224,10 @@ Four coupled pieces:
 - **MS-6b.** **Local-folder-driven STRUCTURED creation.** `mkdir databases/contracts`, write a valid `_schema.json` inside, then add a row JSON. Reconnect. Verify: `openit-contracts` now exists on the dashboard as a STRUCTURED datastore with the schema from the local file. The local row pushed up. Future dashboard edits to schema flow back via the existing `_schema.json` write path.
 - **MS-6c.** **`databases/conversations/` is NOT mirrored** — the system folder is excluded from `discoverLocalCollections`. No `openit-conversations` is created on the cloud.
 - **MS-7.** Delete a row file locally, commit → push DELETE-by-id removes the row from the cloud.
+- **MS-7a.** **Local schema edit pushes back.** Edit `databases/tickets/_schema.json` (e.g. add a new `priority` field with type `string`). Commit. Verify: dashboard shows the new field on the `openit-tickets` collection. Subsequent rows can use the new field.
+- **MS-7b.** **Cloud schema edit pulls down.** Add a field via the dashboard. Next poll rewrites local `_schema.json` to match. Subsequent local row writes can use the new field; push-time validation enforces it.
+- **MS-7c.** **Schema validation blocks bad rows on push.** Write a row file `databases/tickets/<key>.json` missing a required field. Commit. Sync log shows `✗ databases/tickets/<key>.json — required field "<name>" missing`; the row is NOT pushed; sibling valid rows still push fine.
+- **MS-7d.** **Server rejects schema change with existing-row violation.** Edit `_schema.json` to add a required field that existing rows don't have. Commit. Sync log surfaces server's rejection: `✗ datastore: schema push (tickets) failed — <server message>`. Existing rows in that collection are NOT pushed for this cycle (don't compound). User reverts the schema or fills the missing fields, then retries.
 - **MS-8.** Cloud has an unrelated non-`openit-` datastore (e.g. `customer-feedback`) → not pulled, not modified, not visible in OpenIT UI.
 - **MS-9.** Workbench overview with only `openit-tickets` + `openit-people` shows the 2 default tiles, NO "Databases" tile.
 - **MS-10.** Workbench overview after creating `openit-projects` on the dashboard → shows the 2 default tiles AND the new "Databases" tile. Click → listing view renders 3 cards. Click a card → opens FileExplorer at `databases/projects/`.
@@ -243,8 +270,9 @@ The structural rewrite. Largest single change.
 ### Step 4 — Datastore wrapper collapse
 
 - [ ] Rewrite `datastoreSync.ts` as a thin `createCollectionEntitySync` wrapper. Re-export under existing names. Drop `-<orgId>` suffix from default names. `displayDatastoreName` helper. Drop the in-house cache / cooldown / inflight-resolve (orchestrator owns them).
-- [ ] `pushOne` impl scoped to one collection — extract from the existing `pushAllToDatastoresImpl` per-collection inner loop. Critical safety check (`localDirExists`) preserved. Branch on `isStructured` if the push body shape diverges (verify against `firebase-helpers/functions/src/memory.controller.ts` during implementation).
-- [ ] `onAfterResolve` config hook calls `writeDatastoreSchemas(repo, collections)` — content-equality logic, structured-only.
+- [ ] `pushOne` impl scoped to one collection — extract from the existing `pushAllToDatastoresImpl` per-collection inner loop. Critical safety check (`localDirExists`) preserved. Branch on `isStructured` if the push body shape diverges (verify against `firebase-helpers/functions/src/memory.controller.ts` during implementation). **Schema-push first**: if `_schema.json` for this collection is dirty, `PUT /datacollection/{id}/schema` BEFORE row pushes; on server rejection, log + skip row pushes for this collection this cycle. **Schema validation**: for each row, validate against `_schema.json` (required fields + type-match); skip + log invalid rows.
+- [ ] `onAfterResolve` config hook calls `writeDatastoreSchemas(repo, collections)` — content-equality logic, structured-only. Updates the manifest's `_schema.json` entry with the new content hash + mtime so the next push can detect drift.
+- [ ] New `src/lib/datastoreSchema.ts` module: `validateRow(row, schema): { ok: true } | { ok: false, errors: string[] }`. ~50 LOC. Tests in `datastoreSchema.test.ts`.
 - [ ] `discoverLocalCollections` config hook scans `${repo}/databases/`, skips `conversations` and any future system folders, for each subdir: read optional `_schema.json` to set `isStructured` + `schema`. Returns `{ name: "openit-<foldername>", isStructured, schema? }[]`.
 - [ ] `buildCreateBody` config hook returns datastore-specific POST body. For hardcoded defaults: `{ name, type: "datastore", isStructured: true, templateId: "case-management" | "contacts", description, createdBy, createdByName }`. For local-discovered: `{ name, type: "datastore", isStructured, schema?, description, createdBy, createdByName }`.
 - [ ] Update `pushAll.ts` if datastore's status surface changes.
