@@ -986,12 +986,27 @@ export type CollectionSyncStatus<C extends CollectionLike> = {
   lastPullAt: number | null;
 };
 
+/// One collection the wrapper has discovered should exist on the
+/// cloud — either a hardcoded default OR a local-filesystem-driven
+/// discovery (e.g. user created `databases/projects/` and the
+/// datastore wrapper inferred a new `openit-projects` cloud
+/// collection should follow). The orchestrator's auto-create loop
+/// POSTs each entry alongside the simple `defaultNames` list.
+///
+/// `body` is the engine-specific POST body fragment; it gets merged
+/// with the orchestrator's standard fields (`name`, `type`,
+/// `createdBy`, `createdByName`) before sending. Datastore uses this
+/// to set `isStructured` + optional `schema`, which the simple
+/// `describeDefault`/`defaultNames` path can't express.
+export type DiscoveredCollection = {
+  name: string;
+  body: Record<string, unknown>;
+};
+
 export type CollectionSyncConfig<C extends CollectionLike> = {
   /// Engine name for `nestedManifest` routing and log prefixes.
-  /// `"fs"` (filestore) or `"kb"` (knowledge-base). A third member
-  /// would imply a third sync shape — at that point consider a sibling
-  /// helper rather than a flag.
-  entityName: "fs" | "kb";
+  /// `"fs"` (filestore), `"kb"` (knowledge-base), or `"datastore"`.
+  entityName: "fs" | "kb" | "datastore";
 
   /// Display label used in user-facing log lines (e.g. "filestore", "kb").
   displayName: string;
@@ -1039,6 +1054,47 @@ export type CollectionSyncConfig<C extends CollectionLike> = {
   /// Optional — not every engine has a Tauri-side init beyond the
   /// per-collection folder ensure.
   initLocalRoot?: (repo: string) => Promise<unknown>;
+
+  /// Optional hook fired ONCE per `start()` after the post-
+  /// auto-create resolve, before the per-collection pull loop.
+  /// Useful for one-shot side-effects that don't fit the engine's
+  /// per-collection cycle. Datastore uses this to write
+  /// `_schema.json` per structured collection. Errors warn-log
+  /// only — never fail the sync.
+  ///
+  /// Filestore + KB don't supply this and behave unchanged.
+  onAfterResolve?: (repo: string, collections: C[]) => Promise<void>;
+
+  /// Optional hook for engines that auto-create cloud collections
+  /// based on local-filesystem state. Datastore scans
+  /// `${repo}/databases/` for subfolders not yet on cloud and
+  /// returns each as a `DiscoveredCollection` (with body fragment
+  /// indicating structured vs unstructured + schema if present).
+  /// The orchestrator merges these with `defaultNames`, dedupes
+  /// against existing cloud names, and POSTs each.
+  ///
+  /// Filestore + KB don't supply this — local folders the user
+  /// creates are NOT auto-mirrored to cloud for those engines (per
+  /// their briefs). Datastore is intentionally more local-first.
+  discoverLocalCollections?: (args: {
+    repo: string;
+    existingNames: Set<string>;
+  }) => Promise<DiscoveredCollection[]>;
+
+  /// Optional engine-specific POST body shape for auto-create.
+  /// When supplied, replaces the orchestrator's default body
+  /// (`{ name, type, description, createdBy, createdByName }`).
+  /// Receives `name` plus the optional `discovery` entry's body
+  /// fragment so the engine can build a complete request.
+  ///
+  /// Filestore + KB don't supply this; the default body is fine
+  /// for them. Datastore uses it to set `isStructured`,
+  /// `templateId`, and (for structured local-discovered) `schema`.
+  buildCreateBody?: (args: {
+    name: string;
+    creds: PinkfishCreds;
+    discovery?: DiscoveredCollection;
+  }) => Record<string, unknown>;
 };
 
 export type CollectionSyncHandle<C extends CollectionLike> = {
@@ -1211,10 +1267,29 @@ export function createCollectionEntitySync<C extends CollectionLike>(
     }
   }
 
-  // ---- Auto-create defaults -----------------------------------------------
+  // ---- Auto-create defaults + locally-discovered --------------------------
+
+  /// Build the standard POST body unless the engine supplied a custom
+  /// `buildCreateBody`. The discovery entry (if present) carries
+  /// engine-specific body fragments (e.g. `isStructured`, `schema`).
+  function defaultCreateBody(
+    name: string,
+    creds: PinkfishCreds,
+    discovery?: DiscoveredCollection,
+  ): Record<string, unknown> {
+    return {
+      name,
+      type: config.collectionType,
+      description: config.describeDefault(name),
+      createdBy: creds.orgId,
+      createdByName: "OpenIT",
+      ...(discovery?.body ?? {}),
+    };
+  }
 
   async function autoCreateDefaultsIfMissing(
     creds: PinkfishCreds,
+    repo: string,
     existing: C[],
   ): Promise<C[]> {
     const token = getToken();
@@ -1222,28 +1297,57 @@ export function createCollectionEntitySync<C extends CollectionLike>(
     const urls = derivedUrls(creds.tokenUrl);
     const out = [...existing];
 
-    for (const defaultName of config.defaultNames) {
-      if (out.some((c) => c.name === defaultName)) continue;
+    // Build the to-create list: hardcoded defaults + locally-discovered.
+    // Discovery runs after defaults so the discovery hook can see what's
+    // already in the existingNames set and avoid double-listing the
+    // hardcoded entries.
+    const existingNames = new Set(out.map((c) => c.name));
+    type ToCreate = { name: string; discovery?: DiscoveredCollection };
+    const toCreate: ToCreate[] = [];
+    for (const name of config.defaultNames) {
+      if (!existingNames.has(name)) toCreate.push({ name });
+    }
+    if (config.discoverLocalCollections) {
+      try {
+        const discovered = await config.discoverLocalCollections({
+          repo,
+          existingNames: new Set([
+            ...existingNames,
+            ...toCreate.map((t) => t.name),
+          ]),
+        });
+        for (const d of discovered) {
+          if (existingNames.has(d.name)) continue;
+          if (toCreate.some((t) => t.name === d.name)) continue;
+          toCreate.push({ name: d.name, discovery: d });
+        }
+      } catch (e) {
+        console.warn(`[${tag}] discoverLocalCollections threw:`, e);
+      }
+    }
+
+    for (const entry of toCreate) {
       try {
         const fetchFn = makeSkillsFetch(token.accessToken);
         const url = new URL("/datacollection/", urls.skillsBaseUrl);
+        const body = config.buildCreateBody
+          ? config.buildCreateBody({
+              name: entry.name,
+              creds,
+              discovery: entry.discovery,
+            })
+          : defaultCreateBody(entry.name, creds, entry.discovery);
         const response = await fetchFn(url.toString(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: defaultName,
-            type: config.collectionType,
-            description: config.describeDefault(defaultName),
-            createdBy: creds.orgId,
-            createdByName: "OpenIT",
-          }),
+          body: JSON.stringify(body),
         });
         if (!response.ok) {
           if (response.status === 409) {
             // Conflict means another concurrent caller created it
             // between our list and our create. Re-resolve will pick it
             // up below.
-            console.log(`[${tag}] ${defaultName} already exists (409)`);
+            console.log(`[${tag}] ${entry.name} already exists (409)`);
             continue;
           }
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -1253,21 +1357,21 @@ export function createCollectionEntitySync<C extends CollectionLike>(
           out.push(
             config.fromDataCollection({
               id: String(result.id),
-              name: defaultName,
+              name: entry.name,
               type: config.collectionType,
-              description: result.description ?? config.describeDefault(defaultName),
+              description: result.description ?? config.describeDefault(entry.name),
               numItems: 0,
             } as DataCollection),
           );
-          console.log(`[${tag}] + ${defaultName} (id: ${result.id}) [created]`);
+          console.log(`[${tag}] + ${entry.name} (id: ${result.id}) [created]`);
           // Eventual-consistency post-create refetch: log if the
           // collection isn't visible yet so the surface is debuggable.
           try {
             const refetched = await listAllCollections(creds);
-            const seen = refetched.some((c) => c.name === defaultName);
+            const seen = refetched.some((c) => c.name === entry.name);
             if (!seen) {
               console.warn(
-                `[${tag}] post-create refetch did not see ${defaultName} (eventual consistency)`,
+                `[${tag}] post-create refetch did not see ${entry.name} (eventual consistency)`,
               );
             }
           } catch (e) {
@@ -1275,7 +1379,7 @@ export function createCollectionEntitySync<C extends CollectionLike>(
           }
         }
       } catch (e) {
-        console.warn(`[${tag}] failed to create ${defaultName}:`, e);
+        console.warn(`[${tag}] failed to create ${entry.name}:`, e);
       }
     }
     return out;
@@ -1367,10 +1471,12 @@ export function createCollectionEntitySync<C extends CollectionLike>(
       return;
     }
 
-    // Auto-create the hardcoded defaults if missing. Then re-resolve to
-    // pick up the newly-created entries with their canonical descriptions.
+    // Auto-create the hardcoded defaults + any locally-discovered
+    // collections (datastore uses this for `databases/<foldername>/`
+    // → `openit-<foldername>` mirroring). Then re-resolve to pick up
+    // the newly-created entries with their canonical descriptions.
     try {
-      const afterCreate = await autoCreateDefaultsIfMissing(creds, collections);
+      const afterCreate = await autoCreateDefaultsIfMissing(creds, repo, collections);
       collections = afterCreate;
     } catch (e) {
       console.warn(`[${tag}] auto-create phase failed:`, e);
@@ -1382,6 +1488,17 @@ export function createCollectionEntitySync<C extends CollectionLike>(
       if (refreshed.length >= collections.length) collections = refreshed;
     } catch (e) {
       console.warn(`[${tag}] post-create re-resolve failed:`, e);
+    }
+
+    // Engine-specific post-resolve side-effect (e.g. datastore's
+    // `_schema.json` write per structured collection). Errors here
+    // warn-log; don't fail the sync.
+    if (config.onAfterResolve) {
+      try {
+        await config.onAfterResolve(repo, collections);
+      } catch (e) {
+        console.warn(`[${tag}] onAfterResolve threw:`, e);
+      }
     }
 
     update({ collections });
