@@ -109,6 +109,7 @@ export function EscalatedTicketBanner({
     <Banner
       variant="success"
       inline
+      onDark
       icon="✎"
       eyebrow="Needs your reply"
       actions={
@@ -123,7 +124,7 @@ export function EscalatedTicketBanner({
             {sending ? "Sending…" : "Answer ticket"}
           </Button>
           <Button
-            variant="secondary"
+            variant="ghost"
             size="sm"
             onClick={() => setDismissedKey(ticketKey)}
             title="Hide until a new ticket escalates"

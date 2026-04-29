@@ -8,10 +8,9 @@
 .rail {
   flex: 0 0 auto;
   height: var(--h-rail);
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: 0 var(--space-4) 0 var(--layout-traffic-clear);
   background: var(--color-bg);
   -webkit-app-region: drag;
@@ -19,29 +18,45 @@
   user-select: none;
   position: relative;
   z-index: var(--z-sticky);
+  /* Subtle hairline along the bottom — separates the rail from the
+     panes below without competing with the cream gutter. */
+  box-shadow: inset 0 -1px 0 var(--color-border-faint);
 }
 
-/* The three regions. Each has app-region: drag at its container
-   level; interactive children inside opt out. */
+/* The two main regions. Children inside .left (status chips) opt
+   out of the drag automatically because they're <button>s; .right
+   action buttons do the same. The space between left and right
+   stays draggable so the user can grab the rail anywhere. */
 .left,
-.center,
 .right {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-width: 0;
 }
-
-.center {
-  justify-content: center;
-  flex: 1;
-  /* Center region content can overflow; clamp it visually with a
-     soft fade rather than a hard cut. */
+.left {
+  flex: 1 1 auto;
+  /* Allow chips to wrap by hiding overflow; in narrow windows we
+     gracefully clip the rightmost ones rather than push the actions
+     out of view. */
   overflow: hidden;
+  flex-wrap: nowrap;
+}
+.right {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: var(--space-3);
 }
 
-.right {
-  justify-self: end;
+/* Center region kept available for future use (current-view name,
+   counters, etc) but not used in this iteration. */
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* Any interactive element inside the rail must opt out of the drag

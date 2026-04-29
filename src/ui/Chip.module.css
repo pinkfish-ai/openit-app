@@ -142,3 +142,58 @@ button.dashed:hover:not(:disabled) {
   opacity: 1;
   background: rgba(0, 0, 0, 0.06);
 }
+
+/* Segmented chip pair — two related endpoints rendered as one
+   visual entity. Used for the intake form (local + shared URL).
+   Children are .chip elements; the group wrapper paints the
+   shared background and joins them with a thin divider. */
+.segment {
+  display: inline-flex;
+  align-items: stretch;
+  height: 22px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--color-accent-soft);
+  background: var(--color-accent-faint);
+  color: #6a3115;
+  overflow: hidden;
+  font-family: var(--font-body);
+  font-size: var(--fs-caption);
+  white-space: nowrap;
+  font-feature-settings: "tnum" 1;
+}
+.segment .label {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px 0 10px;
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: #8a4727;
+  border-right: 1px solid var(--color-accent-soft);
+}
+.segment button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  white-space: nowrap;
+  padding: 0 10px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  display: inline-flex;
+  align-items: center;
+}
+.segment button:not(:last-child) {
+  border-right: 1px solid var(--color-accent-soft);
+}
+.segment button:hover {
+  background: rgba(199, 90, 44, 0.08);
+}
+.segment .scope {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: #a85d3a;
+  margin-right: 4px;
+}

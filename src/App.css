@@ -90,6 +90,10 @@ body::before {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  /* Prevent the document from scrolling when individual panes have
+     intrinsically tall content. Each pane is responsible for its
+     own internal scroll. */
+  overflow: hidden;
 }
 
 /* .app-header / .app-header-actions / .wordmark / .app-title /
@@ -187,23 +191,25 @@ body::before {
    applied inline by the Shell. */
 
 /* Shell layout — v5: equal cream gutter on all four sides; the
-   header rail and status rail dissolve into the cream canvas
-   (Quieter B). The three pane cards float on cream with a 10px
-   gap between them. */
+   bottom status rail is gone (chips moved into the TitleRail). The
+   three pane cards float on cream with a 10px gap between them.
+   flex:1 + min-height:0 so the panes' internal scroll containers
+   handle overflow instead of the whole document scrolling. */
 .shell {
-  height: 100%;
+  flex: 1 1 0;
+  min-height: 0;
   background: transparent;
   display: flex;
   flex-direction: column;
   gap: var(--layout-pane-gap);
   padding: var(--layout-gutter);
+  overflow: hidden;
 }
 .shell-panes-row {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
-  /* react-resizable-panels controls the inner widths via PanelGroup;
-     this wrapper just enforces the row geometry. */
+  overflow: hidden;
 }
 
 /* Float each pane as a card on the cream canvas. */
@@ -422,20 +428,30 @@ body::before {
   background: var(--bg-canvas);
 }
 
+/* v5: every pane top rail is exactly --h-rail (44px) with one shared
+   bottom-border baseline so the three panes' headers align. The
+   .left-tabs / .viewer-header / .chat-shell-header rules below all
+   honor this height. */
 .left-tabs {
   display: flex;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  align-items: stretch;
+  height: var(--h-rail);
+  border-bottom: 1px solid var(--color-border-faint);
+  background: var(--color-surface);
   flex-shrink: 0;
 }
 
 .left-tab {
   flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
   color: var(--text-muted);
-  padding: 9px 6px;
+  padding: 0 6px;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -483,7 +499,7 @@ body::before {
   background: transparent;
   border: none;
   color: var(--text-muted);
-  padding: 6px 10px;
+  padding: 0 var(--space-3);
   cursor: pointer;
   transition: color 0.1s;
 }
@@ -866,18 +882,20 @@ body::before {
 }
 
 .viewer-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: var(--space-3);
+  height: var(--h-rail);
+  padding: 0 var(--space-4);
   font-size: 13px;
   /* Display (Inter) — was mono. Page titles aren't terminal output;
      they're UI titles. Aligns with the left-pane tabs and the
      workbench, so the whole shell reads as one app. */
   font-family: var(--font-display);
   color: var(--text);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  border-bottom: 1px solid var(--color-border-faint);
+  background: var(--color-surface);
 }
 
 .viewer-title {
@@ -3714,15 +3732,16 @@ body::before {
 /* Chat shell header — small strip above the xterm. Picks up dark
    surface tokens from .right-pane scope so it stays cohesive. */
 .chat-shell-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 14px;
-  background: linear-gradient(180deg, var(--surface) 0%, transparent 100%);
-  border-bottom: 1px solid var(--border-faint);
+  gap: var(--space-3);
+  height: var(--h-rail);
+  padding: 0 var(--space-4);
+  background: var(--color-surface-dark-2);
+  border-bottom: 1px solid var(--color-border-dark);
   font-family: var(--font-display);
   font-size: 12px;
-  flex: 0 0 auto;
 }
 
 .chat-shell-title {

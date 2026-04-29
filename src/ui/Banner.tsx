@@ -18,6 +18,9 @@ export interface BannerProps extends HTMLAttributes<HTMLDivElement> {
   /** When parented inside a card with its own chrome, set to true to
    *  drop the banner's outer radius/borders so it hugs the card edges. */
   inline?: boolean;
+  /** When parented inside a dark surface (e.g. the chat pane), set to
+   *  true to use a dark-tinted variant that doesn't visually jolt. */
+  onDark?: boolean;
 }
 
 const VARIANT_CLASS: Record<BannerVariant, string | undefined> = {
@@ -38,6 +41,7 @@ export function Banner({
   actions,
   onClose,
   inline = false,
+  onDark = false,
   className,
   role = "status",
   ...rest
@@ -46,6 +50,7 @@ export function Banner({
     styles.banner,
     VARIANT_CLASS[variant],
     inline && styles.inline,
+    onDark && styles.onDark,
     className,
   ]
     .filter(Boolean)

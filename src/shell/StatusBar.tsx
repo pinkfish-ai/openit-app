@@ -1,6 +1,5 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
 import type { SlackConfig, SlackStatus } from "../lib/api";
-import { Chip } from "../ui";
+import { Chip, IntakeChip } from "../ui";
 
 function basename(p: string): string {
   const parts = p.split("/").filter((s) => s.length > 0);
@@ -8,15 +7,15 @@ function basename(p: string): string {
 }
 
 /**
- * Bottom status rail. One quiet line of chips that surfaces the
- * "what's going on right now" state without stealing screen space.
+ * StatusChips — the live "what's going on right now" cluster.
  *
- * v5: rebuilt on top of the unified <Chip> primitive. The rail
- * itself is transparent (Quieter B) — no white strip, no hard
- * top border. Cmd-K hint lives only in the top TitleRail — never
- * duplicated here.
+ * v5 (second pass): renders as a flat group of chips with no
+ * surrounding rail. Mounted INSIDE the TitleRail at the top of
+ * the window — using the otherwise-empty space next to the
+ * traffic lights. The previous bottom status strip is gone;
+ * the bottom of the window is now pure cream gutter.
  */
-export function StatusBar({
+export function StatusChips({
   repo,
   cloudConnected,
   orgName,
@@ -52,109 +51,76 @@ export function StatusBar({
   const collapseProjectAndCloud =
     !cloudConnected && projectName.toLowerCase() === cloudLabel.toLowerCase();
 
-  const intakeBare = intakeUrl?.replace(/^https?:\/\//, "");
-  const tunnelBare = tunnelUrl?.replace(/^https?:\/\//, "");
-
   return (
-    <div className="v5-shell-status" role="status">
-      <div className="v5-shell-status-left">
+    <>
+      <Chip
+        variant="strong"
+        glyph="◆"
+        onClick={onOpenPalette}
+        title={
+          collapseProjectAndCloud
+            ? "Local-only project — click for the command palette"
+            : "Project — click for the command palette"
+        }
+      >
+        {collapseProjectAndCloud ? `local · ${projectName}` : projectName}
+      </Chip>
+
+      {!collapseProjectAndCloud && (
         <Chip
-          variant="strong"
-          glyph="◆"
-          onClick={onOpenPalette}
-          title={
-            collapseProjectAndCloud
-              ? "Local-only project — click for the command palette"
-              : "Project — click for the command palette"
-          }
+          variant={cloudConnected ? "success" : "neutral"}
+          led
+          title={cloudConnected ? "Connected to Pinkfish Cloud" : "Local only"}
         >
-          {collapseProjectAndCloud ? `local · ${projectName}` : projectName}
+          {cloudConnected ? `cloud ${cloudLabel}` : "local"}
         </Chip>
+      )}
 
-        {!collapseProjectAndCloud && (
-          <Chip
-            variant={cloudConnected ? "success" : "neutral"}
-            led
-            title={cloudConnected ? "Connected to Pinkfish Cloud" : "Local only"}
-          >
-            {cloudConnected ? `cloud · ${cloudLabel}` : "local"}
-          </Chip>
+      <IntakeChip localUrl={intakeUrl} sharedUrl={tunnelUrl} />
+
+      {/* Slack chip — always rendered. Three visual states:
+            - configured + listener running → sage LED + "@bot · Ns"
+            - configured + listener stopped → ochre LED + "@bot"
+            - not configured                → dashed neutral, "Connect Slack"
+          Click in any state opens the /connect-slack skill canvas
+          (setup vs manage is decided by the canvas itself). */}
+      <Chip
+        variant={
+          slackConfig
+            ? slackRunning
+              ? "success"
+              : "warn"
+            : "neutral"
+        }
+        dashed={!slackConfig}
+        led={!!slackConfig}
+        onClick={onConnectSlack}
+        title={
+          !slackConfig
+            ? "Connect Slack — bring DM-style support requests into your inbox"
+            : slackRunning
+              ? `Slack listener running (${
+                  slackStatus?.last_heartbeat?.sessions ?? 0
+                } sessions). Click to manage.`
+              : "Slack configured but not running. Click to manage."
+        }
+      >
+        {slackConfig ? (
+          <>
+            slack @{slackConfig.bot_name}
+            {slackRunning &&
+              ` ${slackStatus?.last_heartbeat?.sessions ?? 0}s`}
+          </>
+        ) : (
+          "Connect Slack"
         )}
+      </Chip>
 
-        {intakeUrl && intakeBare && (
-          <Chip
-            variant="info"
-            keyLabel="intake"
-            title={`Intake form at ${intakeBare} — click to open in your browser`}
-            onClick={() =>
-              openUrl(intakeUrl).catch((e) =>
-                console.warn("[status-bar] openUrl intake failed:", e),
-              )
-            }
-          >
-            {intakeBare}
-          </Chip>
-        )}
-
-        {tunnelUrl && tunnelBare && (
-          <Chip
-            variant="info"
-            keyLabel="share"
-            title={`Public tunnel at ${tunnelBare} — share this with your team. Dies when OpenIT closes.`}
-            onClick={() =>
-              openUrl(tunnelUrl).catch((e) =>
-                console.warn("[status-bar] openUrl tunnel failed:", e),
-              )
-            }
-          >
-            {tunnelBare}
-          </Chip>
-        )}
-
-        {/* Slack chip — always rendered. Three visual states:
-              - configured + listener running → sage LED + "@bot · Ns"
-              - configured + listener stopped → ochre LED + "@bot"
-              - not configured                → dashed neutral, "Connect Slack"
-            Click in any state opens the /connect-slack skill canvas
-            (setup vs manage is decided by the canvas itself). */}
-        <Chip
-          variant={
-            slackConfig
-              ? slackRunning
-                ? "success"
-                : "warn"
-              : "neutral"
-          }
-          dashed={!slackConfig}
-          led={!!slackConfig}
-          onClick={onConnectSlack}
-          title={
-            !slackConfig
-              ? "Connect Slack — bring DM-style support requests into your inbox"
-              : slackRunning
-                ? `Slack listener running (${
-                    slackStatus?.last_heartbeat?.sessions ?? 0
-                  } sessions). Click to manage.`
-                : "Slack configured but not running. Click to manage."
-          }
-        >
-          {slackConfig ? (
-            <>
-              slack · @{slackConfig.bot_name}
-              {slackRunning &&
-                ` · ${slackStatus?.last_heartbeat?.sessions ?? 0}s`}
-            </>
-          ) : (
-            "Connect Slack"
-          )}
+      {changeCount > 0 && (
+        <Chip variant="warn" led title="Uncommitted changes">
+          {changeCount} change{changeCount === 1 ? "" : "s"}
         </Chip>
-
-        {changeCount > 0 && (
-          <Chip variant="warn" led title="Uncommitted changes">
-            {changeCount} change{changeCount === 1 ? "" : "s"}
-          </Chip>
-        )}
-      </div>
-    </div>
+      )}
+    </>
   );
 }

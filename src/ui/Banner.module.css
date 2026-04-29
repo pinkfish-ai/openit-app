@@ -43,6 +43,25 @@
   border-bottom: 1px solid var(--_border);
 }
 
+/* Inline + dark-pane modifier — when the banner sits inside the
+   dark chat pane, the sage cream block reads as a jarring light
+   block. Tone it down: dark warm background, sage left stripe,
+   sage eyebrow, light cream body text. Keeps the semantic color
+   role without the visual jolt. */
+.onDark {
+  --_bg: rgba(111, 143, 106, 0.12);
+  --_border: rgba(111, 143, 106, 0.35);
+  --_fg: var(--color-text-on-dark);
+}
+.onDark .eyebrow { color: #b8d4a0; }
+.onDark .text { color: var(--color-text-on-dark); }
+.onDark .icon {
+  background: rgba(111, 143, 106, 0.18);
+  color: #b8d4a0;
+}
+.onDark .close { color: var(--color-text-on-dark-mute); }
+.onDark .close:hover { background: rgba(255, 255, 255, 0.06); }
+
 .success {
   --_bg: var(--color-success-soft);
   --_border: rgba(111, 143, 106, 0.4);

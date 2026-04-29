@@ -10,8 +10,6 @@ import {
   gitStatusShort,
   stateLoad,
   type AppPersistedState,
-  type SlackConfig,
-  type SlackStatus,
 } from "../lib/api";
 import { pushAllEntities } from "../lib/pushAll";
 import { clearConflictsForPrefix } from "../lib/syncEngine";
@@ -34,7 +32,11 @@ import { startAutoCommitDriver, stopAutoCommitDriver } from "../lib/autoCommitDr
 import { ChatPane } from "./ChatPane";
 import { ChatShellHeader } from "./ChatShellHeader";
 import { PaneDragHandle } from "./PaneDragHandle";
-import { StatusBar } from "./StatusBar";
+// StatusBar is no longer rendered at the bottom of the shell. The
+// status chips (project, cloud, intake, slack, changes) now live in
+// the TitleRail at the top — see src/App.tsx. The bottom of the
+// window is pure cream gutter, fixing the "panes look chipped off"
+// feedback. The StatusChips export is consumed there.
 import { Workbench } from "./Workbench";
 import { ConflictBanner } from "./ConflictBanner";
 import { FileExplorer } from "./FileExplorer";
@@ -139,16 +141,11 @@ export function Shell({
   cloudConnected,
   onConnectRequest,
   intakeUrl,
-  tunnelUrl,
   dock,
   slackOrgId,
   stagedSlackBotToken,
   onStagedSlackBotTokenChange,
-  slackConfig,
-  slackStatus,
-  orgName,
-  onOpenPalette,
-  onConnectSlack,
+  onChangeCount,
   registerManualPull,
   registerSwitchToSync,
   registerShowCloudCta,
@@ -167,10 +164,6 @@ export function Shell({
    *  into `{{INTAKE_URL}}` placeholders in markdown content (e.g. the
    *  welcome doc). */
   intakeUrl: string | null;
-  /** Public HTTPS URL pointing at the local intake server, when an
-   *  outbound tunnel is up. Null when the tunnel hasn't connected
-   *  (yet) or has disconnected (e.g. laptop sleep). */
-  tunnelUrl: string | null;
   /** Which secret-paste affordance the chat-anchored
    *  SkillActionDock should surface, if any. Driven by the
    *  `.openit/skill-state/connect-slack.json` side channel (read in
@@ -188,17 +181,10 @@ export function Shell({
   stagedSlackBotToken: string | null;
   /** Setter for the staged bot token. */
   onStagedSlackBotTokenChange: (t: string | null) => void;
-  /** Slack config + status — surfaced in the bottom status bar. */
-  slackConfig: SlackConfig | null;
-  slackStatus: SlackStatus | null;
-  /** Cloud org name — surfaced in the bottom status bar. */
-  orgName: string | null;
-  /** Open the cmd-K command palette. */
-  onOpenPalette: () => void;
-  /** Kick off the /connect-slack skill-canvas flow. App owns the
-   *  scaffold-and-inject logic so the cmd-K palette and the bottom-
-   *  bar Slack pill share one entry point. */
-  onConnectSlack: () => void;
+  /** Mirror the uncommitted-change count up to App.tsx so the
+   *  TitleRail's status chips can render it. SourceControl is the
+   *  source of truth; this callback fires whenever it bumps. */
+  onChangeCount?: (n: number) => void;
   /** Register the manual-pull handler so the command palette can call it. */
   registerManualPull: (fn: () => void) => void;
   /** Register the switch-to-sync-tab handler so the command palette can call it. */
@@ -273,7 +259,14 @@ export function Shell({
   const [conflictBubbles, setConflictBubbles] = useState<Bubble[]>([]);
   const [leftTab, setLeftTab] = useState<LeftTab>("overview");
   const [fsTick, setFsTick] = useState(0);
-  const [changeCount, setChangeCount] = useState(0);
+  const [changeCount, _setChangeCount] = useState(0);
+  // Mirror the count to App.tsx so the TitleRail's status chips can
+  // show it. The count's source of truth is still SourceControl
+  // (which calls setChangeCount via its onChangeCount prop below).
+  const setChangeCount = (n: number) => {
+    _setChangeCount(n);
+    onChangeCount?.(n);
+  };
   const [pulling, setPulling] = useState(false);
   const [paneOrder, setPaneOrder] = useState<PaneId[]>(DEFAULT_PANE_ORDER);
   const [draggingPaneId, setDraggingPaneId] = useState<PaneId | null>(null);
@@ -1057,18 +1050,6 @@ export function Shell({
           </div>
         );
       })()}
-      <StatusBar
-        repo={repo}
-        cloudConnected={cloudConnected}
-        orgName={orgName}
-        intakeUrl={intakeUrl}
-        tunnelUrl={tunnelUrl}
-        slackConfig={slackConfig}
-        slackStatus={slackStatus}
-        changeCount={changeCount}
-        onOpenPalette={onOpenPalette}
-        onConnectSlack={onConnectSlack}
-      />
     </div>
   );
 }

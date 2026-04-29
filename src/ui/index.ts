@@ -12,6 +12,9 @@ export type { ButtonProps, ButtonVariant, ButtonSize } from "./Button";
 export { Chip } from "./Chip";
 export type { ChipProps, ChipVariant } from "./Chip";
 
+export { IntakeChip } from "./IntakeChip";
+export type { IntakeChipProps } from "./IntakeChip";
+
 export { Badge } from "./Badge";
 export type { BadgeProps, BadgeTone } from "./Badge";
 

@@ -13,7 +13,7 @@ export function Wordmark({ showTagline = true, className }: WordmarkProps) {
   return (
     <span className={cls}>
       <span className={styles.name}>
-        Open<em>I</em>T
+        Open<em>IT</em>
       </span>
       {showTagline ? (
         <>

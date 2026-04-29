@@ -26,8 +26,8 @@ export function TitleRail({ left, center, right, className, ...rest }: TitleRail
   return (
     <div className={cls} {...rest}>
       <div className={styles.left}>{left}</div>
-      {center ? <div className={styles.center}>{center}</div> : <div />}
-      <div className={`${styles.right} ${styles.nodrag}`}>{right}</div>
+      {center ? <div className={styles.center}>{center}</div> : null}
+      <div className={styles.right}>{right}</div>
     </div>
   );
 }
