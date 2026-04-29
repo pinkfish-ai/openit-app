@@ -18,6 +18,7 @@ import {
   fsStoreDownloadToLocal,
   fsStoreListLocal,
   kbListRemote,
+  entityWriteFile,
 } from "../api";
 import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
 import {
@@ -37,6 +38,21 @@ export type FilestoreCollection = {
   name: string;
   description?: string;
 };
+
+// Ensure a filestore subdirectory exists by writing a placeholder file,
+// then delete it. This forces the backend to create the directory structure.
+async function ensureDirectoryExists(repo: string, dir: string): Promise<void> {
+  const placeholder = ".placeholder";
+  try {
+    console.log(`[filestore] ensuring directory exists: ${dir}`);
+    await entityWriteFile(repo, dir, placeholder, "");
+    console.log(`[filestore] ✓ created placeholder at ${dir}/${placeholder}`);
+    await entityDeleteFile(repo, dir, placeholder);
+    console.log(`[filestore] ✓ deleted placeholder`);
+  } catch (e) {
+    console.warn(`[filestore] failed to ensure directory exists: ${dir}`, e);
+  }
+}
 
 export function filestoreAdapter(args: {
   creds: PinkfishCreds;
@@ -79,14 +95,19 @@ export function filestoreAdapter(args: {
           manifestKey: filename,
           workingTreePath: `${DIR}/${filename}`,
           updatedAt: r.updated_at ?? "",
-          fetchAndWrite: (repo) =>
-            fsStoreDownloadToLocal(repo, filename, downloadUrl),
-          writeShadow: (repo) =>
-            fsStoreDownloadToLocal(
+          fetchAndWrite: async (repo) => {
+            await ensureDirectoryExists(repo, DIR);
+            return fsStoreDownloadToLocal(repo, filename, downloadUrl, DIR);
+          },
+          writeShadow: async (repo) => {
+            await ensureDirectoryExists(repo, DIR);
+            return fsStoreDownloadToLocal(
               repo,
               shadowFilename(filename),
               downloadUrl,
-            ),
+              DIR,
+            );
+          },
         });
       }
       return { items, paginationFailed: false };

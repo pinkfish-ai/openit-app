@@ -35,10 +35,11 @@ export async function loadCollectionManifest(
     // convert to new nested format
     if (root.collection_id && !isNestedFormat(root)) {
       console.log("[filestoreManifest] migrating from single-collection to nested format");
-      // This is the old format - treat as belonging to a specific collection
-      // For now, we'll use the loaded manifest for this collection
-      // Next sync will write it in new format
-      return root;
+      // Old format contained files that may be in the wrong collection bucket.
+      // Start fresh to force re-download in correct per-collection folders.
+      // The old entries could be from before the nested manifest fix, so we
+      // don't trust them to map to the right collection.
+      return defaultManifest(collectionId);
     }
 
     // New nested format: { [collectionId]: KbStatePersisted }

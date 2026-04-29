@@ -602,8 +602,9 @@ export async function fsStoreDownloadToLocal(
   repo: string,
   filename: string,
   url: string,
+  subdir?: string,
 ): Promise<void> {
-  return invoke("fs_store_download_to_local", { repo, filename, url });
+  return invoke("fs_store_download_to_local", { repo, filename, url, subdir: subdir ?? null });
 }
 
 export async function fsStoreUploadFile(args: {
