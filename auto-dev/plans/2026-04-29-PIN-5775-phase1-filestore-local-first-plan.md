@@ -198,3 +198,13 @@ The user-visible behavior change. Touches `App.tsx` only.
 - Migrating existing `~/OpenIT/<orgId>/` folders that may already exist on disk
 - Multi-collection custom-named filestore support (only `library` in Phase 1)
 - `openit-docs-<orgId>` → `openit-library` data migration on cloud
+
+---
+
+## BugBot Review Log
+
+### Iteration 1 (2026-04-29)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Fall-through from cloud-relaunch never reaches rebind branch (V1 fall-through never reaches first-run-with-creds branch) | High | Fixed | `089664e` — added `cloudRelaunchFellThrough` flag set inside the cloud-relaunch branch when the marker is missing or mismatched; first-run-with-creds condition extended to include the flag so V1 fall-through users re-bind to `~/OpenIT/local/` instead of falling into a half-loaded state. BugBot raised this twice across the two SHAs (aaa52b9 and 9bfde6b) — same root-cause finding. |
