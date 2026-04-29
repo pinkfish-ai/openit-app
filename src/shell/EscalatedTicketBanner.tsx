@@ -1,8 +1,13 @@
-// Banner for tickets the agent escalated — admin must handle. Pinned
-// near the top of the shell (just below the conflict banner). Click
-// "Answer ticket" → pastes an /answer-ticket invocation referencing
-// the queued ticket files into the active Claude PTY, where the
-// admin can draft a reply with Claude's help.
+// Banner for tickets the agent escalated — admin must handle.
+// Renders INLINE inside the right (chat) pane, just below the chat
+// header and above the chat stream. (v5: previously rendered with
+// position: fixed at the top-right of the viewport, which clipped
+// over the chat pane's rounded corner. Re-parented in the
+// design-system-v5 PR so it composes with the pane's own chrome.)
+//
+// Click "Answer ticket" → pastes an /answer-ticket invocation
+// referencing the queued ticket files into the active Claude PTY,
+// where the admin can draft a reply with Claude's help.
 //
 // Driven by fs-tick: the parent Shell's fs watcher bumps `fsTick` on
 // every change under the project root, which re-scans `databases/
@@ -11,6 +16,7 @@
 import { useEffect, useState } from "react";
 import { scanEscalatedTickets, type TicketSummary } from "../lib/escalatedTickets";
 import { writeToActiveSession } from "./activeSession";
+import { Banner, Button } from "../ui";
 
 export function EscalatedTicketBanner({
   repo,
@@ -100,38 +106,35 @@ export function EscalatedTicketBanner({
   };
 
   return (
-    <div className="escalated-ticket-banner" role="status">
-      <span className="escalated-ticket-banner-icon" aria-hidden>
-        ✎
-      </span>
-      <div className="escalated-ticket-banner-body">
-        <div className="escalated-ticket-banner-eyebrow">Needs your reply</div>
-        <div className="escalated-ticket-banner-text">
-          <strong>{subjectLabel}</strong>
-          {others > 0
-            ? ` and ${others} other${others === 1 ? "" : "s"}`
-            : ""}
-        </div>
-        <div className="escalated-ticket-banner-actions">
-          <button
-            type="button"
-            className="escalated-ticket-banner-action"
+    <Banner
+      variant="success"
+      inline
+      icon="✎"
+      eyebrow="Needs your reply"
+      actions={
+        <>
+          <Button
+            variant="primary"
+            size="sm"
             onClick={onAnswer}
             disabled={sending}
             title="Open the queued tickets with Claude to draft a response"
           >
             {sending ? "Sending…" : "Answer ticket"}
-          </button>
-          <button
-            type="button"
-            className="escalated-ticket-banner-dismiss"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setDismissedKey(ticketKey)}
             title="Hide until a new ticket escalates"
           >
             Dismiss
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </>
+      }
+    >
+      <strong>{subjectLabel}</strong>
+      {others > 0 ? ` and ${others} other${others === 1 ? "" : "s"}` : ""}
+    </Banner>
   );
 }

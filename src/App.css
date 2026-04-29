@@ -1,3 +1,8 @@
+/* Design system v5 tokens — see src/styles/tokens.css.
+   Keep this import at the top so the new color, space, and radius
+   tokens are available to every legacy class below as we migrate. */
+@import "./styles/tokens.css";
+
 :root {
   /* ── Surfaces (warm cream, layered) ─────────────────────── */
   --bg: #fbf7ec;
@@ -87,61 +92,10 @@ body::before {
   height: 100vh;
 }
 
-.app-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 16px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-muted);
-  position: relative;
-  z-index: 5;
-}
-
-.app-header-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Wordmark — typography-only lockup. No glyph, no badge — just the
-   product name and a serif-italic tagline separated by a hairline dot. */
-.wordmark {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 0;
-}
-
-.app-title {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: -0.015em;
-  color: var(--text);
-  line-height: 1;
-}
-
-.app-title::after { content: none; }
-
-.app-title-sep {
-  color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1;
-}
-
-.app-tagline {
-  color: var(--text-faint);
-  font-size: 12px;
-  font-style: italic;
-  letter-spacing: 0.01em;
-  font-family: var(--font-serif);
-  line-height: 1;
-}
+/* .app-header / .app-header-actions / .wordmark / .app-title /
+   .app-title-sep / .app-tagline — migrated to src/ui/Wordmark and
+   the v5 shell layout in src/App.tsx + src/shell/Shell.tsx.
+   Removed in the v5-foundation PR. */
 
 /* Localhost ticket-intake URL pill. Click opens the form in the
    user's default browser. Temporary home in the header until Phase
@@ -228,20 +182,28 @@ body::before {
   text-overflow: ellipsis;
 }
 
-.app-pane {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 14px 14px 0 14px;
-  background: var(--bg);
-}
+/* .app-pane removed — the v5 shell uses equal cream gutters on
+   all four sides via tokens (--layout-gutter, --layout-pane-gap)
+   applied inline by the Shell. */
 
-/* Shell layout — three floating cards on the cream canvas. */
+/* Shell layout — v5: equal cream gutter on all four sides; the
+   header rail and status rail dissolve into the cream canvas
+   (Quieter B). The three pane cards float on cream with a 10px
+   gap between them. */
 .shell {
   height: 100%;
   background: transparent;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--layout-pane-gap);
+  padding: var(--layout-gutter);
+}
+.shell-panes-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  /* react-resizable-panels controls the inner widths via PanelGroup;
+     this wrapper just enforces the row geometry. */
 }
 
 /* Float each pane as a card on the cream canvas. */
@@ -250,14 +212,14 @@ body::before {
 .viewer,
 .sc-panel,
 .explorer {
-  border-radius: 14px;
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 .left-pane,
 .right-pane,
 .viewer {
-  box-shadow: var(--shadow-card);
-  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-border);
 }
 .viewer {
   background: var(--surface);
@@ -422,127 +384,10 @@ body::before {
 /* Escalated tickets — floating notification, not a full-width stripe.
    Slides in top-right of the viewport so it reads as a notification
    the admin opts into, not a wall they have to walk past. */
-.escalated-ticket-banner {
-  position: fixed;
-  top: 70px;
-  right: 22px;
-  z-index: 50;
-  width: min(420px, calc(100vw - 44px));
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 16px;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--sage);
-  border-radius: 12px;
-  font-size: 12px;
-  font-family: var(--font-body);
-  box-shadow: var(--shadow-lift);
-  animation: toast-slide-in var(--t-slow) var(--ease);
-}
-
-@keyframes toast-slide-in {
-  from { transform: translateX(20px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
-}
-
-.escalated-ticket-banner-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  font-size: 13px;
-  background: var(--sage-soft);
-  color: #2c4d27;
-  border-radius: 8px;
-  margin-top: 1px;
-}
-
-.escalated-ticket-banner-body {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.escalated-ticket-banner-eyebrow {
-  font-family: var(--font-display);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  color: var(--sage);
-}
-
-.escalated-ticket-banner-text {
-  font-family: var(--font-body);
-  font-size: 13px;
-  color: var(--text);
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.escalated-ticket-banner-text strong {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.escalated-ticket-banner-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.escalated-ticket-banner-action,
-.escalated-ticket-banner-dismiss {
-  flex: 0 0 auto;
-  padding: 4px 12px;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  font-family: var(--font-body);
-  font-size: 11px;
-  font-weight: 500;
-  border: 1px solid transparent;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease);
-}
-
-.escalated-ticket-banner-action {
-  background: var(--sage);
-  color: #fff8ec;
-  border-color: var(--sage);
-  font-weight: 600;
-}
-
-.escalated-ticket-banner-action:hover:not(:disabled) {
-  background: #5a7a55;
-  border-color: #5a7a55;
-}
-
-.escalated-ticket-banner-action:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.escalated-ticket-banner-dismiss {
-  background: transparent;
-  border-color: var(--border-strong);
-  color: var(--text-muted);
-}
-
-.escalated-ticket-banner-dismiss:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
+/* .escalated-ticket-banner* — migrated to <Banner variant="success">
+   in src/ui/Banner.tsx; the EscalatedTicketBanner component now
+   renders inline INSIDE the chat pane (not position: fixed) so it
+   clips to the pane's rounded corner. */
 
 /* Cards float with gaps; handle is a transparent gutter. A subtle
    accent dot appears on hover to telegraph "draggable here". */
@@ -1742,29 +1587,10 @@ body::before {
   color: var(--text);
 }
 
-/* Ephemeral confirmation toast. Floats top-center of the viewer; the
-   useToast hook auto-dismisses after 2.5s. Stays visually quiet —
-   the goal is "yes, your action took" not "look at me". */
-.toast-notice {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  background: var(--accent, #2c2c2c);
-  color: #fff;
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-  animation: toast-fade-in 0.15s ease;
-  pointer-events: none;
-}
-
-@keyframes toast-fade-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
-  to { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
+/* .toast-notice removed — the second Toast implementation
+   (src/shell/Toast.tsx) is folded into the unified
+   src/ui/Toast.tsx, which renders one bottom-right floating
+   toast for both flows. */
 
 .thread-reply-chips {
   display: flex;
@@ -2194,39 +2020,10 @@ body::before {
 }
 .right-pane > * { position: relative; z-index: 1; }
 
-.icon-btn {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: var(--r-md);
-  padding: 5px 12px;
-  font-size: 11px;
-  font-family: var(--font-body);
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
-}
-
-.icon-btn:hover {
-  background: var(--accent-faint);
-  border-color: var(--accent-soft);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-card);
-}
-
-.icon-btn.key-set {
-  border-color: var(--sage);
-  background: var(--sage-soft);
-  color: #2c4d27;
-}
-.icon-btn.key-set:hover {
-  background: #cfdfc6;
-  border-color: var(--sage);
-}
+/* .icon-btn / .icon-btn.key-set — first of three legacy
+   definitions for the header buttons. Migrated to <Button> in
+   src/ui/Button.tsx; consumers in src/App.tsx now use that.
+   Removed in the v5-foundation PR. */
 
 .deploy-btn {
   margin-left: auto;
@@ -3139,15 +2936,9 @@ body::before {
   letter-spacing: 0.06em;
 }
 
-.icon-btn.key-set {
-  color: #2c8a4f;
-  border-color: #2c8a4f;
-  background: #e3f5ea;
-}
-
-.icon-btn.key-set:hover {
-  background: #d2efdc;
-}
+/* .icon-btn.key-set — second legacy redefinition (the "wrong"
+   green for the connected state). Migrated to <Button variant=
+   "secondary"> with semantic copy in src/App.tsx. */
 
 .key-input {
   width: 100%;
@@ -3949,144 +3740,39 @@ body::before {
 
 .chat-shell-spacer { flex: 1; }
 
-/* ── Status bar (bottom rail) ──────────────────────────────────── */
-.status-bar {
+/* ── Status bar removed ─────────────────────────────────────────
+   The .status-bar / .status-chip / .status-led classes migrated to
+   src/ui/Chip.tsx. The StatusBar component now uses <Chip> and the
+   status rail dissolves into the cream canvas (Quieter B). The
+   v5-shell-status class below provides the rail layout. */
+.v5-shell-status {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  height: 30px;
   font-family: var(--font-body);
-  font-size: 11px;
-  color: var(--text-muted);
-  position: relative;
-  z-index: 4;
+  font-size: var(--fs-caption);
+  color: var(--color-text-muted);
 }
-
-.status-bar-left {
+.v5-shell-status-left {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
+  flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-
-.status-bar-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg-canvas);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-family: var(--font-body);
+.v5-shell-status-left::-webkit-scrollbar { display: none; }
+.v5-shell-status-right {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--fs-caption);
+  color: var(--color-text-faint);
   white-space: nowrap;
-  cursor: default;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease);
-}
-
-button.status-chip {
-  cursor: pointer;
-}
-
-button.status-chip:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.status-chip-glyph {
-  font-size: 10px;
-  color: var(--text-faint);
-}
-
-.status-chip-label {
-  font-variant-numeric: tabular-nums;
-}
-
-.status-chip-project {
-  background: var(--surface);
-  border-color: var(--border-strong);
-  color: var(--text);
-  font-weight: 500;
-}
-
-.status-chip-project .status-chip-glyph {
-  color: var(--accent);
-  font-size: 9px;
-}
-
-.status-led {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-faint);
-}
-
-.status-chip-ok .status-led {
-  background: var(--sage);
-  box-shadow: 0 0 6px rgba(111, 143, 106, 0.55);
-}
-.status-chip-ok {
-  color: #2c4d27;
-  background: var(--sage-soft);
-  border-color: rgba(111, 143, 106, 0.4);
-}
-
-.status-chip-warn .status-led {
-  background: var(--ochre);
-  box-shadow: 0 0 6px rgba(199, 154, 46, 0.55);
-}
-.status-chip-warn {
-  color: #5c3d00;
-  background: var(--ochre-soft);
-  border-color: rgba(199, 154, 46, 0.4);
-}
-
-.status-chip-info {
-  background: var(--accent-faint);
-  border-color: var(--accent-soft);
-  color: #6a3115;
-}
-
-.status-chip-muted {
-  background: var(--bg-canvas);
-  color: var(--text-faint);
-}
-
-.status-chip-cmdk kbd {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  line-height: 1.1;
-}
-
-button.status-chip-cmdk {
-  background: var(--surface);
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-
-button.status-chip-cmdk:hover {
-  background: var(--accent-faint);
-  border-color: var(--accent-soft);
+  font-feature-settings: "tnum" 1;
 }
 
 /* ── Command palette ───────────────────────────────────────────── */
@@ -4566,64 +4252,9 @@ button.status-chip-cmdk:hover {
   opacity: 1;
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Header refinements — minimal lockup, cmd-K hint, primary cloud CTA
-   ───────────────────────────────────────────────────────────────── */
-
-.header-cmdk-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px 5px 8px;
-  background: transparent;
-  border: 1px dashed var(--border-strong);
-  border-radius: 999px;
-  cursor: pointer;
-  color: var(--text-faint);
-  font-family: var(--font-body);
-  font-size: 11px;
-  transition: border-color var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease);
-}
-
-.header-cmdk-hint:hover {
-  border-color: var(--accent-soft);
-  background: var(--accent-faint);
-  border-style: solid;
-  color: var(--text-muted);
-}
-
-.header-cmdk-hint kbd {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text);
-  line-height: 1.1;
-}
-
-.icon-btn-primary {
-  background: linear-gradient(180deg, #db6b39 0%, var(--accent) 100%);
-  color: #fff8ec;
-  border-color: rgba(120, 50, 20, 0.5);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.22) inset,
-    var(--shadow-sm);
-}
-
-.icon-btn-primary:hover {
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
-  border-color: var(--accent-hover);
-}
-
-.icon-btn-ghost {
-  background: transparent;
-  border-color: var(--border);
-  box-shadow: none;
-}
+/* Header refinements removed — .header-cmdk-hint, .icon-btn-primary,
+   .icon-btn-ghost migrated to <Button variant="cmdk"|"primary"|"ghost">
+   in src/ui/Button.tsx. Consumers in src/App.tsx now use those. */
 
 
 /* ─────────────────────────────────────────────────────────────────
@@ -4789,29 +4420,7 @@ button.status-chip-cmdk:hover {
   color: #fff8ec;
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Status chip refinements — for the bottom status bar
-   ───────────────────────────────────────────────────────────────── */
-.status-chip-icon {
-  flex: 0 0 auto;
-  color: currentColor;
-  opacity: 0.85;
-}
-
-.status-chip-merged {
-  background: var(--surface);
-  border-color: var(--border-strong);
-}
-
-/* Make the intake-form chip clickable like a button. */
-button.status-chip-info {
-  cursor: pointer;
-}
-
-button.status-chip-info:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-}
+/* Status chip refinements removed — folded into <Chip> primitive. */
 
 /* ─────────────────────────────────────────────────────────────────
    EntityCardGrid — unified card grid for entity-list views (agents,
@@ -5171,8 +4780,12 @@ button.status-chip-info:hover {
    Unified button family — coerce existing class names into one set
    of tokens so the visual rhythm is consistent everywhere.
    ───────────────────────────────────────────────────────────────── */
+/* .icon-btn / .icon-btn-primary / .icon-btn-ghost / .icon-btn.key-set
+   are gone — the App.tsx header now uses the v5 <Button> primitive.
+   .deploy-btn / .viewer-* / .onboard-signup-btn still exist; this
+   consolidator continues to coerce them into a shared rhythm until
+   they migrate in subsequent PRs. */
 .btn,
-.icon-btn,
 .deploy-btn,
 .viewer-add-btn,
 .viewer-back-btn,
@@ -5200,7 +4813,6 @@ button.status-chip-info:hover {
 }
 
 .btn:hover:not(:disabled),
-.icon-btn:hover:not(:disabled),
 .viewer-add-btn:hover:not(:disabled),
 .viewer-back-btn:hover:not(:disabled),
 .onboard-signup-btn:hover:not(:disabled) {
@@ -5211,13 +4823,11 @@ button.status-chip-info:hover {
 }
 
 .btn:active:not(:disabled),
-.icon-btn:active:not(:disabled),
 .deploy-btn:active:not(:disabled) {
   transform: translateY(0);
 }
 
 .btn:disabled,
-.icon-btn:disabled,
 .deploy-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -5227,8 +4837,7 @@ button.status-chip-info:hover {
 
 /* Primary — gradient orange CTA. */
 .btn-primary,
-.deploy-btn,
-.icon-btn-primary {
+.deploy-btn {
   background: linear-gradient(180deg, #db6b39 0%, var(--accent) 100%);
   color: #fff8ec;
   border-color: rgba(120, 50, 20, 0.5);
@@ -5239,8 +4848,7 @@ button.status-chip-info:hover {
 }
 
 .btn-primary:hover:not(:disabled),
-.deploy-btn:hover:not(:disabled),
-.icon-btn-primary:hover:not(:disabled) {
+.deploy-btn:hover:not(:disabled) {
   background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
   border-color: var(--accent-hover);
   transform: translateY(-1px);
@@ -5251,7 +4859,6 @@ button.status-chip-info:hover {
 
 /* Ghost — for secondary / dismiss actions. */
 .btn-ghost,
-.icon-btn-ghost,
 .onboard-signup-btn {
   background: transparent;
   border-color: var(--border);
@@ -5260,7 +4867,6 @@ button.status-chip-info:hover {
 }
 
 .btn-ghost:hover:not(:disabled),
-.icon-btn-ghost:hover:not(:disabled),
 .onboard-signup-btn:hover:not(:disabled) {
   background: var(--surface-hover);
   border-color: var(--border-strong);
@@ -5269,16 +4875,14 @@ button.status-chip-info:hover {
 }
 
 /* Success — sage palette. */
-.btn-success,
-.icon-btn.key-set {
+.btn-success {
   background: var(--sage-soft);
   border-color: var(--sage);
   color: #2c4d27;
   box-shadow: var(--shadow-sm);
 }
 
-.btn-success:hover:not(:disabled),
-.icon-btn.key-set:hover:not(:disabled) {
+.btn-success:hover:not(:disabled) {
   background: #cfdfc6;
   border-color: var(--sage);
   color: #2c4d27;
@@ -5440,20 +5044,6 @@ button.status-chip-info:hover {
 }
 
 
-/* ── Slack chip in unconfigured state ─────────────────────────────
-   Always-rendered Slack pill. Dashed border + muted color signals
-   "you don't have one yet — click to set up." Same flow as the
-   configured-state click — both kick off /connect-slack canvas. */
-.status-chip-unset {
-  background: transparent;
-  border: 1px dashed var(--border-strong);
-  color: var(--text-muted);
-}
-
-button.status-chip-unset:hover {
-  background: var(--accent-faint);
-  border-color: var(--accent-soft);
-  border-style: solid;
-  color: var(--accent);
-}
+/* .status-chip-unset removed — handled by the v5 <Chip> primitive's
+   built-in dashed/unset variant in src/ui/Chip.tsx. */
 

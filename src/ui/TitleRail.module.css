@@ -1,0 +1,86 @@
+/* TitleRail — the merged macOS titlebar + app header. The native
+   traffic lights overlay this rail at top-left (we leave 78px of
+   left padding to clear them). The whole rail is draggable except
+   for interactive children, which opt out via app-region: no-drag.
+   Replaces the old .app-header strip in App.tsx and the wasted
+   empty titlebar above it. */
+
+.rail {
+  flex: 0 0 auto;
+  height: var(--h-rail);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-4) 0 var(--layout-traffic-clear);
+  background: var(--color-bg);
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+  position: relative;
+  z-index: var(--z-sticky);
+}
+
+/* The three regions. Each has app-region: drag at its container
+   level; interactive children inside opt out. */
+.left,
+.center,
+.right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.center {
+  justify-content: center;
+  flex: 1;
+  /* Center region content can overflow; clamp it visually with a
+     soft fade rather than a hard cut. */
+  overflow: hidden;
+}
+
+.right {
+  justify-self: end;
+}
+
+/* Any interactive element inside the rail must opt out of the drag
+   so click events land. Apply via the .nodrag utility OR rely on
+   the consumers (Button, Chip) which are already buttons and
+   exempt from drag. Here we add a belt-and-suspenders rule for
+   non-button anchors / divs inside the rail. */
+.nodrag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* The center "context" widget — current view name + counters.
+   Sits in the middle of the rail. */
+.context {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-family: var(--font-body);
+  font-size: var(--fs-meta);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.contextName {
+  font-family: var(--font-display);
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--tracking-snug);
+  color: var(--color-text);
+}
+.contextSep {
+  color: var(--color-text-faint);
+  opacity: 0.5;
+}
+.contextItalic {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--fs-meta);
+  color: var(--color-text-faint);
+}

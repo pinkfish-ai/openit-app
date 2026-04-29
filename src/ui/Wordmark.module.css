@@ -1,0 +1,39 @@
+/* Wordmark — OpenIT lockup with italic serif "I" + tagline.
+   Lives in the header rail of the shell. */
+
+.mark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  -webkit-app-region: drag; /* Tauri: let the user drag the window */
+  app-region: drag;
+  user-select: none;
+}
+.name {
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-lead);
+  letter-spacing: var(--tracking-tight);
+  color: var(--color-text);
+  line-height: 1;
+}
+.name em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: var(--fw-regular);
+  font-size: 16px;
+  color: var(--color-accent);
+  margin: 0 -1px;
+}
+.sep {
+  color: var(--color-text-faint);
+  font-size: var(--fs-meta);
+  line-height: 1;
+}
+.tag {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--fs-meta);
+  color: var(--color-text-faint);
+  line-height: 1;
+}

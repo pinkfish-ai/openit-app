@@ -12,7 +12,7 @@ import { FileThumbnail, isImageFile } from "./FileThumbnail";
 import { EntityBadge, type EntityKind } from "./entityIcons";
 import { ToolsPanel } from "./ToolsPanel";
 import { TrashIcon } from "./TrashIcon";
-import { useToast, ToastView } from "./Toast";
+import { useToast } from "../Toast";
 import { FileTypeBadge, formatBytes } from "./FileTypeBadge";
 import { RowEditForm } from "./RowEditForm";
 import { AttachmentList } from "./AttachmentList";
@@ -465,7 +465,10 @@ export function Viewer({
   // show up as new cards without a manual refresh.
   const [folderDragOver, setFolderDragOver] = useState(false);
   const [folderUploadError, setFolderUploadError] = useState<string | null>(null);
-  const { toast, show: showToast } = useToast();
+  // v5: the in-viewer ToastView was removed. The global ToastProvider
+  // (mounted in main.tsx via src/Toast.tsx) renders all toasts at the
+  // window's bottom-right via the unified <Toast> primitive.
+  const { show: showToast } = useToast();
   // Reverse the entity-folder card order. Default is the routing
   // layer's natural order (alphabetical for files, newest-first for
   // reports). Per-folder via source.path so flipping one folder's
@@ -2351,7 +2354,6 @@ export function Viewer({
 
   return (
     <div className="viewer">
-      <ToastView message={toast} />
       <div className="viewer-header">
         {/* Permanent back/forward pair — every viewer page gets the
             same navigation affordance instead of relying on per-kind

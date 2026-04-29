@@ -1,0 +1,89 @@
+/* Toast — single floating notification. Replaces both
+   src/Toast.tsx + src/shell/Toast.tsx. Always bottom-right,
+   dark warm surface, slide-in animation, auto-dismiss. */
+
+.region {
+  position: fixed;
+  bottom: var(--space-5);
+  right: var(--space-5);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 280px;
+  max-width: 380px;
+  padding: var(--space-4) var(--space-5) var(--space-4) var(--space-4);
+  background: var(--color-surface-dark);
+  color: var(--color-text-on-dark);
+  border: 1px solid var(--color-border-dark);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-normal);
+  animation: in var(--t-base) var(--ease);
+}
+@keyframes in {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+.icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  font-size: 12px;
+  margin-top: 1px;
+  color: var(--color-accent);
+}
+.success .icon  { color: var(--color-success); }
+.warn .icon     { color: var(--color-warn); }
+.critical .icon { color: var(--color-critical); }
+
+.body { flex: 1; min-width: 0; }
+.title {
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-body);
+  color: var(--color-text-on-dark);
+  margin: 0 0 2px;
+  line-height: 1.25;
+}
+.message {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--fs-meta);
+  color: var(--color-text-on-dark-mute);
+  margin: 0;
+  line-height: var(--lh-snug);
+  word-break: break-word;
+}
+
+.close {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 20px;
+  height: 20px;
+  color: var(--color-text-on-dark-mute);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: var(--r-sm);
+}
+.close:hover {
+  color: var(--color-text-on-dark);
+  background: rgba(255, 255, 255, 0.06);
+}

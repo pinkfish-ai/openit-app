@@ -1,0 +1,75 @@
+/* Modal — single panel + backdrop. Used by future cmdk /
+   confirm / onboard / oauth migrations. */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(40, 28, 14, 0.32);
+  backdrop-filter: blur(6px) saturate(110%);
+  -webkit-backdrop-filter: blur(6px) saturate(110%);
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14vh;
+  animation: backdrop-in var(--t-base) var(--ease);
+}
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: panel-in var(--t-slow) var(--ease);
+}
+.sm { width: min(420px, 92vw); }
+.md { width: min(560px, 92vw); }
+.lg { width: min(820px, 92vw); }
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.header {
+  flex: 0 0 auto;
+  height: var(--h-rail);
+  padding: 0 var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--color-border-faint);
+}
+.title {
+  font-family: var(--font-display);
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-lead);
+  letter-spacing: var(--tracking-snug);
+  color: var(--color-text);
+  margin: 0;
+}
+.close { margin-left: auto; }
+
+.body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-5);
+}
+
+.footer {
+  flex: 0 0 auto;
+  padding: var(--space-3) var(--space-5);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  border-top: 1px solid var(--color-border-faint);
+  background: var(--color-bg-canvas);
+}

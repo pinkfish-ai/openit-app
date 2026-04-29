@@ -1,0 +1,144 @@
+/* Chip — one base, six variants. Replaces the 18 distinct
+   pill/chip elements catalogued in the v5 audit. */
+
+.chip {
+  --_bg: var(--color-bg-canvas);
+  --_fg: var(--color-text-muted);
+  --_border: var(--color-border);
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 22px;
+  padding: 0 10px;
+  background: var(--_bg);
+  color: var(--_fg);
+  border: 1px solid var(--_border);
+  border-radius: var(--r-pill);
+  font-family: var(--font-body);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+  white-space: nowrap;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: var(--tracking-normal);
+  cursor: default;
+  user-select: none;
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+button.chip {
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+button.chip:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background:
+    linear-gradient(var(--color-hover-overlay), var(--color-hover-overlay))
+    var(--_bg);
+  color: var(--color-text);
+}
+button.chip:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+.chip:disabled,
+.chip[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.key {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--color-text-faint);
+  font-size: var(--fs-caption);
+}
+.glyph {
+  color: var(--color-accent);
+  font-size: 9px;
+}
+
+.strong {
+  --_bg: var(--color-surface);
+  --_border: var(--color-border-strong);
+  --_fg: var(--color-text);
+  font-weight: var(--fw-medium);
+}
+.info {
+  --_bg: var(--color-accent-faint);
+  --_border: var(--color-accent-soft);
+  --_fg: #6a3115;
+}
+.success {
+  --_bg: var(--color-success-soft);
+  --_border: rgba(111, 143, 106, 0.4);
+  --_fg: var(--color-success-deep);
+}
+.warn {
+  --_bg: var(--color-warn-soft);
+  --_border: rgba(199, 154, 46, 0.4);
+  --_fg: var(--color-warn-deep);
+}
+.critical {
+  --_bg: var(--color-critical-soft);
+  --_border: rgba(179, 74, 58, 0.4);
+  --_fg: var(--color-critical-deep);
+}
+
+/* Modifier — dashed/unset. Used for "click to set this up" affordances
+   (e.g. Slack chip in the not-yet-configured state). Layers on top of
+   any variant. */
+.dashed {
+  background: transparent;
+  border-style: dashed;
+}
+button.dashed:hover:not(:disabled) {
+  background: var(--color-accent-faint);
+  border-color: var(--color-accent-soft);
+  border-style: solid;
+  color: var(--color-accent);
+}
+
+.led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-faint);
+  flex: 0 0 auto;
+}
+.success .led {
+  background: var(--color-success);
+  box-shadow: 0 0 6px rgba(111, 143, 106, 0.55);
+}
+.warn .led {
+  background: var(--color-warn);
+  box-shadow: 0 0 6px rgba(199, 154, 46, 0.55);
+}
+.critical .led {
+  background: var(--color-critical);
+  box-shadow: 0 0 6px rgba(179, 74, 58, 0.55);
+}
+
+.dismiss {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin-left: 2px;
+  margin-right: -4px;
+  border-radius: 50%;
+  color: inherit;
+  opacity: 0.5;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+}
+.dismiss:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.06);
+}

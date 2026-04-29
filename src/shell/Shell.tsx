@@ -839,14 +839,12 @@ export function Shell({
           }
         }}
       />
-      <EscalatedTicketBanner
-        repo={repo}
-        fsTick={fsTick}
-        onOpenPath={async (path) => {
-          const resolved = await resolvePathToSource(path, repo);
-          setSource(resolved);
-        }}
-      />
+      {/* EscalatedTicketBanner used to render here, position: fixed,
+          which clipped over the right pane's rounded corner. In the
+          v5-foundation migration it's re-parented INSIDE the right
+          pane (below the chat header, above the chat stream) so it
+          clips properly to the pane's chrome. See the right-pane
+          paneContent block below. */}
       {(() => {
         const paneClass = (id: PaneId) =>
           `${id === "left" ? "left-pane" : id === "center" ? "center-pane" : "right-pane"} ${
@@ -1002,6 +1000,14 @@ export function Shell({
                   />
                 }
               />
+              <EscalatedTicketBanner
+                repo={repo}
+                fsTick={fsTick}
+                onOpenPath={async (path) => {
+                  const resolved = await resolvePathToSource(path, repo);
+                  setSource(resolved);
+                }}
+              />
               <div className="chat-area">
                 <ChatPane key={chatSessionKey} cwd={repo} resume={chatResume} />
               </div>
@@ -1025,23 +1031,30 @@ export function Shell({
         // PANE_DEFAULT covers the common case; runtime resizes during
         // a session still work via the library's own state.
         return (
-          <PanelGroup direction="horizontal">
-            {paneOrder.map((id, idx) => (
-              <Fragment key={id}>
-                <Panel
-                  id={id}
-                  order={idx}
-                  defaultSize={PANE_DEFAULT[id]}
-                  minSize={PANE_MIN[id]}
-                >
-                  {paneContent[id]}
-                </Panel>
-                {idx < paneOrder.length - 1 && (
-                  <PanelResizeHandle className="resize-handle" />
-                )}
-              </Fragment>
-            ))}
-          </PanelGroup>
+          // Wrapper enforces the panes-row geometry: takes all
+          // available vertical space inside .shell, leaving room for
+          // any banners above and the StatusBar below. Without
+          // flex:1 the PanelGroup collapses in some cases when the
+          // shell uses padded gutters.
+          <div className="shell-panes-row">
+            <PanelGroup direction="horizontal">
+              {paneOrder.map((id, idx) => (
+                <Fragment key={id}>
+                  <Panel
+                    id={id}
+                    order={idx}
+                    defaultSize={PANE_DEFAULT[id]}
+                    minSize={PANE_MIN[id]}
+                  >
+                    {paneContent[id]}
+                  </Panel>
+                  {idx < paneOrder.length - 1 && (
+                    <PanelResizeHandle className="resize-handle" />
+                  )}
+                </Fragment>
+              ))}
+            </PanelGroup>
+          </div>
         );
       })()}
       <StatusBar
