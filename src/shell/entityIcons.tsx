@@ -97,11 +97,12 @@ const WorkflowsIcon: ReactNode = (
   </svg>
 );
 
-// Wrench — for the CLI entity (CLI tools the agent can call via Bash).
+// Terminal prompt — for the CLI entity (CLI tools the agent calls via Bash).
 const CliIcon: ReactNode = (
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <path d="M14.7 6.3a4 4 0 0 0 5 5l-9.4 9.4a2.1 2.1 0 0 1-3-3z" />
-    <path d="M14.7 6.3a4 4 0 0 1 5 5" />
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <polyline points="7 10 10 12 7 14" />
+    <line x1="12" y1="15" x2="16" y2="15" />
   </svg>
 );
 
