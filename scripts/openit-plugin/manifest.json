@@ -1,5 +1,5 @@
 {
-  "version": "2026-04-27-016",
+  "version": "2026-04-29-007",
   "bubbles": [
     { "label": "Answer ticket", "skill": "/answer-ticket" }
   ],
@@ -17,6 +17,11 @@
     { "path": "scripts/sync-resolve-conflict.mjs" },
     { "path": "scripts/sync-push.mjs" },
     { "path": "scripts/report-overview.mjs" },
-    { "path": "scripts/slack-listen.bundle.cjs" }
+    { "path": "scripts/slack-listen.bundle.cjs" },
+    { "path": "scripts/slack-copy-manifest.mjs" },
+    { "path": "scripts/slack-manifest.yml" },
+    { "path": "scripts/slack-send-intro.mjs" },
+    { "path": "scripts/slack-disconnect.mjs" },
+    { "path": "scripts/_flash.mjs" }
   ]
 }

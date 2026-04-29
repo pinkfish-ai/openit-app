@@ -1,7 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { onPtyData, onPtyExit, ptyKill, ptyResize, ptySpawn, ptyWrite } from "../lib/pty";
 import { setActiveSession, clearActiveSession } from "./activeSession";
 import "@xterm/xterm/css/xterm.css";
@@ -24,6 +26,24 @@ export function ChatPane({ cwd, resume }: { cwd: string | null; resume?: boolean
         "'MesloLGS NF', 'JetBrainsMono Nerd Font Mono', 'JetBrainsMono Nerd Font', 'Hack Nerd Font Mono', 'Hack Nerd Font', 'Symbols Nerd Font Mono', Menlo, Monaco, 'SF Mono', monospace",
       fontSize: 13,
       cursorBlink: true,
+      // OSC 8 hyperlink handler. Claude Code emits OSC 8 escape
+      // sequences for URLs in its output (the "rich" terminal
+      // hyperlink protocol — separate from the regex-based plain
+      // URL detection that WebLinksAddon handles below). Without
+      // overriding this, xterm's default handler calls
+      // `window.open`, which the Tauri webview blocks ("Opening
+      // link blocked as opener could not be cleared") and then
+      // falls through to `window.confirm`, which is also blocked
+      // ("dialog.confirm not allowed"). Routing through Tauri's
+      // openUrl plugin opens the link in the user's default
+      // browser like every other openUrl call in the app.
+      linkHandler: {
+        activate(_event: MouseEvent, uri: string) {
+          openUrl(uri).catch((e) => console.warn("openUrl failed:", e));
+        },
+        hover() {},
+        leave() {},
+      },
       // Colorblind-friendly palette on cream `#faf9f6`. The earlier
       // attempt kept yellows for Claude's tool-block headers, but
       // they wash out for colorblind users (deuteranopia/protanopia
@@ -63,6 +83,18 @@ export function ChatPane({ cwd, resume }: { cwd: string | null; resume?: boolean
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    // Web-links addon: detects http(s):// URLs in terminal output
+    // and makes them clickable. Routed through Tauri's openUrl so
+    // links open in the user's default browser, not inside the
+    // webview. The addon's built-in activation already requires
+    // cmd-click on macOS (ctrl-click elsewhere), so we don't need
+    // a custom modifier check — passing one was actually breaking
+    // activation in the Tauri webview.
+    term.loadAddon(
+      new WebLinksAddon((_event, uri) => {
+        openUrl(uri).catch((e) => console.warn("openUrl failed:", e));
+      }),
+    );
     term.open(containerRef.current);
     fit.fit();
     term.focus();

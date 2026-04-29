@@ -1,0 +1,108 @@
+/* SkillActionDock — sits between the chat-area and PromptBubbles
+ * in the right pane. Two states: collapsed (just a button), and
+ * expanded (a row with password input + Save + Cancel). The
+ * expansion happens in-place; no modal, no overlay. */
+
+.skill-action-dock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0 16px;
+  background: transparent;
+  flex-wrap: wrap;
+}
+
+.skill-action-dock-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #2c2d72;
+  color: #fff8ec;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.08);
+  white-space: nowrap;
+}
+
+.skill-action-dock-button:hover:not(:disabled) {
+  background: #383a8a;
+}
+
+.skill-action-dock-button:active:not(:disabled) {
+  background: #25266a;
+}
+
+.skill-action-dock-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.skill-action-dock-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.skill-action-dock-hint {
+  font-size: 12px;
+  color: #6b6356;
+  font-style: italic;
+}
+
+.skill-action-dock-error {
+  width: 100%;
+  font-size: 12px;
+  color: #b3492c;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+/* ---- Inline-expanded state ---- */
+
+.skill-action-dock-inline .skill-action-dock-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #d8d2c2;
+  border-radius: 6px;
+  background: #fff;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+  font-size: 13px;
+  color: #1f1a13;
+}
+
+.skill-action-dock-inline .skill-action-dock-input:focus {
+  outline: 2px solid #2c2d72;
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.skill-action-dock-inline .skill-action-dock-input:disabled {
+  background: #f3eddc;
+  cursor: not-allowed;
+}
+
+.skill-action-dock-cancel {
+  background: transparent;
+  border: none;
+  color: #6b6356;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.skill-action-dock-cancel:hover:not(:disabled) {
+  color: #1f1a13;
+  background: #f3eddc;
+}
+
+.skill-action-dock-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

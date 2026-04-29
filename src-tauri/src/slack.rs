@@ -28,7 +28,7 @@ use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, Runtime};
@@ -67,6 +67,29 @@ const SLACK_API_BASE: &str = "https://slack.com/api";
 const HTTP_TIMEOUT_SECS: u64 = 15;
 const LISTENER_READY_TIMEOUT_SECS: u64 = 10;
 const LISTENER_STOP_GRACE_SECS: u64 = 5;
+
+/// Process-global mirror of the active listener's bot token. The
+/// intake server (`intake.rs`) reads this to service the
+/// `/skill/slack-send-intro` route without having to thread an
+/// `AppHandle` (and therefore Tauri-managed `SlackSupervisorState`)
+/// through the Axum router. Updated by `slack_listener_start` on
+/// successful bring-up and cleared by `stop_inner` / supervisor exit.
+static ACTIVE_BOT_TOKEN: OnceLock<Arc<PMutex<Option<String>>>> = OnceLock::new();
+
+fn active_bot_token_slot() -> &'static Arc<PMutex<Option<String>>> {
+    ACTIVE_BOT_TOKEN.get_or_init(|| Arc::new(PMutex::new(None)))
+}
+
+/// Public read-only accessor for the active listener's bot token.
+/// Returns `None` when no listener is running. Cheap (clones a
+/// short string under a parking_lot mutex).
+pub fn current_bot_token() -> Option<String> {
+    active_bot_token_slot().lock().clone()
+}
+
+fn set_active_bot_token(token: Option<String>) {
+    *active_bot_token_slot().lock() = token;
+}
 
 fn bot_token_slot(org_id: &str) -> String {
     format!(
@@ -199,7 +222,7 @@ struct LookupUser {
     id: String,
 }
 
-async fn slack_lookup_user_id(
+pub(crate) async fn slack_lookup_user_id(
     http: &HttpClient,
     bot_token: &str,
     email: &str,
@@ -231,7 +254,7 @@ struct PostMessageResp {
     error: Option<String>,
 }
 
-async fn slack_post_message(
+pub(crate) async fn slack_post_message(
     http: &HttpClient,
     bot_token: &str,
     channel: &str,
@@ -634,9 +657,11 @@ pub async fn slack_listener_start<R: Runtime>(
         .as_ref()
         .map(|t| t.is_finished())
         .unwrap_or(true);
+    let bot_token_for_global = running.bot_token.clone();
     *state.inner.lock() = Some(running);
     if already_dead {
         *state.inner.lock() = None;
+        set_active_bot_token(None);
         let exit_err = state
             .last_exit_error
             .lock()
@@ -644,6 +669,7 @@ pub async fn slack_listener_start<R: Runtime>(
             .unwrap_or_else(|| "listener exited immediately after reporting ready".into());
         return Err(exit_err);
     }
+    set_active_bot_token(Some(bot_token_for_global));
     Ok(())
 }
 
@@ -750,6 +776,10 @@ fn spawn_supervisor_task(
         // last_error/heartbeat with us — exit_err_handle is the
         // separate channel for "last error after exit".
         *inner_handle.lock() = None;
+        // Mirror clear into the process-global so the intake-server
+        // `/skill/slack-send-intro` route stops servicing requests
+        // against a dead listener.
+        set_active_bot_token(None);
     })
 }
 

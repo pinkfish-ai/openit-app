@@ -43,9 +43,9 @@ import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
 import { Viewer, type ViewerSource } from "./Viewer";
-import { SkillCanvas } from "../SkillCanvas";
-import type { SkillCanvasState as SkillCanvasStateType } from "../lib/skillCanvas";
+import type { DockKind } from "../lib/skillState";
 import { resolvePathToSource } from "./entityRouting";
+import { SkillActionDock } from "./SkillActionDock";
 
 type LeftTab = "overview" | "files" | "source-control";
 
@@ -142,9 +142,10 @@ export function Shell({
   onConnectRequest,
   intakeUrl,
   tunnelUrl,
-  skillCanvasState,
-  skillCanvasOrgId,
-  onSkillCanvasClosed,
+  dock,
+  slackOrgId,
+  stagedSlackBotToken,
+  onStagedSlackBotTokenChange,
   slackConfig,
   slackStatus,
   orgName,
@@ -172,17 +173,23 @@ export function Shell({
    *  outbound tunnel is up. Null when the tunnel hasn't connected
    *  (yet) or has disconnected (e.g. laptop sleep). */
   tunnelUrl: string | null;
-  /** Active Skill Canvas state, if any. When non-null AND active, the
-   *  center pane swaps from Viewer to SkillCanvas. App.tsx watches the
-   *  state file under .openit/skill-state/<skill>.json and passes the
-   *  current value here. */
-  skillCanvasState: SkillCanvasStateType | null;
-  /** Pinkfish orgId (or "" for local-only) — needed by skill-canvas
-   *  actions that touch keychain (e.g. Slack token storage). */
-  skillCanvasOrgId: string;
-  /** Called when the canvas's dismiss button flips active=false; used to
-   *  let App.tsx clear the watched state. */
-  onSkillCanvasClosed: () => void;
+  /** Which secret-paste affordance the chat-anchored
+   *  SkillActionDock should surface, if any. Driven by the
+   *  `.openit/skill-state/connect-slack.json` side channel (read in
+   *  App.tsx). The dock renders nothing when this is null/undefined.
+   */
+  dock: DockKind | undefined;
+  /** Pinkfish orgId (or "" for local-only) — needed by
+   *  SkillActionDock when it calls slack_connect (Keychain slot is
+   *  scoped per org). */
+  slackOrgId: string;
+  /** xoxb- token staged in App-level state between the bot-token
+   *  paste and the app-token paste. App.tsx owns the value so the
+   *  paste flow survives the dock unmount/remount cycle that
+   *  happens when Claude flips the dock kind between paste steps. */
+  stagedSlackBotToken: string | null;
+  /** Setter for the staged bot token. */
+  onStagedSlackBotTokenChange: (t: string | null) => void;
   /** Slack config + status — surfaced in the bottom status bar. */
   slackConfig: SlackConfig | null;
   slackStatus: SlackStatus | null;
@@ -954,33 +961,23 @@ export function Shell({
                   above the viewer card. The left and right grips
                   reach all six permutations in ≤2 moves, so dropping
                   this is purely a visual cleanup. */}
-              {skillCanvasState && skillCanvasState.active && repo && intakeUrl ? (
-                <SkillCanvas
-                  repo={repo}
-                  orgId={skillCanvasOrgId}
-                  intakeUrl={intakeUrl}
-                  state={skillCanvasState}
-                  onClosed={onSkillCanvasClosed}
-                />
-              ) : (
-                <Viewer
-                  source={source}
-                  repo={repo ?? ""}
-                  fsTick={fsTick}
-                  intakeUrl={intakeUrl}
-                  welcomeFlashKey={welcomeFlashKey}
-                  onOpenPath={async (path) => {
-                    const resolved = await resolvePathToSource(path, repo);
-                    setSource(resolved);
-                  }}
-                  onConnectCloud={onConnectRequest}
-                  onConnectSlack={onConnectSlack}
-                  onGoBack={goBack}
-                  onGoForward={goForward}
-                  canGoBack={canGoBack}
-                  canGoForward={canGoForward}
-                />
-              )}
+              <Viewer
+                source={source}
+                repo={repo ?? ""}
+                fsTick={fsTick}
+                intakeUrl={intakeUrl}
+                welcomeFlashKey={welcomeFlashKey}
+                onOpenPath={async (path) => {
+                  const resolved = await resolvePathToSource(path, repo);
+                  setSource(resolved);
+                }}
+                onConnectCloud={onConnectRequest}
+                onConnectSlack={onConnectSlack}
+                onGoBack={goBack}
+                onGoForward={goForward}
+                canGoBack={canGoBack}
+                canGoForward={canGoForward}
+              />
             </div>
           ),
           right: (
@@ -1004,6 +1001,14 @@ export function Shell({
               <div className="chat-area">
                 <ChatPane key={chatSessionKey} cwd={repo} resume={chatResume} />
               </div>
+              <SkillActionDock
+                dock={dock}
+                repo={repo}
+                orgId={slackOrgId}
+                intakeUrl={intakeUrl}
+                stagedBotToken={stagedSlackBotToken}
+                onStagedBotTokenChange={onStagedSlackBotTokenChange}
+              />
               <PromptBubbles extraBubbles={conflictBubbles} bubbles={bubbles} />
             </div>
           ),
