@@ -107,10 +107,7 @@ fn uninstall_blocking(args: CliUninstallArgs) -> Result<(), String> {
 /// only" recovery path when brew uninstall fails because the CLI was
 /// installed out-of-band.
 #[tauri::command]
-pub async fn cli_remove_hint_only(
-    project_root: String,
-    entry_id: String,
-) -> Result<(), String> {
+pub async fn cli_remove_hint_only(project_root: String, entry_id: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         splice_claude_md(&project_root, |existing| {
             remove_cli_entry(existing, &entry_id)
@@ -188,8 +185,12 @@ fn remove_cli_entry(claude_md: &str, entry_id: &str) -> String {
 /// Extract `(entry_id, full_line)` pairs from inside the marker block.
 /// Lines without an `<!-- entry:ID -->` prefix are ignored.
 fn parse_block(claude_md: &str) -> Vec<(String, String)> {
-    let Some(start) = claude_md.find(BLOCK_START) else { return Vec::new() };
-    let Some(end_rel) = claude_md[start..].find(BLOCK_END) else { return Vec::new() };
+    let Some(start) = claude_md.find(BLOCK_START) else {
+        return Vec::new();
+    };
+    let Some(end_rel) = claude_md[start..].find(BLOCK_END) else {
+        return Vec::new();
+    };
     let body = &claude_md[start + BLOCK_START.len()..start + end_rel];
     let mut out = Vec::new();
     for line in body.lines() {
