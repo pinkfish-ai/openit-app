@@ -390,13 +390,17 @@ export function Shell({
     const isFilestoresList = current.kind === "filestores-list";
     const isAttachmentsFolder = current.kind === "attachments-folder";
     const isKnowledgeBasesList = current.kind === "knowledge-bases-list";
+    const isPeopleList = current.kind === "people-list";
+    const isDatastoreTable = current.kind === "datastore-table";
     if (
       !isConversation &&
       !isEntityFolder &&
       !isDatabasesList &&
       !isFilestoresList &&
       !isAttachmentsFolder &&
-      !isKnowledgeBasesList
+      !isKnowledgeBasesList &&
+      !isPeopleList &&
+      !isDatastoreTable
     )
       return;
     const path =
@@ -418,7 +422,11 @@ export function Shell({
                   ? `${repo}/filestores/attachments`
                   : current.kind === "knowledge-bases-list"
                     ? `${repo}/knowledge-bases`
-                    : "";
+                    : current.kind === "people-list"
+                      ? `${repo}/databases/people`
+                      : current.kind === "datastore-table"
+                        ? `${repo}/databases/${current.collection.name}`
+                        : "";
     if (!path) return;
     let cancelled = false;
     resolvePathToSource(path, repo)
