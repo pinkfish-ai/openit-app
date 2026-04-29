@@ -186,13 +186,17 @@ export async function resolveProjectFilestores(
   }
 }
 
-/// Pick one collection per name across all openit-* collections, keeping
-/// the lexicographically smallest id when the API returned duplicates so
-/// every caller in the same session converges on the same one.
+/// Dedupe by name across all openit-* collections. If the API returned
+/// multiple collections with the same name (legacy duplicates), keep the
+/// lexicographically smallest id so every caller in the same session
+/// converges on the same one. Non-openit collections (e.g. user's own
+/// `customer-feedback`) are filtered out so the sync engine never sees
+/// them.
 ///
-/// Filters non-OpenIT collections via the `openit-` prefix so a user's
-/// unrelated filestores (e.g. `customer-feedback`) are never seen by the
-/// sync engine.
+/// Pre-Phase-1 also had a tighter `dedupeByName(all, defaults)` that
+/// further filtered to the hardcoded defaults set, but Phase 1 syncs
+/// every openit-* collection (defaults + per-org dynamic ones) so the
+/// defaults-filter variant was unused in production and removed.
 export function dedupeOpenitByName(
   all: DataCollection[],
 ): FilestoreCollection[] {

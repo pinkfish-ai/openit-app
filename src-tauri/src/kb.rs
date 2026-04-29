@@ -486,6 +486,17 @@ pub fn fs_store_write_file_bytes(
 /// Helper to build a filestore path with optional subdirectory.
 /// If subdir is provided, the final path is <repo>/<subdir>/<filename>.
 /// If subdir is not provided, uses the default filestores/library directory.
+///
+/// Filename must be a single non-empty path component. We reject:
+///   - empty strings
+///   - any `/` or `\` (would escape into a sibling dir)
+///   - `.` and `..` (would silently land at the subdir or its parent —
+///     a server-supplied filename of "." or ".." in fs_store_download_to_local
+///     would otherwise overwrite the directory itself or write into the
+///     parent).
+///   - absolute paths or multi-component paths (defense-in-depth — the
+///     separator check above already rejects these, but Path::components
+///     also catches Windows drive letters and other oddities).
 fn fs_path_with_optional_subdir(
     repo: &str,
     filename: &str,
