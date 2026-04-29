@@ -139,7 +139,13 @@ export type ViewerSource =
       // ticketid-grouped renderer and isn't part of this set.
       // `reports` carries on-demand generated markdown reports —
       // sorted newest-first by filename instead of alphabetically.
-      entity: "agents" | "workflows" | "knowledge-base" | "library" | "reports";
+      entity:
+        | "agents"
+        | "workflows"
+        | "knowledge-base"
+        | "library"
+        | "reports"
+        | "attachments-ticket";
       // Repo-relative path the resolver matched. For non-KB entities
       // it equals the entity name; for KB it carries the specific
       // collection (e.g. `knowledge-bases/default` or

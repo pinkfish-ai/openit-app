@@ -770,6 +770,7 @@ export function FileExplorer({
                     //   - `filestores/library/`     → curated entity-folder
                     rel === "filestores" ||
                     rel === "filestores/attachments" ||
+                    rel.match(/^filestores\/attachments\/[^/]+$/) ||
                     rel === "filestores/library" ||
                     // On-demand markdown reports — sorted newest-first
                     // in the entity-folder view via filename prefix.
