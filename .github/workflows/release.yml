@@ -1,0 +1,104 @@
+name: Release
+
+# Cuts a public release of the macOS desktop app.
+#
+# Trigger:  push a tag matching v*.*.* (e.g. `git tag v0.1.0 && git push --tags`)
+# Output:   a GitHub Release with two DMGs (Apple Silicon + Intel), the matching
+#           updater archives + signatures, and a single `latest.json` consumed by
+#           the in-app updater.
+#
+# Signing is auto-detected:
+#   - If APPLE_SIGNING_IDENTITY secret is set, build is signed with Developer ID
+#     and notarized via notarytool. (v0.2.0+ path.)
+#   - Otherwise, build is ad-hoc-signed only — users will see Gatekeeper's
+#     "cannot be opened" dialog on first launch and must approve via System
+#     Settings → Privacy & Security. (v0.1.0 path.)
+# Either way, the Tauri updater itself signs the update payload with the
+# minisign keypair, so auto-update works on both signed and unsigned builds.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+# One release at a time. If two tags get pushed back-to-back, the second waits
+# for the first instead of racing on the same GH Release object.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch_label: aarch64
+          - target: x86_64-apple-darwin
+            arch_label: x64
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo + target dir
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+
+      - run: npm ci
+
+      # tauri-action handles: tauri build, ad-hoc OR Developer ID signing
+      # (auto-detected from env), notarization (if APPLE_ID is set),
+      # updater-archive signing (TAURI_SIGNING_*), and uploading artifacts to
+      # a draft release. The release is published once the matrix completes.
+      - name: Build + sign + (notarize) + upload
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Updater signing — required on every build, signed or not.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Apple Developer ID signing + notarization.
+          # All of these can be absent for v0.1.0 — tauri-action skips signing
+          # cleanly and emits an ad-hoc-signed bundle instead.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "OpenIT ${{ github.ref_name }}"
+          releaseBody: |
+            macOS desktop app for OpenIT.
+
+            **First-time install:** macOS will say *"OpenIT can't be opened
+            because Apple cannot check it for malicious software."* That's
+            expected for the beta. Open System Settings → Privacy & Security,
+            scroll down, and click "Open Anyway" next to OpenIT. (Future signed
+            builds will install without this step.)
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: --target ${{ matrix.target }}

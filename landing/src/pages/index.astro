@@ -1,0 +1,41 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+<BaseLayout title="OpenIT — Claude-powered IT operations">
+  <h1>Run your IT desk in plain English.</h1>
+  <p class="lede">
+    OpenIT is a desktop scaffold around Claude Code, built for IT admins at small
+    and mid-sized companies. Describe a workflow, watch Claude write the
+    integrations, schemas, and automations as files on your machine.
+  </p>
+
+  <div class="cta-row">
+    <a href="/download" class="btn">
+      Download for macOS
+      <span class="sub">Beta &middot; Apple Silicon + Intel</span>
+    </a>
+    <a href="https://github.com/pinkfish-ai/openit-app" class="btn secondary">View on GitHub</a>
+  </div>
+
+  <h2>What it does</h2>
+  <ul>
+    <li>Launches a Claude session in an embedded terminal alongside a project file explorer and viewer.</li>
+    <li>Connects to your Pinkfish org and syncs datastores, knowledge bases, workflows, and agents bidirectionally.</li>
+    <li>Bundles the OpenIT plugin so Claude knows which scripts, MCPs, and APIs to reach for.</li>
+    <li>Lets you graduate to a real terminal any time — every file OpenIT writes is identical to what plain Claude Code would write.</li>
+  </ul>
+
+  <h2>Who it's for</h2>
+  <p>
+    IT administrators at SMB companies who want Pinkfish-grade automation without
+    spinning up a platform team. If you can describe what you want in a Slack
+    channel, you can build it in OpenIT.
+  </p>
+
+  <h2>Status</h2>
+  <p>
+    Public beta. Currently macOS only. Apple Developer ID code signing is in
+    progress — until then, see the
+    <a href="/download">download page</a> for the one-time first-launch step.
+  </p>
+</BaseLayout>

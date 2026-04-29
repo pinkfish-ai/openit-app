@@ -42,6 +42,22 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "OpenIT — Claude-powered IT operations for SMBs.",
+    "longDescription": "OpenIT is a desktop scaffold around Claude Code targeted at IT admins. It launches a Claude session in an embedded terminal alongside a project file explorer, viewer, and one-click deploy to Pinkfish.",
+    "copyright": "Copyright © 2026 Pinkfish",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": "entitlements.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU3Rjg3RkNGMjkyOEFBNTgKUldSWXFpZ3B6My80NTdIS1dCQ1FYdkNjVEhWU3BWTmRxV3puUjN0QVc0ZEtvR2dzTTE5NEpIWUsK",
+      "endpoints": [
+        "https://github.com/pinkfish-ai/openit-app/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

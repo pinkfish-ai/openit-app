@@ -1,0 +1,49 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+---
+<BaseLayout title="OpenIT — Privacy">
+  <h1>Privacy</h1>
+  <p class="lede">Draft — superseded by Pinkfish's main privacy policy when published.</p>
+
+  <h2>What stays on your machine</h2>
+  <p>
+    Everything in <code>~/OpenIT/&lt;orgId&gt;/</code> lives locally — projects,
+    Claude conversation history, and the OpenIT plugin. Nothing in that
+    directory leaves your Mac unless you choose to sync it (Pinkfish entities)
+    or share it.
+  </p>
+
+  <h2>What goes to Pinkfish</h2>
+  <p>
+    When you connect OpenIT to a Pinkfish org, entities prefixed
+    <code>openit-</code> mirror to the Pinkfish backend so they're available
+    when you log in elsewhere. Specifically: datastores, filestores, knowledge
+    bases, workflows, and agents tagged for OpenIT. Authentication uses an
+    OAuth client-credentials runtime token; no Pinkfish password ever leaves
+    your browser.
+  </p>
+
+  <h2>What goes to Anthropic</h2>
+  <p>
+    OpenIT uses Claude Code as its substrate. Prompts and the surrounding
+    context that Claude Code chooses to include are sent to Anthropic per
+    Anthropic's terms. OpenIT does not add additional telemetry on top of
+    Claude's.
+  </p>
+
+  <h2>What goes to third parties</h2>
+  <p>
+    When Claude calls a connected SaaS (Slack, Zendesk, Salesforce, Jira, Okta,
+    GitHub, Google, AWS, Azure…) through Pinkfish's gateway, the request is
+    routed through your existing Pinkfish connections. Those calls are subject
+    to Pinkfish's connection-level audit and the third party's own terms.
+  </p>
+
+  <h2>Crash + error telemetry</h2>
+  <p>None in v0.1.0. If we add it, we'll update this page first.</p>
+
+  <h2>Contact</h2>
+  <p>
+    Questions: <a href="mailto:hello@pinkfish.ai">hello@pinkfish.ai</a>.
+  </p>
+</BaseLayout>
