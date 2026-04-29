@@ -3,7 +3,7 @@
 //
 // Usage:
 //   node .claude/scripts/sync-resolve-conflict.mjs \
-//        --prefix <knowledge-bases/<name> | filestores/<name> | datastore | agent | workflow | legacy short name> \
+//        --prefix <knowledge-bases/<name> | filestores/<name> | databases/<name> | agent | workflow> \
 //        --key <manifestKey>
 //
 // What it does:
@@ -32,8 +32,8 @@
 //     is `{ [collectionId]: { collection_id, collection_name, files } }`.
 //     KB and filestore both use this shape.
 //   - **Flat single-collection** (legacy): `{ collection_id,
-//     collection_name, files }`. Only datastore / agent / workflow still
-//     write this shape.
+//     collection_name, files }`. Only agent / workflow still write
+//     this shape — datastore migrated to nested in Phase 3.
 //
 //   The script auto-detects which format is on disk and routes
 //   accordingly.
@@ -41,12 +41,12 @@
 // Prefix → manifest file:
 //   - `knowledge-bases/<name>`     → `.openit/kb-state.json` (nested)
 //   - `filestores/<name>`          → `.openit/fs-state.json` (nested)
-//   - `datastore`                  → `.openit/datastore-state.json` (flat)
+//   - `databases/<name>`           → `.openit/datastore-state.json` (nested)
 //   - `agent`                      → `.openit/agent-state.json` (flat)
 //   - `workflow`                   → `.openit/workflow-state.json` (flat)
 //
-// Datastore / agent / workflow keep the flat shape until those engines
-// migrate to per-collection manifests in a later phase. KB and filestore
+// Agent / workflow keep the flat shape until those engines migrate to
+// per-collection manifests in a later phase. KB / filestore / datastore
 // use the per-collection nested shape — and per-collection prefixes
 // always carry collection identity, so this script can route directly to
 // the right bucket without a legacy short-form fallback.
@@ -77,7 +77,7 @@ const FORCE_PUSH_MTIME_SENTINEL = 1;
 function manifestFileFor(prefix) {
   if (prefix.startsWith("knowledge-bases/")) return ".openit/kb-state.json";
   if (prefix.startsWith("filestores/")) return ".openit/fs-state.json";
-  if (prefix === "datastore") return ".openit/datastore-state.json";
+  if (prefix.startsWith("databases/")) return ".openit/datastore-state.json";
   if (prefix === "agent") return ".openit/agent-state.json";
   if (prefix === "workflow") return ".openit/workflow-state.json";
   return null;
@@ -128,9 +128,22 @@ function findBucket(manifest, prefix) {
     }
     return null;
   }
-  // datastore / agent / workflow use the flat manifest shape — they
-  // don't appear in a nested manifest, so finding nothing here means
-  // the caller is targeting the wrong file.
+  // Datastore: same pattern, `databases/<displayName>` → `openit-<displayName>`.
+  // Phase 3 of V2 sync (PIN-5779) — datastore migrated to the nested
+  // manifest shape alongside filestore + KB.
+  if (prefix.startsWith("databases/")) {
+    const displayName = prefix.slice("databases/".length);
+    const expected = `openit-${displayName}`;
+    for (const [id, bucket] of Object.entries(manifest)) {
+      if (bucket?.collection_name === expected) {
+        return { bucket, bucketKey: id };
+      }
+    }
+    return null;
+  }
+  // agent / workflow use the flat manifest shape — they don't appear
+  // in a nested manifest, so finding nothing here means the caller is
+  // targeting the wrong file.
   return null;
 }
 
@@ -155,7 +168,7 @@ async function main() {
 
   if (args.help) {
     process.stdout.write(
-      "Usage: sync-resolve-conflict.mjs --prefix <knowledge-bases/<name>|filestores/<name>|datastore|agent|workflow> --key <manifestKey>\n",
+      "Usage: sync-resolve-conflict.mjs --prefix <knowledge-bases/<name>|filestores/<name>|databases/<name>|agent|workflow> --key <manifestKey>\n",
     );
     process.exit(0);
   }
@@ -166,7 +179,7 @@ async function main() {
   if (!file) {
     fail(
       "invalid_prefix",
-      `Unknown prefix: ${args.prefix}. Valid: knowledge-bases/<name>, filestores/<name>, datastore, agent, workflow.`,
+      `Unknown prefix: ${args.prefix}. Valid: knowledge-bases/<name>, filestores/<name>, databases/<name>, agent, workflow.`,
     );
   }
 

@@ -37,47 +37,55 @@ async function readManifest(name: string): Promise<{
 
 describe("sync-resolve-conflict.mjs", () => {
   it("force-push: rewrites the entry using conflict_remote_version", async () => {
-    // Engine flagged this row as conflicted and recorded the
-    // current remote_version on the entry. Resolve script should
-    // replace remote_version with that captured value and set
-    // pulled_at_mtime_ms=1 so the next push sees localChanged=true.
+    // Phase 3: datastore migrated to nested per-collection manifest.
+    // The bare manifestKey is the row key (`row-A`); the bucket is
+    // keyed by collection id and looked up by `collection_name`
+    // matching `openit-<displayName>`.
     await writeFile(
       path.join(tmpDir, ".openit", "datastore-state.json"),
       JSON.stringify({
-        collection_id: null,
-        collection_name: null,
-        files: {
-          "openit-people/row-A": {
-            remote_version: "v1-pre-conflict",
-            pulled_at_mtime_ms: 1000,
-            conflict_remote_version: "v2-at-conflict-time",
+        "ds-people-id": {
+          collection_id: "ds-people-id",
+          collection_name: "openit-people",
+          files: {
+            "row-A": {
+              remote_version: "v1-pre-conflict",
+              pulled_at_mtime_ms: 1000,
+              conflict_remote_version: "v2-at-conflict-time",
+            },
+            "row-B": {
+              remote_version: "v2",
+              pulled_at_mtime_ms: 2000,
+            },
           },
-          "openit-people/row-B": { remote_version: "v2", pulled_at_mtime_ms: 2000 },
         },
       }),
     );
 
     const { stdout } = await runScript([
       "--prefix",
-      "datastore",
+      "databases/people",
       "--key",
-      "openit-people/row-A",
+      "row-A",
     ]);
     const result = JSON.parse(stdout.trim());
     expect(result).toEqual({
       ok: true,
-      prefix: "datastore",
-      key: "openit-people/row-A",
+      prefix: "databases/people",
+      key: "row-A",
       action: "force-push",
     });
 
-    const manifest = await readManifest("datastore");
-    expect(manifest.files["openit-people/row-A"]).toEqual({
+    const manifest = (await readManifest("datastore")) as unknown as Record<
+      string,
+      { files: Record<string, unknown> }
+    >;
+    expect(manifest["ds-people-id"].files["row-A"]).toEqual({
       remote_version: "v2-at-conflict-time",
       pulled_at_mtime_ms: 1,
     });
     // Sibling row-B preserved unchanged.
-    expect(manifest.files["openit-people/row-B"]).toEqual({
+    expect(manifest["ds-people-id"].files["row-B"]).toEqual({
       remote_version: "v2",
       pulled_at_mtime_ms: 2000,
     });
@@ -87,30 +95,35 @@ describe("sync-resolve-conflict.mjs", () => {
     await writeFile(
       path.join(tmpDir, ".openit", "datastore-state.json"),
       JSON.stringify({
-        collection_id: null,
-        collection_name: null,
-        files: {
-          "openit-people/row-A": { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+        "ds-people-id": {
+          collection_id: "ds-people-id",
+          collection_name: "openit-people",
+          files: {
+            "row-A": { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+          },
         },
       }),
     );
 
     const { stdout } = await runScript([
       "--prefix",
-      "datastore",
+      "databases/people",
       "--key",
-      "openit-people/row-A",
+      "row-A",
     ]);
     const result = JSON.parse(stdout.trim());
     expect(result).toEqual({
       ok: true,
-      prefix: "datastore",
-      key: "openit-people/row-A",
+      prefix: "databases/people",
+      key: "row-A",
       action: "deleted",
     });
 
-    const manifest = await readManifest("datastore");
-    expect(manifest.files["openit-people/row-A"]).toBeUndefined();
+    const manifest = (await readManifest("datastore")) as unknown as Record<
+      string,
+      { files: Record<string, unknown> }
+    >;
+    expect(manifest["ds-people-id"].files["row-A"]).toBeUndefined();
   });
 
   it("is a no-op when the key isn't tracked (idempotent)", async () => {
