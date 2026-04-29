@@ -1,42 +1,44 @@
 # Integration Tests
 
-Real integration tests that run against actual backends without mocking. These tests verify end-to-end behavior of the filestore sync system.
+Real integration tests that run against the live Pinkfish backend.
+Use these instead of restart-and-retry loops on the running app.
 
 ## Setup
 
 ### 1. Create test config
 
-Copy the example config:
 ```bash
 cp test-config.example.json test-config.json
 ```
 
-### 2. Fill in credentials
+`test-config.json` is git-ignored — never commit it.
 
-Edit `test-config.json` with your real credentials:
+### 2. Fill in your credentials
 
 ```json
 {
-  "repo": "/path/to/test/repo",
+  "repo": "/Users/yourname/OpenIT/local",
   "orgId": "your-org-id",
   "credentials": {
-    "tokenUrl": "https://oauth.dev20.pinkfish.dev",
+    "tokenUrl": "https://app-api.dev20.pinkfish.dev/oauth/token",
+    "webUrl": "https://dev20.pinkfish.dev",
     "clientId": "your-client-id",
     "clientSecret": "your-client-secret"
-  },
-  "collections": {
-    "docs": "collection-id-for-docs",
-    "attachments": "collection-id-for-attachments",
-    "library": "collection-id-for-library"
   }
 }
 ```
 
-**⚠️ IMPORTANT**: `test-config.json` is git-ignored. Never commit credentials.
+Notes:
+- `tokenUrl` is the **full** OAuth endpoint URL including `/oauth/token`.
+  Mirror the curl pattern: `curl -X POST "$TOKEN_URL" ...`.
+- `webUrl` is the web app URL for the same environment (informational).
+- Skills API URL (`skills-stage.pinkfish.ai` for dev, `skills.pinkfish.ai`
+  for prod) is derived automatically from `tokenUrl`.
+- **Collection IDs are NOT in the config** — they're discovered at test time
+  by name. IDs change when collections are recreated; names are stable.
 
-### 3. Get credentials
+### 3. (Optional) Verify OAuth from the shell
 
-From the OAuth endpoint:
 ```bash
 curl -X POST "https://app-api.dev20.pinkfish.dev/oauth/token" \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -46,117 +48,73 @@ curl -X POST "https://app-api.dev20.pinkfish.dev/oauth/token" \
   -d "scope=org:YOUR_ORG_ID"
 ```
 
+If this returns a token, the integration tests will too.
+
 ## Running Tests
 
-### Run all integration tests
 ```bash
-npm run test:integration
+npm run test:integration                    # one-shot
+npm run test:integration:watch              # rerun on file changes
+npm run test:integration -- --reporter=verbose   # see all stdout
 ```
 
-### Run specific test file
-```bash
-npm test -- --config vitest.integration.config.ts filestore-sync.test.ts
-```
+If `test-config.json` is absent the suite skips silently — safe for CI.
 
-### Watch mode (re-run on file changes)
-```bash
-npm test -- --config vitest.integration.config.ts --watch
-```
-
-### Verbose output
-```bash
-npm test -- --config vitest.integration.config.ts --reporter=verbose
-```
-
-## How Tests Skip If Config Missing
-
-If `test-config.json` doesn't exist, integration tests are automatically skipped with a message pointing to the setup instructions. This allows the test suite to run in CI without credentials.
-
-## Test Structure
+## Layout
 
 ```
 integration_tests/
-├── README.md                    # This file
-├── filestore-sync.test.ts       # Main filestore sync tests
-├── utils/
-│   ├── config.ts               # Load test config
-│   └── mocks.ts                # Mock helpers
-└── fixtures/                   # Test data and fixtures
+├── README.md                  # this file
+├── filestore-sync.test.ts     # filestore discovery + routing
+└── utils/
+    ├── config.ts              # load test-config.json + URL derivation
+    ├── auth.ts                # OAuth client_credentials flow
+    └── pinkfish-api.ts        # PinkfishClient: list collections + items
 ```
 
 ## What Gets Tested
 
-### filestore-sync.test.ts
-1. **Discovery**: Lists files from real remote collections
-2. **Routing**: Verifies files route to correct local folders
-3. **Callbacks**: Checks fetchAndWrite functions are properly set up
-4. **Collections**: Tests multiple collections simultaneously
+`filestore-sync.test.ts`:
+1. OAuth — the client_credentials grant returns an access token
+2. Discovery — `GET /datacollection/?type=filestorage` returns all collections
+3. openit-* filtering — `openit-` prefix selection
+4. List items — `GET /filestorage/items?collectionId=…&format=full` per collection
+5. Routing — `openit-foo` → `filestores/foo/` (verified for default + dynamic names)
 
-## Troubleshooting
+The test calls the same skills API endpoints the Tauri backend uses. The
+only thing not covered here is the actual file download (which goes through
+the Tauri command surface, not directly fetchable from Node).
 
-### Test config not found
-```
-test-config.json not found. Copy test-config.example.json to test-config.json
-```
-**Solution**: Follow setup steps above.
+## Adding a New Test
 
-### Authentication failed
-```
-Error: HTTP 401: Unauthorized
-```
-**Solution**: Check credentials in test-config.json. Rotate credentials if exposed.
-
-### Connection timeout
-```
-Timeout: did not complete within 30000ms
-```
-**Solution**: Check network connectivity and API endpoint availability.
-
-### Tests skip silently
-This is expected if `test-config.json` doesn't exist. Tests will skip with a note.
-
-## Adding New Tests
-
-1. Create new file in `integration_tests/`
-2. Use `loadConfig()` to get test credentials
-3. Use `skipIf(!config)` to skip if config missing
-4. Run with: `npm test -- --config vitest.integration.config.ts your-test.test.ts`
-
-Example:
 ```typescript
-import { describe, it, skipIf } from "vitest";
+import { describe, it, expect } from "vitest";
 import { loadConfig } from "./utils/config";
+import { PinkfishClient } from "./utils/pinkfish-api";
 
 const config = loadConfig();
 
-describe.skipIf(!config)("my integration test", () => {
-  it("should test something real", async () => {
-    // Use config.repo, config.credentials, etc.
+describe.skipIf(!config)("my new test", () => {
+  it("does something real", async () => {
+    const client = new PinkfishClient(config!);
+    const collections = await client.listCollections("filestorage");
+    expect(collections.length).toBeGreaterThan(0);
   });
 });
 ```
 
-## CI/CD Notes
+`PinkfishClient` already handles the right header (`Auth-Token`, not
+`Authorization`) and the right base URLs.
 
-Integration tests are skipped in CI unless `test-config.json` is provided. To enable in CI:
-1. Store credentials in CI environment variables
-2. Build test-config.json from env vars before running tests:
-   ```bash
-   cat > test-config.json <<EOF
-   {
-     "repo": "$TEST_REPO",
-     "orgId": "$TEST_ORG_ID",
-     ...
-   }
-   EOF
-   ```
+## Troubleshooting
 
-## Debugging
+**"test-config.json not found"** — copy the example and fill it in.
 
-Add console.log or use debugger:
-```bash
-node --inspect-brk ./node_modules/vitest/vitest.mjs \
-  --config vitest.integration.config.ts filestore-sync.test.ts
-```
+**"HTTP 401"** — bad credentials. Re-run the curl from step 3.
 
-Then open `chrome://inspect` in Chrome.
+**"HTTP 404 ... Route GET /datacollection/{id}/items not found"** — wrong
+endpoint. The right one is `/filestorage/items?collectionId=…`. (Already
+fixed in `pinkfish-api.ts`; only relevant if you're writing a new caller.)
+
+**"getaddrinfo ENOTFOUND"** — your machine can't reach the Pinkfish
+infra. Check VPN / network.
