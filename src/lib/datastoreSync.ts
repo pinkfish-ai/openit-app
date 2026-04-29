@@ -110,8 +110,22 @@ async function discoverLocalDatastores(args: {
     return [];
   }
 
+  // `fsList` walks recursively (depth 6), so `nodes` includes
+  // grandchildren like `databases/tickets/<key>.json` and any nested
+  // dir under an existing collection. Filter to DIRECT children of
+  // `databases/` only — otherwise a subdir like
+  // `databases/tickets/archived/` would pass the system-folder /
+  // existing-names checks below and get auto-created on the cloud as
+  // `openit-archived`. Same `directChildren` shape as Workbench.tsx.
+  const databasesPrefix = `${databasesPath}/`;
+  const directChildren = nodes.filter((n) => {
+    if (!n.path.startsWith(databasesPrefix)) return false;
+    const tail = n.path.slice(databasesPrefix.length);
+    return tail.length > 0 && !tail.includes("/");
+  });
+
   const out: DiscoveredCollection[] = [];
-  for (const node of nodes) {
+  for (const node of directChildren) {
     if (!node.is_dir) continue;
     const folderName = node.name;
     if (SYSTEM_FOLDERS.has(folderName)) continue;
