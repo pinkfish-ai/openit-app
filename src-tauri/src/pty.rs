@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use std::thread;
 
@@ -84,6 +86,9 @@ pub fn pty_spawn<R: Runtime>(
         cmd.cwd(d);
     }
     cmd.env("TERM", "xterm-256color");
+    if let Some(path) = augmented_path() {
+        cmd.env("PATH", path);
+    }
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pair.slave);
@@ -199,21 +204,120 @@ pub fn pty_kill(state: State<'_, PtyState>, session_id: String) -> Result<(), St
     Ok(())
 }
 
-/// Detect whether `claude` is on PATH; returns the resolved path or null.
+/// Detect a usable `claude` binary. Checks PATH first, then well-known install
+/// locations the native installer drops into (which a GUI-launched app's PATH
+/// won't see until the user opens a fresh terminal).
 #[tauri::command]
 pub fn claude_detect() -> Option<String> {
-    which::which("claude")
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned())
+    locate_claude().map(|p| p.to_string_lossy().into_owned())
 }
 
-/// Resolve which binary to spawn. Preference: explicit override → `claude` on PATH → user's $SHELL → /bin/bash.
+/// Run the official Claude Code installer (`claude.ai/install.sh`) and return
+/// the resolved binary path on success. The installer drops the binary at
+/// `~/.local/bin/claude` and updates the user's shell rc — but the running app
+/// won't see the rc change, so callers should always go through `claude_detect`
+/// or `resolve_command` afterwards (both probe known install dirs).
+#[tauri::command]
+pub fn claude_install() -> Result<String, String> {
+    if let Some(existing) = locate_claude() {
+        return Ok(existing.to_string_lossy().into_owned());
+    }
+
+    let output = Command::new("bash")
+        .arg("-c")
+        .arg("curl -fsSL https://claude.ai/install.sh | bash")
+        .output()
+        .map_err(|e| format!("failed to run installer: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(format!(
+            "installer exited with status {:?}\nstdout: {stdout}\nstderr: {stderr}",
+            output.status.code()
+        ));
+    }
+
+    locate_claude()
+        .map(|p| p.to_string_lossy().into_owned())
+        .ok_or_else(|| {
+            "installer reported success but no claude binary found in expected locations"
+                .to_string()
+        })
+}
+
+fn locate_claude() -> Option<PathBuf> {
+    if let Ok(p) = which::which("claude") {
+        return Some(p);
+    }
+    for candidate in claude_install_candidates() {
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+}
+
+fn claude_install_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Some(home) = home_dir() {
+        out.push(home.join(".local/bin/claude"));
+        out.push(home.join(".claude/local/claude"));
+    }
+    out.push(PathBuf::from("/usr/local/bin/claude"));
+    out.push(PathBuf::from("/opt/homebrew/bin/claude"));
+    out
+}
+
+/// Build a PATH that includes the install dirs the native installer uses, so
+/// child processes spawned from a GUI-launched app can find `claude` even
+/// before the user restarts their terminal. Returns `None` if PATH is fine
+/// as-is or unreadable.
+fn augmented_path() -> Option<String> {
+    let home = home_dir()?;
+    let extra = [
+        home.join(".local/bin"),
+        home.join(".claude/local"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+    ];
+    let current = std::env::var("PATH").unwrap_or_default();
+    let mut parts: Vec<String> = current
+        .split(':')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    let mut changed = false;
+    for dir in extra.iter() {
+        if !dir.is_dir() {
+            continue;
+        }
+        let s = dir.to_string_lossy().to_string();
+        if !parts.iter().any(|p| p == &s) {
+            parts.insert(0, s);
+            changed = true;
+        }
+    }
+    if changed {
+        Some(parts.join(":"))
+    } else {
+        None
+    }
+}
+
+/// Resolve which binary to spawn. Preference: explicit override → `claude` on PATH or known install dir → user's $SHELL → /bin/bash.
 fn resolve_command(override_cmd: Option<&str>) -> Result<String> {
     if let Some(c) = override_cmd {
         return Ok(c.to_string());
     }
-    if let Ok(path) = which::which("claude") {
-        return Ok(path.to_string_lossy().into_owned());
+    if let Some(p) = locate_claude() {
+        return Ok(p.to_string_lossy().into_owned());
     }
     if let Ok(shell) = std::env::var("SHELL") {
         if !shell.is_empty() {

@@ -48,6 +48,7 @@ pub fn run() {
             pty::pty_resize,
             pty::pty_kill,
             pty::claude_detect,
+            pty::claude_install,
             fs_tree::fs_list,
             fs_tree::fs_read,
             fs_tree::fs_read_bytes,
