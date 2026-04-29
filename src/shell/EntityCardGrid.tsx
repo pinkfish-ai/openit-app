@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ENTITY_META, type EntityKind } from "./entityIcons";
 
 export type { EntityKind };
@@ -18,6 +18,11 @@ export type EntityCard = {
    *  kind icon when omitted. */
   icon?: ReactNode;
   onClick?: () => void;
+  /** When set, dragging files from the desktop onto this card calls
+   *  the handler with the dropped File list. Used by the filestores-
+   *  list view so users can drop files directly onto a collection
+   *  card without first opening it. */
+  onFilesDropped?: (files: File[]) => void | Promise<void>;
 };
 
 /**
@@ -51,42 +56,76 @@ export function EntityCardGrid({
 
   return (
     <div className={`entity-grid entity-tone-${meta.tone}`}>
-      {cards.map((c) => {
-        const Tag = c.onClick ? "button" : "div";
-        return (
-          <Tag
-            key={c.key}
-            type={c.onClick ? "button" : undefined}
-            className={`entity-card ${c.onClick ? "entity-card-clickable" : ""}`}
-            onClick={c.onClick}
-          >
-            <span className="entity-card-glyph" aria-hidden>
-              {c.icon ?? meta.icon}
-            </span>
-            <div className="entity-card-body">
-              <div className="entity-card-row">
-                <span className="entity-card-title">{c.title}</span>
-                {c.meta !== undefined && (
-                  <span className="entity-card-meta">{c.meta}</span>
-                )}
-              </div>
-              {c.description && (
-                <span className="entity-card-desc">{c.description}</span>
-              )}
-              {c.badge && (
-                <span
-                  className={`entity-card-badge entity-card-badge-${
-                    c.badge.tone ?? "neutral"
-                  }`}
-                >
-                  {c.badge.label}
-                </span>
-              )}
-            </div>
-          </Tag>
-        );
-      })}
+      {cards.map((c) => (
+        <EntityCardItem key={c.key} card={c} fallbackIcon={meta.icon} />
+      ))}
     </div>
+  );
+}
+
+function EntityCardItem({
+  card: c,
+  fallbackIcon,
+}: {
+  card: EntityCard;
+  fallbackIcon: ReactNode;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  const Tag = c.onClick ? "button" : "div";
+  const dropProps = c.onFilesDropped
+    ? {
+        onDragOver: (e: React.DragEvent) => {
+          if (Array.from(e.dataTransfer.types).includes("Files")) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = "copy";
+            setDragOver(true);
+          }
+        },
+        onDragLeave: () => setDragOver(false),
+        onDrop: async (e: React.DragEvent) => {
+          setDragOver(false);
+          const files = Array.from(e.dataTransfer.files ?? []);
+          if (files.length === 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          await c.onFilesDropped?.(files);
+        },
+      }
+    : {};
+  return (
+    <Tag
+      type={c.onClick ? "button" : undefined}
+      className={`entity-card ${c.onClick ? "entity-card-clickable" : ""}${
+        dragOver ? " entity-card-drag" : ""
+      }`}
+      onClick={c.onClick}
+      {...dropProps}
+    >
+      <span className="entity-card-glyph" aria-hidden>
+        {c.icon ?? fallbackIcon}
+      </span>
+      <div className="entity-card-body">
+        <div className="entity-card-row">
+          <span className="entity-card-title">{c.title}</span>
+          {c.meta !== undefined && (
+            <span className="entity-card-meta">{c.meta}</span>
+          )}
+        </div>
+        {c.description && (
+          <span className="entity-card-desc">{c.description}</span>
+        )}
+        {c.badge && (
+          <span
+            className={`entity-card-badge entity-card-badge-${
+              c.badge.tone ?? "neutral"
+            }`}
+          >
+            {c.badge.label}
+          </span>
+        )}
+      </div>
+    </Tag>
   );
 }
 

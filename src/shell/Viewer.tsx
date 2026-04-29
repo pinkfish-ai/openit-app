@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { fsRead, fsReadBytes, fsList, reportOverviewRun } from "../lib/api";
+import { fsRead, fsReadBytes, fsList, reportOverviewRun, entityWriteFileBytes } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
@@ -28,6 +28,76 @@ const BRACKETED_PASTE_CLOSE = "\x1b[201~";
 import type { ViewerSource } from "./types";
 
 export type { ViewerSource };
+
+/// Land each dropped file into `<repo>/<subdir>/<filename>`. Used by
+/// every drag-from-desktop affordance on entity-folder views and on
+/// the filestores/knowledge-bases collection cards. On any failure
+/// the error string is set via `setError` so the call site can render
+/// it; successes are silent because the fs watcher refreshes the
+/// folder listing on its own.
+/// Some sources (filestores-list, knowledge-bases-list) carry the
+/// collection's absolute on-disk path because that's what `fsList`
+/// returns. The Rust write commands require a repo-relative subdir
+/// (the `validate_subdir` guard rejects absolute paths to prevent
+/// writes outside the repo). Strip the repo prefix when present;
+/// otherwise return the path as-is and let the validator complain
+/// with a useful message.
+function toRepoRelative(repo: string, path: string): string {
+  const r = repo.endsWith("/") ? repo : `${repo}/`;
+  if (path.startsWith(r)) return path.slice(r.length);
+  if (path === repo) return "";
+  return path;
+}
+
+async function uploadFilesToSubdir(
+  repo: string,
+  subdir: string,
+  files: File[],
+  setError: (msg: string | null) => void,
+): Promise<void> {
+  const relSubdir = toRepoRelative(repo, subdir);
+  setError(null);
+  const failed: { name: string; reason: string }[] = [];
+  for (const f of files) {
+    // Sanitize the filename for the on-disk write. macOS-generated
+    // screenshot names include a U+202F (narrow no-break space) and
+    // `:` colons that survive Finder but break sync/upload paths
+    // downstream — collapse all whitespace to a single ASCII space
+    // and strip the chars that aren't safe across filesystems.
+    const filename = sanitizeUploadFilename(f.name || "upload");
+    try {
+      const buf = await f.arrayBuffer();
+      await entityWriteFileBytes(repo, relSubdir, filename, buf);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`[folder-upload] failed for ${filename}:`, err);
+      failed.push({ name: filename, reason });
+    }
+  }
+  if (failed.length > 0) {
+    setError(
+      `Failed to upload: ${failed
+        .map((f) => `${f.name} (${f.reason})`)
+        .join(", ")}`,
+    );
+  }
+}
+
+/// Filenames that survive Finder (narrow no-break space, colons,
+/// stray Unicode whitespace) routinely break the sync push and other
+/// downstream tools that assume POSIX-safe names. Normalize before
+/// the write so what lands on disk matches what later consumers will
+/// accept. Rules: collapse any Unicode whitespace run to a single
+/// ASCII space, strip characters that are unsafe on at least one
+/// major filesystem (`/ \ : * ? " < > |`), and trim. Always preserves
+/// the extension.
+function sanitizeUploadFilename(name: string): string {
+  const cleaned = name
+    .replace(/\s+/g, " ")
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .trim();
+  return cleaned.length > 0 ? cleaned : "upload";
+}
 
 /// Title labels for the entity-folder view. Capital case for the title
 /// bar; the explorer rows use the lowercase folder names directly.
@@ -306,6 +376,13 @@ export function Viewer({
     { path: string; filename: string }[]
   >([]);
   const [replyDragOver, setReplyDragOver] = useState(false);
+  // Drag-from-desktop into an open entity-folder (library /
+  // knowledge-base). Mirrors the reply-composer affordance — drop
+  // files anywhere in the card grid and they land in the folder's
+  // subdir on disk; the fs watcher re-resolves the folder so they
+  // show up as new cards without a manual refresh.
+  const [folderDragOver, setFolderDragOver] = useState(false);
+  const [folderUploadError, setFolderUploadError] = useState<string | null>(null);
   // "Generate overview" button state on the reports/ entity-folder
   // view. Run kicks off the local script via the Tauri command and,
   // on success, jumps the viewer to the freshly-written file. fsTick
@@ -318,6 +395,8 @@ export function Viewer({
     setReplyError(null);
     setReplyAttachments([]);
     setReplyDragOver(false);
+    setFolderDragOver(false);
+    setFolderUploadError(null);
     // Reset the Generate-overview button alongside the other view-
     // specific state so a stale failure message doesn't follow the
     // user when they navigate away from reports/ and back.
@@ -1357,6 +1436,9 @@ export function Viewer({
     if (source.kind === "knowledge-bases-list") {
       return (
         <div className="viewer-summary">
+          {folderUploadError && (
+            <p className="viewer-edit-error">{folderUploadError}</p>
+          )}
           <EntityCardGrid
             kind="knowledge-bases"
             cards={source.collections.map((c) => ({
@@ -1368,6 +1450,9 @@ export function Viewer({
                 ? undefined
                 : { label: "custom", tone: "info" },
               onClick: () => onOpenPath && void onOpenPath(c.path),
+              onFilesDropped: repo
+                ? (files) => uploadFilesToSubdir(repo, c.path, files, setFolderUploadError)
+                : undefined,
             }))}
           />
         </div>
@@ -1377,6 +1462,9 @@ export function Viewer({
     if (source.kind === "filestores-list") {
       return (
         <div className="viewer-summary">
+          {folderUploadError && (
+            <p className="viewer-edit-error">{folderUploadError}</p>
+          )}
           <EntityCardGrid
             kind="filestores"
             cards={source.collections.map((c) => ({
@@ -1388,6 +1476,15 @@ export function Viewer({
                 ? undefined
                 : { label: "custom", tone: "info" },
               onClick: () => onOpenPath && void onOpenPath(c.path),
+              // Attachments collection is per-ticket — dropping into the
+              // generic folder would have nowhere meaningful to land. The
+              // remaining built-in (`library`) and any user-created
+              // filestore accept drops to their on-disk subdir.
+              onFilesDropped:
+                repo && c.name !== "attachments"
+                  ? (files) =>
+                      uploadFilesToSubdir(repo, c.path, files, setFolderUploadError)
+                  : undefined,
             }))}
           />
         </div>
@@ -1514,10 +1611,46 @@ export function Viewer({
           onClick: () => onOpenPath && void onOpenPath(f.path),
         };
       });
+      // Drag-and-drop upload from the desktop is enabled for the two
+      // user-content folders (`library/` and any KB collection).
+      // Agents/workflows/reports/attachments-ticket are excluded —
+      // those are either system-generated, scoped to ticket context,
+      // or schema-shaped and not safe to land arbitrary files into.
+      const acceptsDrop =
+        source.entity === "library" || source.entity === "knowledge-base";
+      const subdir = source.path;
       return (
-        <div className="viewer-summary">
+        <div
+          className={`viewer-summary${
+            acceptsDrop && folderDragOver ? " viewer-summary-drag" : ""
+          }`}
+          onDragOver={(e) => {
+            if (!acceptsDrop || !repo) return;
+            if (Array.from(e.dataTransfer.types).includes("Files")) {
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "copy";
+              setFolderDragOver(true);
+            }
+          }}
+          onDragLeave={() => {
+            if (acceptsDrop) setFolderDragOver(false);
+          }}
+          onDrop={async (e) => {
+            if (!acceptsDrop || !repo) return;
+            const files = Array.from(e.dataTransfer.files ?? []);
+            if (files.length === 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            setFolderDragOver(false);
+            await uploadFilesToSubdir(repo, subdir, files, setFolderUploadError);
+          }}
+        >
           {source.entity === "reports" && reportError && (
             <p className="viewer-edit-error">{reportError}</p>
+          )}
+          {acceptsDrop && folderUploadError && (
+            <p className="viewer-edit-error">{folderUploadError}</p>
           )}
           <EntityCardGrid
             kind={source.entity === "attachments-ticket" ? "attachments" : source.entity}

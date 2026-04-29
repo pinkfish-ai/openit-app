@@ -1669,6 +1669,15 @@ body::before {
   background: var(--accent-soft, rgba(196, 62, 62, 0.05));
 }
 
+/* Drag-from-desktop highlight on the library/knowledge-base entity-
+   folder view. Same affordance as the reply composer, scaled up to
+   the full card-grid panel. */
+.viewer-summary-drag {
+  outline: 2px dashed var(--accent, #c43e3e);
+  outline-offset: -6px;
+  background: var(--accent-soft, rgba(196, 62, 62, 0.05));
+}
+
 .thread-reply-chips {
   display: flex;
   flex-wrap: wrap;
@@ -4781,6 +4790,13 @@ button.status-chip-info:hover {
   background: var(--surface);
   transform: translateY(-1px);
   box-shadow: var(--shadow-card);
+}
+
+.entity-card-drag {
+  border-color: var(--accent, #c43e3e) !important;
+  background: var(--accent-soft, rgba(196, 62, 62, 0.05)) !important;
+  outline: 2px dashed var(--accent, #c43e3e);
+  outline-offset: -3px;
 }
 
 .entity-card-glyph {
