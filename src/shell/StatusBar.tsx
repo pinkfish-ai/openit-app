@@ -16,6 +16,7 @@ export function StatusBar({
   cloudConnected,
   orgName,
   intakeUrl,
+  tunnelUrl,
   slackConfig,
   slackStatus,
   changeCount,
@@ -26,6 +27,7 @@ export function StatusBar({
   cloudConnected: boolean;
   orgName: string | null;
   intakeUrl: string | null;
+  tunnelUrl: string | null;
   slackConfig: SlackConfig | null;
   slackStatus: SlackStatus | null;
   changeCount: number;
@@ -46,6 +48,7 @@ export function StatusBar({
     !cloudConnected && projectName.toLowerCase() === cloudLabel.toLowerCase();
 
   const intakeBare = intakeUrl?.replace(/^https?:\/\//, "");
+  const tunnelBare = tunnelUrl?.replace(/^https?:\/\//, "");
 
   return (
     <div className="status-bar" role="status">
@@ -106,6 +109,35 @@ export function StatusBar({
             </svg>
             <span className="status-chip-label">
               Intake form · {intakeBare}
+            </span>
+          </button>
+        )}
+
+        {tunnelUrl && (
+          <button
+            type="button"
+            className="status-chip status-chip-info"
+            title={`Public tunnel at ${tunnelBare} — share this with your team. Dies when OpenIT closes.`}
+            onClick={() =>
+              openUrl(tunnelUrl).catch((e) =>
+                console.warn("[status-bar] openUrl tunnel failed:", e),
+              )
+            }
+          >
+            <svg
+              className="status-chip-icon"
+              viewBox="0 0 14 14"
+              width="11"
+              height="11"
+              aria-hidden
+            >
+              <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+              <line x1="2.5" y1="7" x2="11.5" y2="7" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M7 2.5 C 9 4.5, 9 9.5, 7 11.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M7 2.5 C 5 4.5, 5 9.5, 7 11.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+            <span className="status-chip-label">
+              Share · {tunnelBare}
             </span>
           </button>
         )}

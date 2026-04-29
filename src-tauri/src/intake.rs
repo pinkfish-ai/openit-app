@@ -2064,7 +2064,13 @@ fn origin_is_localhost(headers: &HeaderMap) -> bool {
         return false;
     };
     match url.host() {
-        Some(url::Host::Domain(d)) => d == "localhost",
+        // `localhost` plus the active public-tunnel host (if any). The
+        // tunnel module narrows the allowlist to *exactly* the current
+        // session's subdomain — we don't blanket-trust `*.lhr.life`,
+        // since other localhost.run users could otherwise CSRF us.
+        Some(url::Host::Domain(d)) => {
+            d == "localhost" || crate::tunnel::current_tunnel_host().as_deref() == Some(d)
+        }
         Some(url::Host::Ipv4(addr)) => addr.is_loopback(),
         Some(url::Host::Ipv6(addr)) => addr.is_loopback(),
         None => false,
