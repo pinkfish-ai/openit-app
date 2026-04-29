@@ -501,16 +501,37 @@ pub fn fs_store_write_file_bytes(
     fs::write(&path, &bytes).map_err(|e| e.to_string())
 }
 
-// Datastore manifest now goes through entity_state_load / entity_state_save
-// with name="datastore". datastore-specific row listing is handled by the
-// generic entity_list_local with subdir="databases/<collection>", filtered
-// in the TS adapter.
+/// Helper to build a filestore path with optional subdirectory.
+/// If subdir is provided, the final path is <repo>/<subdir>/<filename>.
+/// If subdir is not provided, uses the default filestores/library directory.
+fn fs_path_with_optional_subdir(
+    repo: &str,
+    filename: &str,
+    subdir: Option<&str>,
+) -> Result<PathBuf, String> {
+    if filename.is_empty() {
+        return Err("filename is empty".into());
+    }
+    if filename.contains('/') || filename.contains('\\') {
+        return Err(format!(
+            "filename must not contain path separators: {}",
+            filename
+        ));
+    }
+    let base_dir = if let Some(subdir) = subdir {
+        Path::new(repo).join(subdir)
+    } else {
+        fs_dir(repo)
+    };
+    Ok(base_dir.join(filename))
+}
 
 #[tauri::command]
 pub async fn fs_store_download_to_local(
     repo: String,
     filename: String,
     url: String,
+    subdir: Option<String>,
 ) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -532,8 +553,13 @@ pub async fn fs_store_download_to_local(
     }
     let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
 
-    let path = safe_fs_path(&repo, &filename)?;
-    ensure_dir(&fs_dir(&repo))?;
+    let path = fs_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
+    
+    // Ensure parent directory exists (including subdirectories)
+    if let Some(parent) = path.parent() {
+        ensure_dir(parent)?;
+    }
+    
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     Ok(())
 }
