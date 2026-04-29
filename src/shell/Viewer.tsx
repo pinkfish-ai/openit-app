@@ -1793,13 +1793,22 @@ export function Viewer({
             acceptsDrop && folderDragOver ? " viewer-summary-drag" : ""
           }${showDropZone ? " viewer-summary-dropzone" : ""}`}
           onDragOver={(e) => {
-            if (!acceptsDrop || !repo) return;
-            if (Array.from(e.dataTransfer.types).includes("Files")) {
-              e.preventDefault();
-              e.stopPropagation();
-              e.dataTransfer.dropEffect = "copy";
-              setFolderDragOver(true);
+            // preventDefault is required EVERY time on a file dragover
+            // — even when this folder doesn't accept drops. The HTML5
+            // spec only fires `drop` on elements whose `dragover` was
+            // prevented; without this, the Tauri webview falls back to
+            // the OS default and navigates away from the SPA when the
+            // user releases the file. The acceptsDrop branch only
+            // controls whether we paint the highlight.
+            if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (!acceptsDrop || !repo) {
+              e.dataTransfer.dropEffect = "none";
+              return;
             }
+            e.dataTransfer.dropEffect = "copy";
+            setFolderDragOver(true);
           }}
           onDragLeave={() => {
             if (acceptsDrop) setFolderDragOver(false);

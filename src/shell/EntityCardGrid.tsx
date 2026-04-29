@@ -58,18 +58,12 @@ export function EntityCardGrid({
     x: number;
     y: number;
   } | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // Dismiss the menu on Escape or any click outside; re-arm the
-  // delete confirmation each time the menu re-opens so a stray
-  // double-click can't slip past the safety prompt.
+  // Dismiss the menu on Escape or any click outside.
   useEffect(() => {
     if (!menu) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setMenu(null);
-        setConfirmDelete(false);
-      }
+      if (e.key === "Escape") setMenu(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -98,7 +92,6 @@ export function EntityCardGrid({
           onContextMenu={(x, y) => {
             if (!c.onDelete && !c.onReveal) return;
             setMenu({ cardKey: c.key, x, y });
-            setConfirmDelete(false);
           }}
         />
       ))}
@@ -106,14 +99,10 @@ export function EntityCardGrid({
         <>
           <div
             className="context-menu-overlay"
-            onClick={() => {
-              setMenu(null);
-              setConfirmDelete(false);
-            }}
+            onClick={() => setMenu(null)}
             onContextMenu={(e) => {
               e.preventDefault();
               setMenu(null);
-              setConfirmDelete(false);
             }}
           />
           <div
@@ -128,7 +117,6 @@ export function EntityCardGrid({
                 onClick={() => {
                   void activeCard.onReveal?.();
                   setMenu(null);
-                  setConfirmDelete(false);
                 }}
               >
                 Reveal in Finder
@@ -139,16 +127,15 @@ export function EntityCardGrid({
                 type="button"
                 className="context-menu-item context-menu-item-danger"
                 onClick={() => {
-                  if (!confirmDelete) {
-                    setConfirmDelete(true);
-                    return;
-                  }
+                  // The onDelete handler runs its own window.confirm()
+                  // — duplicating it here with an arm-twice click
+                  // forced three clicks to delete from the menu. Drop
+                  // straight into the handler.
                   void activeCard.onDelete?.();
                   setMenu(null);
-                  setConfirmDelete(false);
                 }}
               >
-                {confirmDelete ? "Click again to confirm" : "Delete"}
+                Delete
               </button>
             )}
           </div>
