@@ -918,3 +918,612 @@ export function startReadOnlyEntitySync(args: {
     firstAttempt,
   };
 }
+
+// ---------------------------------------------------------------------------
+// startCollectionEntitySync — connect-time + poll bootstrap for entities
+// shaped as "multi-collection of files with bidirectional sync + push".
+// Sibling to `startReadOnlyEntitySync` above.
+//
+// Filestore (Phase 1) and KB (Phase 2) plug into this. Datastore stays
+// per-engine because rows + schema is a different shape; if it ever fits
+// here it can adopt this helper, otherwise a sibling
+// `startRowCollectionEntitySync` is the right move.
+//
+// What's owned here (so engine wrappers don't reimplement it):
+//   - Status object + listener pattern.
+//   - Per-collection conflict tracking + flattened union for the public
+//     `status.conflicts` field.
+//   - `activePrefixes` Set for stop-time cleanup of the cross-entity
+//     conflict aggregator.
+//   - Per-org in-flight resolve dedup so concurrent callers share one
+//     list-then-create pass.
+//   - REST `/datacollection/?type=…` discovery, openit-* prefix filter,
+//     dedupe-by-name (smallest id wins).
+//   - Auto-create defaults loop with eventual-consistency post-create
+//     refetch.
+//   - Per-collection folder ensure (write/delete a `.placeholder`).
+//   - Initial pull then 60s poll, sequential per collection (avoids
+//     `.git/index.lock` races).
+//   - `lastSyncAt` stamp on every successful pull (Phase-1 deferral).
+//   - `hasServerShadowFiles` walker across every active collection's
+//     folder.
+//   - `pullAllNow` and `stop` lifecycle.
+//   - Status updates around each `pushOne` call (config supplies the
+//     engine-specific upload impl); per-collection lock prefix routes
+//     through `withRepoLock`.
+// ---------------------------------------------------------------------------
+
+import { makeSkillsFetch } from "../api/fetchAdapter";
+import {
+  derivedUrls,
+  getToken,
+  type PinkfishCreds,
+} from "./pinkfishAuth";
+import {
+  entityDeleteFile,
+  entityListLocal,
+  entityWriteFile,
+  projectUpdateLastSyncAt,
+} from "./api";
+import { type DataCollection } from "./skillsApi";
+
+export type CollectionLike = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+export type CollectionConflictFile = {
+  filename: string;
+  reason: "local-and-remote-changed";
+};
+
+export type CollectionSyncStatus<C extends CollectionLike> = {
+  phase: "idle" | "resolving" | "pulling" | "ready" | "pushing" | "error";
+  collections: C[];
+  conflicts: CollectionConflictFile[];
+  lastError: string | null;
+  lastPullAt: number | null;
+};
+
+export type CollectionSyncConfig<C extends CollectionLike> = {
+  /// Engine name for `nestedManifest` routing and log prefixes.
+  /// `"fs"` (filestore) or `"kb"` (knowledge-base). A third member
+  /// would imply a third sync shape — at that point consider a sibling
+  /// helper rather than a flag.
+  entityName: "fs" | "kb";
+
+  /// Display label used in user-facing log lines (e.g. "filestore", "kb").
+  displayName: string;
+
+  /// REST `?type=` query value for `/datacollection/`. Filestore:
+  /// "filestorage". KB: "knowledge-base".
+  collectionType: string;
+
+  /// Hardcoded default names to auto-create on connect when no
+  /// `openit-*` collection of this type exists yet. Filestore: `["openit-library",
+  /// "openit-attachments"]`. KB: `["openit-default"]`. User-named
+  /// collections (e.g. `openit-runbooks` created in the dashboard) are
+  /// picked up by discovery — they don't need to live in this list.
+  defaultNames: readonly string[];
+
+  /// Description text used in the POST body when auto-creating one of
+  /// the defaults. Receives the full openit-prefixed name.
+  describeDefault: (openitName: string) => string;
+
+  /// Local folder root (e.g. "filestores", "knowledge-bases"). Used for
+  /// the per-collection folder-ensure walker.
+  localFolderRoot: string;
+
+  /// Build the adapter for one collection. Each collection gets its own
+  /// adapter instance with its own conflict-bus prefix and manifest slot.
+  buildAdapter: (args: { creds: PinkfishCreds; collection: C }) => EntityAdapter;
+
+  /// Type bridge from REST `DataCollection` to the engine's collection
+  /// type. Engines extend the base shape with engine-specific fields
+  /// (today both `FilestoreCollection` and `KbCollection` use the base
+  /// shape verbatim, but the bridge lets them diverge later).
+  fromDataCollection: (c: DataCollection) => C;
+
+  /// Engine-specific push implementation. Caller is responsible for the
+  /// upload + manifest persistence; the orchestrator wraps this in a
+  /// per-collection lock and toggles status `pushing` → `ready` around it.
+  pushOne: (args: {
+    creds: PinkfishCreds;
+    repo: string;
+    collection: C;
+    onLine?: (msg: string) => void;
+  }) => Promise<{ pushed: number; failed: number }>;
+
+  /// One-shot init for the local folder root (e.g. `fsStoreInit`).
+  /// Optional — not every engine has a Tauri-side init beyond the
+  /// per-collection folder ensure.
+  initLocalRoot?: (repo: string) => Promise<unknown>;
+};
+
+export type CollectionSyncHandle<C extends CollectionLike> = {
+  // Status surface
+  subscribe: (fn: (s: CollectionSyncStatus<C>) => void) => () => void;
+  getStatus: () => CollectionSyncStatus<C>;
+
+  // Lifecycle
+  start: (args: { creds: PinkfishCreds; repo: string }) => Promise<void>;
+  stop: () => void;
+
+  // Manual operations — same lock + status discipline as the polling loop.
+  pullAllNow: (args: { creds: PinkfishCreds; repo: string }) => Promise<void>;
+  pullOne: (args: {
+    creds: PinkfishCreds;
+    repo: string;
+    collection: C;
+  }) => Promise<{ ok: boolean; error?: string; downloaded: number; total: number }>;
+  pushOne: (args: {
+    creds: PinkfishCreds;
+    repo: string;
+    collection: C;
+    onLine?: (msg: string) => void;
+  }) => Promise<{ pushed: number; failed: number }>;
+
+  // Side queries used by Shell.tsx + pushAll.ts.
+  hasServerShadowFiles: (repo: string) => Promise<boolean>;
+
+  // Discovery — exposed for callers that need the collection list before
+  // start has run (rare, but pushAll.ts uses it for the pre-push pull).
+  resolveCollections: (
+    creds: PinkfishCreds,
+    onLog?: (msg: string) => void,
+  ) => Promise<C[]>;
+
+  // Tests sometimes want to reach into the dedupe helper directly.
+  dedupeOpenit: (all: DataCollection[]) => C[];
+};
+
+const OPENIT_PREFIX = "openit-";
+
+export function createCollectionEntitySync<C extends CollectionLike>(
+  config: CollectionSyncConfig<C>,
+): CollectionSyncHandle<C> {
+  const tag = config.displayName;
+
+  // ---- Status + listener bookkeeping --------------------------------------
+
+  let status: CollectionSyncStatus<C> = {
+    phase: "idle",
+    collections: [],
+    conflicts: [],
+    lastError: null,
+    lastPullAt: null,
+  };
+  const listeners = new Set<(s: CollectionSyncStatus<C>) => void>();
+
+  function update(patch: Partial<CollectionSyncStatus<C>>) {
+    status = { ...status, ...patch };
+    for (const l of listeners) l(status);
+  }
+
+  // ---- Per-collection conflict tracking -----------------------------------
+
+  // Each poll callback writes only its own collection's slot; status
+  // exposes the flattened union. Without this, the last poll to complete
+  // would clobber every other collection's entries.
+  const conflictsByCollection = new Map<string, CollectionConflictFile[]>();
+  function flattenConflicts(): CollectionConflictFile[] {
+    const out: CollectionConflictFile[] = [];
+    for (const list of conflictsByCollection.values()) out.push(...list);
+    return out;
+  }
+  function recordConflictsFor(
+    collectionId: string,
+    conflicts: { manifestKey: string }[],
+  ) {
+    conflictsByCollection.set(
+      collectionId,
+      conflicts.map((c) => ({
+        filename: c.manifestKey,
+        reason: "local-and-remote-changed",
+      })),
+    );
+  }
+
+  // ---- Active prefix tracking ---------------------------------------------
+
+  // Every adapter `prefix` we register so stop() can drop their entries
+  // from the cross-entity conflict aggregator. Pre-fix, calls to
+  // `clearConflictsForPrefix("filestore")` cleared nothing because the
+  // actual prefixes are `filestores/<folder>`.
+  const activePrefixes = new Set<string>();
+
+  // ---- Polling timers -----------------------------------------------------
+
+  let stopPolls: Array<() => void> = [];
+
+  // ---- In-flight resolve dedup --------------------------------------------
+
+  // Keyed by orgId. Concurrent callers share one list-then-create pass.
+  const inflightResolve = new Map<string, Promise<C[]>>();
+
+  // ---- Discovery ----------------------------------------------------------
+
+  function dedupeOpenit(all: DataCollection[]): C[] {
+    const byName = new Map<string, C>();
+    for (const c of all) {
+      if (!c.name.startsWith(OPENIT_PREFIX)) continue;
+      const candidate = config.fromDataCollection(c);
+      const existing = byName.get(c.name);
+      if (!existing || candidate.id < existing.id) {
+        byName.set(c.name, candidate);
+      }
+    }
+    return Array.from(byName.values());
+  }
+
+  async function listAllCollections(creds: PinkfishCreds): Promise<DataCollection[]> {
+    const token = getToken();
+    if (!token) throw new Error("not authenticated");
+    const urls = derivedUrls(creds.tokenUrl);
+    const fetchFn = makeSkillsFetch(token.accessToken);
+    const url = new URL("/datacollection/", urls.skillsBaseUrl);
+    url.searchParams.set("type", config.collectionType);
+    const response = await fetchFn(url.toString());
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    const parsed = (await response.json()) as DataCollection[] | null;
+    return Array.isArray(parsed) ? parsed : [];
+  }
+
+  async function resolveCollectionsImpl(
+    creds: PinkfishCreds,
+    onLog?: (msg: string) => void,
+  ): Promise<C[]> {
+    const all = await listAllCollections(creds);
+    const openit = dedupeOpenit(all);
+    console.log(
+      `[${tag}] discovery: ${all.length} ${config.collectionType} collections, ${openit.length} carry the openit- prefix`,
+    );
+    for (const c of openit) {
+      console.log(`  • ${c.name} (id: ${c.id})`);
+      onLog?.(`  ✓ ${c.name} (id: ${c.id})`);
+    }
+    return openit;
+  }
+
+  async function resolveCollections(
+    creds: PinkfishCreds,
+    onLog?: (msg: string) => void,
+  ): Promise<C[]> {
+    const existing = inflightResolve.get(creds.orgId);
+    if (existing) return existing;
+    const promise = resolveCollectionsImpl(creds, onLog);
+    inflightResolve.set(creds.orgId, promise);
+    try {
+      return await promise;
+    } finally {
+      inflightResolve.delete(creds.orgId);
+    }
+  }
+
+  // ---- Auto-create defaults -----------------------------------------------
+
+  async function autoCreateDefaultsIfMissing(
+    creds: PinkfishCreds,
+    existing: C[],
+  ): Promise<C[]> {
+    const token = getToken();
+    if (!token) return existing;
+    const urls = derivedUrls(creds.tokenUrl);
+    const out = [...existing];
+
+    for (const defaultName of config.defaultNames) {
+      if (out.some((c) => c.name === defaultName)) continue;
+      try {
+        const fetchFn = makeSkillsFetch(token.accessToken);
+        const url = new URL("/datacollection/", urls.skillsBaseUrl);
+        const response = await fetchFn(url.toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: defaultName,
+            type: config.collectionType,
+            description: config.describeDefault(defaultName),
+            createdBy: creds.orgId,
+            createdByName: "OpenIT",
+          }),
+        });
+        if (!response.ok) {
+          if (response.status === 409) {
+            // Conflict means another concurrent caller created it
+            // between our list and our create. Re-resolve will pick it
+            // up below.
+            console.log(`[${tag}] ${defaultName} already exists (409)`);
+            continue;
+          }
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const result = (await response.json()) as { id?: string | number; description?: string } | null;
+        if (result?.id) {
+          out.push(
+            config.fromDataCollection({
+              id: String(result.id),
+              name: defaultName,
+              type: config.collectionType,
+              description: result.description ?? config.describeDefault(defaultName),
+              numItems: 0,
+            } as DataCollection),
+          );
+          console.log(`[${tag}] + ${defaultName} (id: ${result.id}) [created]`);
+          // Eventual-consistency post-create refetch: log if the
+          // collection isn't visible yet so the surface is debuggable.
+          try {
+            const refetched = await listAllCollections(creds);
+            const seen = refetched.some((c) => c.name === defaultName);
+            if (!seen) {
+              console.warn(
+                `[${tag}] post-create refetch did not see ${defaultName} (eventual consistency)`,
+              );
+            }
+          } catch (e) {
+            console.warn(`[${tag}] post-create refetch failed:`, e);
+          }
+        }
+      } catch (e) {
+        console.warn(`[${tag}] failed to create ${defaultName}:`, e);
+      }
+    }
+    return out;
+  }
+
+  // ---- Per-collection folder ensure ---------------------------------------
+
+  async function ensureCollectionDir(repo: string, collection: C): Promise<void> {
+    const folderName = collection.name.startsWith(OPENIT_PREFIX)
+      ? collection.name.slice(OPENIT_PREFIX.length)
+      : collection.name;
+    const dir = `${config.localFolderRoot}/${folderName}`;
+    const placeholder = ".placeholder";
+    try {
+      await entityWriteFile(repo, dir, placeholder, "");
+      await entityDeleteFile(repo, dir, placeholder);
+    } catch (e) {
+      console.warn(`[${tag}] failed to ensure dir ${dir}:`, e);
+    }
+  }
+
+  // ---- Run a single bidirectional pull for one collection -----------------
+
+  async function runPullWithAdapter(args: {
+    repo: string;
+    collection: C;
+    adapter: EntityAdapter;
+  }): Promise<{ pulled: number; total: number }> {
+    const result = await pullEntity(args.adapter, args.repo, {
+      onPhase: (phase) => {
+        if (phase === "pulling") update({ phase: "pulling" });
+      },
+      onResult: (r) => {
+        recordConflictsFor(args.collection.id, r.conflicts);
+        update({
+          phase: "ready",
+          conflicts: flattenConflicts(),
+          lastPullAt: Date.now(),
+          lastError: null,
+        });
+        // Stamp cloud.json with the most-recent successful sync. Phase 1
+        // (Finding #1) deferred this; the orchestrator picks it up so
+        // every engine on this helper inherits the behaviour.
+        void projectUpdateLastSyncAt(args.repo).catch((e) =>
+          console.warn(`[${tag}] projectUpdateLastSyncAt failed:`, e),
+        );
+      },
+      onError: (e) => {
+        update({ phase: "error", lastError: String(e) });
+      },
+    });
+    return { pulled: result.pulled, total: result.remoteCount };
+  }
+
+  // ---- Lifecycle: start + stop -------------------------------------------
+
+  async function start(args: {
+    creds: PinkfishCreds;
+    repo: string;
+  }): Promise<void> {
+    const { creds, repo } = args;
+    console.log(`[${tag}] start`, { repo });
+
+    for (const stop of stopPolls) stop();
+    stopPolls = [];
+    conflictsByCollection.clear();
+    for (const prefix of activePrefixes) clearConflictsForPrefix(prefix);
+    activePrefixes.clear();
+
+    update({ phase: "resolving", lastError: null, conflicts: [] });
+
+    if (config.initLocalRoot) {
+      try {
+        await config.initLocalRoot(repo);
+      } catch (e) {
+        console.error(`[${tag}] initLocalRoot failed:`, e);
+        update({ phase: "error", lastError: String(e) });
+        return;
+      }
+    }
+
+    let collections: C[];
+    try {
+      collections = await resolveCollections(creds);
+    } catch (e) {
+      console.error(`[${tag}] resolveCollections failed:`, e);
+      update({ phase: "error", lastError: String(e) });
+      return;
+    }
+
+    // Auto-create the hardcoded defaults if missing. Then re-resolve to
+    // pick up the newly-created entries with their canonical descriptions.
+    try {
+      const afterCreate = await autoCreateDefaultsIfMissing(creds, collections);
+      collections = afterCreate;
+    } catch (e) {
+      console.warn(`[${tag}] auto-create phase failed:`, e);
+    }
+    try {
+      const refreshed = await resolveCollections(creds);
+      // If refresh succeeded, prefer it — fresher description fields,
+      // canonical IDs from the server.
+      if (refreshed.length >= collections.length) collections = refreshed;
+    } catch (e) {
+      console.warn(`[${tag}] post-create re-resolve failed:`, e);
+    }
+
+    update({ collections });
+
+    for (const collection of collections) {
+      await ensureCollectionDir(repo, collection);
+    }
+
+    if (collections.length === 0) {
+      update({ phase: "ready" });
+      return;
+    }
+
+    // Sequential pulls so auto-commit doesn't race on `.git/index.lock`.
+    for (const collection of collections) {
+      const adapter = config.buildAdapter({ creds, collection });
+      activePrefixes.add(adapter.prefix);
+      try {
+        await runPullWithAdapter({ repo, collection, adapter });
+      } catch (e) {
+        console.error(`[${tag}:${collection.id}] initial pull failed:`, e);
+      }
+      stopPolls.push(
+        startPolling(adapter, repo, {
+          onPhase: (phase) => {
+            if (phase === "pulling") update({ phase: "pulling" });
+          },
+          onResult: (r) => {
+            recordConflictsFor(collection.id, r.conflicts);
+            update({
+              phase: "ready",
+              conflicts: flattenConflicts(),
+              lastPullAt: Date.now(),
+              lastError: null,
+            });
+            void projectUpdateLastSyncAt(repo).catch((e) =>
+              console.warn(`[${tag}] projectUpdateLastSyncAt failed:`, e),
+            );
+          },
+          onError: (e) => {
+            console.error(`[${tag}:${collection.id}] poll failed:`, e);
+            update({ phase: "error", lastError: String(e) });
+          },
+        }),
+      );
+    }
+  }
+
+  function stop(): void {
+    for (const stop of stopPolls) stop();
+    stopPolls = [];
+    conflictsByCollection.clear();
+    for (const prefix of activePrefixes) clearConflictsForPrefix(prefix);
+    activePrefixes.clear();
+    update({
+      phase: "idle",
+      collections: [],
+      conflicts: [],
+      lastError: null,
+    });
+  }
+
+  // ---- Manual operations --------------------------------------------------
+
+  async function pullAllNow(args: {
+    creds: PinkfishCreds;
+    repo: string;
+  }): Promise<void> {
+    for (const collection of status.collections) {
+      const adapter = config.buildAdapter({ creds: args.creds, collection });
+      try {
+        await runPullWithAdapter({ repo: args.repo, collection, adapter });
+      } catch (e) {
+        console.error(`[${tag}:${collection.id}] pullAllNow failed:`, e);
+      }
+    }
+  }
+
+  async function pullOne(args: {
+    creds: PinkfishCreds;
+    repo: string;
+    collection: C;
+  }): Promise<{ ok: boolean; error?: string; downloaded: number; total: number }> {
+    const adapter = config.buildAdapter({
+      creds: args.creds,
+      collection: args.collection,
+    });
+    try {
+      const r = await runPullWithAdapter({
+        repo: args.repo,
+        collection: args.collection,
+        adapter,
+      });
+      return { ok: true, downloaded: r.pulled, total: r.total };
+    } catch (e) {
+      console.error(`[${tag}] pullOne failed:`, e);
+      return { ok: false, error: String(e), downloaded: 0, total: 0 };
+    }
+  }
+
+  async function pushOne(args: {
+    creds: PinkfishCreds;
+    repo: string;
+    collection: C;
+    onLine?: (msg: string) => void;
+  }): Promise<{ pushed: number; failed: number }> {
+    const adapter = config.buildAdapter({
+      creds: args.creds,
+      collection: args.collection,
+    });
+    return withRepoLock(args.repo, adapter.prefix, async () => {
+      update({ phase: "pushing" });
+      try {
+        return await config.pushOne(args);
+      } finally {
+        update({ phase: "ready" });
+      }
+    });
+  }
+
+  // ---- Shadow walker ------------------------------------------------------
+
+  async function hasServerShadowFiles(repo: string): Promise<boolean> {
+    for (const c of status.collections) {
+      const folderName = c.name.startsWith(OPENIT_PREFIX)
+        ? c.name.slice(OPENIT_PREFIX.length)
+        : c.name;
+      const dir = `${config.localFolderRoot}/${folderName}`;
+      const files = await entityListLocal(repo, dir).catch(() => []);
+      const siblings = new Set(files.map((f) => f.filename));
+      if (files.some((f) => classifyAsShadow(f.filename, siblings))) return true;
+    }
+    return false;
+  }
+
+  // ---- Public handle ------------------------------------------------------
+
+  return {
+    subscribe: (fn) => {
+      listeners.add(fn);
+      fn(status);
+      return () => listeners.delete(fn);
+    },
+    getStatus: () => status,
+    start,
+    stop,
+    pullAllNow,
+    pullOne,
+    pushOne,
+    hasServerShadowFiles,
+    resolveCollections,
+    dedupeOpenit,
+  };
+}
