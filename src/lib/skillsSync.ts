@@ -50,6 +50,13 @@ async function writeSyncedPluginVersion(repo: string, version: string): Promise<
   }
 }
 
+/// TEMPORARY: while /web doesn't yet host `openit-plugin/`, the remote
+/// fetch always 404s and we silently fall back to bundled anyway. Set
+/// this to `true` to skip the cloud attempt entirely — saves a failed
+/// HTTP round-trip per file on every connect and keeps the console
+/// quieter. Flip back to `false` once /web has the path.
+const FORCE_BUNDLED_PLUGIN = true;
+
 /// Fetch the manifest. Tries cloud when creds are provided and falls back to
 /// the bundled copy. With no creds, reads bundled directly. Local-first means
 /// the bundled copy is always the source of truth at install/first-run time —
@@ -57,7 +64,7 @@ async function writeSyncedPluginVersion(repo: string, version: string): Promise<
 export async function fetchSkillsManifest(
   creds: PinkfishCreds | null,
 ): Promise<PluginManifest> {
-  if (creds) {
+  if (creds && !FORCE_BUNDLED_PLUGIN) {
     try {
       const manifestJson = await invoke<string>("skills_fetch_manifest", {
         appApiUrl: creds.tokenUrl,
@@ -75,7 +82,7 @@ export async function fetchSkillFile(
   skillPath: string,
   creds: PinkfishCreds | null,
 ): Promise<string> {
-  if (creds) {
+  if (creds && !FORCE_BUNDLED_PLUGIN) {
     try {
       return await invoke<string>("skills_fetch_file", {
         appApiUrl: creds.tokenUrl,
