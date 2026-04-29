@@ -43,13 +43,37 @@ export type FilestoreSyncStatus = {
   lastPullAt: number | null;
 };
 
-function getDefaultFilestores(orgId: string) {
+/// Defaults for OpenIT-managed filestore collections. All names use the
+/// `openit-` prefix so we can filter remote listings to only OpenIT's own
+/// collections (a user's Pinkfish account may also have unrelated filestores).
+///
+/// Phase 1 of V2 sync (PIN-5775): renamed from `openit-docs-<orgId>` to
+/// `openit-library` so the remote name mirrors the local folder name
+/// (`filestores/library/`). Pre-V2 collections under the old name will be
+/// orphaned — V1 deployment surface is small (test orgs) and Phase 2 covers
+/// proper cross-engine migration.
+export function getDefaultFilestores(_orgId: string) {
   return [
     {
-      name: `openit-docs-${orgId}`,
+      name: "openit-library",
       description: "Shared document storage for OpenIT",
     },
   ];
+}
+
+/// Prefix every OpenIT-managed filestore collection carries on the cloud.
+/// Used to filter the user's full filestore list down to the ones we own
+/// before any sync logic runs.
+export const OPENIT_FILESTORE_PREFIX = "openit-";
+
+/// Strip the `openit-` prefix for display in the UI. Returns the input
+/// unchanged if it doesn't start with the prefix (defensive — should always
+/// match for collections we manage, but the engine surfaces collection
+/// names from remote which we don't fully control).
+export function displayFilestoreName(name: string): string {
+  return name.startsWith(OPENIT_FILESTORE_PREFIX)
+    ? name.slice(OPENIT_FILESTORE_PREFIX.length)
+    : name;
 }
 
 let status: FilestoreSyncStatus = {
@@ -134,12 +158,20 @@ export async function resolveProjectFilestores(
 /// collections with the same name (legacy duplicates), keep the
 /// lexicographically smallest id so every caller in the same session
 /// converges on the same one.
-function dedupeByName(
+///
+/// Filters non-OpenIT collections via the `openit-` prefix before matching
+/// defaults, so a user with unrelated filestores on their Pinkfish account
+/// (e.g. `customer-feedback`) is never seen by the sync engine. The defaults
+/// themselves all carry the prefix; the explicit filter is forward-compatible
+/// for Phase 2 where multiple OpenIT collections may exist beyond the
+/// `getDefaultFilestores` set.
+export function dedupeByName(
   all: DataCollection[],
   defaults: ReturnType<typeof getDefaultFilestores>,
 ): FilestoreCollection[] {
   const byName = new Map<string, FilestoreCollection>();
   for (const c of all) {
+    if (!c.name.startsWith(OPENIT_FILESTORE_PREFIX)) continue;
     if (!defaults.some((d) => d.name === c.name)) continue;
     const existing = byName.get(c.name);
     if (!existing || String(c.id) < existing.id) {

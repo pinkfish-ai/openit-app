@@ -219,6 +219,49 @@ export async function projectBootstrap(args: {
   return invoke("project_bootstrap", { orgName: args.orgName, orgId: args.orgId });
 }
 
+/// Cloud-binding marker stored at `<repo>/.openit/cloud.json`. Records which
+/// Pinkfish org the folder is currently bound to. Phase 1 of V2 sync (PIN-5775)
+/// — replaces the `~/OpenIT/<orgId>/` folder convention with a per-folder
+/// metadata file so the user keeps working in their existing folder when they
+/// connect to cloud.
+export type CloudBinding = {
+  orgId: string;
+  orgName: string;
+  /// Unix epoch milliseconds when the binding was first written.
+  connectedAt: number;
+  /// Unix epoch ms of the most recent successful sync. `null` until the first
+  /// poll completes.
+  lastSyncAt: number | null;
+};
+
+/// Write `.openit/cloud.json` for `repo`. Idempotent for the same `orgId`
+/// (preserves `connectedAt`); rejects with an error if the folder is already
+/// bound to a different org so the caller can surface a clear conflict
+/// instead of silently overwriting.
+export async function projectBindToCloud(args: {
+  repo: string;
+  orgId: string;
+  orgName: string;
+}): Promise<CloudBinding> {
+  return invoke("project_bind_to_cloud", {
+    repo: args.repo,
+    orgId: args.orgId,
+    orgName: args.orgName,
+  });
+}
+
+/// Read the binding. `null` for unbound folders.
+export async function projectGetCloudBinding(repo: string): Promise<CloudBinding | null> {
+  return invoke("project_get_cloud_binding", { repo });
+}
+
+/// Refresh `lastSyncAt` to the current time. No-op (resolves) if the folder
+/// is unbound — sync engines call this after every successful poll without
+/// having to special-case the local-only path.
+export async function projectUpdateLastSyncAt(repo: string): Promise<void> {
+  return invoke("project_update_last_sync_at", { repo });
+}
+
 /// Start the localhost ticket-intake HTTP server scoped to `repo`.
 /// Returns the URL clients hit (e.g. `http://127.0.0.1:54123`). If a
 /// server is already running, it's stopped first so calling this on
