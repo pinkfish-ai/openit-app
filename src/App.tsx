@@ -24,7 +24,7 @@ import {
 } from "./lib/skillCanvas";
 import { buildManageState, buildSetupState } from "./lib/connectSlackState";
 import { onFsChanged } from "./lib/fsWatcher";
-import { loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
+import { clearCreds, loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { useBrowserConnect } from "./lib/useBrowserConnect";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
@@ -615,6 +615,15 @@ function App() {
         pinkfishOrgName={orgName}
         initialCreds={savedCreds}
         onPinkfishConnected={onPinkfishConnected}
+        onPinkfishDisconnected={async () => {
+          // Wipe the keychain creds + in-memory token. subscribeToken
+          // catches the null and flips `connected` to false; we still
+          // need to manually reset orgName + savedCreds since neither
+          // is derived from the token state.
+          await clearCreds();
+          setOrgName(null);
+          setSavedCreds(null);
+        }}
         onContinue={() => setBypassOnboarding(true)}
         browserConnect={browserConnect.state}
         startBrowserConnect={browserConnect.start}
