@@ -371,6 +371,16 @@ function App() {
 
         const finish = () => setLoaded(true);
 
+        // V1 fall-through flag. Set when the cloud-relaunch branch enters
+        // (creds + lastRepo) but the cloud.json marker is missing or
+        // points at a different org — typical V1 legacy state where
+        // `lastRepo = ~/OpenIT/<oldOrgId>/`. Without this flag, the
+        // first-run-with-creds branch's `!lastRepo || stale` condition
+        // is false (lastRepo is truthy, stale is false), and execution
+        // falls past every branch into a half-loaded state with no repo
+        // set and no syncs started.
+        let cloudRelaunchFellThrough = false;
+
         if (creds && lastRepo) {
           // Cloud-connected relaunch — skip onboarding and resume syncs.
           //
@@ -396,12 +406,13 @@ function App() {
             finish();
             return;
           }
+          cloudRelaunchFellThrough = true;
           console.log(
             "[app] lastRepo has no matching cloud.json — re-binding via first-run-with-creds branch",
           );
         }
 
-        if (creds && (!lastRepo || stale)) {
+        if (creds && (!lastRepo || stale || cloudRelaunchFellThrough)) {
           // First run with dev creds (or stale legacy lastRepo discarded
           // above). Land in `~/OpenIT/local/`, write the cloud.json
           // marker, then start syncs. Phase 1 deliberately drops the
@@ -454,13 +465,11 @@ function App() {
         // later via the header pill (which still routes through the
         // existing PinkfishOauthModal).
         //
-        // The `!creds` guard matters when `stale && creds`: we discarded
-        // the legacy `~/Documents/OpenIT/<orgId>/` lastRepo above, so the
-        // cloud-bootstrap branch's `!stale` check fails. Without this
-        // guard, a user with valid cloud creds + a stale repo path would
-        // silently land in local-only mode instead of seeing onboarding.
-        // Onboarding is the right surface for them — they reconnect and
-        // we bootstrap fresh into `~/OpenIT/<orgId>/`.
+        // After Phase 1's V2 sync changes (PIN-5775), `stale && creds`
+        // and `cloudRelaunchFellThrough && creds` both reach the
+        // first-run-with-creds branch above and re-bind to
+        // `~/OpenIT/local/`, so they never fall down to this no-creds
+        // block. Only true no-creds startups land here.
         if (!creds) try {
           console.log("[app] local-only bootstrap");
           // If lastRepo is a cloud-keyed folder we can't sync without
