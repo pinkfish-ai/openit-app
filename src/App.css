@@ -3937,31 +3937,6 @@ body::before {
 
 .chat-shell-spacer { flex: 1; }
 
-.chat-shell-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  transition: background var(--t-base) var(--ease),
-              box-shadow var(--t-base) var(--ease);
-}
-
-.chat-shell-dot.alive {
-  background: var(--sage);
-  box-shadow: 0 0 0 2px rgba(111, 143, 106, 0.18);
-  animation: chat-dot-breathe 2.4s var(--ease) infinite;
-}
-
-.chat-shell-dot.idle {
-  background: var(--text-faint);
-  box-shadow: 0 0 0 2px rgba(151, 141, 118, 0.10);
-  opacity: 0.5;
-}
-
-@keyframes chat-dot-breathe {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(111, 143, 106, 0.18); }
-  50%      { box-shadow: 0 0 0 5px rgba(111, 143, 106, 0.06); }
-}
-
 /* ── Status bar (bottom rail) ──────────────────────────────────── */
 .status-bar {
   flex: 0 0 auto;

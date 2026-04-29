@@ -1,4 +1,4 @@
-/// CLI install/uninstall — hybrid model with cross-platform awareness.
+/// Tool install/uninstall — hybrid model with cross-platform awareness.
 ///
 /// On macOS we run `brew install` directly so the UI sees deterministic
 /// state (idle → installing → installed/failed). On Windows/Linux we
@@ -14,7 +14,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { writeToActiveSession } from "../shell/activeSession";
-import { CATALOG, type CatalogEntry } from "./cliCatalog";
+import { CATALOG, type CatalogEntry } from "./toolsCatalog";
 
 export type TargetOs = "macos" | "windows" | "linux" | "unknown";
 
@@ -24,7 +24,7 @@ let cachedTargetOs: TargetOs | null = null;
 export async function getTargetOs(): Promise<TargetOs> {
   if (cachedTargetOs) return cachedTargetOs;
   try {
-    const os = await invoke<string>("cli_target_os");
+    const os = await invoke<string>("tools_target_os");
     cachedTargetOs = (os as TargetOs) ?? "unknown";
   } catch {
     cachedTargetOs = "unknown";
@@ -38,7 +38,7 @@ export async function listInstalled(): Promise<Set<string>> {
   await Promise.all(
     CATALOG.map(async (entry) => {
       try {
-        const found = await invoke<boolean>("cli_is_installed", {
+        const found = await invoke<boolean>("tools_is_installed", {
           binary: entry.binary,
         });
         if (found) installed.add(entry.id);
@@ -53,11 +53,11 @@ export async function listInstalled(): Promise<Set<string>> {
 /// macOS-only: run `brew install <pkg>` and add the entry to CLAUDE.md.
 /// Resolves on success; rejects with brew stderr on failure so the UI
 /// can surface it (and offer the agentic-debug fallback).
-export async function installCli(
+export async function installTool(
   projectRoot: string,
   entry: CatalogEntry,
 ): Promise<void> {
-  await invoke("cli_install", {
+  await invoke("tools_install", {
     args: {
       project_root: projectRoot,
       brew_pkg: entry.brewPkg,
@@ -80,12 +80,12 @@ export class UninstallError extends Error {
   }
 }
 
-export async function uninstallCli(
+export async function uninstallTool(
   projectRoot: string,
   entry: CatalogEntry,
 ): Promise<void> {
   try {
-    await invoke("cli_uninstall", {
+    await invoke("tools_uninstall", {
       args: {
         project_root: projectRoot,
         brew_pkg: entry.brewPkg,
@@ -106,7 +106,7 @@ export async function removeHintOnly(
   projectRoot: string,
   entry: CatalogEntry,
 ): Promise<void> {
-  await invoke("cli_remove_hint_only", {
+  await invoke("tools_remove_hint_only", {
     projectRoot,
     entryId: entry.id,
   });

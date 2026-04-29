@@ -1,13 +1,14 @@
-/// Hardcoded v1 catalog of CLI tools an IT admin can install into their
+/// Hardcoded v1 catalog of tools an IT admin can install into their
 /// machine. Each entry maps to a brew install and a one-line CLAUDE.md
 /// hint that tells Claude the tool exists. Claude already knows the
-/// popular CLIs from training; for less-common tools the hint includes
+/// popular tools from training; for less-common ones the hint includes
 /// a `<tool> --help` nudge so Claude can self-discover surface area on
 /// demand.
 ///
-/// Why CLI instead of MCP servers: zero token cost until the tool is
-/// actually invoked (no schemas in baseline context), no per-session
-/// tool cap, and IT admins already know the brew install pattern.
+/// Why local CLIs instead of MCP servers: zero token cost until the
+/// tool is actually invoked (no schemas in baseline context), no
+/// per-session tool cap, and IT admins already know the brew install
+/// pattern.
 
 export type CatalogEntry = {
   /// Short stable id used as the entry key in the marker block.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { CATALOG, findEntry } from "./cliCatalog";
+import { CATALOG, findEntry } from "./toolsCatalog";
 
-describe("CLI catalog", () => {
+describe("tools catalog", () => {
   it("has no duplicate ids", () => {
     const ids = CATALOG.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);

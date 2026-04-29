@@ -10,7 +10,7 @@ import { DataTable } from "./DataTable";
 import { EntityCardGrid } from "./EntityCardGrid";
 import { FileThumbnail, isImageFile } from "./FileThumbnail";
 import { EntityBadge, type EntityKind } from "./entityIcons";
-import { CliPanel } from "./CliPanel";
+import { ToolsPanel } from "./ToolsPanel";
 import { TrashIcon } from "./TrashIcon";
 import { useToast, ToastView } from "./Toast";
 import { FileTypeBadge, formatBytes } from "./FileTypeBadge";
@@ -656,7 +656,7 @@ export function Viewer({
       setContent("");
       return;
     }
-    if (source.kind === "cli") {
+    if (source.kind === "tools") {
       setMode("rendered");
       setContent("");
       return;
@@ -772,7 +772,7 @@ export function Viewer({
       case "people-list":        return "People";
       case "cloud-cta": return "Connect to Pinkfish Cloud";
       case "getting-started": return "Getting started";
-      case "cli": return "CLI";
+      case "tools": return "Tools";
       default: return "";
     }
   };
@@ -1625,11 +1625,11 @@ export function Viewer({
       );
     }
 
-    // CLI — the CLI-tools catalog. Synthetic entity (no on-disk
+    // Tools — the tools catalog. Synthetic entity (no on-disk
     // contents); the panel detects installed binaries via `which` and
     // shells out to `brew install/uninstall` for mutations.
-    if (source.kind === "cli") {
-      return <CliPanel projectRoot={repo} />;
+    if (source.kind === "tools") {
+      return <ToolsPanel projectRoot={repo} />;
     }
 
     // `filestores/attachments/` welcome stub + per-ticket roll-up.
@@ -2398,8 +2398,8 @@ export function Viewer({
       case "people-list":
         headerKind = "people";
         break;
-      case "cli":
-        headerKind = "cli";
+      case "tools":
+        headerKind = "tools";
         break;
     }
   }

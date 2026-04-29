@@ -19,7 +19,7 @@ import {
   buildKbConflictPrompt,
   getSyncStatus,
   kbHasServerShadowFiles,
-  pullNow,
+  pullAllKbNow,
   subscribeSync,
 } from "../lib/kbSync";
 import {
@@ -150,6 +150,7 @@ export function Shell({
   const [draggingPaneId, setDraggingPaneId] = useState<PaneId | null>(null);
   const [dragOverPaneId, setDragOverPaneId] = useState<PaneId | null>(null);
   const [chatSessionKey, setChatSessionKey] = useState(0);
+  const [chatResume, setChatResume] = useState(false);
   const bumpFs = useCallback(() => setFsTick((t) => t + 1), []);
 
   /// Drag-source / drop-target wiring. The grip in each pane's header
@@ -234,6 +235,12 @@ export function Shell({
   );
 
   const newChatSession = useCallback(() => {
+    setChatResume(false);
+    setChatSessionKey((k) => k + 1);
+  }, []);
+
+  const resumeChatSession = useCallback(() => {
+    setChatResume(true);
     setChatSessionKey((k) => k + 1);
   }, []);
 
@@ -256,18 +263,20 @@ export function Shell({
       // the streaming output too.
 
       // KB pull
-      const kbStatus = getSyncStatus();
-      if (kbStatus.collection) {
-        onSyncLine("▸ pull: kb");
+      const kbCollections = getSyncStatus().collections;
+      if (kbCollections.length === 0) {
+        onSyncLine("▸ pull: kb skipped (no collections)");
+      } else {
+        onSyncLine(
+          `▸ pull: kb (${kbCollections.length} collection${kbCollections.length === 1 ? "" : "s"})`,
+        );
         try {
-          await pullNow({ creds, repo, collection: kbStatus.collection });
+          await pullAllKbNow({ creds, repo });
           onSyncLine("  ✓ kb pull complete");
         } catch (e) {
           console.error("[manual pull] kb failed:", e);
           onSyncLine(`  ✗ kb pull failed: ${String(e)}`);
         }
-      } else {
-        onSyncLine("▸ pull: kb skipped (no collection)");
       }
 
       // Filestore pull
@@ -855,6 +864,7 @@ export function Shell({
             >
               <ChatShellHeader
                 onNewSession={newChatSession}
+                onResumeSession={resumeChatSession}
                 dragHandle={
                   <PaneDragHandle
                     paneId="right"
@@ -864,7 +874,7 @@ export function Shell({
                 }
               />
               <div className="chat-area">
-                <ChatPane key={chatSessionKey} cwd={repo} />
+                <ChatPane key={chatSessionKey} cwd={repo} resume={chatResume} />
               </div>
               <PromptBubbles extraBubbles={conflictBubbles} bubbles={bubbles} />
             </div>

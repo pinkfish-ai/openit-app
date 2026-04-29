@@ -107,9 +107,8 @@ function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubbl
 /// the relaunch + fresh-bootstrap paths can't drift on which engines they
 /// start. Each engine swallows its own init error so one failure doesn't
 /// take down the others.
-function startCloudSyncs(creds: PinkfishCreds, repo: string, orgName: string): void {
-  const slug = basename(repo);
-  startKbSync({ creds, repo, orgSlug: slug, orgName }).catch((e) =>
+function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): void {
+  startKbSync({ creds, repo }).catch((e) =>
     console.error("kb sync init failed:", e),
   );
   startFilestoreSync({ creds, repo }).catch((e) =>
