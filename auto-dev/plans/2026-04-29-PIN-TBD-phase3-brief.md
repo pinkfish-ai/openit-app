@@ -1,26 +1,37 @@
 # PIN-TBD: Phase 3 — Datastore consolidation + custom-datastore overview tile — Brief (draft)
 
-**Ticket:** [TBD — new sibling of PIN-5775, to be created in Linear]
+**Ticket:** [TBD — new sibling of PIN-5775, to be filed in Linear by the engineer]
 **Date:** 2026-04-29
 **Repo:** `openit-app` (primary)
 **Predecessors:**
   - Phase 1 — `2026-04-29-PIN-5775-phase1-filestore-local-first-plan.md` (PR #63, merged)
   - Phase 2 — `2026-04-29-PIN-5775-phase2-kb-local-first-addendum.md` (PR #66)
-**Status:** Draft for engineer review — stage 01 (Brief). Do not advance to stage 02 (Plan) until approved.
+**Status:** Approved by engineer (2026-04-29) — design questions locked. Ready to advance to stage 02 once the Linear ticket is filed.
 
 ---
 
 ## Problem
 
-Two gaps to close, both about datastore.
+Three gaps to close, all about datastore.
 
-### Architecture gap
+### Two flavors with different REST handling
+
+Datastores come in two flavors:
+
+- **Structured** — has a `_schema.json`. Rows validated against fielded schema. Auto-created defaults (`openit-tickets`, `openit-people`) are structured.
+- **Unstructured** — no schema. Rows are freeform JSON. Conversations (`databases/conversations/<ticketId>/`) are an example local-only unstructured store; user-created customs may also be unstructured.
+
+The REST handling differs between flavors. Per `/firebase-helpers/functions/src/memory.controller.ts`, the server branches on `dataCollection.isStructured` for: create-collection request body shape (structured needs `schema`, unstructured needs a `key` column convention), bquery format (structured supports fielded queries, unstructured returns raw items), list-items `format=light` semantics, and CSV import. Same endpoints (`/memory/items`, `/memory/bquery`, `/datacollection/`) — but request bodies and response shapes diverge per flavor.
+
+The current `datastoreSync.ts` only auto-creates structured (`isStructured: true` hardcoded at line 184) and largely ignores the unstructured path. Phase 3's consolidation needs to handle both — either with one branching adapter, or with two adapter factories (one per flavor) selected based on `collection.isStructured`.
+
+### Architecture gap (consolidation)
 
 After Phase 2, lifecycle + status + per-collection conflict tracking + polling + `lastSyncAt` for filestore and KB live in one shared helper, `createCollectionEntitySync`, in `syncEngine.ts`. Each engine wrapper is ≤ 270 LOC of engine-specific glue.
 
 Datastore syncs bidirectionally and works correctly today — but its orchestrator is a hand-written ~600-LOC parallel to the one Phase 2 just centralized. That's a maintenance tax: a bug fix in the shared helper doesn't reach datastore; an investigation of "why is sync hanging?" has to look in two places. The current `datastoreSync.ts` reimplements: status object, listener pattern, polling loop, in-flight resolve dedup, auto-create defaults loop with 409 handling, conflict tracking, push lifecycle. All of those are now centralized in `createCollectionEntitySync` for filestore + KB.
 
-### UX gap
+### UX gap (overview discoverability)
 
 The Workbench overview pulls the two default datastores (`openit-tickets`, `openit-people`) up as dedicated tiles. If a user creates a custom `openit-*` datastore — either by hand on the Pinkfish dashboard, or via a future Skill that adds one — there's no surface for it on the overview. It exists as a folder under `databases/` and is reachable via the FileExplorer tree, but not discoverable.
 
@@ -54,7 +65,15 @@ This is a Phase-2-shaped gap: Phase 2 made the sync engine multi-collection-awar
 
 4. **Plugin script support.** `sync-resolve-conflict.mjs` accepts `datastore` for the flat manifest. If datastore migrates to a nested per-collection manifest in this phase, the script gets updated to navigate the new shape (same change Phase 2 made for KB and filestore). If datastore stays on the flat manifest, no script changes.
 
-5. **Integration tests** covering datastore's full bidirectional flow against the live Pinkfish org. Mirror the Phase 2 KB integration tests in `integration_tests/`.
+5. **Integration tests** covering datastore's full bidirectional flow against the live Pinkfish org. Mirror the Phase 2 KB integration tests in `integration_tests/`. Cover both structured and unstructured flavors.
+
+6. **Claude skill: how to use datastores.** Add a plugin skill (`scripts/openit-plugin/skills/datastores.md` or similar) that teaches Claude-in-the-terminal how to work with datastores — both flavors. Documents:
+   - File-ops first: rows are JSON files under `databases/<colName>/<key>.json`. Read / Edit / Write directly. The sync engine pushes the change to Pinkfish on commit.
+   - Schema-aware behaviour for structured datastores: read `_schema.json` to know the fields, validate inputs before writing.
+   - Unstructured datastores: freeform JSON, no validation.
+   - When to reach for the gateway / MCP: semantic search across rows, natural-language queries, bulk operations the file ops would be slow for.
+   - Examples: "show me all open tickets" → Glob + Read; "find tickets mentioning VPN" → either grep (small set) or `gateway_invoke datastore-structured natural_query` (large set).
+   This is the second cross-repo plugin step in this phase (alongside the `sync-resolve-conflict.mjs` update from Phase 2's loop). At merge time it mirrors into `/web/packages/app/public/openit-plugin/skills/`.
 
 ### Out (deferred to later phases)
 
@@ -72,11 +91,12 @@ This is a Phase-2-shaped gap: Phase 2 made the sync engine multi-collection-awar
 
 ### Datastore behaviour (no regression on existing flow)
 
-- [ ] Edit a row file `databases/openit-tickets/<key>.json` locally → next poll pushes to Pinkfish. (Existing behaviour; verify it still works after the refactor.)
+- [ ] Edit a row file `databases/openit-tickets/<key>.json` locally → next poll pushes to Pinkfish. (Existing structured behaviour; verify it still works after the refactor.)
 - [ ] Create a row on the Pinkfish dashboard → next poll pulls down to `databases/openit-tickets/<key>.json` locally.
 - [ ] Both sides edit the same row → `.server.json` shadow lands, "Resolve in Claude" bubble names the right path, the resolve-script flow clears the conflict.
 - [ ] Server-side delete propagates to local file removal (existing `onServerDelete` behaviour preserved).
-- [ ] `_schema.json` per collection writes once on connect; content-equality skip prevents redundant rewrites on subsequent connects.
+- [ ] `_schema.json` per **structured** collection writes once on connect; content-equality skip prevents redundant rewrites. Unstructured collections do NOT get a `_schema.json`.
+- [ ] **Unstructured** datastore: round-trip works against an unstructured `openit-*` datastore. Row read/write doesn't require schema validation. No `_schema.json` written.
 - [ ] `cloud.json.lastSyncAt` updates after a successful datastore pull (the Phase 2 deferral now extends to datastore).
 - [ ] Pre-existing pagination + per-collection failure tracking (`unreliableKeyPrefixes`) is preserved.
 

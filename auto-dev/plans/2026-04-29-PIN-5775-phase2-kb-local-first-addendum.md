@@ -223,3 +223,11 @@ If at the end of Step 9 the net delta on `filestoreSync.ts` + `kbSync.ts` is pos
 |---|---------|----------|-------------|-----------------|
 | 1 | Legacy prefixes fail against nested manifest format | Medium | Fixed | `eabdef4` — V2 hasn't launched, no in-flight transcripts to honour. Dropped the legacy `kb` / `filestore` short prefixes from `sync-resolve-conflict.mjs` entirely. The script now only accepts the per-collection forms (which carry collection identity) plus the flat-only short names for `datastore` / `agent` / `workflow`. Earlier `0b5c2de` added a hint-error for the legacy + nested combination — superseded by this clean removal. |
 | 2 | `startKbSync` silently drops the documented `onLog` callback | Low | Fixed | `3e16703` — added `onLog?: (msg: string) => void` to the orchestrator's `start({creds, repo, onLog})` and forwarded to `resolveCollections(creds, onLog)` so per-collection log lines (`✓ openit-default (id: …)`) reach the modal log / terminal status pane during connect. `startKbSync` passes `args.onLog` through cleanly. Side-update: the two `sync-resolve-conflict.test.ts` cases that used the removed legacy prefixes (`kb`, `filestore`) switched to the per-collection forms. |
+
+### Iteration 2 (2026-04-29)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | (none — clean run) | — | — | "✅ Bugbot reviewed your changes and found no new issues!" — review of commit `84ac1f9`. CI green: frontend, rust, Cursor Bugbot all passing. Both iter-1 threads resolved. |
+
+**BugBot loop exit:** clean run achieved at iteration 2. Phase 2 implementation is code-complete. Manual MS-1 through MS-6 (per the brief) remain the gating step before the engineer signs off on merge — see PR description.
