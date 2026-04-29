@@ -212,3 +212,14 @@ Post-extraction: new `startCollectionEntitySync` ~250 LOC inside `syncEngine.ts`
 Plus ~150 LOC of new `nestedManifest.ts`, ~150 LOC of new `entities/kb.ts`, ~100 LOC of new `kb.ts`, integration tests.
 
 If at the end of Step 9 the net delta on `filestoreSync.ts` + `kbSync.ts` is positive, the extraction failed and the helper's interface needs simplification before this lands.
+
+---
+
+## BugBot Review Log
+
+### Iteration 1 (2026-04-29)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Legacy prefixes fail against nested manifest format | Medium | Fixed | `eabdef4` — V2 hasn't launched, no in-flight transcripts to honour. Dropped the legacy `kb` / `filestore` short prefixes from `sync-resolve-conflict.mjs` entirely. The script now only accepts the per-collection forms (which carry collection identity) plus the flat-only short names for `datastore` / `agent` / `workflow`. Earlier `0b5c2de` added a hint-error for the legacy + nested combination — superseded by this clean removal. |
+| 2 | `startKbSync` silently drops the documented `onLog` callback | Low | Fixed | `3e16703` — added `onLog?: (msg: string) => void` to the orchestrator's `start({creds, repo, onLog})` and forwarded to `resolveCollections(creds, onLog)` so per-collection log lines (`✓ openit-default (id: …)`) reach the modal log / terminal status pane during connect. `startKbSync` passes `args.onLog` through cleanly. Side-update: the two `sync-resolve-conflict.test.ts` cases that used the removed legacy prefixes (`kb`, `filestore`) switched to the per-collection forms. |
