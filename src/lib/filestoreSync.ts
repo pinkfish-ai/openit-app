@@ -365,6 +365,20 @@ export async function startFilestoreSync(args: {
           collections.push(newCollection);
           orgCache.set(remoteName, newCollection);
           console.log(`[filestoreSync] ✓ Created ${remoteName} with id: ${result.id}`);
+          
+          // Post-create refetch to handle eventual consistency: verify the collection is now visible on the API
+          try {
+            console.log(`[filestoreSync] post-create refetch for ${remoteName}...`);
+            const refetched = await listFilestoreCollections(creds);
+            const refetchedOpenit = refetched.filter((c) => c.name.startsWith(OPENIT_FILESTORE_PREFIX));
+            if (refetchedOpenit.some((c) => c.name === remoteName)) {
+              console.log(`[filestoreSync] ✓ post-create refetch confirmed ${remoteName} is now visible`);
+            } else {
+              console.warn(`[filestoreSync] ⚠ post-create refetch did not see ${remoteName} yet (eventual consistency)`);
+            }
+          } catch (refetchErr) {
+            console.warn(`[filestoreSync] post-create refetch failed:`, refetchErr);
+          }
         }
       } catch (e) {
         console.warn(`[filestoreSync] Failed to create ${remoteName}:`, e);
