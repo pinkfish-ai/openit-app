@@ -226,8 +226,8 @@ fn write_cloud_binding_to_disk(path: &Path, binding: &CloudBinding) -> Result<()
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create_dir_all: {}", e))?;
     }
-    let json =
-        serde_json::to_string_pretty(binding).map_err(|e| format!("serialize cloud.json: {}", e))?;
+    let json = serde_json::to_string_pretty(binding)
+        .map_err(|e| format!("serialize cloud.json: {}", e))?;
     fs::write(path, json).map_err(|e| format!("write cloud.json: {}", e))
 }
 
@@ -395,8 +395,7 @@ mod tests {
     #[test]
     fn update_last_sync_at_sets_field_and_preserves_others() {
         let (_dir, repo) = repo();
-        let original =
-            project_bind_to_cloud(repo.clone(), "org-1".into(), "Org".into()).unwrap();
+        let original = project_bind_to_cloud(repo.clone(), "org-1".into(), "Org".into()).unwrap();
         // Sleep so now_ms strictly advances past `original.connected_at`.
         std::thread::sleep(std::time::Duration::from_millis(5));
         project_update_last_sync_at(repo.clone()).unwrap();
