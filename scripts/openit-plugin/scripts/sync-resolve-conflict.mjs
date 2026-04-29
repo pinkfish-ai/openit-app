@@ -39,23 +39,17 @@
 //   accordingly.
 //
 // Prefix → manifest file:
-//   - `knowledge-bases/<name>`     → `.openit/kb-state.json` (nested only)
-//   - `filestores/<name>`          → `.openit/fs-state.json` (nested only)
-//   - `kb` / `filestore`           → legacy short forms, accepted for
-//                                    in-flight transcripts written before
-//                                    the nested rewrite. Only valid
-//                                    against the legacy FLAT manifest
-//                                    shape — these prefixes do not
-//                                    carry collection identity, so they
-//                                    can't address a specific bucket
-//                                    in a nested manifest. If a nested
-//                                    manifest is on disk and a legacy
-//                                    prefix arrives, the script errors
-//                                    with a hint to use the per-
-//                                    collection prefix instead.
+//   - `knowledge-bases/<name>`     → `.openit/kb-state.json` (nested)
+//   - `filestores/<name>`          → `.openit/fs-state.json` (nested)
 //   - `datastore`                  → `.openit/datastore-state.json` (flat)
 //   - `agent`                      → `.openit/agent-state.json` (flat)
 //   - `workflow`                   → `.openit/workflow-state.json` (flat)
+//
+// Datastore / agent / workflow keep the flat shape until those engines
+// migrate to per-collection manifests in a later phase. KB and filestore
+// use the per-collection nested shape — and per-collection prefixes
+// always carry collection identity, so this script can route directly to
+// the right bucket without a legacy short-form fallback.
 //
 // When to call this:
 //   After merging the canonical (`<key>.json`) and deleting the shadow
@@ -82,15 +76,10 @@ const FORCE_PUSH_MTIME_SENTINEL = 1;
 /// when the prefix shape is unrecognised.
 function manifestFileFor(prefix) {
   if (prefix.startsWith("knowledge-bases/")) return ".openit/kb-state.json";
-  if (prefix === "kb") return ".openit/kb-state.json";
-
   if (prefix.startsWith("filestores/")) return ".openit/fs-state.json";
-  if (prefix === "filestore") return ".openit/fs-state.json";
-
   if (prefix === "datastore") return ".openit/datastore-state.json";
   if (prefix === "agent") return ".openit/agent-state.json";
   if (prefix === "workflow") return ".openit/workflow-state.json";
-
   return null;
 }
 
@@ -139,7 +128,9 @@ function findBucket(manifest, prefix) {
     }
     return null;
   }
-  // Short legacy names — fall through to the flat-format path.
+  // datastore / agent / workflow use the flat manifest shape — they
+  // don't appear in a nested manifest, so finding nothing here means
+  // the caller is targeting the wrong file.
   return null;
 }
 
@@ -204,23 +195,6 @@ async function main() {
   let files;
   let writeBack;
   if (isNestedManifest(manifest)) {
-    // Legacy short prefixes (`kb`, `filestore`) don't carry collection
-    // identity, so they can't address a bucket in a nested manifest.
-    // Surface a clear error pointing the user at the per-collection
-    // prefix shape rather than silently failing as bucket_not_found —
-    // this happens when a transcript from before the Phase-2 rewrite
-    // emits the legacy prefix against a post-Phase-2 manifest.
-    if (args.prefix === "kb" || args.prefix === "filestore") {
-      const root = args.prefix === "kb" ? "knowledge-bases" : "filestores";
-      const bucketNames = Object.values(manifest)
-        .map((b) => b?.collection_name)
-        .filter(Boolean)
-        .map((n) => (n.startsWith("openit-") ? n.slice("openit-".length) : n));
-      fail(
-        "legacy_prefix_against_nested_manifest",
-        `The legacy short prefix \`${args.prefix}\` cannot address a specific collection in a nested manifest. Use \`--prefix ${root}/<name>\` instead. Available: ${bucketNames.map((n) => `${root}/${n}`).join(", ") || "(none)"}.`,
-      );
-    }
     const lookup = findBucket(manifest, args.prefix);
     if (!lookup) {
       fail(
