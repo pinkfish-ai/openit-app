@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { fsRead, fsReadBytes, fsList, reportOverviewRun, entityWriteFileBytes } from "../lib/api";
+import { fsRead, fsReadBytes, fsList, reportOverviewRun, entityWriteFileBytes, entityDeleteFile } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
@@ -11,6 +11,7 @@ import { EntityCardGrid } from "./EntityCardGrid";
 import { FileThumbnail, isImageFile } from "./FileThumbnail";
 import { EntityBadge, type EntityKind } from "./entityIcons";
 import { CliPanel } from "./CliPanel";
+import { TrashIcon } from "./TrashIcon";
 import { RowEditForm } from "./RowEditForm";
 import { AttachmentList } from "./AttachmentList";
 import { ImageViewer } from "./viewers/ImageViewer";
@@ -80,6 +81,28 @@ async function uploadFilesToSubdir(
         .map((f) => `${f.name} (${f.reason})`)
         .join(", ")}`,
     );
+  }
+}
+
+/// Confirm + delete a single file in an entity folder. Used by the
+/// trash button on library/KB/reports/attachments-ticket cards. The
+/// fs watcher refreshes the listing on its own — we just surface
+/// errors so the user knows when a delete didn't take.
+async function deleteFileInSubdir(
+  repo: string,
+  subdir: string,
+  filename: string,
+  setError: (msg: string | null) => void,
+): Promise<void> {
+  const ok = window.confirm(`Delete "${filename}"?\n\nThis cannot be undone.`);
+  if (!ok) return;
+  setError(null);
+  try {
+    await entityDeleteFile(repo, toRepoRelative(repo, subdir), filename);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[folder-delete] failed for ${filename}:`, err);
+    setError(`Failed to delete ${filename}: ${reason}`);
   }
 }
 
@@ -1267,36 +1290,59 @@ export function Viewer({
 
       return (
         <div className="viewer-summary viewer-people">
+          {folderUploadError && (
+            <p className="viewer-edit-error">{folderUploadError}</p>
+          )}
           <div className="viewer-thread-list">
             {source.people.map((p) => (
-              <button
-                key={p.key}
-                type="button"
-                className="thread-card thread-card-person"
-                onClick={() => {
-                  if (onOpenPath) {
-                    void onOpenPath(`${repo}/databases/people/${p.key}.json`);
-                  }
-                }}
-                title={`Open ${p.name || p.email || p.key}`}
-              >
-                <div className="thread-card-row">
-                  <span className="thread-card-subject">
-                    {p.name || p.email || p.key}
-                  </span>
-                  {p.role && (
-                    <span className="thread-card-status">{p.role}</span>
-                  )}
-                </div>
-                <div className="thread-card-meta">
-                  {p.email && p.email !== p.name && (
-                    <span className="thread-card-asker">{p.email}</span>
-                  )}
-                  {p.department && (
-                    <span className="thread-card-count">{p.department}</span>
-                  )}
-                </div>
-              </button>
+              <div key={p.key} className="thread-card-wrapper">
+                <button
+                  type="button"
+                  className="thread-card thread-card-person"
+                  onClick={() => {
+                    if (onOpenPath) {
+                      void onOpenPath(`${repo}/databases/people/${p.key}.json`);
+                    }
+                  }}
+                  title={`Open ${p.name || p.email || p.key}`}
+                >
+                  <div className="thread-card-row">
+                    <span className="thread-card-subject">
+                      {p.name || p.email || p.key}
+                    </span>
+                    {p.role && (
+                      <span className="thread-card-status">{p.role}</span>
+                    )}
+                  </div>
+                  <div className="thread-card-meta">
+                    {p.email && p.email !== p.name && (
+                      <span className="thread-card-asker">{p.email}</span>
+                    )}
+                    {p.department && (
+                      <span className="thread-card-count">{p.department}</span>
+                    )}
+                  </div>
+                </button>
+                {repo && (
+                  <button
+                    type="button"
+                    className="entity-card-delete thread-card-delete"
+                    title={`Delete ${p.name || p.email || p.key}`}
+                    aria-label={`Delete ${p.name || p.email || p.key}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteFileInSubdir(
+                        repo,
+                        "databases/people",
+                        `${p.key}.json`,
+                        setFolderUploadError,
+                      );
+                    }}
+                  >
+                    <TrashIcon />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -1609,6 +1655,10 @@ export function Viewer({
           meta: isReport ? dateLabel : undefined,
           icon: isImageFile(f.path) ? <FileThumbnail absPath={f.path} /> : undefined,
           onClick: () => onOpenPath && void onOpenPath(f.path),
+          onDelete: repo
+            ? () =>
+                deleteFileInSubdir(repo, source.path, f.name, setFolderUploadError)
+            : undefined,
         };
       });
       // Drag-and-drop upload from the desktop is enabled for the two

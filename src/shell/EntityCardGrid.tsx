@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ENTITY_META, type EntityKind } from "./entityIcons";
+import { TrashIcon } from "./TrashIcon";
 
 export type { EntityKind };
 
@@ -23,6 +24,11 @@ export type EntityCard = {
    *  list view so users can drop files directly onto a collection
    *  card without first opening it. */
   onFilesDropped?: (files: File[]) => void | Promise<void>;
+  /** When set, the card shows a hover-revealed trash button that
+   *  invokes this handler. The handler is responsible for any
+   *  confirmation prompt — the grid just wires the click + stops
+   *  propagation so the card's `onClick` doesn't fire. */
+  onDelete?: () => void | Promise<void>;
 };
 
 /**
@@ -93,7 +99,7 @@ function EntityCardItem({
         },
       }
     : {};
-  return (
+  const card = (
     <Tag
       type={c.onClick ? "button" : undefined}
       className={`entity-card ${c.onClick ? "entity-card-clickable" : ""}${
@@ -126,6 +132,29 @@ function EntityCardItem({
         )}
       </div>
     </Tag>
+  );
+  if (!c.onDelete) return card;
+  // The delete button has to sit OUTSIDE the card's <button> element
+  // — nesting interactive controls inside a button is invalid HTML
+  // and the click target collapses. Wrap card + delete button in a
+  // relatively-positioned div and overlay the trash button at the
+  // top-right; CSS hides it until the wrapper is hovered.
+  return (
+    <div className="entity-card-wrapper">
+      {card}
+      <button
+        type="button"
+        className="entity-card-delete"
+        title={`Delete ${c.title}`}
+        aria-label={`Delete ${c.title}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          void c.onDelete?.();
+        }}
+      >
+        <TrashIcon />
+      </button>
+    </div>
   );
 }
 
