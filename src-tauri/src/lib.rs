@@ -1,6 +1,5 @@
 mod agent_trace;
 mod claude;
-mod cli_tools;
 mod filestore;
 mod fs_tree;
 mod git_history;
@@ -17,6 +16,7 @@ mod skill_canvas;
 mod skills;
 mod slack;
 mod state;
+mod tools;
 mod watcher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -71,11 +71,11 @@ pub fn run() {
             git_ops::git_diff_name_only,
             git_ops::git_global_user_email,
             claude::claude_generate_commit_message,
-            cli_tools::cli_is_installed,
-            cli_tools::cli_target_os,
-            cli_tools::cli_install,
-            cli_tools::cli_uninstall,
-            cli_tools::cli_remove_hint_only,
+            tools::tools_is_installed,
+            tools::tools_target_os,
+            tools::tools_install,
+            tools::tools_uninstall,
+            tools::tools_remove_hint_only,
             state::state_load,
             state::state_save,
             keychain::keychain_set,
