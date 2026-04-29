@@ -157,7 +157,16 @@ export type ViewerSource =
       // entity's own `name` field when readable (agents/workflows JSON);
       // description is the entity's `description` field, or the first
       // markdown heading for knowledge-base, or empty for library.
-      files: { name: string; displayName: string; description: string; path: string }[];
+      files: {
+        name: string;
+        displayName: string;
+        description: string;
+        path: string;
+        /** Bytes on disk; null when the platform call hasn't returned
+         *  a stat (legacy fallback path or unreadable file). The
+         *  viewer hides the size suffix when null. */
+        size?: number | null;
+      }[];
     }
   // Top-level `databases/` directory. Each collection is its own
   // subfolder (databases/<col>/) — the parent view shows them as cards

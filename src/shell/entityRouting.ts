@@ -552,6 +552,7 @@ export async function resolvePathToSource(
         displayName: string;
         description: string;
         path: string;
+        size: number | null;
       }[] = [];
       const childPrefix = `${path}/`;
       for (const n of nodes) {
@@ -620,7 +621,7 @@ export async function resolvePathToSource(
             }
           }
         }
-        files.push({ name: n.name, displayName, description, path: n.path });
+        files.push({ name: n.name, displayName, description, path: n.path, size: null });
       }
       // jump around when files are renamed in place. Reports are the
       // exception — filenames carry a leading `YYYY-MM-DD-HHmm`
@@ -631,6 +632,23 @@ export async function resolvePathToSource(
         files.sort((a, b) => b.name.localeCompare(a.name));
       } else {
         files.sort((a, b) => a.displayName.localeCompare(b.displayName));
+      }
+      // Pull file sizes from the entity-local listing. fs_list doesn't
+      // surface size and walking the disk twice is fine: this resolver
+      // only fires when the user clicks the folder, not on every
+      // fsTick. Wrap in try/catch so an unsupported subdir (or a
+      // future entity that isn't backed by entity_list_local) keeps
+      // rendering without sizes instead of crashing the whole view.
+      try {
+        const { entityListLocal } = await import("../lib/api");
+        const sizes = await entityListLocal(repo, rel);
+        const byName = new Map(sizes.map((s) => [s.filename, s.size]));
+        for (const f of files) {
+          const s = byName.get(f.name);
+          if (typeof s === "number") f.size = s;
+        }
+      } catch {
+        /* size lookup unsupported — leave sizes null */
       }
       return {
         kind: "entity-folder",
