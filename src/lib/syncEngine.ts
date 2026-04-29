@@ -1047,7 +1047,15 @@ export type CollectionSyncHandle<C extends CollectionLike> = {
   getStatus: () => CollectionSyncStatus<C>;
 
   // Lifecycle
-  start: (args: { creds: PinkfishCreds; repo: string }) => Promise<void>;
+  start: (args: {
+    creds: PinkfishCreds;
+    repo: string;
+    /** Receives per-collection log lines (`✓ openit-default (id: …)`)
+     *  on the FIRST resolve only. Forwarded to the discovery helper so
+     *  callers (modal log, terminal status pane) see the same output
+     *  the read-only sibling helper produces. */
+    onLog?: (msg: string) => void;
+  }) => Promise<void>;
   stop: () => void;
 
   // Manual operations — same lock + status discipline as the polling loop.
@@ -1327,8 +1335,9 @@ export function createCollectionEntitySync<C extends CollectionLike>(
   async function start(args: {
     creds: PinkfishCreds;
     repo: string;
+    onLog?: (msg: string) => void;
   }): Promise<void> {
-    const { creds, repo } = args;
+    const { creds, repo, onLog } = args;
     console.log(`[${tag}] start`, { repo });
 
     for (const stop of stopPolls) stop();
@@ -1351,7 +1360,7 @@ export function createCollectionEntitySync<C extends CollectionLike>(
 
     let collections: C[];
     try {
-      collections = await resolveCollections(creds);
+      collections = await resolveCollections(creds, onLog);
     } catch (e) {
       console.error(`[${tag}] resolveCollections failed:`, e);
       update({ phase: "error", lastError: String(e) });

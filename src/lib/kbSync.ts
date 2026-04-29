@@ -92,13 +92,14 @@ export async function startKbSync(args: {
   /** Legacy — Phase 2 ignores. Kept so call sites compile unchanged. */
   orgName?: string;
   /** Receives per-collection log lines (`✓ openit-default (id: …)`)
-   *  on the FIRST attempt. Forwarded to the orchestrator. */
+   *  on the FIRST resolve. Forwarded to the orchestrator's
+   *  resolveCollections so the modal log / terminal status pane sees
+   *  the same output the read-only sibling helper produces. */
   onLog?: (msg: string) => void;
 }): Promise<void> {
   void args.orgSlug;
   void args.orgName;
-  void args.onLog;
-  await handle.start({ creds: args.creds, repo: args.repo });
+  await handle.start({ creds: args.creds, repo: args.repo, onLog: args.onLog });
 }
 
 /// Run one bidirectional pull across every active KB collection. Used
