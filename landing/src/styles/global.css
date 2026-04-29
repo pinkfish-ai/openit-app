@@ -1,12 +1,14 @@
 :root {
-  --bg: #0b0b0d;
-  --surface: #14141a;
-  --surface-2: #1c1c25;
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #ececf1;
-  --text-dim: #a8a8b3;
-  --accent: #ff5fa8;
-  --accent-hover: #ff7ab9;
+  /* Palette mirrors src/App.css in the desktop app — warm cream + terracotta —
+     so the landing reads as the app's home, not a separate marketing site. */
+  --bg: #fbf7ec;
+  --surface: #ffffff;
+  --surface-2: #f5edd8;
+  --border: #e7decb;
+  --text: #25201a;
+  --text-dim: #67604f;
+  --accent: #c75a2c;
+  --accent-hover: #ad4a22;
   --max: 1080px;
   --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
@@ -155,11 +157,12 @@ p {
   opacity: 0.8;
 }
 .btn.secondary {
-  background: var(--surface-2);
+  background: var(--surface);
   color: var(--text);
+  border: 1px solid var(--border);
 }
 .btn.secondary:hover {
-  background: #262633;
+  background: var(--surface-2);
 }
 .btn[aria-disabled="true"] {
   background: var(--surface-2);

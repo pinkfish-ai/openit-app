@@ -4,14 +4,13 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 const base = import.meta.env.BASE_URL;
 const url = (p: string) => `${base.replace(/\/$/, "")}/${p.replace(/^\//, "")}`;
 ---
-<BaseLayout title="OpenIT — your IT helpdesk, in plain English">
-  <h1>Your IT helpdesk, in plain English.</h1>
+<BaseLayout title="OpenIT — an IT helpdesk in Claude Code">
+  <h1>An IT helpdesk. On your laptop. In Claude Code.</h1>
   <p class="lede">
-    OpenIT is a small desktop app that wraps Claude Code with the chrome an IT
-    admin needs — a project explorer, a viewer, a chat-intake URL for askers,
-    and bidirectional sync with your Pinkfish cloud workspace. Describe what
-    you want; Claude writes it as files in your repo. Hit sync and the same
-    files run in production.
+    OpenIT pins a real Claude Code session to a project folder on your machine
+    and bundles in the helpdesk shape — tickets, knowledge, agents, reports —
+    all plain files Claude reads and edits in your repo. Sync to Pinkfish when
+    you want it in production.
   </p>
 
   <div class="cta-row">
@@ -22,64 +21,91 @@ const url = (p: string) => `${base.replace(/\/$/, "")}/${p.replace(/^\//, "")}`;
     <a href="https://github.com/pinkfish-ai/openit-app" class="btn secondary">View on GitHub</a>
   </div>
 
-  <h2>What it is</h2>
+  <h2>Why on your laptop, with Claude Code</h2>
   <p>
-    A Tauri shell that pins a Claude Code session to a project folder. The
-    OpenIT plugin (skills, schemas, MCPs, scripts) is bundled in, so Claude
-    knows the helpdesk shape from the first turn — tickets, knowledge bases,
-    people, agents, files, reports.
+    Today's ITSM tools are bloated for a reason. They ship a workflow engine,
+    an admin console, a reporting UI, a forms builder, a chat bot, and a
+    mountain of integration plumbing — all priced to clear an enterprise
+    sales cycle.
   </p>
   <p>
-    Everything Claude writes is plain Markdown and JSON in a directory you
-    control. No proprietary database. No clicky admin UI. No paid sandbox to
-    "test" against.
+    Mid-market IT doesn't need any of that. It needs the <strong>outcomes</strong>:
+    tickets handled, knowledge captured, access provisioned, reports written,
+    problems prevented. Claude Code already produces all of those when it has
+    the right files and the right tools — that's its day job. OpenIT bundles
+    the files and the tools, pins them to a folder on your machine, and gets
+    out of the way.
   </p>
 
-  <h2>How it works</h2>
-  <ol>
-    <li>
-      <strong>Open a project.</strong> OpenIT scaffolds a clean directory —
-      <code>databases/</code>, <code>knowledge-bases/</code>, <code>agents/</code>,
-      <code>filestores/</code> — and starts a local chat-intake URL so askers
-      can file tickets immediately.
-    </li>
-    <li>
-      <strong>Connect to Pinkfish (optional).</strong> Two-click browser OAuth.
-      Your org's datastores, KB articles, agents, and files sync into the local
-      repo. Local-only mode also works — it's a real helpdesk on your laptop.
-    </li>
-    <li>
-      <strong>Talk to Claude.</strong> <em>"Add a KB article for password resets."</em>
-      <em>"Tighten the triage agent so it tags tickets by topic."</em>
-      <em>"Show me last week's escalations grouped by asker."</em> Claude reads
-      the files, edits them, writes new ones — you see the diffs in the viewer.
-    </li>
-    <li>
-      <strong>Sync.</strong> Local edits push to Pinkfish on save; cloud changes
-      pull on connect. Slack ingest, channel webhooks, multi-device — all light
-      up the moment cloud is connected.
-    </li>
-  </ol>
-
-  <h2>Why files on disk</h2>
+  <h2>The full power of Claude Code</h2>
   <p>
-    ITSM as code, in git. Diffs you can read. PRs you can review. Branches for
-    staging vs prod. Rollback by <code>git revert</code>. Edit in any editor.
-    Hand the repo to your terminal-native engineers and they're productive
-    immediately — every file OpenIT writes is identical to what plain Claude
-    Code would write. If you ever leave OpenIT, you take your config with you.
+    This isn't a stripped-down agent or a Claude-shaped chat bubble. It's the
+    real Claude Code — every skill, every MCP, every model setting you'd get
+    in a terminal — pinned to a project folder you control.
+  </p>
+  <ul>
+    <li>
+      <strong>Investigate across every system.</strong> Tail the AD logs, query
+      Okta, pivot to Jira, draft a remediation plan — one conversation, every
+      system. Claude Code is your IT command line.
+    </li>
+    <li>
+      <strong>Author any report you want.</strong> No fixed dashboards.
+      Describe the report; Claude reads the audit log and writes it as a
+      markdown file.
+    </li>
+    <li>
+      <strong>Extend the integration yourself.</strong> When the catalog is
+      missing something, Claude writes the connector in your repo. You ship
+      it the same day.
+    </li>
+    <li>
+      <strong>Capture the answer once.</strong> Every escalated ticket leaves
+      a KB article behind. The same question gets auto-answered next time.
+    </li>
+  </ul>
+
+  <h2>What's in the project</h2>
+  <p>
+    A clean directory of plain Markdown and JSON. No proprietary database, no
+    clicky admin UI, no paid sandbox.
+  </p>
+  <ul>
+    <li><code>databases/</code> — tickets, people, anything else as structured rows.</li>
+    <li><code>knowledge-bases/</code> — markdown KB articles. The "answer once" target.</li>
+    <li><code>agents/</code> — agent configs (triage, onboarding, audit).</li>
+    <li><code>filestores/</code> — uploaded attachments, runbooks, library files.</li>
+    <li><code>reports/</code> — generated markdown reports, newest-first.</li>
+  </ul>
+  <p>Open the folder in any editor. Everything is readable, diffable, and yours.</p>
+
+  <h2>Sync when you want production</h2>
+  <p>
+    Connect to Pinkfish and the desktop app syncs your repo with your cloud
+    workspace bidirectionally. Local edits push on save. Cloud changes pull on
+    connect. Multi-device, channel webhooks, public chat URLs — all light up
+    the moment cloud is connected.
+  </p>
+  <p>
+    You don't have to. Local-only mode is a real helpdesk: a chat-intake URL
+    askers can use right now, a Claude pane for admin work, the answer-once
+    loop running on your laptop. Cloud is the deploy target, not the
+    dependency.
   </p>
 
-  <h2>Who it's for</h2>
+  <h2>Why files in git</h2>
   <p>
-    IT admins at small and mid-sized companies who want Pinkfish-grade
-    automation without spinning up a platform team. If you can describe what
-    you need in a Slack message, you can build it in OpenIT.
+    ITSM as code, in git. Diffs you can read. PRs you can review. Branches
+    for staging vs prod. Rollback by <code>git revert</code>. Edit alongside
+    Claude in any editor. Hand the repo to your terminal-native engineers
+    and they're productive immediately — every file OpenIT writes is
+    identical to what plain Claude Code would write. If you ever leave
+    OpenIT, you take your config with you.
   </p>
 
   <h2>Status</h2>
   <p>
-    Public beta. macOS only (Apple Silicon + Intel), signed and notarized — no
-    Gatekeeper warning on first launch. Linux and Windows builds follow.
+    Public beta. macOS only (Apple Silicon + Intel), signed and notarized —
+    no first-launch warning. Linux and Windows builds follow.
   </p>
 </BaseLayout>
