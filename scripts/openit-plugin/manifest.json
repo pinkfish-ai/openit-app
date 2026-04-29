@@ -9,6 +9,7 @@
     { "path": "skills/answer-ticket.md" },
     { "path": "skills/connect-to-cloud.md" },
     { "path": "skills/connect-slack.md" },
+    { "path": "skills/databases.md" },
     { "path": "skills/report.md" },
     { "path": "schemas/tickets._schema.json" },
     { "path": "schemas/people._schema.json" },

@@ -20,6 +20,13 @@ type Station = {
   visibleIf?: (counts: Record<string, number>) => boolean;
 };
 
+/// Auxiliary count: how many CUSTOM datastores exist (i.e. how many
+/// `databases/<x>/` subdirs aren't `tickets`, `people`, or a system
+/// folder). Used as the visibility predicate for the `databases`
+/// station — independent of the displayed `counts.databases` (which
+/// is the total datastore count, matching the listing).
+const CUSTOM_DATASTORE_COUNT_KEY = "__databases_custom_count";
+
 /// Local-only system folders under `databases/` that don't count as
 /// "custom datastores" for the visibility predicate. Mirrors the same
 /// list in datastoreSync.ts.
@@ -36,10 +43,15 @@ const STATIONS: Station[] = [
   // Phase 3: appears only when the user has at least one custom
   // (non-default) datastore — i.e. anything under `databases/` other
   // than `tickets`, `people`, or system folders like `conversations`.
-  // Click opens the `databases/` parent dir; FileExplorer renders the
-  // existing tree view of all subfolders.
+  // The displayed count is the TOTAL number of datastores (matches
+  // what the FileExplorer's listing view shows when clicked); the
+  // visibility predicate is the separate `__databases_custom_count`
+  // we computed alongside it. Without this split, a user with two
+  // legacy `openit-foo-<orgId>/` folders + the new `tickets`/`people`
+  // folders would see the listing show 4 entries while the tile
+  // claimed 2 — confusing.
   { id: "databases", kind: "databases", rel: "databases",         countMode: "dirs",
-    visibleIf: (c) => (c.databases ?? 0) > 0 },
+    visibleIf: (c) => (c[CUSTOM_DATASTORE_COUNT_KEY] ?? 0) > 0 },
   { id: "knowledge", kind: "knowledge", rel: "knowledge-bases",   countMode: "dirs" },
   { id: "files",     kind: "files",     rel: "filestores",        countMode: "dirs" },
   { id: "agents",    kind: "agents",    rel: "agents",            countMode: "json-rows" },
@@ -124,22 +136,25 @@ export function Workbench({
             const rootAbs = `${repo}/${s.rel}`;
             const items = await fsList(rootAbs);
             const direct = directChildren(items, rootAbs);
-            let count = countWithMode(direct, s.countMode);
-            // The `databases` station counts only CUSTOM datastores —
-            // anything other than the two defaults (`tickets`, `people`)
-            // and system folders (`conversations`). Visibility hinges on
-            // count > 0, so excluding those here flips the tile off
-            // whenever the user only has defaults.
+            const count = countWithMode(direct, s.countMode);
+            // The `databases` station's displayed count is the TOTAL
+            // datastores (matches the listing the user sees when
+            // clicking the tile). Visibility uses a separate count
+            // — non-default, non-system — so a user with only
+            // `tickets` + `people` + `conversations` doesn't see the
+            // tile (those defaults already have dedicated stations).
             if (s.id === "databases") {
-              count = direct.filter(
-                (n) =>
-                  n.is_dir &&
-                  !n.name.startsWith(".") &&
-                  !DATABASES_DEFAULT_FOLDERS.has(n.name) &&
+              const datastoreDirs = direct.filter(
+                (n) => n.is_dir && !n.name.startsWith(".") &&
                   !DATABASES_SYSTEM_FOLDERS.has(n.name),
+              );
+              next[s.id] = datastoreDirs.length;
+              next[CUSTOM_DATASTORE_COUNT_KEY] = datastoreDirs.filter(
+                (n) => !DATABASES_DEFAULT_FOLDERS.has(n.name),
               ).length;
+            } else {
+              next[s.id] = count;
             }
-            next[s.id] = count;
           } catch {
             next[s.id] = 0;
           }
