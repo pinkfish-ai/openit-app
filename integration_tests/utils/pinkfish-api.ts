@@ -147,6 +147,15 @@ export class PinkfishClient {
   }
 
   /**
+   * Get all openit-* datastore collections.
+   * Phase 3 of V2 sync (PIN-5779).
+   */
+  async listOpenitDatastores(): Promise<DataCollection[]> {
+    const all = await this.listCollections("datastore");
+    return all.filter((c) => c.name.startsWith("openit-"));
+  }
+
+  /**
    * Upload a file to a filestorage collection. Multipart form upload to
    * the same endpoint the Tauri backend uses.
    * Endpoint: POST /filestorage/items/upload?collectionId={id}

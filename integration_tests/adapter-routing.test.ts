@@ -48,6 +48,12 @@ vi.mock("../src/lib/api", () => ({
     files: {},
   }),
   kbStateSave: vi.fn(),
+  datastoreStateLoad: vi.fn().mockResolvedValue({
+    collection_id: "",
+    collection_name: "",
+    files: {},
+  }),
+  datastoreStateSave: vi.fn(),
 }));
 
 vi.mock("../src/lib/pinkfishAuth", () => ({
