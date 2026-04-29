@@ -7,7 +7,7 @@ use std::process::Command;
 
 use serde::Serialize;
 
-const GITIGNORE: &str = ".DS_Store\n.openit/\n.claude/\nCLAUDE.md\nknowledge-bases/**/*.server.*\nfilestores/**/*.server.*\nagents/*.server.*\nworkflows/*.server.*\ndatabases/**/*.server.json\n";
+const GITIGNORE: &str = ".DS_Store\n.openit/\n.claude/\nCLAUDE.md\ngetting-started.md\nknowledge-bases/**/*.server.*\nfilestores/**/*.server.*\nagents/*.server.*\nworkflows/*.server.*\ndatabases/**/*.server.json\n";
 
 fn git_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(".git")
@@ -64,6 +64,7 @@ fn untrack_gitignored_paths(repo: &str) -> Result<(), String> {
         ".openit/datastore-state.json",
         ".claude",
         "CLAUDE.md",
+        "getting-started.md",
     ];
     let mut args: Vec<&str> = vec!["rm", "--cached", "-r", "--ignore-unmatch", "--quiet"];
     args.extend_from_slice(PATHS);
@@ -73,7 +74,7 @@ fn untrack_gitignored_paths(repo: &str) -> Result<(), String> {
     // newly-ignored pathspecs. SCOPE: pathspecs on both the diff check
     // AND the commit, so we don't sweep up unrelated staged changes
     // the user may have left behind in the SourceControl tab.
-    const PATHSPECS: &[&str] = &[".openit/", ".claude/", "CLAUDE.md"];
+    const PATHSPECS: &[&str] = &[".openit/", ".claude/", "CLAUDE.md", "getting-started.md"];
     let mut diff_args: Vec<&str> = vec!["diff", "--cached", "--quiet", "--"];
     diff_args.extend_from_slice(PATHSPECS);
     let cached = run_git(repo, &diff_args)?;

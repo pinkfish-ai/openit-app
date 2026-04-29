@@ -120,8 +120,6 @@ function sourceKey(s: ViewerSource): string {
       return "knowledge-bases-list";
     case "cloud-cta":
       return "cloud-cta";
-    case "getting-started":
-      return "getting-started";
     case "tools":
       return "tools";
   }
@@ -469,7 +467,7 @@ export function Shell({
     registerShowCloudCta(() => setSource({ kind: "cloud-cta" }));
   }, [registerShowCloudCta]);
 
-  // Auto-open _welcome.md on first load — and re-open on demand
+  // Auto-open getting-started.md on first load — and re-open on demand
   // when the App-header "Getting Started" button dispatches the
   // `openit:open-welcome` custom event. Listening for the event here
   // (rather than plumbing a callback through props) keeps the
@@ -484,15 +482,17 @@ export function Shell({
   const [welcomeFlashKey, setWelcomeFlashKey] = useState(0);
   useEffect(() => {
     if (!repo) return;
+    const welcomePath = `${repo}/getting-started.md`;
     const openWelcome = () => {
-      // Already on the Getting Started page → flash the title to
-      // confirm the click did something (re-setting the same source
-      // wouldn't re-mount or animate anything on its own).
-      if (source && source.kind === "getting-started") {
+      const onWelcome =
+        source && source.kind === "file" && source.path === welcomePath;
+      if (onWelcome) {
         setWelcomeFlashKey((k) => k + 1);
         return;
       }
-      setSource({ kind: "getting-started" });
+      resolvePathToSource(welcomePath, repo)
+        .then(setSource)
+        .catch((e) => console.error("[shell] welcome resolution failed:", e));
     };
     window.addEventListener("openit:open-welcome", openWelcome);
     return () => {
@@ -611,11 +611,16 @@ export function Shell({
     };
   }, [fsTick, repo]);
 
-  // First-load auto-open of the Getting Started page (only when
-  // nothing else is loaded yet). React surface, no fs read.
+  // First-load auto-open of getting-started.md (only when nothing else
+  // is loaded yet). Resolves through the same path-to-source pipeline
+  // as a regular markdown click so `{{INTAKE_URL}}` substitution and
+  // the markdown viewer kick in unchanged.
   useEffect(() => {
     if (repo && !source) {
-      setSource({ kind: "getting-started" });
+      const welcomePath = `${repo}/getting-started.md`;
+      resolvePathToSource(welcomePath, repo)
+        .then(setSource)
+        .catch((e) => console.error("[shell] welcome resolution failed:", e));
     }
   }, [repo, source]);
 
@@ -972,7 +977,6 @@ export function Shell({
                   setSource(resolved);
                 }}
                 onConnectCloud={onConnectRequest}
-                onConnectSlack={onConnectSlack}
                 onGoBack={goBack}
                 onGoForward={goForward}
                 canGoBack={canGoBack}
