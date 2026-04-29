@@ -94,6 +94,7 @@ export function Onboarding({
   pinkfishOrgName,
   initialCreds,
   onPinkfishConnected,
+  onPinkfishDisconnected,
   onContinue,
   browserConnect,
   startBrowserConnect,
@@ -103,6 +104,7 @@ export function Onboarding({
   pinkfishOrgName: string | null;
   initialCreds: Partial<PinkfishCreds> | null;
   onPinkfishConnected: (orgName: string | null) => void;
+  onPinkfishDisconnected: () => void;
   onContinue: () => void;
   // Browser-handoff state hoisted to App so the in-shell cloud-cta and
   // the onboarding screen drive the same flow with shared state.
@@ -227,12 +229,29 @@ export function Onboarding({
           }
           action={
             pinkfishConnected ? (
-              <button
-                className="icon-btn key-set"
-                onClick={() => setAuthOpen(true)}
-              >
-                Update
-              </button>
+              <span style={{ display: "inline-flex", gap: 6 }}>
+                <button
+                  className="icon-btn key-set"
+                  onClick={() => setAuthOpen(true)}
+                >
+                  Update
+                </button>
+                <button
+                  className="icon-btn"
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Disconnect from Pinkfish?\n\nYour local files stay. The credential on this machine is removed; Pinkfish-side, the API key remains until you delete it from Settings → API Credentials.",
+                      )
+                    ) {
+                      onPinkfishDisconnected();
+                    }
+                  }}
+                  title="Remove the Pinkfish credential from this machine"
+                >
+                  Disconnect
+                </button>
+              </span>
             ) : browserConnect.kind === "waiting" ||
               browserConnect.kind === "starting" ||
               browserConnect.kind === "validating" ? (
