@@ -3,84 +3,392 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 
 const base = import.meta.env.BASE_URL;
 const url = (p: string) => `${base.replace(/\/$/, "")}/${p.replace(/^\//, "")}`;
+
+const githubUrl = "https://github.com/pinkfish-ai/openit-app";
+
+const beforeAfter: [string, string][] = [
+  ["Employees file a ticket. Wait.", "Employees ask in Slack or Teams. Answered instantly."],
+  ["The knowledge base goes stale.", "The KB writes itself from real questions."],
+  ["Configure workflows in clicky admin UIs.", "Show Claude once. It handles the rest."],
+  ["Wait quarters for a missing integration.", "Claude writes the integration. Ships today."],
+  ["Three tabs to debug an access issue.", "One conversation across every system."],
+];
+
+const nativeAccess: { k: string; v: string }[] = [
+  { k: "Identity", v: "Okta · Google Workspace · Microsoft Entra" },
+  { k: "Chat", v: "Slack · Microsoft Teams" },
+  { k: "Endpoints", v: "Jamf · Kandji · Intune" },
+  { k: "Cloud", v: "AWS · GCP · Azure" },
+  { k: "Code", v: "GitHub · GitLab" },
+  { k: "Tickets & docs", v: "Jira · Linear · Notion · Confluence" },
+];
+
+const weekOne: [string, string][] = [
+  ["Day 1", "Install. Claude joins chat, watches how you work."],
+  ["Day 3", "The questions Claude has seen you answer start handling themselves."],
+  ["Week 1", "Routine asks self-resolve. Every escalation leaves a KB article behind."],
+  ["Week 2", "You're spending mornings on hard problems, not the queue."],
+];
 ---
-<BaseLayout title="OpenIT — an IT helpdesk. Claude Code as the Operating System.">
-  <h1>An IT helpdesk.<br />Claude Code as the Operating System.</h1>
-  <p class="lede">
-    The control plane for every system IT runs — tickets, knowledge, agents,
-    reports, integrations — authored by Claude Code as plain files in your
-    git repo.
-  </p>
+<BaseLayout title="OpenIT — An IT helpdesk that runs on Claude Code">
+  <div class="min-h-screen bg-cream text-ink selection:bg-terracotta selection:text-cream">
+    {/* NAV */}
+    <header class="mx-auto flex max-w-7xl items-center justify-between px-6 py-6 md:px-10">
+      <a href={url("/")} class="flex items-center gap-2 no-underline">
+        <div class="grid h-7 w-7 place-items-center rounded-md bg-ink text-cream">
+          <span class="font-display text-[13px] leading-none">O</span>
+        </div>
+        <span class="font-display text-lg tracking-tight">OpenIT</span>
+      </a>
+      <nav class="hidden items-center gap-8 font-mono-tag text-[11px] text-ink/60 md:flex">
+        <a href="#thesis" class="hover:text-ink no-underline">Thesis</a>
+        <a href="#week-one" class="hover:text-ink no-underline">Week One</a>
+        <a href="#status" class="hover:text-ink no-underline">Status</a>
+        <a href={githubUrl} class="inline-flex items-center gap-1 hover:text-ink no-underline">
+          GitHub
+          <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
+        </a>
+      </nav>
+      <a href="#download" class="hidden rounded-full bg-ink px-4 py-2 font-mono-tag text-[10px] text-cream hover:bg-terracotta md:inline-flex no-underline">
+        Download
+      </a>
+    </header>
 
-  <div class="cta-row">
-    <a href={url("/download")} class="btn">
-      Download for macOS
-      <span class="sub">Beta &middot; Apple Silicon + Intel</span>
-    </a>
-    <a href="https://github.com/pinkfish-ai/openit-app" class="btn secondary">View on GitHub</a>
+    {/* HERO */}
+    <section class="mx-auto max-w-7xl px-6 pb-20 pt-10 md:px-10 md:pb-32 md:pt-16">
+      <span class="inline-flex items-center gap-2 rounded-full border border-ink/15 bg-cream px-4 py-1.5 font-mono-tag text-[11px] text-ink/70">
+        <span class="h-1.5 w-1.5 rounded-full bg-terracotta"></span>
+        Public Beta · macOS · Open Source
+      </span>
+
+      <h1 class="font-display mt-8 text-[9.5vw] leading-[0.95] md:mt-10 md:text-[68px] lg:text-[88px]">
+        An IT helpdesk{" "}
+        <span class="text-terracotta">that runs on Claude Code.</span>
+      </h1>
+
+      <p class="mt-10 max-w-3xl text-xl leading-snug text-ink/80 md:text-2xl">
+        Claude handles tickets, provisions access, and{" "}
+        <span class="font-serif-italic text-terracotta">learns how you work</span> — so you spend your day on the hard problems, not the queue.
+      </p>
+
+      <div id="download" class="mt-12 flex flex-wrap items-center gap-4">
+        <a href={url("/download")} class="group inline-flex items-center gap-3 rounded-full bg-ink px-7 py-4 text-cream transition hover:bg-terracotta no-underline">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06z"/><path d="M10 2c1 .5 2 2 2 5"/></svg>
+          <span class="font-medium">Download for macOS</span>
+          <span class="font-mono-tag text-[10px] text-cream/60">Beta · AS + Intel</span>
+        </a>
+        <a href={githubUrl} class="group inline-flex items-center gap-2 rounded-full border border-ink/20 bg-transparent px-7 py-4 text-ink transition hover:border-ink hover:bg-ink hover:text-cream no-underline">
+          <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+          <span class="font-medium">View on GitHub</span>
+          <svg class="h-4 w-4 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>
+        </a>
+      </div>
+
+      {/* Architecture block */}
+      <div class="mt-24 grid gap-px overflow-hidden rounded-3xl border border-ink/15 bg-ink/15 md:mt-32 md:grid-cols-2">
+        <div class="bg-cream p-8 md:p-10">
+          <div class="inline-flex items-center gap-2 rounded-full border border-ink/20 bg-cream-deep px-3 py-1.5 font-mono-tag text-[11px] font-semibold text-ink">
+            <svg class="h-3.5 w-3.5 text-terracotta" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="m4 17 6-6-6-6"/><path d="M12 19h8"/></svg>
+            For IT · Desktop App
+          </div>
+          <h3 class="font-display mt-6 text-4xl leading-[0.95] tracking-tight md:text-5xl">
+            Run Claude Code <br /> on your desktop.
+          </h3>
+          <p class="mt-5 max-w-md text-base leading-relaxed text-ink/70">
+            Install OpenIT on your Mac. Claude works alongside you in the terminal — reading tickets, shaping workflows, writing connectors.
+          </p>
+          <div class="mt-8 rounded-xl bg-ink p-4 font-mono-tag text-[11px] text-cream/80">
+            <div class="text-cream/40">$ openit start</div>
+            <div class="mt-2 text-terracotta">→ claude code · ready</div>
+            <div class="text-cream/60">→ slack · connected</div>
+            <div class="text-cream/60">→ 12 open tickets in queue</div>
+          </div>
+        </div>
+        <div class="bg-cream-deep p-8 md:p-10">
+          <div class="inline-flex items-center gap-2 rounded-full border border-ink/20 bg-cream px-3 py-1.5 font-mono-tag text-[11px] font-semibold text-ink">
+            <svg class="h-3.5 w-3.5 text-terracotta" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            For Employees · Chat
+          </div>
+          <h3 class="font-display mt-6 text-4xl leading-[0.95] tracking-tight md:text-5xl">
+            Ask in Slack, <br /> Teams, or email.
+          </h3>
+          <p class="mt-5 max-w-md text-base leading-relaxed text-ink/70">
+            No new app to learn. Employees ask wherever they already work — Claude answers, or routes it to you.
+          </p>
+          <div class="mt-8 space-y-3">
+            <div class="max-w-[85%] rounded-2xl bg-ink/5 p-4">
+              <div class="font-mono-tag text-[10px] text-ink/40">marcus · #it-help</div>
+              <div class="mt-1 text-sm text-ink/80">need access to the analytics dashboard please</div>
+            </div>
+            <div class="ml-auto max-w-[85%] rounded-2xl bg-terracotta p-4 text-cream">
+              <div class="font-mono-tag text-[10px] text-cream/60">openit · just now</div>
+              <div class="mt-1 text-sm">Granted — Looker viewer role added. Try refreshing.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {/* §01 BEFORE / AFTER */}
+    <section class="border-t border-ink/10 bg-cream-deep">
+      <div class="mx-auto max-w-7xl px-6 py-24 md:px-10 md:py-32">
+        <div class="flex items-center gap-3 font-mono-tag text-[11px] text-ink/50">
+          <span class="text-terracotta">§01</span>
+          <span class="h-px flex-1 bg-ink/15"></span>
+          <span>Before &amp; After</span>
+        </div>
+        <h2 class="font-display mt-6 text-5xl leading-[0.95] tracking-tight md:text-7xl">
+          What <span class="font-serif-italic text-terracotta">changes.</span>
+        </h2>
+
+        <div class="mt-16 overflow-hidden rounded-3xl border border-ink/15">
+          <div class="grid grid-cols-2 bg-ink text-cream">
+            <div class="p-6 font-mono-tag text-[12px] font-semibold text-cream">Before — Other ITSMs</div>
+            <div class="border-l border-cream/15 p-6 font-mono-tag text-[12px] font-semibold text-terracotta">After — OpenIT</div>
+          </div>
+          {beforeAfter.map(([b, a]) => (
+            <div class="grid grid-cols-2 border-t border-ink/10 bg-cream">
+              <div class="p-6 text-base text-ink/55 line-through decoration-ink/20 md:p-8 md:text-lg">{b}</div>
+              <div class="border-l border-ink/10 p-6 text-base font-medium text-ink md:p-8 md:text-lg">{a}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* §02 THESIS */}
+    <section id="thesis" class="border-t border-ink/10">
+      <div class="mx-auto grid max-w-7xl gap-16 px-6 py-24 md:grid-cols-12 md:px-10 md:py-32">
+        <div class="md:col-span-5">
+          <div class="flex items-center gap-3 font-mono-tag text-[11px] text-ink/50">
+            <span class="text-terracotta">§02</span>
+            <span class="h-px flex-1 bg-ink/15"></span>
+            <span>The thesis</span>
+          </div>
+          <h2 class="font-display mt-6 text-5xl leading-[0.95] tracking-tight md:text-6xl">
+            Configure in <br /> Claude Code. <br />
+            <span class="text-terracotta">Not UI.</span>
+          </h2>
+        </div>
+        <div class="space-y-8 md:col-span-7 md:pt-20">
+          <p class="text-xl leading-relaxed text-ink/75 md:text-2xl">
+            Every other ITSM is configured the same way: clicky admin screens, proprietary workflow builders, vendor agents you have to learn. The configuration is theirs.
+          </p>
+          <blockquote class="border-l-2 border-terracotta pl-6 font-display text-3xl leading-tight tracking-tight md:text-4xl">
+            Claude Code is the operating system.
+          </blockquote>
+          <p class="text-lg leading-relaxed text-ink/75">
+            OpenIT inverts it. You configure in plain English with Claude Code; the result is files in your repo. Sync to <span class="font-serif-italic text-terracotta">Pinkfish cloud</span> and the same files run there 24/7. Cloud is a deploy target — your repo is the source of truth. Edit it directly. Branch it. Take it with you.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    {/* §03 NATIVE ACCESS */}
+    <section id="native-access" class="border-t border-ink/10">
+      <div class="mx-auto max-w-7xl px-6 py-24 md:px-10 md:py-32">
+        <div class="flex items-center gap-3 font-mono-tag text-[11px] text-ink/50">
+          <span class="text-terracotta">§03</span>
+          <span class="h-px flex-1 bg-ink/15"></span>
+          <span>Native access</span>
+        </div>
+        <h2 class="font-display mt-6 text-5xl leading-[0.95] tracking-tight md:text-7xl">
+          Every system IT runs. <br />
+          <span class="font-serif-italic text-terracotta">One conversation.</span>
+        </h2>
+        <p class="mt-10 max-w-3xl text-xl leading-snug text-ink/75 md:text-2xl">
+          Claude doesn't bounce between tools. It <span class="font-serif-italic text-terracotta">is</span> the tool — with native access to every system in your stack.
+        </p>
+
+        <div class="mt-16 grid gap-px overflow-hidden rounded-3xl border border-ink/15 bg-ink/15 md:grid-cols-3">
+          {nativeAccess.map(({ k, v }) => (
+            <div class="bg-cream p-6 md:p-7">
+              <div class="font-mono-tag text-[10px] text-terracotta">{k}</div>
+              <div class="mt-3 text-base leading-snug text-ink md:text-lg">{v}</div>
+            </div>
+          ))}
+          <div class="bg-ink p-6 text-cream md:col-span-3 md:p-8">
+            <div class="flex flex-col items-start gap-4 md:flex-row md:items-center md:justify-between">
+              <div class="flex items-center gap-3">
+                <svg class="h-4 w-4 text-terracotta" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 22v-5"/><path d="M9 7V2"/><path d="M15 7V2"/><path d="M6 13V8h12v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4Z"/></svg>
+                <div class="font-mono-tag text-[10px] text-terracotta">Anything else</div>
+              </div>
+              <div class="text-base leading-snug text-cream/85 md:text-lg">
+                Claude writes the integration if it's missing.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <p class="mt-12 max-w-3xl text-lg leading-relaxed text-ink/70">
+          No middleware. No glue scripts. No tab-switching. The investigation, the fix, and the article that documents it all happen in one conversation.
+        </p>
+      </div>
+    </section>
+
+    {/* §04 WEEK ONE */}
+    <section id="week-one" class="border-t border-ink/10 bg-ink text-cream">
+      <div class="mx-auto max-w-7xl px-6 py-24 md:px-10 md:py-32">
+        <div class="flex items-center gap-3 font-mono-tag text-[11px] text-cream/40">
+          <span class="text-terracotta">§04</span>
+          <span class="h-px flex-1 bg-cream/15"></span>
+          <span>Week one</span>
+        </div>
+        <h2 class="font-display mt-6 text-5xl leading-[0.95] tracking-tight md:text-7xl">
+          Smarter <br /> <span class="font-serif-italic text-terracotta">every day.</span>
+        </h2>
+        <p class="mt-8 max-w-2xl text-xl leading-snug text-cream/70 md:text-2xl">
+          Every ticket you handle teaches Claude one more thing. Two weeks in, your queue runs differently.
+        </p>
+
+        <div class="mt-20 grid gap-px bg-cream/10 md:grid-cols-4">
+          {weekOne.map(([k, v]) => (
+            <div class="bg-ink p-8">
+              <div class="font-mono-tag text-[11px] text-terracotta">{k}</div>
+              <p class="mt-6 text-lg leading-snug text-cream/85">{v}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    {/* §05 THE SHIFT */}
+    <section class="border-t border-ink/10">
+      <div class="mx-auto max-w-7xl px-6 py-24 md:px-10 md:py-32">
+        <div class="flex items-center gap-3 font-mono-tag text-[11px] text-ink/50">
+          <span class="text-terracotta">§05</span>
+          <span class="h-px flex-1 bg-ink/15"></span>
+          <span>The shift</span>
+        </div>
+        <h2 class="font-display mt-6 max-w-5xl text-5xl leading-[0.95] tracking-tight md:text-7xl">
+          Don't do the work. <br /><span class="text-terracotta">Supervise it.</span>
+        </h2>
+        <div class="mt-16 grid gap-12 md:grid-cols-2">
+          <p class="text-xl leading-relaxed text-ink/75 md:text-2xl">
+            Claude watches how you handle a ticket, then handles the next one itself. Workflows take shape from how you actually work — not from a UI you have to configure.
+          </p>
+          <div class="space-y-6 text-lg leading-relaxed text-ink/70">
+            <p>No agents to prompt-engineer. No rules to write. No staging tenant to maintain. The helpdesk teaches itself from your queue.</p>
+            <p>The files are there if you want them — readable, editable, portable. But you don't have to touch them.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {/* §06 LOCAL THEN CLOUD */}
+    <section class="border-t border-ink/10 bg-cream-deep">
+      <div class="mx-auto max-w-7xl px-6 py-24 md:px-10 md:py-32">
+        <div class="flex items-center gap-3 font-mono-tag text-[11px] text-ink/50">
+          <span class="text-terracotta">§06</span>
+          <span class="h-px flex-1 bg-ink/15"></span>
+          <span>Local, then cloud</span>
+        </div>
+        <h2 class="font-display mt-6 text-5xl leading-[0.95] tracking-tight md:text-7xl">
+          Try it locally. <br /> Run it in <span class="font-serif-italic text-terracotta">cloud.</span>
+        </h2>
+
+        <div class="mt-16 grid gap-10 md:grid-cols-2">
+          <div class="rounded-3xl border border-ink/15 bg-cream p-8 md:p-10">
+            <div class="inline-flex items-center gap-2 rounded-full border border-ink/20 bg-cream-deep px-3 py-1 font-mono-tag text-[11px] font-medium text-ink">
+              <span class="h-1.5 w-1.5 rounded-full bg-ink"></span>
+              01 · Local
+            </div>
+            <h3 class="font-display mt-5 text-3xl tracking-tight md:text-4xl">On your machine.</h3>
+            <p class="mt-4 leading-relaxed text-ink/70">
+              Real Claude Code, real integrations, real tickets. No paid sandbox tenant.
+            </p>
+          </div>
+          <div class="rounded-3xl bg-ink p-8 text-cream md:p-10">
+            <div class="inline-flex items-center gap-2 rounded-full border border-terracotta/40 bg-terracotta/10 px-3 py-1 font-mono-tag text-[11px] font-medium text-terracotta">
+              <span class="h-1.5 w-1.5 rounded-full bg-terracotta"></span>
+              02 · Cloud
+            </div>
+            <h3 class="font-display mt-5 text-3xl tracking-tight md:text-4xl">Sync to Pinkfish.</h3>
+            <p class="mt-4 leading-relaxed text-cream/70">
+              Same project runs 24/7. Slack and Teams stay live, a public link picks up outside askers, agents act while you sleep. Production is durable — IT can't depend on your laptop being awake.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {/* §07 OWNERSHIP */}
+    <section class="border-t border-ink/10">
+      <div class="mx-auto max-w-7xl px-6 py-24 md:px-10 md:py-32">
+        <div class="flex items-center gap-3 font-mono-tag text-[11px] text-ink/50">
+          <span class="text-terracotta">§07</span>
+          <span class="h-px flex-1 bg-ink/15"></span>
+          <span>Ownership</span>
+        </div>
+        <h2 class="font-display mt-6 text-5xl leading-[0.95] tracking-tight md:text-7xl">
+          Yours, in <br /><span class="font-serif-italic text-terracotta">plain files.</span>
+        </h2>
+        <p class="mt-12 max-w-3xl text-xl leading-relaxed text-ink/75 md:text-2xl">
+          Every workflow Claude learned, every KB article it wrote, every connector it shaped — readable, diffable, in your repo. Hand it to a terminal-native engineer when you hire one and they're productive immediately. If you ever leave OpenIT, you walk out with everything.
+        </p>
+
+        <div class="mt-12 overflow-hidden rounded-2xl border border-ink/15 bg-ink font-mono-tag text-[12px] text-cream/80">
+          <div class="flex items-center gap-2 border-b border-cream/10 px-4 py-3 text-[10px] text-cream/40">
+            <span class="h-2.5 w-2.5 rounded-full bg-cream/20"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-cream/20"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-cream/20"></span>
+            <span class="ml-3 normal-case tracking-normal">openit-acme/</span>
+          </div>
+          <div class="space-y-1 p-5">
+            <div class="text-cream/40">├── workflows/</div>
+            <div class="pl-4 text-cream/70">├── onboarding.md</div>
+            <div class="pl-4 text-cream/70">└── access-requests.md</div>
+            <div class="text-cream/40">├── kb/</div>
+            <div class="pl-4 text-terracotta">├── vpn-troubleshooting.md  ← written by claude</div>
+            <div class="pl-4 text-cream/70">└── okta-mfa-reset.md</div>
+            <div class="text-cream/40">└── connectors/</div>
+            <div class="pl-4 text-cream/70">    └── jira.ts</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {/* §08 STATUS */}
+    <section id="status" class="border-t border-ink/10 bg-terracotta text-cream">
+      <div class="mx-auto max-w-7xl px-6 py-24 md:px-10 md:py-40">
+        <div class="flex items-center gap-3 font-mono-tag text-[11px] text-cream/60">
+          <span>§08</span>
+          <span class="h-px flex-1 bg-cream/30"></span>
+          <span>Status</span>
+        </div>
+        <h2 class="font-display mt-6 text-7xl leading-[0.92] tracking-tight md:text-[112px]">
+          Public <span class="font-serif-italic">beta.</span>
+        </h2>
+        <p class="mt-10 max-w-2xl text-xl leading-snug text-cream/85 md:text-2xl">
+          macOS (Apple Silicon + Intel), signed and notarized — no first-launch warning. Linux and Windows builds follow.
+        </p>
+        <div class="mt-12">
+          <a href={url("/download")} class="group inline-flex items-center gap-3 rounded-full bg-ink px-7 py-4 text-cream transition hover:bg-cream hover:text-ink no-underline">
+            <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06z"/><path d="M10 2c1 .5 2 2 2 5"/></svg>
+            <span class="font-medium">Download for macOS</span>
+            <span class="font-mono-tag text-[10px] opacity-70">Beta · AS + Intel</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    {/* FOOTER */}
+    <footer class="border-t border-ink/10 bg-cream">
+      <div class="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-6 py-10 md:flex-row md:items-center md:px-10">
+        <div class="flex items-center gap-2">
+          <div class="grid h-7 w-7 place-items-center rounded-md bg-ink text-cream">
+            <span class="font-display text-[13px] leading-none">O</span>
+          </div>
+          <span class="font-display text-lg tracking-tight">OpenIT</span>
+          <span class="ml-3 font-mono-tag text-[10px] text-ink/40">© 2026 · Apache 2.0</span>
+        </div>
+        <div class="flex items-center gap-6 font-mono-tag text-[11px] text-ink/60">
+          <a href={githubUrl} class="hover:text-ink no-underline">GitHub ↗</a>
+          <a href="https://pinkfish.ai" class="hover:text-ink no-underline">Pinkfish ↗</a>
+          <a href={url("/privacy")} class="hover:text-ink no-underline">Privacy</a>
+          <a href={url("/terms")} class="hover:text-ink no-underline">Terms</a>
+        </div>
+      </div>
+    </footer>
   </div>
-
-  <h2>A different substrate</h2>
-  <p>
-    Legacy ITSM keeps your config in the vendor's database, behind a clicky
-    admin UI. The new agentic wave bolts an AI chat layer on top of the same
-    database. Either way, you're inside the vendor's model of IT.
-  </p>
-  <p>
-    OpenIT moves the substrate. Your service desk is <strong>files in git,
-    authored by Claude Code</strong> — every skill, every MCP, every model
-    setting you'd get in a terminal. No proprietary agent to learn.
-  </p>
-
-  <h2>What that unlocks</h2>
-  <ul>
-    <li>
-      <strong>One conversation, every system.</strong> Tail AD logs, query
-      Okta, pivot to Jira, draft a fix. Claude Code is your IT command line.
-    </li>
-    <li>
-      <strong>Any report, on demand.</strong> No fixed dashboards. Describe
-      what you want; Claude writes it.
-    </li>
-    <li>
-      <strong>Connectors you can extend.</strong> Catalog missing something?
-      Claude writes the integration. Ship the same day.
-    </li>
-    <li>
-      <strong>Answer once.</strong> Every escalated ticket leaves a KB article
-      behind. The next person gets the answer instantly.
-    </li>
-    <li>
-      <strong>Change control like code.</strong> Branch, PR, merge,
-      <code>git revert</code>. Rollback in seconds — not a vendor support
-      ticket.
-    </li>
-  </ul>
-
-  <h2>Authored on your machine. Runs in production.</h2>
-  <p>
-    OpenIT pins a real Claude Code session to your project folder, so the
-    whole helpdesk can be built, tested, and administered locally — against
-    real integrations, no paid sandbox tenant. When it's ready, sync to
-    Pinkfish: the same files run in the cloud, 24/7. Channel webhooks, public
-    intake URLs, agents that act while you sleep.
-  </p>
-  <p>
-    Production is durable, because IT can't depend on your laptop being awake.
-  </p>
-
-  <h2>Plain files. Yours, forever.</h2>
-  <p>
-    Open the project in any editor. Markdown and JSON. Diffs you can read.
-    PRs you can review. Hand the repo to a terminal-native engineer and
-    they're immediately productive — every file OpenIT writes is identical to
-    what plain Claude Code would write. If you ever leave OpenIT, you walk
-    out with your config.
-  </p>
-
-  <h2>Status</h2>
-  <p>
-    Public beta. macOS (Apple Silicon + Intel), signed and notarized — no
-    first-launch warning. Linux and Windows builds follow.
-  </p>
 </BaseLayout>

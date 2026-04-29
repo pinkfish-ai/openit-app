@@ -1,208 +1,88 @@
-:root {
-  /* Palette mirrors src/App.css in the desktop app — warm cream + terracotta —
-     so the landing reads as the app's home, not a separate marketing site. */
-  --bg: #fbf7ec;
-  --surface: #ffffff;
-  --surface-2: #f5edd8;
-  --border: #e7decb;
-  --text: #25201a;
-  --text-dim: #67604f;
-  --accent: #c75a2c;
-  --accent-hover: #ad4a22;
-  --max: 1080px;
-  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* OpenIT — warm cream + terracotta editorial palette.
+   Ported from the Lovable design system. All colors HSL. */
+
+@layer base {
+  :root {
+    --background: 40 33% 96%;
+    --foreground: 30 12% 12%;
+
+    --card: 40 33% 96%;
+    --card-foreground: 30 12% 12%;
+
+    --popover: 40 33% 98%;
+    --popover-foreground: 30 12% 12%;
+
+    --primary: 14 62% 50%;
+    --primary-foreground: 40 33% 97%;
+    --primary-glow: 18 80% 60%;
+
+    --secondary: 40 25% 90%;
+    --secondary-foreground: 30 12% 12%;
+
+    --muted: 40 22% 88%;
+    --muted-foreground: 30 8% 38%;
+
+    --accent: 14 62% 50%;
+    --accent-foreground: 40 33% 97%;
+
+    --destructive: 0 70% 45%;
+    --destructive-foreground: 40 33% 97%;
+
+    --border: 30 15% 82%;
+    --input: 30 15% 82%;
+    --ring: 14 62% 50%;
+
+    --ink: 30 14% 10%;
+    --cream: 40 33% 96%;
+    --cream-deep: 38 28% 92%;
+    --terracotta: 14 62% 50%;
+
+    --radius: 999px;
+  }
 }
 
-* {
-  box-sizing: border-box;
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Inter", system-ui, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  .font-display {
+    font-family: "Inter", system-ui, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 0.92;
+    word-spacing: 0.02em;
+  }
+
+  .font-mono-tag {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .font-serif-italic {
+    font-family: "Fraunces", "Times New Roman", serif;
+    font-style: italic;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+  }
 }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: 16px;
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-}
-
-a {
-  color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: var(--border);
-  text-underline-offset: 3px;
-}
-a:hover {
-  text-decoration-color: var(--accent);
-}
-
-.container {
-  max-width: var(--max);
-  margin: 0 auto;
-  padding: 0 24px;
-}
-
-header.site {
-  padding: 24px 0;
-  border-bottom: 1px solid var(--border);
-}
-header.site .row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-header.site .brand {
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  text-decoration: none;
-  font-size: 18px;
-}
-header.site nav a {
-  margin-left: 24px;
-  color: var(--text-dim);
-  text-decoration: none;
-}
-header.site nav a:hover {
-  color: var(--text);
-}
-
-footer.site {
-  padding: 48px 0 64px;
-  margin-top: 96px;
-  border-top: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: 14px;
-}
-footer.site .row {
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-footer.site nav a {
-  margin-right: 24px;
-  color: var(--text-dim);
-  text-decoration: none;
-}
-footer.site nav a:hover {
-  color: var(--text);
-}
-
-main {
-  padding: 64px 0 96px;
-}
-
-h1 {
-  font-size: clamp(36px, 5vw, 56px);
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-  margin: 0 0 24px;
-  font-weight: 600;
-}
-h2 {
-  font-size: 28px;
-  letter-spacing: -0.01em;
-  margin: 64px 0 16px;
-  font-weight: 600;
-}
-h3 {
-  font-size: 18px;
-  margin: 32px 0 8px;
-  font-weight: 600;
-}
-p {
-  margin: 0 0 16px;
-  color: var(--text-dim);
-  max-width: 64ch;
-}
-
-.lede {
-  font-size: 20px;
-  color: var(--text);
-  max-width: 60ch;
-  margin-bottom: 40px;
-}
-
-.cta-row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin: 32px 0 16px;
-}
-
-.btn {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 16px 24px;
-  background: var(--accent);
-  color: #fff;
-  border-radius: 12px;
-  text-decoration: none;
-  font-weight: 600;
-  font-size: 16px;
-  border: 0;
-  transition: background 120ms ease;
-}
-.btn:hover {
-  background: var(--accent-hover);
-}
-.btn .sub {
-  font-size: 13px;
-  font-weight: 400;
-  opacity: 0.8;
-}
-.btn.secondary {
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-}
-.btn.secondary:hover {
-  background: var(--surface-2);
-}
-.btn[aria-disabled="true"] {
-  background: var(--surface-2);
-  color: var(--text-dim);
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.callout {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 24px;
-  margin: 32px 0;
-}
-.callout p:last-child {
-  margin-bottom: 0;
-}
-.callout code {
-  background: var(--surface-2);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: var(--mono);
-  font-size: 13px;
-}
-
-ol,
-ul {
-  color: var(--text-dim);
-  padding-left: 20px;
-}
-li {
-  margin-bottom: 8px;
-}
-
-details {
-  margin-top: 16px;
-  color: var(--text-dim);
-}
-details summary {
-  cursor: pointer;
-  color: var(--text);
+@layer utilities {
+  .text-terracotta { color: hsl(var(--terracotta)); }
+  .bg-cream { background-color: hsl(var(--cream)); }
+  .bg-cream-deep { background-color: hsl(var(--cream-deep)); }
+  .bg-ink { background-color: hsl(var(--ink)); }
+  .text-ink { color: hsl(var(--ink)); }
+  .border-ink { border-color: hsl(var(--ink)); }
 }

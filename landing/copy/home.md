@@ -1,84 +1,122 @@
-# Home page — draft copy
-
-Source of truth for `landing/src/pages/index.astro`. Edit here. When this
-reads right, port it back into the .astro file and review in the
-rendered Astro page.
-
-The spine of the story:
-
-> **An IT helpdesk. Claude Code as the Operating System.**
->
-> Your service desk is files in your git repo, authored by Claude Code.
-> Built on your machine. Deployed to cloud for production.
-
----
+# OpenIT — landing copy
 
 ## Hero
 
-**An IT helpdesk. Claude Code as the Operating System.**
+Status badge: Public Beta · macOS · Open Source
 
-The control plane for every system IT runs — tickets, knowledge, agents,
-reports, integrations — authored by Claude Code as plain files in your
-git repo.
+**An IT helpdesk that runs on Claude Code.**
 
-**Buttons:**
+Lede: Claude handles tickets, provisions access, and learns how you work — so you spend your day on the hard problems, not the queue.
 
-- `Download for macOS — Beta · Apple Silicon + Intel`
-- `View on GitHub`
+CTAs:
+- Download for macOS — Beta · Apple Silicon + Intel
+- View on GitHub ↗
 
----
+### Architecture block
 
-## A different substrate
+**For IT · Desktop app**
+Run Claude Code on your desktop.
 
-Legacy ITSM keeps your config in the vendor's database, behind a clicky
-admin UI. The new agentic wave bolts an AI chat layer on top of the same
-database. Either way, you're inside the vendor's model of IT.
+Install OpenIT on your Mac. Claude works alongside you in the terminal — reading tickets, shaping workflows, writing connectors.
 
-OpenIT moves the substrate. Your service desk is **files in git,
-authored by Claude Code** — every skill, every MCP, every model setting
-you'd get in a terminal. No proprietary agent to learn.
+**For employees · Chat**
+Ask in Slack, Teams, or email.
 
----
-
-## What that unlocks
-
-- **One conversation, every system.** Tail AD logs, query Okta, pivot to
-  Jira, draft a fix. Claude Code is your IT command line.
-- **Any report, on demand.** No fixed dashboards. Describe what you
-  want; Claude writes it.
-- **Connectors you can extend.** Catalog missing something? Claude
-  writes the integration. Ship the same day.
-- **Answer once.** Every escalated ticket leaves a KB article behind.
-  The next person gets the answer instantly.
-- **Change control like code.** Branch, PR, merge, `git revert`.
-  Rollback in seconds — not a vendor support ticket.
+No new app to learn. Employees ask wherever they already work — Claude answers, or routes it to you.
 
 ---
 
-## Authored on your machine. Runs in production.
+## §01 — Before & After
 
-OpenIT pins a real Claude Code session to your project folder, so the
-whole helpdesk can be built, tested, and administered locally — against
-real integrations, no paid sandbox tenant. When it's ready, sync to
-Pinkfish: the same files run in the cloud, 24/7. Channel webhooks,
-public intake URLs, agents that act while you sleep.
+### What changes.
 
-Production is durable, because IT can't depend on your laptop being
-awake.
-
----
-
-## Plain files. Yours, forever.
-
-Open the project in any editor. Markdown and JSON. Diffs you can read.
-PRs you can review. Hand the repo to a terminal-native engineer and
-they're immediately productive — every file OpenIT writes is identical
-to what plain Claude Code would write. If you ever leave OpenIT, you
-walk out with your config.
+| Before — other ITs | After — OpenIT |
+|---|---|
+| Employees file a ticket. Wait. | Employees ask in Slack or Teams. Answered instantly. |
+| The knowledge base goes stale. | The KB writes itself from real questions. |
+| Configure workflows in clicky admin UIs. | Show Claude once. It handles the rest. |
+| Wait quarters for a missing integration. | Claude writes the integration. Ships today. |
+| Three tabs to debug an access issue. | One conversation across every system. |
 
 ---
 
-## Status
+## §02 — The thesis
 
-Public beta. macOS (Apple Silicon + Intel), signed and notarized — no
-first-launch warning. Linux and Windows builds follow.
+### Configure in Claude Code. Not UI.
+
+Every other ITSM is configured the same way: clicky admin screens, proprietary workflow builders, vendor agents you have to learn. The configuration is theirs.
+
+> Claude Code is the operating system.
+
+OpenIT inverts it. You configure in plain English with Claude Code; the result is files in your repo. Sync to Pinkfish cloud and the same files run there 24/7. Cloud is a deploy target — your repo is the source of truth. Edit it directly. Branch it. Take it with you.
+
+---
+
+## §03 — Native access
+
+### Every system IT runs. One conversation.
+
+Claude doesn't bounce between tools. It *is* the tool — with native access to every system in your stack.
+
+- **Identity** — Okta, Google Workspace, Microsoft Entra
+- **Chat** — Slack, Microsoft Teams
+- **Endpoints** — Jamf, Kandji, Intune
+- **Cloud** — AWS, GCP, Azure
+- **Code** — GitHub, GitLab
+- **Tickets & docs** — Jira, Linear, Notion, Confluence
+- **Anything else** — Claude writes the integration if it's missing
+
+No middleware. No glue scripts. No tab-switching. The investigation, the fix, and the article that documents it all happen in one conversation.
+
+---
+
+## §04 — Week one
+
+### Smarter every day.
+
+Every ticket you handle teaches Claude one more thing. Two weeks in, your queue runs differently.
+
+- **Day 1** — Install. Claude joins chat, watches how you work.
+- **Day 3** — The questions Claude has seen you answer start handling themselves.
+- **Week 1** — Routine asks self-resolve. Every escalation leaves a KB article behind.
+- **Week 2** — You're spending mornings on hard problems, not the queue.
+
+---
+
+## §05 — The shift
+
+### Don't do the work. Supervise it.
+
+Claude watches how you handle a ticket, then handles the next one itself. Workflows take shape from how you actually work — not from a UI you have to configure.
+
+No agents to prompt-engineer. No rules to write. No staging tenant to maintain. The helpdesk teaches itself from your queue.
+
+The files are there if you want them — readable, editable, portable. But you don't have to touch them.
+
+---
+
+## §06 — Local, then cloud
+
+### Try it locally. Run it in cloud.
+
+Run OpenIT on your machine first — real Claude Code, real integrations, real tickets. No paid sandbox tenant.
+
+When it earns your trust, sync to Pinkfish: the same project runs in cloud, 24/7. Slack and Teams stay live for your team, a public link picks up outside askers, agents act while you sleep. Production is durable, because IT can't depend on your laptop being awake.
+
+---
+
+## §07 — Ownership
+
+### Yours, in plain files.
+
+Every workflow Claude learned, every KB article it wrote, every connector it shaped — readable, diffable, in your repo. Hand it to a terminal-native engineer when you hire one and they're productive immediately. If you ever leave OpenIT, you walk out with everything.
+
+---
+
+## §08 — Status
+
+### Public beta.
+
+macOS (Apple Silicon + Intel), signed and notarized — no first-launch warning. Linux and Windows builds follow.
+
+CTA: Download for macOS — Beta · Apple Silicon + Intel
