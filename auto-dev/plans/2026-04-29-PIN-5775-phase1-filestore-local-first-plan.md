@@ -214,3 +214,11 @@ The user-visible behavior change. Touches `App.tsx` only.
 | # | Finding | Severity | Disposition | Commit / Reason |
 |---|---------|----------|-------------|-----------------|
 | 1 | orgId persisted as orgName in cloud.json binding | Medium | Fixed | `632acad` — App.tsx first-run-with-creds path now passes `orgName: ""` instead of `creds.orgId`. Cloud-relaunch falls back to `creds.orgId` for the display arg when `binding.orgName` is empty. Rust same-org rebind path now refuses to clobber a non-empty existing orgName with an empty one (so a future modal-connect with a real display name persists). Two new cargo tests pin the semantics. Also verified the `openit-` filter behaviour against the dev20 org's actual filestore listing — three unrelated user collections (`My File Store`, `HTML Reports`, …) are correctly filtered out. |
+
+### Iteration 3 (2026-04-29)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | (none — clean run) | — | — | "✅ Bugbot reviewed your changes and found no new issues!" — review of commit `211c512`. CI green: frontend, rust, Cursor Bugbot all `completed:success`. Zero unresolved cursor threads. |
+
+**BugBot loop exit:** clean run achieved at iteration 3. Phase 1 implementation is code-complete. Manual scenarios MS-1 through MS-7 remain the gating step before merge — see PR description.
