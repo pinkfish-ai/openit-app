@@ -133,13 +133,25 @@ The same pattern applies to the plugin's `CLAUDE.md` and any skills under `web/.
 
 # Dev process
 
-4 stages. Each produces a concrete artifact.
+6 stages. Each produces a concrete artifact.
 
-- **01-brief.md** — write a brief in Linear (the *why* + scope).
-- **02-impl-plan.md** — implementation plan as a dated markdown file under `auto-dev/plans/`. Becomes the contract for the work.
-- **03-testing.md** — tests written + green locally before opening the PR.
-- **04-PR.md** — PR opened, BugBot loop run to clean.
+| Stage | File | Artifact |
+| --- | --- | --- |
+| 01 — Brief | `01-brief.md` | Linear ticket with Problem / Desired Outcome / Scope / Success Criteria |
+| 02 — Impl plan | `02-impl.plan.md` | `auto-dev/plans/YYYY-MM-DD-PIN-####-short-name.md` with Files-to-modify table, unit-test list, manual scenarios, implementation checklist |
+| 03 — Implementation | `03-implementation.md` | Code + unit tests on a feature branch; plan checklist marked off; `LEARNINGS & CHANGES` section appended where the implementation diverged from the plan |
+| 04 — Testing | `04-testing.md` | Full vitest + cargo test pass + manual click-through scenarios; Linear comment summarizing what was tested |
+| 05 — Impl review | `05-impl-review.md` | `auto-dev/plans/<plan-filename>-impl-review.md` with verdict + findings; fix sub-plans if any |
+| 06 — PR + BugBot | `06-PR.md` | Open PR with Conventional-Commits title, run `@cursor review` loop until clean, merge. Cross-repo `/web` mirror at merge time if plugin scripts changed |
 
 Skip the ceremony for trivial fixes (one-line bug, doc typo). Use it for anything that would benefit from being reviewed against an explicit plan.
 
+**Stages do not advance silently.** Each stage's transition checklist ends with engineer approval. Do not roll into the next stage on your own.
+
 **BugBot stop-condition:** keep iterating until the only remaining findings are Low-severity. At that point reply with rationale (or fix), resolve, merge.
+
+## Optional add-ons (use when warranted)
+
+- **Plan review** — currently implicit in stage 02 ("Stop, ask engineer to approve"). Promote to its own stage if plans tend to drift.
+- **Documentation** — for changes that affect user-facing docs in `/web` or the README, add a doc-update step to the PR checklist. Does not need its own stage.
+- **Retrospective** — for big features (e.g. V2 sync), worth running a structured retrospective after merge. Can be ad-hoc; doesn't need a numbered stage.
