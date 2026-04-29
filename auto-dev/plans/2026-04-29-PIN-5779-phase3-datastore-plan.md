@@ -352,3 +352,11 @@ Plus from this plan's investigation:
 | 2 | Discovery scans recursively, creating spurious cloud collections | Medium | Fixed | `39e6bca` — `discoverLocalDatastores` called `fsList(databasesPath)` which walks depth-6 recursively. A nested dir like `databases/tickets/archived/` would pass the system-folder + existing-names checks and get auto-created on the cloud as `openit-archived`. Filtered to direct children only via the same shape Workbench.tsx uses. |
 | 3 | Pull count always returns zero, suppressing log messages | Low | Fixed | `4bea849` — `pullAllNow` now returns aggregate `{ pulled, total }` across every collection (`runPullWithAdapter` already returned per-collection counts; just sum them). `pullDatastoresOnce` captures and surfaces the real value; the `pulled > 0` log branch in pushAll.ts is no longer dead code. Filestore + KB wrappers benefit too if they wire it up. |
 | 4 | Empty collection name produces confusing conflict messages | Low | Fixed | `8965f85` — extended `CollectionConflictFile` with `collectionId` (the orchestrator's `recordConflictsFor` already had it as an arg). `pullDatastoresOnce` builds an id→displayName lookup from `status.collections` and hydrates each conflict's `collectionName`. pushAll.ts now renders `tickets/CS123.json: reason` instead of `/CS123.json: reason`. |
+
+### Iteration 2 (2026-04-29)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | (none — clean run) | — | — | "✅ Bugbot reviewed your changes and found no new issues!" — review of commit `b26e0d0`. CI green: frontend, rust, Cursor Bugbot all passing. All four iter-1 threads resolved. |
+
+**BugBot loop exit:** clean run achieved at iteration 2. Phase 3 implementation is code-complete. Manual MS-1 through MS-12 (per the brief) remain the gating step before merge — see PR description.
