@@ -17,6 +17,8 @@ describe("filestore sync integration", () => {
   it("should pull files from remote and write to collection folders", async () => {
     const adapter = filestoreAdapter({
       creds: {
+        clientId: "test-client",
+        clientSecret: "test-secret",
         orgId: "test-org",
         tokenUrl: "https://test.tokenurl",
       },
@@ -40,8 +42,11 @@ describe("filestore sync integration", () => {
     // Mock remote files
     vi.mocked(api.kbListRemote).mockResolvedValue([
       {
+        id: "remote-1",
         filename: "_claudesetup.txt",
         signed_url: "https://download.test/_claudesetup.txt",
+        file_size: null,
+        mime_type: null,
         updated_at: "2026-04-29T15:00:00Z",
       },
     ]);
@@ -51,7 +56,7 @@ describe("filestore sync integration", () => {
     vi.mocked(api.entityDeleteFile).mockResolvedValue(undefined);
 
     // Mock file download - THIS IS THE KEY TEST
-    vi.mocked(api.fsStoreDownloadToLocal).mockImplementation(async (repo, filename, url, subdir) => {
+    vi.mocked(api.fsStoreDownloadToLocal).mockImplementation(async (repo, filename, _url, subdir) => {
       console.log(`Download called with: repo=${repo}, filename=${filename}, subdir=${subdir}`);
       // Simulate file being written by adding to local list
       if (subdir === "filestores/docs-653713545258" && filename === "_claudesetup.txt") {

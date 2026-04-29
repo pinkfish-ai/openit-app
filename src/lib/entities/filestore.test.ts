@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { filestoreAdapter } from "./filestore";
 import * as api from "../api";
-import * as syncEngine from "../syncEngine";
 
 // Mock the API module
 vi.mock("../api", () => ({
@@ -31,6 +30,8 @@ describe("filestoreAdapter", () => {
     // Setup adapter for openit-docs-653713545258
     const adapter = filestoreAdapter({
       creds: {
+        clientId: "test-client",
+        clientSecret: "test-secret",
         orgId: "test-org",
         tokenUrl: "https://test.tokenurl",
       },
@@ -43,8 +44,11 @@ describe("filestoreAdapter", () => {
 
     // Mock remote list
     const mockRemoteFile = {
+      id: "remote-1",
       filename: "_claudesetup.txt",
       signed_url: "https://download.url/file",
+      file_size: null,
+      mime_type: null,
       updated_at: "2026-04-29T00:00:00Z",
     };
 
@@ -66,6 +70,8 @@ describe("filestoreAdapter", () => {
   it("should create directory before downloading", async () => {
     const adapter = filestoreAdapter({
       creds: {
+        clientId: "test-client",
+        clientSecret: "test-secret",
         orgId: "test-org",
         tokenUrl: "https://test.tokenurl",
       },
@@ -77,8 +83,11 @@ describe("filestoreAdapter", () => {
     });
 
     const mockRemoteFile = {
+      id: "remote-2",
       filename: "document.pdf",
       signed_url: "https://download.url/document.pdf",
+      file_size: null,
+      mime_type: null,
       updated_at: "2026-04-29T00:00:00Z",
     };
 
@@ -122,6 +131,8 @@ describe("filestoreAdapter", () => {
   it("should handle errors gracefully during directory creation", async () => {
     const adapter = filestoreAdapter({
       creds: {
+        clientId: "test-client",
+        clientSecret: "test-secret",
         orgId: "test-org",
         tokenUrl: "https://test.tokenurl",
       },
@@ -133,8 +144,11 @@ describe("filestoreAdapter", () => {
     });
 
     const mockRemoteFile = {
+      id: "remote-3",
       filename: "book.md",
       signed_url: "https://download.url/book.md",
+      file_size: null,
+      mime_type: null,
       updated_at: "2026-04-29T00:00:00Z",
     };
 
@@ -160,6 +174,8 @@ describe("filestoreAdapter", () => {
     // Create adapters for different collections
     const docAdapter = filestoreAdapter({
       creds: {
+        clientId: "test-client",
+        clientSecret: "test-secret",
         orgId: "test-org",
         tokenUrl: "https://test.tokenurl",
       },
@@ -172,6 +188,8 @@ describe("filestoreAdapter", () => {
 
     const attachAdapter = filestoreAdapter({
       creds: {
+        clientId: "test-client",
+        clientSecret: "test-secret",
         orgId: "test-org",
         tokenUrl: "https://test.tokenurl",
       },
@@ -186,15 +204,21 @@ describe("filestoreAdapter", () => {
     vi.mocked(api.kbListRemote)
       .mockResolvedValueOnce([
         {
+          id: "remote-guide",
           filename: "guide.md",
           signed_url: "https://url/guide.md",
+          file_size: null,
+          mime_type: null,
           updated_at: "2026-04-29T00:00:00Z",
         },
       ])
       .mockResolvedValueOnce([
         {
+          id: "remote-image",
           filename: "image.png",
           signed_url: "https://url/image.png",
+          file_size: null,
+          mime_type: null,
           updated_at: "2026-04-29T00:00:00Z",
         },
       ]);

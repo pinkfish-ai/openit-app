@@ -24,6 +24,8 @@ describe("filestore real integration", () => {
   it("should discover files in openit-docs collection", async () => {
     const adapter = filestoreAdapter({
       creds: {
+        clientId: config.credentials.clientId,
+        clientSecret: config.credentials.clientSecret,
         orgId: config.orgId,
         tokenUrl: config.credentials.tokenUrl,
       },
@@ -51,6 +53,8 @@ describe("filestore real integration", () => {
   it("should test download flow without actual file write", async () => {
     const adapter = filestoreAdapter({
       creds: {
+        clientId: config.credentials.clientId,
+        clientSecret: config.credentials.clientSecret,
         orgId: config.orgId,
         tokenUrl: config.credentials.tokenUrl,
       },
