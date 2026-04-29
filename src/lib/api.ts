@@ -474,8 +474,9 @@ export async function kbDownloadToLocal(
   repo: string,
   filename: string,
   url: string,
+  subdir?: string,
 ): Promise<void> {
-  return invoke("kb_download_to_local", { repo, filename, url });
+  return invoke("kb_download_to_local", { repo, filename, url, subdir });
 }
 
 export type KbUploadResult = {
@@ -513,6 +514,7 @@ export async function kbUploadFile(args: {
   collectionId: string;
   skillsBaseUrl: string;
   accessToken: string;
+  subdir?: string;
 }): Promise<KbUploadResult> {
   return invoke("kb_upload_file", {
     repo: args.repo,
@@ -520,6 +522,7 @@ export async function kbUploadFile(args: {
     collectionId: args.collectionId,
     skillsBaseUrl: args.skillsBaseUrl,
     accessToken: args.accessToken,
+    subdir: args.subdir,
   });
 }
 
