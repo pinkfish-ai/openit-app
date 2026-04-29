@@ -9,6 +9,8 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::pty;
+
 /// Cap on the staged diff we send to Claude. Big diffs (e.g. an initial
 /// import) would otherwise blow past the model's context budget — we'd
 /// rather get a slightly less specific message than no message.
@@ -57,7 +59,12 @@ pub async fn claude_generate_commit_message(repo: String) -> Result<String, Stri
 }
 
 fn generate_commit_message_blocking(repo: &str) -> Result<String, String> {
-    let claude = which::which("claude").map_err(|_| "Claude CLI not found on PATH".to_string())?;
+    // Use the same lookup as the onboarding auto-installer: PATH first, then
+    // the well-known install dirs. A GUI-launched OpenIT inherits a minimal
+    // PATH that excludes `~/.local/bin`, so a `which::which` here would fail
+    // immediately after a successful auto-install — even though the binary
+    // is sitting right there.
+    let claude = pty::locate_claude().ok_or_else(|| "Claude CLI not found on PATH".to_string())?;
 
     let diff_out = run_git(repo, &["diff", "--cached"])?;
     if !diff_out.status.success() {
@@ -98,11 +105,18 @@ Output ONLY the subject line. No quotes, no code fences, no explanation, no prea
         recent_block, diff_text
     );
 
-    let mut child = Command::new(&claude)
+    let mut command = Command::new(&claude);
+    command
         .arg("-p")
         .arg(&prompt)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Mirror the PTY's PATH augmentation so `claude` itself can find the
+    // tools it shells out to (gh, git, gcloud, …) on a GUI-launched app.
+    if let Some(path) = pty::augmented_path() {
+        command.env("PATH", path);
+    }
+    let mut child = command
         .spawn()
         .map_err(|e| format!("failed to spawn claude: {}", e))?;
 

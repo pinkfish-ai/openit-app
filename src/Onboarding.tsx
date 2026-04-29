@@ -341,28 +341,33 @@ export function Onboarding({
             claudePath === "loading" ? (
               "Checking your PATH…"
             ) : claudePath === "installing" ? (
-              "Downloading from claude.ai/install.sh — this takes a few seconds."
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                <span className="sc-spinner" aria-hidden="true" />
+                <span>
+                  Downloading from{" "}
+                  <code>claude.ai/install.sh</code> — this takes a few seconds.
+                </span>
+              </span>
             ) : claudeReady ? (
               <code className="onboard-path">{claudePath as string}</code>
             ) : (
               <>
-                <span style={{ color: "#b91c1c" }}>
-                  Auto-install failed.
-                </span>{" "}
+                <div style={{ color: "#b91c1c", marginBottom: 4 }}>
+                  Auto-install failed. Retry, or{" "}
+                  <a
+                    href={CLAUDE_INSTALL_DOCS}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openUrl(CLAUDE_INSTALL_DOCS).catch(console.error);
+                    }}
+                  >
+                    install manually
+                  </a>
+                  .
+                </div>
                 {claudeInstallError ? (
-                  <code className="onboard-path">{claudeInstallError}</code>
-                ) : null}{" "}
-                Retry, or{" "}
-                <a
-                  href={CLAUDE_INSTALL_DOCS}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    openUrl(CLAUDE_INSTALL_DOCS).catch(console.error);
-                  }}
-                >
-                  install manually
-                </a>
-                .
+                  <pre className="onboard-error-pre">{claudeInstallError}</pre>
+                ) : null}
               </>
             )
           }

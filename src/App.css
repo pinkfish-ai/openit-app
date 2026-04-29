@@ -2833,6 +2833,23 @@ body::before {
   border: 1px solid var(--border);
 }
 
+/* Installer stderr block: keep multi-line / ANSI-noisy errors from blowing
+   out the onboarding card. Scrolls instead. */
+.onboard-error-pre {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  margin: 0;
+  max-height: 8rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .chat-row {
   display: inline-flex;
   align-items: center;

@@ -1,15 +1,24 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Runtime, State};
+
+/// Source URL for the official Claude Code native installer. Surfaced in the
+/// onboarding UI so the user can see what we're about to fetch.
+const CLAUDE_INSTALL_SCRIPT_URL: &str = "https://claude.ai/install.sh";
+
+/// Hard cap on the auto-install. The installer normally finishes in ~5s; if
+/// it's still running after 120s we kill it so the UI doesn't hang forever
+/// on a captive portal or slow CDN.
+const CLAUDE_INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Default)]
 pub struct PtyState {
@@ -217,17 +226,58 @@ pub fn claude_detect() -> Option<String> {
 /// `~/.local/bin/claude` and updates the user's shell rc — but the running app
 /// won't see the rc change, so callers should always go through `claude_detect`
 /// or `resolve_command` afterwards (both probe known install dirs).
+///
+/// `async` so the Tauri command thread isn't blocked while curl runs (5–30s
+/// typically; up to `CLAUDE_INSTALL_TIMEOUT` before we kill it).
+///
+/// Unix only: the install.sh is bash-only and supports macOS + Linux. On
+/// Windows we return an error pointing at the manual install docs rather
+/// than silently shelling out to bash (which would either fail or, worse,
+/// install into WSL where the Windows-side OpenIT process can't see it).
 #[tauri::command]
-pub fn claude_install() -> Result<String, String> {
+pub async fn claude_install() -> Result<String, String> {
     if let Some(existing) = locate_claude() {
         return Ok(existing.to_string_lossy().into_owned());
     }
+    tauri::async_runtime::spawn_blocking(run_install_blocking)
+        .await
+        .map_err(|e| format!("background task failed: {}", e))?
+}
 
-    let output = Command::new("bash")
+#[cfg(unix)]
+fn run_install_blocking() -> Result<String, String> {
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let mut child = Command::new("bash")
         .arg("-c")
-        .arg("curl -fsSL https://claude.ai/install.sh | bash")
-        .output()
-        .map_err(|e| format!("failed to run installer: {e}"))?;
+        .arg(format!("curl -fsSL {} | bash", CLAUDE_INSTALL_SCRIPT_URL))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn installer: {e}"))?;
+
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if started.elapsed() > CLAUDE_INSTALL_TIMEOUT {
+                    let _ = child.kill();
+                    return Err(format!(
+                        "installer timed out after {}s — check your network or install manually",
+                        CLAUDE_INSTALL_TIMEOUT.as_secs()
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => return Err(format!("waiting on installer: {e}")),
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("collecting installer output: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -246,16 +296,28 @@ pub fn claude_install() -> Result<String, String> {
         })
 }
 
-fn locate_claude() -> Option<PathBuf> {
+#[cfg(not(unix))]
+fn run_install_blocking() -> Result<String, String> {
+    Err(
+        "Auto-install is only supported on macOS and Linux. \
+        Please install Claude Code manually from https://docs.anthropic.com/claude/docs/claude-code"
+            .to_string(),
+    )
+}
+
+/// Locate a usable `claude` binary: PATH first, then known install dirs.
+/// Exposed so other Tauri commands that shell out to claude (e.g.
+/// `claude_generate_commit_message`) resolve against the same set the
+/// auto-installer drops binaries into.
+pub(crate) fn locate_claude() -> Option<PathBuf> {
     if let Ok(p) = which::which("claude") {
         return Some(p);
     }
-    for candidate in claude_install_candidates() {
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    locate_claude_among(&claude_install_candidates(), |p| p.is_file())
+}
+
+fn locate_claude_among(candidates: &[PathBuf], is_file: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    candidates.iter().find(|c| is_file(c)).cloned()
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -265,8 +327,12 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 fn claude_install_candidates() -> Vec<PathBuf> {
+    claude_install_candidates_for(home_dir().as_deref())
+}
+
+fn claude_install_candidates_for(home: Option<&Path>) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    if let Some(home) = home_dir() {
+    if let Some(home) = home {
         out.push(home.join(".local/bin/claude"));
         out.push(home.join(".claude/local/claude"));
     }
@@ -278,24 +344,33 @@ fn claude_install_candidates() -> Vec<PathBuf> {
 /// Build a PATH that includes the install dirs the native installer uses, so
 /// child processes spawned from a GUI-launched app can find `claude` even
 /// before the user restarts their terminal. Returns `None` if PATH is fine
-/// as-is or unreadable.
-fn augmented_path() -> Option<String> {
+/// as-is or unreadable. Exposed for any module that spawns subprocesses
+/// expected to find `claude` and its peers.
+pub(crate) fn augmented_path() -> Option<String> {
     let home = home_dir()?;
+    let current = std::env::var("PATH").unwrap_or_default();
+    augmented_path_for(&home, &current, |p| p.is_dir())
+}
+
+fn augmented_path_for(
+    home: &Path,
+    current_path: &str,
+    dir_exists: impl Fn(&Path) -> bool,
+) -> Option<String> {
     let extra = [
         home.join(".local/bin"),
         home.join(".claude/local"),
         PathBuf::from("/usr/local/bin"),
         PathBuf::from("/opt/homebrew/bin"),
     ];
-    let current = std::env::var("PATH").unwrap_or_default();
-    let mut parts: Vec<String> = current
+    let mut parts: Vec<String> = current_path
         .split(':')
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
     let mut changed = false;
     for dir in extra.iter() {
-        if !dir.is_dir() {
+        if !dir_exists(dir) {
             continue;
         }
         let s = dir.to_string_lossy().to_string();
@@ -345,6 +420,78 @@ mod tests {
     fn resolve_command_falls_back_to_shell_or_bash() {
         let resolved = resolve_command(None).unwrap();
         assert!(!resolved.is_empty());
+    }
+
+    #[test]
+    fn install_candidates_include_local_bin_when_home_is_set() {
+        let home = PathBuf::from("/tmp/fake-home");
+        let cs = claude_install_candidates_for(Some(&home));
+        assert!(cs.iter().any(|p| p == &home.join(".local/bin/claude")));
+        assert!(cs.iter().any(|p| p == &home.join(".claude/local/claude")));
+        assert!(cs
+            .iter()
+            .any(|p| p == &PathBuf::from("/usr/local/bin/claude")));
+        assert!(cs
+            .iter()
+            .any(|p| p == &PathBuf::from("/opt/homebrew/bin/claude")));
+    }
+
+    #[test]
+    fn install_candidates_omit_home_when_unset() {
+        let cs = claude_install_candidates_for(None);
+        // Only the absolute fallbacks remain.
+        assert_eq!(cs.len(), 2);
+        assert!(cs.iter().all(|p| p.is_absolute()));
+    }
+
+    #[test]
+    fn locate_claude_among_returns_first_match() {
+        let candidates = vec![
+            PathBuf::from("/nope/a/claude"),
+            PathBuf::from("/nope/b/claude"),
+            PathBuf::from("/nope/c/claude"),
+        ];
+        // Pretend the second entry exists.
+        let found = locate_claude_among(&candidates, |p| p == Path::new("/nope/b/claude"));
+        assert_eq!(found, Some(PathBuf::from("/nope/b/claude")));
+    }
+
+    #[test]
+    fn locate_claude_among_returns_none_when_nothing_exists() {
+        let candidates = vec![PathBuf::from("/nope/a/claude")];
+        let found = locate_claude_among(&candidates, |_| false);
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn augmented_path_prepends_only_existing_dirs() {
+        let home = PathBuf::from("/tmp/fake-home");
+        let current = "/usr/bin:/bin";
+        // First dir exists, others don't.
+        let only_local_bin = home.join(".local/bin");
+        let augmented = augmented_path_for(&home, current, |p| p == only_local_bin.as_path());
+        let s = augmented.expect("expected PATH augmentation");
+        assert!(s.starts_with("/tmp/fake-home/.local/bin:"));
+        assert!(s.ends_with(":/usr/bin:/bin"));
+    }
+
+    #[test]
+    fn augmented_path_is_idempotent() {
+        let home = PathBuf::from("/tmp/fake-home");
+        // PATH already has the dir we'd otherwise prepend.
+        let current = "/tmp/fake-home/.local/bin:/usr/bin";
+        let only_local_bin = home.join(".local/bin");
+        let augmented = augmented_path_for(&home, current, |p| p == only_local_bin.as_path());
+        // No change needed → None.
+        assert!(augmented.is_none());
+    }
+
+    #[test]
+    fn augmented_path_returns_none_when_no_dirs_exist() {
+        let home = PathBuf::from("/tmp/fake-home");
+        let current = "/usr/bin";
+        let augmented = augmented_path_for(&home, current, |_| false);
+        assert!(augmented.is_none());
     }
 
     /// Drive the real PTY backend (without the Tauri event layer) to prove the
