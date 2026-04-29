@@ -404,6 +404,19 @@ export async function startFilestoreSync(args: {
     console.warn(`[filestoreSync] Error during auto-create phase:`, e);
   }
 
+  // After creating collections, re-resolve to pick up any existing files and get the newly created collections
+  // The initial resolve only finds what was on remote before we created the defaults
+  try {
+    console.log(`[filestoreSync] re-resolving after collection creation...`);
+    const refreshedCollections = await resolveProjectFilestores(creds);
+    console.log("[filestoreSync] refreshed collections after creation", refreshedCollections);
+    collections = refreshedCollections; // Update with the fresh list
+    update({ collections });
+  } catch (e) {
+    console.warn(`[filestoreSync] re-resolve after creation failed:`, e);
+    // Continue with what we have - created collections are already in the array
+  }
+
   resolvedRepos.add(repo);
 
   const persisted = await fsStoreStateLoad(repo);
