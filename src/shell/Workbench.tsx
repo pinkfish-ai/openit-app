@@ -14,7 +14,17 @@ type Station = {
   openRel?: string;
   /** What to count among direct children. */
   countMode: "dirs" | "json-rows" | "files";
+  /** When set, the station only renders if `visibleIf(state)` returns
+   *  true. Used by the `databases` station to appear only when the
+   *  user has custom (non-default) datastores. */
+  visibleIf?: (counts: Record<string, number>) => boolean;
 };
+
+/// Local-only system folders under `databases/` that don't count as
+/// "custom datastores" for the visibility predicate. Mirrors the same
+/// list in datastoreSync.ts.
+const DATABASES_SYSTEM_FOLDERS = new Set(["conversations"]);
+const DATABASES_DEFAULT_FOLDERS = new Set(["tickets", "people"]);
 
 // Each station's icon, tone, and label come from ENTITY_META — same
 // source the EntityCardGrid cards and Viewer headers consume, so
@@ -23,6 +33,13 @@ const STATIONS: Station[] = [
   { id: "inbox",     kind: "inbox",     rel: "databases/tickets", countMode: "json-rows" },
   { id: "reports",   kind: "reports",   rel: "reports",           countMode: "files" },
   { id: "people",    kind: "people",    rel: "databases/people",  countMode: "json-rows" },
+  // Phase 3: appears only when the user has at least one custom
+  // (non-default) datastore — i.e. anything under `databases/` other
+  // than `tickets`, `people`, or system folders like `conversations`.
+  // Click opens the `databases/` parent dir; FileExplorer renders the
+  // existing tree view of all subfolders.
+  { id: "databases", kind: "databases", rel: "databases",         countMode: "dirs",
+    visibleIf: (c) => (c.databases ?? 0) > 0 },
   { id: "knowledge", kind: "knowledge", rel: "knowledge-bases",   countMode: "dirs" },
   { id: "files",     kind: "files",     rel: "filestores",        countMode: "dirs" },
   { id: "agents",    kind: "agents",    rel: "agents",            countMode: "json-rows" },
@@ -107,7 +124,22 @@ export function Workbench({
             const rootAbs = `${repo}/${s.rel}`;
             const items = await fsList(rootAbs);
             const direct = directChildren(items, rootAbs);
-            next[s.id] = countWithMode(direct, s.countMode);
+            let count = countWithMode(direct, s.countMode);
+            // The `databases` station counts only CUSTOM datastores —
+            // anything other than the two defaults (`tickets`, `people`)
+            // and system folders (`conversations`). Visibility hinges on
+            // count > 0, so excluding those here flips the tile off
+            // whenever the user only has defaults.
+            if (s.id === "databases") {
+              count = direct.filter(
+                (n) =>
+                  n.is_dir &&
+                  !n.name.startsWith(".") &&
+                  !DATABASES_DEFAULT_FOLDERS.has(n.name) &&
+                  !DATABASES_SYSTEM_FOLDERS.has(n.name),
+              ).length;
+            }
+            next[s.id] = count;
           } catch {
             next[s.id] = 0;
           }
@@ -167,7 +199,7 @@ export function Workbench({
 
       <div className="workbench-section-label">Stations</div>
       <div className="workbench-stations">
-        {STATIONS.map((s) => {
+        {STATIONS.filter((s) => !s.visibleIf || s.visibleIf(counts)).map((s) => {
           const meta = ENTITY_META[s.kind];
           return (
             <button

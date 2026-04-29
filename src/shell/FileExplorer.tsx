@@ -82,7 +82,13 @@ function prettyName(
   datastores: DataCollection[] = [],
   datastoreItems: Record<string, { items: MemoryItem[]; hasMore: boolean }> = {},
 ): string {
-  if (rel.match(/^databases\/openit-[^/]+$/)) {
+  // Datastore collection folder. Phase 3 convention: local folder
+  // name is already unprefixed (`databases/tickets/`, not
+  // `databases/openit-tickets/`). Defensive prefix-strip handles any
+  // legacy `openit-<x>-<orgId>` folder still on disk. Excludes the
+  // local-only `conversations/` system folder, which has its own
+  // rendering path below.
+  if (rel.match(/^databases\/[^/]+$/) && !rel.endsWith("/conversations")) {
     const stripped = name.replace(/^openit-/, "").replace(/-\d+$/, "");
     if (stripped) return stripped;
   }
