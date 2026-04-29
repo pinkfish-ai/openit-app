@@ -195,8 +195,27 @@
   gap: 6px;
 }
 
+.errorStderr {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 3px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.errorActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .errorRecovery {
-  align-self: flex-start;
   background: transparent;
   border: 1px solid #b04028;
   color: #b04028;
@@ -209,4 +228,21 @@
 
 .errorRecovery:hover {
   background: #f9e0d4;
+}
+
+.errorDismiss {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.errorDismiss:hover {
+  background: var(--surface-hover);
+  color: var(--text);
 }

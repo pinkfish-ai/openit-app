@@ -20,13 +20,22 @@ The MCP route shipped 6 first-party remote OAuth servers via `claude mcp add`. B
 
 ---
 
-## Why agentic install (not direct shell-out)
+## Hybrid install flow (programmatic happy path, agent fallback)
 
-The first version of the CLI flow had OpenIT shell out to `brew install` via a Tauri command, then splice the project CLAUDE.md from Rust. First non-trivial test (Microsoft Graph CLI — bad tap name) failed with opaque stderr and no path forward. Pivoted again, mid-PR:
+Two iterations got us here. v1 had OpenIT shell out to `brew install` via a Tauri command, then splice CLAUDE.md from Rust. First non-trivial test (Microsoft Graph CLI — bad tap name) failed with opaque stderr. v2 pivoted to fully agentic — Claude runs brew, debugs failures, edits CLAUDE.md. Worked, but the UI lost deterministic state (we couldn't tell when the install actually finished, which meant no spinners, no proper installed-state flips, no clean error surfaces).
 
-**Click Install → write a structured prompt into the active Claude session.** Claude runs brew, sees the output, debugs failures, falls back to vendor docs, and edits CLAUDE.md per the marker convention. Same pattern Claude uses for everything else in OpenIT.
+**v3 (this plan): hybrid.** Programmatic install runs `brew install` directly so the UI sees real state — `idle → installing → installed/failed`. On failure, the captured stderr can be handed to Claude as a debug prompt that includes the actual error and asks Claude to pick an alternate install path.
 
-Trade-off: one Claude turn per install (cost: pennies). What you get: robust to bad metadata, robust to per-OS install variation, fully transparent to the user (they see the agent work in the chat), and *much* less code on our side. No more brew shell-out, no more Rust string-splicing, no more session restart wiring.
+| State | UI | Trigger |
+|---|---|---|
+| `idle` (not installed) | "Install locally" button | Click |
+| `idle` (installed) | "Uninstall" red button | Click |
+| `busy` | "Installing…" / "Uninstalling…" disabled | While brew runs |
+| `installed` | Green dot + "Installed" pill | brew exit 0 |
+| `failed` | Inline error block with stderr + "Ask Claude to debug ↗" + "Dismiss" | brew exit ≠ 0 |
+| `handed-off` | "Sent to Claude →" disabled (4s) | After clicking debug |
+
+What you get: fast deterministic happy path (95% of installs), Claude as an explicit fallback for the cases where our brew metadata is wrong or the user's machine is unusual. The user sees the actual stderr they hit before deciding to involve the agent.
 
 ---
 
@@ -50,15 +59,20 @@ Microsoft Graph CLI was in v1 but pulled (no canonical brew formula — the tap 
 
 ### Backend (Rust, `src-tauri/src/cli_tools.rs`)
 
-A single Tauri command — `cli_is_installed(binary: String) -> bool`. Wraps `which::which`. Free PATH lookup the catalog UI calls per entry to render install/installed state. Detection is source-agnostic — a binary the user installed manually flips the card to "Installed" without OpenIT having done anything.
+Four Tauri commands:
 
-Everything else (running brew, vendor fallback, CLAUDE.md splicing) is Claude's responsibility now.
+- **`cli_is_installed(binary)`** — `which::which` lookup. Source-agnostic; a binary the user installed manually still flips the card.
+- **`cli_install(args)`** — runs `brew install <pkg>`, then splices the entry's hint line into CLAUDE.md. Brew failure short-circuits without writing the hint; stderr propagates verbatim so the UI can offer it to the agent-debug fallback.
+- **`cli_uninstall(args)`** — runs `brew uninstall <pkg>` AND strips the entry from CLAUDE.md. The CLAUDE.md update happens regardless of brew exit (the CLI may have been installed out-of-band); brew errors surface for the recovery affordances.
+- **`cli_remove_hint_only(...)`** — strip-the-hint without touching the binary. Used as a manual recovery option when brew uninstall failed.
+
+The CLAUDE.md splicer (`upsert_cli_entry`, `remove_cli_entry`, `parse_block`, `rewrite_block`) is pure-string and unit-tested in Rust (8 tests covering append, preserve-existing, replace-in-place, sort-by-id, drop-block-when-last, no-op-on-unknown, parse).
 
 ### Frontend
 
-- **`src/lib/cliCatalog.ts`** — hardcoded 7-entry catalog with `binary`, `brewPkg`, `claudeMdHint`, `docsUrl`.
-- **`src/lib/cliInstall.ts`** — `listInstalled()` (calls `cli_is_installed` for every catalog entry in parallel), `buildInstallPrompt(entry)` / `buildUninstallPrompt(entry)` (pure functions, unit-tested), `requestCliInstall(entry)` / `requestCliUninstall(entry)` (write the prompt into the active Claude session via `writeToActiveSession`).
-- **`src/shell/CliPanel.tsx`** + scoped `CliPanel.module.css` — the catalog UI rendered into the center pane. Click Install → request flies → button flashes "Sent to Claude →" for 4 seconds.
+- **`src/lib/cliCatalog.ts`** — hardcoded 7-entry catalog: `binary`, `brewPkg`, `claudeMdHint`, `docsUrl`.
+- **`src/lib/cliInstall.ts`** — `listInstalled()` (calls `cli_is_installed` per entry in parallel), `installCli(...)` / `uninstallCli(...)` / `removeHintOnly(...)` (Tauri bridges to the Rust commands, surfacing stderr on failure), `buildInstallDebugPrompt(entry, stderr)` / `buildUninstallDebugPrompt(entry, stderr)` (pure prompt builders, unit-tested), `requestInstallDebug(...)` / `requestUninstallDebug(...)` (write the prompt to the active Claude session).
+- **`src/shell/CliPanel.tsx`** + scoped `CliPanel.module.css` — catalog UI with the deterministic state machine described above. Each card tracks its own `CardStatus`; failures render inline error blocks with stderr + the "Ask Claude to debug" handoff.
 
 ### Marker-block convention
 
@@ -94,10 +108,10 @@ CLI is a first-class Workbench entity (no file-explorer presence — system stat
 
 1. **Workbench** shows a **CLI** station with the count of currently-detected CLIs.
 2. **Click CLI** → Viewer renders the catalog grid in the center pane.
-3. **Click Install** → an install prompt is written into the active Claude session as a new turn. The card's button flashes "Sent to Claude →" for 4 seconds.
-4. **Watch Claude work in the chat.** Claude runs `brew install`, sees its output, debugs failures (bad tap, missing formula, network) the way a human would, and updates CLAUDE.md when the install succeeds.
-5. **Uninstall** mirrors install. `window.confirm` guards (since the chat will be visibly busy for a moment) but doesn't kill any sessions — the same Claude that runs the uninstall already has the new CLAUDE.md state in context.
-6. **No auto-restart.** The session that runs the install also edits CLAUDE.md — it doesn't need to re-read the file. Future sessions read the updated CLAUDE.md naturally on start.
+3. **Click Install** → button flips to "Installing…" while brew runs. On success the card flips to the green Installed pill. On failure an inline error block appears with the captured stderr.
+4. **Failed install** → choices: "Ask Claude to debug ↗" (writes a prompt with the actual stderr into the chat — Claude picks an alternate install path), or "Dismiss" (clear the error, retry whenever).
+5. **Failed uninstall** → same pattern, plus a "Just dismiss the hint" button for the case where brew can't manage the binary but the user is fine leaving it on disk.
+6. **No auto-restart.** Programmatic install is fast enough that the same Claude session naturally picks up the new tool either via training (it knows `gh`, `aws`, etc.) or via the next message that mentions it. Future sessions read the updated CLAUDE.md on start.
 7. **Per-card "docs ↗" link** to the vendor docs.
 
 No Pinkfish CTA — Pinkfish doesn't have a parallel CLI offering, so the comparison was forced. Cloud upsell stays in the existing Connect-to-Cloud flow.
@@ -107,20 +121,22 @@ No Pinkfish CTA — Pinkfish doesn't have a parallel CLI offering, so the compar
 ## Checklist
 
 ### Backend
-- [x] `src-tauri/src/cli_tools.rs` — single `cli_is_installed` command (everything else moved to Claude).
-- [x] Register in `src-tauri/src/lib.rs`.
+- [x] `src-tauri/src/cli_tools.rs` — `cli_is_installed`, `cli_install`, `cli_uninstall`, `cli_remove_hint_only`. Splicer with 8 unit tests.
+- [x] Register all four in `src-tauri/src/lib.rs`.
 
 ### Frontend
 - [x] `src/lib/cliCatalog.ts` — 7 entries (Tailscale replaces MS Graph).
-- [x] `src/lib/cliInstall.ts` — `listInstalled`, prompt builders, `requestCliInstall` / `requestCliUninstall`.
-- [x] `src/shell/CliPanel.tsx` + `CliPanel.module.css`.
+- [x] `src/lib/cliInstall.ts` — `listInstalled`, `installCli` / `uninstallCli` / `removeHintOnly`, debug-prompt builders, `requestInstallDebug` / `requestUninstallDebug`.
+- [x] `src/shell/CliPanel.tsx` — deterministic per-card state machine + inline failure recovery.
+- [x] `src/shell/CliPanel.module.css`.
 - [x] Entity wiring: `entityIcons.tsx`, `types.ts`, `entityRouting.ts`, `Viewer.tsx`, `Workbench.tsx`.
 
 ### Plugin
 - [x] `scripts/openit-plugin/CLAUDE.md` — marker convention spec so Claude knows the format. **At merge time, mirror to `/web/packages/app/public/openit-plugin/CLAUDE.md` and bump manifest version.**
 
 ### Tests
-- [x] **TS unit** — `cliCatalog.test.ts` (shape conformance), `cliInstall.test.ts` (listInstalled, prompt builders, request functions).
+- [x] **Rust unit** — splicer tests in `cli_tools.rs`: append-block, preserve-existing-content, replace-in-place, sort-by-id, drop-block-when-last, no-op-on-unknown, parse-block, no-op-on-unchanged.
+- [x] **TS unit** — `cliCatalog.test.ts` (shape conformance), `cliInstall.test.ts` (listInstalled, installCli/uninstallCli/removeHintOnly invocation shapes, UninstallError wrapping, debug-prompt builders, request functions).
 
 ### Ship
 - [ ] `npx tsc --noEmit` clean
@@ -132,11 +148,11 @@ No Pinkfish CTA — Pinkfish doesn't have a parallel CLI offering, so the compar
 
 ## Manual E2E plan
 
-- **`gh` install** — Claude is well-trained on it; should run `brew install gh` and update CLAUDE.md without drama. Validates the happy path.
-- **`okta` install** — less-known to Claude; exercises the marker convention more carefully and the `<tool> --help` discovery angle.
-- **`tailscale` install** — also less-known; second pass at the discovery flow.
-- **Failure injection** — uninstall brew temporarily (`mv $(which brew) /tmp/brew.bak`) and try installing. Should see Claude debug, suggest curl, fall back to docs. Restore brew after.
-- **Uninstall** — verify the CLAUDE.md block updates correctly, including the empty-block-cleanup case (uninstall the last entry).
+- **`gh` install (happy path)** — programmatic brew install runs, button flips to "Installing…" → green Installed pill, CLAUDE.md gets the marker block.
+- **`tailscale` install** — less-known to Claude; verifies the `--help` discovery angle once Claude reads the new CLAUDE.md hint on the next session.
+- **Failure injection** — temporarily disable brew (`mv $(which brew) /tmp/brew.bak`) and click Install. Inline error block appears with the actual stderr. Click "Ask Claude to debug" — prompt lands in the chat with the captured error. Claude picks an alternate install path. Restore brew after.
+- **Uninstall** — verify CLAUDE.md block updates correctly, including the empty-block-cleanup case (uninstall the last entry).
+- **Bad-tap regression** — temporarily change `okta`'s `brewPkg` to a fictional tap, click Install, confirm we get the proper error block + debug handoff (not a silent failure).
 
 ---
 

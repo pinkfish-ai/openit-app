@@ -1,13 +1,10 @@
-/// Install / uninstall happen through Claude. OpenIT writes a structured
-/// prompt into the embedded Claude session; Claude runs the install
-/// (brew first, vendor docs as fallback), debugs failures, and updates
-/// CLAUDE.md per the marker convention documented in the plugin's
-/// `CLAUDE.md` (`<!-- openit:cli-tools:start -->` block, per-entry
-/// `<!-- entry:ID -->` lines).
-///
-/// The free PATH lookup (`cli_is_installed`) is what the catalog UI
-/// uses to reflect installed-vs-not. Detection is source-agnostic — a
-/// binary the user installed manually still flips the card.
+/// CLI install/uninstall — hybrid model. The happy path runs `brew
+/// install` directly via the Rust `cli_install` command so the UI sees
+/// deterministic state (idle → installing → installed/failed). On
+/// failure, the captured stderr can be handed to Claude as a debug
+/// prompt — Claude picks an alternate install path (curl, dnf, dotnet
+/// tool, etc.) for cases where our brew metadata is wrong or the user's
+/// machine is unusual.
 
 import { invoke } from "@tauri-apps/api/core";
 import { writeToActiveSession } from "../shell/activeSession";
@@ -31,54 +28,128 @@ export async function listInstalled(): Promise<Set<string>> {
   return installed;
 }
 
-/// Build the install prompt for a catalog entry. Self-contained — gives
-/// Claude the suggested brew command, the vendor docs URL for fallback,
-/// the entry id and hint line, and a reminder to verify with `which`.
-/// Pulled out as a pure function so it can be unit-tested.
-export function buildInstallPrompt(entry: CatalogEntry): string {
+/// Run `brew install <pkg>` and add the entry to CLAUDE.md. Resolves
+/// when both succeed; rejects with brew stderr on failure so the UI
+/// can surface it (and offer the Claude-debug fallback).
+export async function installCli(
+  projectRoot: string,
+  entry: CatalogEntry,
+): Promise<void> {
+  await invoke("cli_install", {
+    args: {
+      project_root: projectRoot,
+      brew_pkg: entry.brewPkg,
+      entry_id: entry.id,
+      claude_md_line: entry.claudeMdHint,
+    },
+  });
+}
+
+/// Run `brew uninstall <pkg>` and remove the entry from CLAUDE.md.
+/// Throws an `UninstallError` carrying the brew error AND a flag
+/// indicating CLAUDE.md was already cleaned up — the UI uses this to
+/// offer the "remove hint only" recovery for non-brew-managed binaries.
+export class UninstallError extends Error {
+  constructor(
+    message: string,
+    public readonly hintRemoved: boolean,
+  ) {
+    super(message);
+    this.name = "UninstallError";
+  }
+}
+
+export async function uninstallCli(
+  projectRoot: string,
+  entry: CatalogEntry,
+): Promise<void> {
+  try {
+    await invoke("cli_uninstall", {
+      args: {
+        project_root: projectRoot,
+        brew_pkg: entry.brewPkg,
+        entry_id: entry.id,
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new UninstallError(msg, true);
+  }
+}
+
+/// Strip the CLAUDE.md hint without touching any installed binary.
+/// Recovery path when brew uninstall fails because the CLI wasn't
+/// brew-managed.
+export async function removeHintOnly(
+  projectRoot: string,
+  entry: CatalogEntry,
+): Promise<void> {
+  await invoke("cli_remove_hint_only", {
+    projectRoot,
+    entryId: entry.id,
+  });
+}
+
+/// Build the debug prompt for a failed install. Self-contained — gives
+/// Claude the brew command we tried, the actual stderr, the vendor
+/// docs URL, and the marker-block update we want once it succeeds.
+/// Pure function so it can be unit-tested.
+export function buildInstallDebugPrompt(
+  entry: CatalogEntry,
+  brewStderr: string,
+): string {
   return [
-    `[OpenIT] Please install ${entry.name} on this machine.`,
+    `[OpenIT] I tried to install ${entry.name} via \`brew install ${entry.brewPkg}\` and it failed:`,
     ``,
-    `Suggested install: \`brew install ${entry.brewPkg}\`. If brew is missing, the formula isn't found, or the install otherwise fails, check the vendor docs (${entry.docsUrl}) for an alternate method (curl script, package manager, etc.) and use whichever works on this OS.`,
+    "```",
+    brewStderr.trim(),
+    "```",
     ``,
-    `After install, verify the binary is on PATH: \`which ${entry.binary}\`.`,
+    `Please debug this. Check the vendor docs at ${entry.docsUrl} for an alternate install method (curl script, package manager, dotnet tool, etc.) that works on this OS, run it, and verify with \`which ${entry.binary}\`.`,
     ``,
-    `Then update CLAUDE.md to register the tool. Use the marker convention from the "Locally-installed CLI tools" section. Add (or replace) this exact entry line, keyed by entry id \`${entry.id}\`:`,
+    `When the install succeeds, update CLAUDE.md per the marker convention. Add (or replace) this line keyed by entry id \`${entry.id}\`, sorted alphabetically among the existing entries:`,
     ``,
     `<!-- entry:${entry.id} -->- ${entry.claudeMdHint}`,
     ``,
-    `Lines inside the block should be sorted alphabetically by entry id. If the marker block doesn't exist yet, create it at the end of CLAUDE.md.`,
-    ``,
-    `Tell me when it's done — including whether the install succeeded.`,
-  ].join("\n");
-}
-
-/// Build the uninstall prompt. Mirrors install — Claude runs `brew
-/// uninstall` (or alternative) and strips the entry from CLAUDE.md.
-export function buildUninstallPrompt(entry: CatalogEntry): string {
-  return [
-    `[OpenIT] Please uninstall ${entry.name} from this machine.`,
-    ``,
-    `Suggested removal: \`brew uninstall ${entry.brewPkg}\`. If the binary wasn't brew-managed (manual installer, etc.), use the appropriate removal method or just confirm with the user how it was installed.`,
-    ``,
-    `Then update CLAUDE.md: remove the line keyed by \`<!-- entry:${entry.id} -->\` from the OpenIT marker block. If that was the last entry, remove the entire block.`,
+    `If the marker block doesn't exist yet, create it at the end of CLAUDE.md.`,
     ``,
     `Tell me when it's done.`,
   ].join("\n");
 }
 
-/// Write the install prompt into the active Claude session. Returns
-/// false if no session is active (the user hasn't started Claude yet);
-/// the UI surfaces that as an error.
-export async function requestCliInstall(entry: CatalogEntry): Promise<boolean> {
-  const prompt = buildInstallPrompt(entry);
-  // Trailing carriage return submits the prompt as a new turn.
-  return writeToActiveSession(prompt + "\r");
+/// Build the debug prompt for a failed uninstall. Same idea — Claude
+/// picks the right uninstall path given the captured stderr.
+export function buildUninstallDebugPrompt(
+  entry: CatalogEntry,
+  brewStderr: string,
+): string {
+  return [
+    `[OpenIT] I tried to uninstall ${entry.name} via \`brew uninstall ${entry.brewPkg}\` and it failed:`,
+    ``,
+    "```",
+    brewStderr.trim(),
+    "```",
+    ``,
+    `The CLAUDE.md hint for \`${entry.id}\` has already been removed. The binary is probably installed via a different mechanism (manual installer, pip, dotnet tool, etc.) — find the right uninstall path and run it.`,
+    ``,
+    `Tell me when it's done.`,
+  ].join("\n");
 }
 
-export async function requestCliUninstall(
+/// Send the install-debug prompt to the active Claude session. Returns
+/// false if no session is active.
+export async function requestInstallDebug(
   entry: CatalogEntry,
+  brewStderr: string,
 ): Promise<boolean> {
-  const prompt = buildUninstallPrompt(entry);
-  return writeToActiveSession(prompt + "\r");
+  return writeToActiveSession(buildInstallDebugPrompt(entry, brewStderr) + "\r");
+}
+
+export async function requestUninstallDebug(
+  entry: CatalogEntry,
+  brewStderr: string,
+): Promise<boolean> {
+  return writeToActiveSession(
+    buildUninstallDebugPrompt(entry, brewStderr) + "\r",
+  );
 }

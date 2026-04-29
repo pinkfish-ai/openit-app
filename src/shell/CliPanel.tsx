@@ -1,23 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
 import { CATALOG, type CatalogEntry } from "../lib/cliCatalog";
 import {
+  installCli,
   listInstalled,
-  requestCliInstall,
-  requestCliUninstall,
+  removeHintOnly,
+  requestInstallDebug,
+  requestUninstallDebug,
+  uninstallCli,
+  UninstallError,
 } from "../lib/cliInstall";
 import styles from "./CliPanel.module.css";
 
 /// CLI catalog rendered into the center pane via the `cli` entity
-/// route. Click Install / Uninstall hands the request off to Claude in
-/// the embedded session — Claude runs brew (or vendor fallback), debugs
-/// failures, and edits CLAUDE.md per the marker convention. The card's
-/// installed state comes from `which` detection so it reflects what's
-/// actually on the machine, regardless of how it got there.
+/// route. Programmatic install runs `brew install` directly (fast
+/// happy path, deterministic UI state); on brew failure we surface the
+/// captured stderr with an "Ask Claude to debug" button that hands
+/// off to the agent with the actual error.
+
+type CardStatus =
+  | { kind: "idle" }
+  | { kind: "busy"; verb: "install" | "uninstall" }
+  | { kind: "failed"; verb: "install" | "uninstall"; stderr: string }
+  | { kind: "handed-off" };
+
 export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
   const [installed, setInstalled] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
-  const [requestedId, setRequestedId] = useState<string | null>(null);
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [statuses, setStatuses] = useState<Record<string, CardStatus>>({});
 
   const refreshInstalled = async () => {
     if (!projectRoot) return;
@@ -50,50 +59,83 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
     });
   }, [search, installed]);
 
-  const clearError = (id: string) =>
-    setErrors((prev) => {
+  const setStatus = (id: string, status: CardStatus) =>
+    setStatuses((prev) => ({ ...prev, [id]: status }));
+
+  const onInstall = async (entry: CatalogEntry) => {
+    if (!projectRoot) return;
+    setStatus(entry.id, { kind: "busy", verb: "install" });
+    try {
+      await installCli(projectRoot, entry);
+      setStatus(entry.id, { kind: "idle" });
+      await refreshInstalled();
+    } catch (e) {
+      const stderr = e instanceof Error ? e.message : String(e);
+      setStatus(entry.id, { kind: "failed", verb: "install", stderr });
+    }
+  };
+
+  const onUninstall = async (entry: CatalogEntry) => {
+    if (!projectRoot) return;
+    const ok = window.confirm(
+      `Uninstall ${entry.name}? This will run \`brew uninstall ${entry.brewPkg}\`.`,
+    );
+    if (!ok) return;
+    setStatus(entry.id, { kind: "busy", verb: "uninstall" });
+    try {
+      await uninstallCli(projectRoot, entry);
+      setStatus(entry.id, { kind: "idle" });
+      await refreshInstalled();
+    } catch (e) {
+      // brew uninstall failed (probably not brew-managed). The
+      // CLAUDE.md hint is already gone — refresh installed state and
+      // surface the error with a debug-handoff button.
+      const stderr = e instanceof UninstallError ? e.message : String(e);
+      setStatus(entry.id, { kind: "failed", verb: "uninstall", stderr });
+      await refreshInstalled();
+    }
+  };
+
+  const onAskClaude = async (entry: CatalogEntry, status: CardStatus) => {
+    if (status.kind !== "failed") return;
+    const sent =
+      status.verb === "install"
+        ? await requestInstallDebug(entry, status.stderr)
+        : await requestUninstallDebug(entry, status.stderr);
+    if (!sent) {
+      // No active Claude session; keep the failed state so the user
+      // sees the error and can retry once Claude is up.
+      return;
+    }
+    setStatus(entry.id, { kind: "handed-off" });
+    setTimeout(() => {
+      setStatuses((prev) => {
+        if (prev[entry.id]?.kind !== "handed-off") return prev;
+        const next = { ...prev };
+        delete next[entry.id];
+        return next;
+      });
+    }, 4000);
+  };
+
+  const onRemoveHintOnly = async (entry: CatalogEntry) => {
+    if (!projectRoot) return;
+    try {
+      await removeHintOnly(projectRoot, entry);
+      setStatus(entry.id, { kind: "idle" });
+      await refreshInstalled();
+    } catch (e) {
+      const stderr = e instanceof Error ? e.message : String(e);
+      setStatus(entry.id, { kind: "failed", verb: "uninstall", stderr });
+    }
+  };
+
+  const onDismiss = (id: string) =>
+    setStatuses((prev) => {
       const next = { ...prev };
       delete next[id];
       return next;
     });
-
-  const flashRequested = (id: string) => {
-    setRequestedId(id);
-    // Brief feedback then clear — the actual install happens in the
-    // chat, the user's eye should follow Claude there. Catalog
-    // refreshes installed state when the panel is reopened.
-    setTimeout(() => setRequestedId((curr) => (curr === id ? null : curr)), 4000);
-  };
-
-  const onInstall = async (entry: CatalogEntry) => {
-    clearError(entry.id);
-    const ok = await requestCliInstall(entry);
-    if (!ok) {
-      setErrors((prev) => ({
-        ...prev,
-        [entry.id]: "No active Claude session — start Claude in the right pane first.",
-      }));
-      return;
-    }
-    flashRequested(entry.id);
-  };
-
-  const onUninstall = async (entry: CatalogEntry) => {
-    const ok = window.confirm(
-      `Hand off uninstall of ${entry.name} to Claude? Claude will run \`brew uninstall ${entry.brewPkg}\` and remove the CLAUDE.md hint.`,
-    );
-    if (!ok) return;
-    clearError(entry.id);
-    const sent = await requestCliUninstall(entry);
-    if (!sent) {
-      setErrors((prev) => ({
-        ...prev,
-        [entry.id]: "No active Claude session — start Claude in the right pane first.",
-      }));
-      return;
-    }
-    flashRequested(entry.id);
-  };
 
   if (!projectRoot) {
     return (
@@ -107,10 +149,9 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
     <div className={styles.panel}>
       <h2 className={styles.heading}>Give your agent hands</h2>
       <p className={styles.tagline}>
-        Install CLI tools so Claude can act on your IT systems via Bash. Click
-        Install and Claude handles the rest in the chat — running brew, picking
-        a fallback if needed, and updating <code>CLAUDE.md</code> so it knows the
-        tool is available.
+        Install CLI tools so Claude can act on your IT systems via Bash. Brew
+        runs the install; if it fails, hand the actual error to Claude and let
+        it pick a fallback.
       </p>
       <input
         type="text"
@@ -125,10 +166,12 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
             key={entry.id}
             entry={entry}
             installed={installed.has(entry.id)}
-            requested={requestedId === entry.id}
-            error={errors[entry.id]}
+            status={statuses[entry.id] ?? { kind: "idle" }}
             onInstall={() => onInstall(entry)}
             onUninstall={() => onUninstall(entry)}
+            onAskClaude={(s) => onAskClaude(entry, s)}
+            onRemoveHintOnly={() => onRemoveHintOnly(entry)}
+            onDismiss={() => onDismiss(entry.id)}
           />
         ))}
       </div>
@@ -139,25 +182,43 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
 function CliCard({
   entry,
   installed,
-  requested,
-  error,
+  status,
   onInstall,
   onUninstall,
+  onAskClaude,
+  onRemoveHintOnly,
+  onDismiss,
 }: {
   entry: CatalogEntry;
   installed: boolean;
-  requested: boolean;
-  error?: string;
+  status: CardStatus;
   onInstall: () => void;
   onUninstall: () => void;
+  onAskClaude: (s: CardStatus) => void;
+  onRemoveHintOnly: () => void;
+  onDismiss: () => void;
 }) {
-  const primaryLabel = installed
-    ? requested
-      ? "Sent to Claude →"
-      : "Uninstall"
-    : requested
-      ? "Sent to Claude →"
-      : "Install locally";
+  const busy = status.kind === "busy";
+  const handedOff = status.kind === "handed-off";
+
+  let primaryLabel: string;
+  let primaryHandler: () => void;
+  let primaryDanger = false;
+  if (handedOff) {
+    primaryLabel = "Sent to Claude →";
+    primaryHandler = () => {};
+  } else if (busy) {
+    primaryLabel = status.verb === "install" ? "Installing…" : "Uninstalling…";
+    primaryHandler = () => {};
+  } else if (installed) {
+    primaryLabel = "Uninstall";
+    primaryHandler = onUninstall;
+    primaryDanger = true;
+  } else {
+    primaryLabel = "Install locally";
+    primaryHandler = onInstall;
+  }
+
   return (
     <div className={styles.card}>
       <div className={styles.cardHeader}>
@@ -172,9 +233,9 @@ function CliCard({
       <div className={styles.cardActions}>
         <button
           type="button"
-          className={`${styles.btn} ${installed ? styles.btnDanger : styles.btnPrimary}`}
-          onClick={installed ? onUninstall : onInstall}
-          disabled={requested}
+          className={`${styles.btn} ${primaryDanger ? styles.btnDanger : styles.btnPrimary}`}
+          onClick={primaryHandler}
+          disabled={busy || handedOff}
         >
           {primaryLabel}
         </button>
@@ -187,7 +248,41 @@ function CliCard({
           docs ↗
         </a>
       </div>
-      {error && <p className={styles.error}>{error}</p>}
+      {status.kind === "failed" && (
+        <div className={styles.error}>
+          <span>
+            {status.verb === "install"
+              ? "Install failed."
+              : "Uninstall failed (the CLAUDE.md hint was removed regardless)."}
+          </span>
+          <pre className={styles.errorStderr}>{status.stderr}</pre>
+          <div className={styles.errorActions}>
+            <button
+              type="button"
+              className={styles.errorRecovery}
+              onClick={() => onAskClaude(status)}
+            >
+              Ask Claude to debug ↗
+            </button>
+            {status.verb === "uninstall" && (
+              <button
+                type="button"
+                className={styles.errorRecovery}
+                onClick={onRemoveHintOnly}
+              >
+                Just dismiss the hint
+              </button>
+            )}
+            <button
+              type="button"
+              className={styles.errorDismiss}
+              onClick={onDismiss}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
