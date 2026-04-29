@@ -46,9 +46,14 @@ Together: agents+workflows have a behaviour gap, datastore has an architecture g
 1. **Agents → bidirectional.** Add a push path (`pushAllToAgents` per agent file). Wire onto the appropriate engine helper. `agentSync.ts` becomes a thin wrapper. Conflicts use the same `.server.json` shadow + cross-entity conflict bus.
 2. **Workflows → bidirectional.** Same pattern as agents. Push path targets `POST /service/automations/{id}` (or whatever the dashboard's "save draft" endpoint is). Release stays manual via the existing dashboard UX — sync targets the workflow draft only.
 3. **Datastore consolidation.** Refactor `datastoreSync.ts` to use the same shared engine helper as filestore + KB. If the shape fits, plug in. If it doesn't (rows + schema is different enough), extract a sibling `startRowCollectionEntitySync` rather than knob-fitting the existing helper.
-4. **Single Sync-tab Commit pushes everything.** The Sync tab's commit handler currently pushes filestore, KB, and datastore. Phase 3 extends `pushAll.ts` to include agents + workflows. One click → all five entities.
-5. **Plugin script support.** `sync-resolve-conflict.mjs` already accepts `agent` / `workflow` / `datastore` for flat manifests. Whatever new shape datastore adopts (nested or otherwise), the script keeps working.
-6. **Integration tests** covering each engine's bidirectional flow against the live Pinkfish org.
+4. **Custom-datastore overview tile + listing view.** Today the Workbench overview has dedicated tiles for `tickets` and `people` (the two default datastores) and no surface for anything else under `databases/`. With Phase 3 supporting any `openit-*` datastore (including ones the user creates in the dashboard like `openit-projects`), those would be invisible from the overview. Phase 3 adds a conditional **"Databases"** tile that:
+   - Renders only when at least one non-default datastore is present (i.e. any `openit-*` datastore other than `openit-tickets` / `openit-people`).
+   - Click opens an all-datastores listing view — the user's full set of datastores including the defaults, with row-counts and last-sync timestamps.
+   - Each entry in the listing routes into the existing FileExplorer at `databases/<colName>/`.
+   - Default tiles (`tickets`, `people`) stay as the primary fast-paths; the new tile is for discoverability of customs without cluttering the overview when the user has only the defaults.
+5. **Single Sync-tab Commit pushes everything.** The Sync tab's commit handler currently pushes filestore, KB, and datastore. Phase 3 extends `pushAll.ts` to include agents + workflows. One click → all five entities.
+6. **Plugin script support.** `sync-resolve-conflict.mjs` already accepts `agent` / `workflow` / `datastore` for flat manifests. Whatever new shape datastore adopts (nested or otherwise), the script keeps working.
+7. **Integration tests** covering each engine's bidirectional flow against the live Pinkfish org.
 
 ### Out (deferred to later phases)
 
@@ -72,6 +77,14 @@ Together: agents+workflows have a behaviour gap, datastore has an architecture g
 - [ ] Sync tab Commit pushes all five entity types in one operation. Each surfaces a `▸ sync: <entity> pushing` log line and a `<n> ok, <m> failed` result.
 - [ ] `cloud.json.lastSyncAt` updates after successful pulls of any entity (Phase 2 already covers filestore + KB; Phase 3 picks up agents / workflows / datastore).
 - [ ] Local-only mode: editing any entity locally with no Pinkfish creds is fine. The sync is a no-op until creds are present.
+
+### Overview UX
+
+- [ ] User with only the two default datastores (`openit-tickets`, `openit-people`) sees the existing two tiles and NO "Databases" tile. Overview is unchanged.
+- [ ] User with a custom datastore (e.g. `openit-projects`) sees the existing two default tiles AND a new "Databases" tile.
+- [ ] Click the "Databases" tile → listing view of every `openit-*` datastore, with row count + last-sync timestamp per entry.
+- [ ] Click an entry in the listing → opens the FileExplorer at `databases/<colName>/`.
+- [ ] When the user deletes a custom datastore on the cloud, the next poll removes it from the listing and (if it was the only custom one) hides the "Databases" tile again on next overview render.
 
 ### Architecture
 
@@ -109,6 +122,10 @@ Together: agents+workflows have a behaviour gap, datastore has an architecture g
 6. **Linear ticket.** New sibling of PIN-5775? Or a tracking parent ticket with three child issues? See Q4 — depends on scope decision.
 
 7. **What about plugin skills hardcoding paths?** `answer-ticket.md` says "Write to `knowledge-bases/default/<filename>.md` (unless the admin asked for a custom KB)." If the admin's workspace has only `openit-runbooks`, that skill would write to `knowledge-bases/default/` which doesn't exist. Out of scope per the brief but worth flagging — a future "skill content audit" phase makes sense.
+
+8. **"Databases" tile naming.** "Databases" is the current term in Workbench station IDs (`databases/`). But the user-facing UI today calls them "Datastores" via `displayFilestoreName`-style helpers? Quick audit: ENTITY_META labels (`tickets` / `people`) avoid the word entirely; the FileExplorer says "datastore". Recommendation: pick one — "Databases" reads more natural to non-engineers, "Datastores" matches the cloud REST type. Either is fine, but a one-pass rename across UI strings would clean up inconsistencies.
+
+9. **What about analogous treatment for filestore + KB customs?** Phase 2 made filestore + KB multi-collection-aware, but the Workbench has just one `files` tile and one `knowledge` tile. Clicking either opens the FileExplorer rooted at the parent dir, so customs are reachable — but they're not surfaced on the overview. Same UX gap as datastore had pre-Phase-3. Should the conditional-tile pattern extend to "show a `files` / `knowledge` listing tile when the user has more than the defaults" — or is the FileExplorer's existing tree view sufficient there? Recommendation: ship the datastore tile in Phase 3, see if the same gap is felt for filestore / KB, address it separately if so.
 
 ---
 
