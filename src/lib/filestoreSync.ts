@@ -418,18 +418,24 @@ export async function startFilestoreSync(args: {
   if (collections.length > 0) {
     // Sync all collections, not just the first one
     for (const collection of collections) {
+      console.log(`[filestoreSync] starting pull for collection: ${collection.name} (id: ${collection.id})`);
       const adapter = filestoreAdapter({ creds, collection });
       try {
-        await runPull({ repo, adapter });
+        console.log(`[filestoreSync] calling runPull for ${collection.name}...`);
+        const result = await runPull({ repo, adapter });
+        console.log(`[filestoreSync] runPull completed for ${collection.name}: ${result.downloaded}/${result.total} files`);
       } catch (e) {
-        console.error(`[filestoreSync] initial pull failed for ${collection.name} (poll will still start):`, e);
+        console.error(`[filestoreSync] initial pull failed for ${collection.name}:`, e);
       }
       
+      console.log(`[filestoreSync] starting polling for ${collection.name}...`);
       stopPoll = startPolling(adapter, repo, {
         onPhase: (phase) => {
+          console.log(`[filestoreSync] poll phase for ${collection.name}: ${phase}`);
           if (phase === "pulling") update({ phase: "pulling" });
         },
         onResult: (r) => {
+          console.log(`[filestoreSync] poll result for ${collection.name}: ${r.pulled} pulled, ${r.remoteCount} remote, ${r.conflicts.length} conflicts`);
           const conflicts: ConflictFile[] = r.conflicts.map((c) => ({
             filename: c.manifestKey,
             reason: "local-and-remote-changed",
@@ -442,12 +448,13 @@ export async function startFilestoreSync(args: {
           });
         },
         onError: (e) => {
-          console.error(`[filestoreSync] pull failed for ${collection.name}:`, e);
+          console.error(`[filestoreSync] poll failed for ${collection.name}:`, e);
           update({ phase: "error", lastError: String(e) });
         },
       });
     }
   } else {
+    console.log(`[filestoreSync] no collections to sync`);
     update({ phase: "ready" });
   }
 }
