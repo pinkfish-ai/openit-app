@@ -216,8 +216,7 @@ async fn persist_intake_url(repo: &Path, url: &str) -> std::io::Result<()> {
     let dir = repo.join(".openit");
     tokio::fs::create_dir_all(&dir).await?;
     let body = serde_json::json!({ "url": url });
-    let json = serde_json::to_string_pretty(&body)
-        .map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(&body).map_err(std::io::Error::other)?;
     tokio::fs::write(dir.join("intake.json"), json).await
 }
 
