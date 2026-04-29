@@ -20,7 +20,15 @@ import styles from "./CliPanel.module.css";
 type CardStatus =
   | { kind: "idle" }
   | { kind: "busy"; verb: "install" | "uninstall" }
-  | { kind: "failed"; verb: "install" | "uninstall"; stderr: string }
+  | {
+      kind: "failed";
+      verb: "install" | "uninstall";
+      stderr: string;
+      /// Set when the user clicked "Ask Claude to debug" but no PTY
+      /// session was active. Lets the inline error append a hint
+      /// telling them to start Claude.
+      claudeSessionMissing?: boolean;
+    }
   | { kind: "handed-off" };
 
 export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
@@ -103,8 +111,9 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
         ? await requestInstallDebug(entry, status.stderr)
         : await requestUninstallDebug(entry, status.stderr);
     if (!sent) {
-      // No active Claude session; keep the failed state so the user
-      // sees the error and can retry once Claude is up.
+      // No active Claude session — surface that on the existing
+      // failure block instead of letting the click look broken.
+      setStatus(entry.id, { ...status, claudeSessionMissing: true });
       return;
     }
     setStatus(entry.id, { kind: "handed-off" });
@@ -149,9 +158,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
     <div className={styles.panel}>
       <h2 className={styles.heading}>Give your agent hands</h2>
       <p className={styles.tagline}>
-        Install CLI tools so Claude can act on your IT systems via Bash. Brew
-        runs the install; if it fails, hand the actual error to Claude and let
-        it pick a fallback.
+        Install CLI tools so Claude can act on your IT systems via Bash.
       </p>
       <input
         type="text"
@@ -251,11 +258,21 @@ function CliCard({
       {status.kind === "failed" && (
         <div className={styles.error}>
           <span>
-            {status.verb === "install"
-              ? "Install failed."
-              : "Uninstall failed (the CLAUDE.md hint was removed regardless)."}
+            {status.verb === "install" ? "Install failed." : "Uninstall failed."}
           </span>
           <pre className={styles.errorStderr}>{status.stderr}</pre>
+          {status.verb === "uninstall" && (
+            <span className={styles.errorHelper}>
+              The CLAUDE.md hint may still be present — use "Just dismiss the
+              hint" if you want to clean it up without retrying brew.
+            </span>
+          )}
+          {status.claudeSessionMissing && (
+            <span className={styles.errorHelper}>
+              No active Claude session — start Claude in the right pane and try
+              "Ask Claude to debug" again.
+            </span>
+          )}
           <div className={styles.errorActions}>
             <button
               type="button"

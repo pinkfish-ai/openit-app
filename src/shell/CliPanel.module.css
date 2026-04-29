@@ -209,6 +209,12 @@
   overflow-y: auto;
 }
 
+.errorHelper {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .errorActions {
   display: flex;
   gap: 6px;
