@@ -150,22 +150,27 @@ No datastore unit tests today. No datastore real-API integration test today. Pha
 
 ### Approach
 
-Three coupled pieces:
+Four coupled pieces:
 
-1. **Engine helper** — extend `createCollectionEntitySync` with an `onAfterResolve(repo, collections)` config hook that fires once per `start()` after auto-create + re-resolve, before the per-collection pull loop. Purely additive — filestore + KB pass `undefined` and behave identically. Datastore supplies the schema-write step.
+1. **Engine helper** — extend `createCollectionEntitySync` with two new optional config hooks. Both unused by filestore + KB (they keep their existing simple-defaults behaviour); datastore supplies both:
+   - `onAfterResolve(repo, collections)` — fires once per `start()` after auto-create + re-resolve, before the per-collection pull loop. Datastore uses this for the structured-only `_schema.json` write.
+   - `discoverLocalCollections({ repo, existingNames }) → Promise<{name, isStructured?, schema?}[]>` — datastore returns names of local `databases/<foldername>/` subdirs not yet on cloud. The orchestrator's auto-create loop POSTs each one alongside the hardcoded defaults.
+   - `buildCreateBody(name, opts) → object` — engine-specific POST body shape. Datastore returns `{ name, type: "datastore", isStructured, schema?, templateId?, ... }`; filestore + KB keep their default body shape via the existing `describeDefault` mechanism.
 
 2. **Datastore engine** — refactor for per-collection adapter shape, plug into `createCollectionEntitySync`, drop the org-suffix from default names, add `nestedManifest.ts` support for `"datastore"` entity name, branch on `isStructured` where the API surfaces diverge (push body shape, list-items request).
 
-3. **Overview UX** — conditional `databases` Workbench station + listing view that reuses the existing FileExplorer collection-card pattern.
+3. **Local-folder-driven creation.** When a user drops a new folder into `databases/<foldername>/` (manually or via Claude in the terminal), on next connect (or 60s poll if we wire it in) the orchestrator auto-creates `openit-<foldername>` on cloud. **If the local folder contains a `_schema.json`, the cloud datastore is created STRUCTURED with that schema.** Otherwise, UNSTRUCTURED (freeform JSON rows). Conversations (`databases/conversations/`) is excluded — it's a local-only system folder and never gets mirrored to cloud.
+
+4. **Overview UX** — conditional `databases` Workbench station + listing view that reuses the existing FileExplorer collection-card pattern.
 
 ### Files to modify
 
 | File | Change |
 | --- | --- |
-| `src/lib/syncEngine.ts` | Add `onAfterResolve?: (repo: string, collections: C[]) => Promise<void>` to `CollectionSyncConfig<C>`. Call it inside `start()` after `update({ collections })` and before the per-collection pull loop. Errors warn-log only (don't fail the whole sync). |
+| `src/lib/syncEngine.ts` | Add three optional fields to `CollectionSyncConfig<C>`: (1) `onAfterResolve?: (repo, collections) => Promise<void>` — fires once after resolve, before pull loop; errors warn-log. (2) `discoverLocalCollections?: ({ repo, existingNames }) => Promise<DiscoveredCollection[]>` — wrapper-supplied filesystem scan; the orchestrator auto-creates each returned entry. (3) `buildCreateBody?: (name, discovery?) => Record<string, unknown>` — engine-specific POST body for auto-create; if absent, fall back to the current default-body shape. Wire all three into the existing `autoCreateDefaultsIfMissing` loop. Filestore + KB don't supply these — behaviour unchanged for them. |
 | `src/lib/nestedManifest.ts` | Extend `EntityName` from `"fs" | "kb"` to `"fs" | "kb" | "datastore"`. Add `datastoreStateLoad` / `datastoreStateSave` to the loaders/savers maps. Existing legacy-flat-format detection migrates the old datastore manifest forward (bucket discarded — fresh state on first sync, same as Phase 2 KB). |
 | `src/lib/entities/datastore.ts` | Refactor to **per-collection** adapter: `datastoreAdapter({ creds, collection })` (singular). Compute `displayName = collection.name.replace(/^openit-/, "")` once. `prefix: \`databases/<displayName>\`` per filestore/KB pattern. `manifestKey` simplifies to `<key>` (was `<colName>/<key>`). `workingTreePath: \`databases/<displayName>/<key>.json\`` — local strips the prefix. `listRemote` paginates ONE collection (drops the across-collections flatten). `listLocal` reads `databases/<displayName>/`. `onServerDelete` doesn't need to parse the slash anymore. Persistence via `loadCollectionManifest(repo, "datastore", collection.id)` / `saveCollectionManifest`. The `unreliableKeyPrefixes` mechanic moves to per-adapter (each adapter reports its own unreliability via `paginationFailed: true`). |
-| `src/lib/datastoreSync.ts` | Collapse to ~150 LOC: define the `CollectionSyncConfig<DataCollection>`, supply `pushOne` (per-collection upload — existing full-reconcile logic scoped to one collection, with `localDirExists` safety check preserved), supply `onAfterResolve` (calls `writeDatastoreSchemas(repo, collections)`). Default names: plain `openit-tickets` and `openit-people` (drop the `-<orgId>` suffix to match filestore + KB). Drop the in-house `inflightResolve` / `lastCreationAttemptTime` / `createdCollections` caches (orchestrator owns them). `displayDatastoreName(name)` helper strips `openit-` for UI labels. Keep the same export surface (`resolveProjectDatastores`, `pullDatastoresOnce`, `pushAllToDatastores`, `startDatastoreSync`, `stopDatastoreSync`) so Shell.tsx / pushAll.ts compile unchanged. Status type `DatastoreSyncStatus = CollectionSyncStatus<DataCollection>`. |
+| `src/lib/datastoreSync.ts` | Collapse to ~200 LOC. Define the `CollectionSyncConfig<DataCollection>`, supply `pushOne` (per-collection upload — existing full-reconcile logic scoped to one collection, with `localDirExists` safety check preserved), supply `onAfterResolve` (`writeDatastoreSchemas(repo, collections)`), supply `discoverLocalCollections` (scan `databases/`, skip `conversations` + system folders, for each subdir read optional `_schema.json` to determine structured-vs-unstructured), supply `buildCreateBody` (builds `{ name, type: "datastore", isStructured, schema?, templateId?, description, createdBy, createdByName }` — `isStructured: true` + `templateId` for hardcoded defaults, `isStructured` from local-folder discovery for the rest). Default names: plain `openit-tickets` and `openit-people`. Drop in-house `inflightResolve` / `lastCreationAttemptTime` / `createdCollections` caches (orchestrator owns them). `displayDatastoreName(name)` strips `openit-`. Keep export surface (`resolveProjectDatastores`, `pullDatastoresOnce`, `pushAllToDatastores`, `startDatastoreSync`, `stopDatastoreSync`) so Shell.tsx / pushAll.ts compile unchanged. Status type `DatastoreSyncStatus = CollectionSyncStatus<DataCollection>`. |
 | `src/lib/api.ts` | Confirm `datastoreStateLoad` / `datastoreStateSave` exist (they should — they were added during R2). No new wrappers. |
 | `src/lib/pushAll.ts` | Update if datastore's status surface changes (`getDatastoreSyncStatus` becomes available, replacing the side-channel through `pullDatastoresOnce`). Likely a small simplification. |
 | `src/shell/Workbench.tsx` | Add new `databases` station entry after `people`. Wire conditional visibility based on whether any non-default `openit-*` datastore is present. Reuse existing station-rendering machinery. |
@@ -192,6 +197,9 @@ Three coupled pieces:
 - **MS-4.** Both sides edit the same row → `.server.json` shadow lands; conflict bubble names the right path; resolve script clears.
 - **MS-5.** Delete a row on dashboard → next poll removes the local file.
 - **MS-6.** Create an UNSTRUCTURED datastore `openit-notes` on the dashboard → next poll pulls it down to `databases/notes/`. NO `_schema.json` written. Row round-trip works.
+- **MS-6a.** **Local-folder-driven UNSTRUCTURED creation.** `mkdir databases/projects && echo '{"name":"alpha"}' > databases/projects/alpha.json`. Reconnect (or wait for next discovery). Verify: `openit-projects` now exists on the dashboard as an unstructured datastore. The local file pushed up.
+- **MS-6b.** **Local-folder-driven STRUCTURED creation.** `mkdir databases/contracts`, write a valid `_schema.json` inside, then add a row JSON. Reconnect. Verify: `openit-contracts` now exists on the dashboard as a STRUCTURED datastore with the schema from the local file. The local row pushed up. Future dashboard edits to schema flow back via the existing `_schema.json` write path.
+- **MS-6c.** **`databases/conversations/` is NOT mirrored** — the system folder is excluded from `discoverLocalCollections`. No `openit-conversations` is created on the cloud.
 - **MS-7.** Delete a row file locally, commit → push DELETE-by-id removes the row from the cloud.
 - **MS-8.** Cloud has an unrelated non-`openit-` datastore (e.g. `customer-feedback`) → not pulled, not modified, not visible in OpenIT UI.
 - **MS-9.** Workbench overview with only `openit-tickets` + `openit-people` shows the 2 default tiles, NO "Databases" tile.
@@ -212,11 +220,11 @@ Three coupled pieces:
 
 ### Step 1 — Engine helper extension
 
-Smallest possible additive change. Foundation for the schema-write hook.
+Three additive config hooks. Filestore + KB don't supply them — behaviour unchanged for those engines.
 
-- [ ] Add `onAfterResolve?: (repo: string, collections: C[]) => Promise<void>` to `CollectionSyncConfig<C>`.
-- [ ] Wire the call inside `start()` after `update({ collections })` and before the per-collection adapter loop. Errors warn-log; don't fail the sync.
-- [ ] Test in `syncEngine.test.ts` (mock config with a spy on the hook).
+- [ ] Add `onAfterResolve?` (post-resolve hook), `discoverLocalCollections?` (filesystem-driven discovery), `buildCreateBody?` (engine-specific POST body) to `CollectionSyncConfig<C>`.
+- [ ] Extend `autoCreateDefaultsIfMissing` to merge `defaultNames` + `discoverLocalCollections()` results, dedupe against existing cloud names, POST each via `buildCreateBody` (or fall back to the current default body shape).
+- [ ] Tests in `syncEngine.test.ts`: each hook fires; filestore + KB configs without the hooks behave identically to today.
 - [ ] `npx tsc --noEmit && npx vitest run` clean.
 
 ### Step 2 — nestedManifest.ts → datastore
@@ -235,10 +243,12 @@ The structural rewrite. Largest single change.
 ### Step 4 — Datastore wrapper collapse
 
 - [ ] Rewrite `datastoreSync.ts` as a thin `createCollectionEntitySync` wrapper. Re-export under existing names. Drop `-<orgId>` suffix from default names. `displayDatastoreName` helper. Drop the in-house cache / cooldown / inflight-resolve (orchestrator owns them).
-- [ ] `pushOne` impl scoped to one collection — extract from the existing `pushAllToDatastoresImpl` per-collection inner loop. Critical safety check (`localDirExists`) preserved.
-- [ ] `onAfterResolve` config hook calls `writeDatastoreSchemas(repo, collections)` — same content-equality logic, structured-only.
+- [ ] `pushOne` impl scoped to one collection — extract from the existing `pushAllToDatastoresImpl` per-collection inner loop. Critical safety check (`localDirExists`) preserved. Branch on `isStructured` if the push body shape diverges (verify against `firebase-helpers/functions/src/memory.controller.ts` during implementation).
+- [ ] `onAfterResolve` config hook calls `writeDatastoreSchemas(repo, collections)` — content-equality logic, structured-only.
+- [ ] `discoverLocalCollections` config hook scans `${repo}/databases/`, skips `conversations` and any future system folders, for each subdir: read optional `_schema.json` to set `isStructured` + `schema`. Returns `{ name: "openit-<foldername>", isStructured, schema? }[]`.
+- [ ] `buildCreateBody` config hook returns datastore-specific POST body. For hardcoded defaults: `{ name, type: "datastore", isStructured: true, templateId: "case-management" | "contacts", description, createdBy, createdByName }`. For local-discovered: `{ name, type: "datastore", isStructured, schema?, description, createdBy, createdByName }`.
 - [ ] Update `pushAll.ts` if datastore's status surface changes.
-- [ ] `datastoreSync.test.ts` for helpers.
+- [ ] `datastoreSync.test.ts` for helpers + the discoverLocalCollections logic (mock filesystem, verify structured/unstructured branching on `_schema.json` presence).
 
 ### Step 5 — Overview UX
 
@@ -284,6 +294,10 @@ Hard stop per `auto-dev/02-impl.plan.md`. Don't roll into stage 03 (implementati
 4. **Pagination + `unreliableKeyPrefixes`.** Each per-collection adapter handles its own pagination scope. The current single-adapter version reports per-collection unreliability via the cross-cutting list. With per-collection, the orchestrator already aggregates per-adapter `paginationFailed` flags via `clearConflictsForPrefix` per prefix — same effect, simpler shape.
 
 5. **FileExplorer regex update reach.** Changing `databases/openit-[^/]+$` → `databases/[^/]+$` means a system-folder exclusion list is needed (today only `conversations` lives at `databases/conversations/`, but any future sibling system folder would also need to be excluded). Stage-03 audit: grep for every regex / path-prefix check involving `databases/openit-` and update consistently.
+
+6. **Local-folder-driven creation latency.** The discovery currently runs only on `start()` — i.e. on connect / app reload. A user creating `databases/foo/` while sync is already running won't see `openit-foo` on cloud until next reconnect. If wiring discovery into the 60s poll proves easy, do it; if it complicates the polling code, ship the connect-time-only behaviour and document the limitation. The OpenIT terminal user is unlikely to hit this — Claude tends to create folders within a single session that ends with a reconnect.
+
+7. **Race between local-folder creation and existing cloud collection.** A user creates `databases/foo/` locally; meanwhile someone created `openit-foo` on the dashboard. On next discovery, the local scan returns `foo` as a candidate but the existing-names check (which the orchestrator does inside the auto-create loop) skips it — no duplicate creation. Local rows in the folder push up via the regular sync once the cloud entry is found. Verify in stage 03 that the existing-names dedup happens BEFORE the POST.
 
 ---
 
