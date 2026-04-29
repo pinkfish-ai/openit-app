@@ -39,14 +39,23 @@
 //   accordingly.
 //
 // Prefix → manifest file:
-//   - `knowledge-bases/<name>`     → `.openit/kb-state.json` (nested)
-//   - `filestores/<name>`          → `.openit/fs-state.json` (nested)
+//   - `knowledge-bases/<name>`     → `.openit/kb-state.json` (nested only)
+//   - `filestores/<name>`          → `.openit/fs-state.json` (nested only)
 //   - `kb` / `filestore`           → legacy short forms, accepted for
-//                                    in-flight transcripts. Both nested
-//                                    and flat formats supported.
-//   - `datastore`                  → `.openit/datastore-state.json`
-//   - `agent`                      → `.openit/agent-state.json`
-//   - `workflow`                   → `.openit/workflow-state.json`
+//                                    in-flight transcripts written before
+//                                    the nested rewrite. Only valid
+//                                    against the legacy FLAT manifest
+//                                    shape — these prefixes do not
+//                                    carry collection identity, so they
+//                                    can't address a specific bucket
+//                                    in a nested manifest. If a nested
+//                                    manifest is on disk and a legacy
+//                                    prefix arrives, the script errors
+//                                    with a hint to use the per-
+//                                    collection prefix instead.
+//   - `datastore`                  → `.openit/datastore-state.json` (flat)
+//   - `agent`                      → `.openit/agent-state.json` (flat)
+//   - `workflow`                   → `.openit/workflow-state.json` (flat)
 //
 // When to call this:
 //   After merging the canonical (`<key>.json`) and deleting the shadow
@@ -195,6 +204,23 @@ async function main() {
   let files;
   let writeBack;
   if (isNestedManifest(manifest)) {
+    // Legacy short prefixes (`kb`, `filestore`) don't carry collection
+    // identity, so they can't address a bucket in a nested manifest.
+    // Surface a clear error pointing the user at the per-collection
+    // prefix shape rather than silently failing as bucket_not_found —
+    // this happens when a transcript from before the Phase-2 rewrite
+    // emits the legacy prefix against a post-Phase-2 manifest.
+    if (args.prefix === "kb" || args.prefix === "filestore") {
+      const root = args.prefix === "kb" ? "knowledge-bases" : "filestores";
+      const bucketNames = Object.values(manifest)
+        .map((b) => b?.collection_name)
+        .filter(Boolean)
+        .map((n) => (n.startsWith("openit-") ? n.slice("openit-".length) : n));
+      fail(
+        "legacy_prefix_against_nested_manifest",
+        `The legacy short prefix \`${args.prefix}\` cannot address a specific collection in a nested manifest. Use \`--prefix ${root}/<name>\` instead. Available: ${bucketNames.map((n) => `${root}/${n}`).join(", ") || "(none)"}.`,
+      );
+    }
     const lookup = findBucket(manifest, args.prefix);
     if (!lookup) {
       fail(
