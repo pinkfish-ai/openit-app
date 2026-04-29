@@ -2054,6 +2054,9 @@ export function Viewer({
       case "people-list":
         headerKind = "people";
         break;
+      case "cli":
+        headerKind = "cli";
+        break;
     }
   }
 
