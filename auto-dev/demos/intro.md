@@ -1,3 +1,14 @@
+## Key beats
+
+1. Claude Code is the OS — configure in plain English, not clicky admin UIs.
+2. Employees ask where they already work — Slack/Teams, no new app.
+3. One conversation across every system — and Claude writes the integration if it's missing.
+4. It learns from how you work — answer once, Claude handles the next one and leaves a KB article behind.
+5. Skills and scripts are the unit of work — Claude generates either on demand, and runs scripts two ways: when the IT admin asks, or automatically as part of a learned workflow. Provisioning, offboarding, reports, investigations all live as files you can read and edit.
+6. Local first, then cloud — your repo is the source of truth; no lock-in.
+
+---
+
 OpenIT is the first IT Helpdesk, and maybe the first application ever, that runs on Claude Code.
 
 Its an open source downloadable application that your IT admin runs on their laptop.
