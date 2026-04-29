@@ -79,14 +79,14 @@ export const CATALOG: CatalogEntry[] = [
     docsUrl: "https://cli.okta.com/",
   },
   {
-    id: "mgc",
-    name: "Microsoft Graph CLI",
-    description: "M365/Entra admin: users, groups, licenses, mailboxes.",
-    binary: "mgc",
-    brewPkg: "microsoftgraph/tap/msgraph-cli",
+    id: "tailscale",
+    name: "Tailscale CLI",
+    description: "Zero-trust VPN admin: devices, ACLs, exit nodes, audit.",
+    binary: "tailscale",
+    brewPkg: "tailscale",
     claudeMdHint:
-      "Microsoft Graph CLI (`mgc`) is installed. Run `mgc --help` to see commands. Auth via `mgc login`.",
-    docsUrl: "https://learn.microsoft.com/graph/cli/overview",
+      "Tailscale CLI (`tailscale`) is installed. Use it for tailnet operations — auth via `tailscale up`. Run `tailscale --help` to see commands.",
+    docsUrl: "https://tailscale.com/kb/1080/cli",
   },
   {
     id: "op",

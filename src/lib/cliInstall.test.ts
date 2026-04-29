@@ -4,20 +4,27 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 
+vi.mock("../shell/activeSession", () => ({
+  writeToActiveSession: vi.fn(),
+}));
+
 import { invoke } from "@tauri-apps/api/core";
-import { CATALOG } from "./cliCatalog";
+import { writeToActiveSession } from "../shell/activeSession";
+import { CATALOG, findEntry } from "./cliCatalog";
 import {
-  installCli,
+  buildInstallPrompt,
+  buildUninstallPrompt,
   listInstalled,
-  removeHintOnly,
-  uninstallCli,
-  UninstallError,
+  requestCliInstall,
+  requestCliUninstall,
 } from "./cliInstall";
 
 const mockedInvoke = vi.mocked(invoke);
+const mockedWrite = vi.mocked(writeToActiveSession);
 
 beforeEach(() => {
   mockedInvoke.mockReset();
+  mockedWrite.mockReset();
 });
 
 describe("listInstalled", () => {
@@ -40,54 +47,61 @@ describe("listInstalled", () => {
   });
 });
 
-describe("installCli", () => {
-  it("invokes cli_install with the entry's brew_pkg and CLAUDE.md hint", async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined);
-    const entry = CATALOG.find((e) => e.id === "gh")!;
-    await installCli("/tmp/proj", entry);
-    expect(mockedInvoke).toHaveBeenCalledWith("cli_install", {
-      args: {
-        project_root: "/tmp/proj",
-        brew_pkg: entry.brewPkg,
-        entry_id: entry.id,
-        claude_md_line: entry.claudeMdHint,
-      },
-    });
-  });
-});
-
-describe("uninstallCli", () => {
-  it("calls cli_uninstall with the entry's brew_pkg and id", async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined);
-    const entry = CATALOG[0];
-    await uninstallCli("/tmp/proj", entry);
-    expect(mockedInvoke).toHaveBeenCalledWith("cli_uninstall", {
-      args: { project_root: "/tmp/proj", brew_pkg: entry.brewPkg, entry_id: entry.id },
-    });
+describe("buildInstallPrompt", () => {
+  it("includes brew suggestion, docs URL, marker line, and entry id", () => {
+    const entry = findEntry("gh")!;
+    const prompt = buildInstallPrompt(entry);
+    expect(prompt).toContain("brew install gh");
+    expect(prompt).toContain(entry.docsUrl);
+    expect(prompt).toContain(`<!-- entry:gh -->`);
+    expect(prompt).toContain(entry.claudeMdHint);
+    expect(prompt).toContain("which gh");
   });
 
-  it("wraps brew failures in UninstallError with hintRemoved=true", async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error("brew uninstall failed: not installed"));
-    const entry = CATALOG[0];
-    await expect(uninstallCli("/tmp/proj", entry)).rejects.toBeInstanceOf(
-      UninstallError,
-    );
-    try {
-      await uninstallCli("/tmp/proj", entry);
-    } catch (e) {
-      expect((e as UninstallError).hintRemoved).toBe(true);
+  it("works for every catalog entry", () => {
+    for (const entry of CATALOG) {
+      const prompt = buildInstallPrompt(entry);
+      expect(prompt).toContain(entry.brewPkg);
+      expect(prompt).toContain(entry.binary);
+      expect(prompt).toContain(entry.claudeMdHint);
     }
   });
 });
 
-describe("removeHintOnly", () => {
-  it("calls cli_remove_hint_only with project root and entry id", async () => {
-    mockedInvoke.mockResolvedValueOnce(undefined);
-    const entry = CATALOG[0];
-    await removeHintOnly("/tmp/proj", entry);
-    expect(mockedInvoke).toHaveBeenCalledWith("cli_remove_hint_only", {
-      projectRoot: "/tmp/proj",
-      entryId: entry.id,
-    });
+describe("buildUninstallPrompt", () => {
+  it("includes brew uninstall suggestion and the entry-id removal instruction", () => {
+    const entry = findEntry("aws")!;
+    const prompt = buildUninstallPrompt(entry);
+    expect(prompt).toContain(`brew uninstall ${entry.brewPkg}`);
+    expect(prompt).toContain(`<!-- entry:${entry.id} -->`);
+  });
+});
+
+describe("requestCliInstall / requestCliUninstall", () => {
+  it("writes the install prompt + carriage return to the active session", async () => {
+    mockedWrite.mockResolvedValueOnce(true);
+    const entry = findEntry("gh")!;
+    const ok = await requestCliInstall(entry);
+    expect(ok).toBe(true);
+    expect(mockedWrite).toHaveBeenCalledTimes(1);
+    const written = mockedWrite.mock.calls[0][0];
+    expect(written.endsWith("\r")).toBe(true);
+    expect(written).toContain("brew install gh");
+  });
+
+  it("returns false when no Claude session is active", async () => {
+    mockedWrite.mockResolvedValueOnce(false);
+    const entry = findEntry("gh")!;
+    const ok = await requestCliInstall(entry);
+    expect(ok).toBe(false);
+  });
+
+  it("uninstall writes the uninstall prompt", async () => {
+    mockedWrite.mockResolvedValueOnce(true);
+    const entry = findEntry("op")!;
+    await requestCliUninstall(entry);
+    const written = mockedWrite.mock.calls[0][0];
+    expect(written).toContain("Please uninstall");
+    expect(written).toContain(`brew uninstall ${entry.brewPkg}`);
   });
 });

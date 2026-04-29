@@ -41,7 +41,6 @@ import { EscalatedTicketBanner } from "./EscalatedTicketBanner";
 import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
-import { subscribeRestartRequested } from "./activeSession";
 import { Viewer, type ViewerSource } from "./Viewer";
 import { SkillCanvas } from "../SkillCanvas";
 import type { SkillCanvasState as SkillCanvasStateType } from "../lib/skillCanvas";
@@ -236,13 +235,6 @@ export function Shell({
   const newChatSession = useCallback(() => {
     setChatSessionKey((k) => k + 1);
   }, []);
-
-  // Auto-restart the embedded Claude session when something asks for it
-  // — currently triggered by the CLI install/uninstall flow so the
-  // freshly-spawned Claude reads the updated CLAUDE.md hint section.
-  useEffect(() => {
-    return subscribeRestartRequested(newChatSession);
-  }, [newChatSession]);
 
   const handleManualPull = useCallback(async () => {
     if (!repo || pulling) return;

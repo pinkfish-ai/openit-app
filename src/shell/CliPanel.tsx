@@ -1,28 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { CATALOG, type CatalogEntry } from "../lib/cliCatalog";
 import {
-  installCli,
   listInstalled,
-  removeHintOnly,
-  uninstallCli,
-  UninstallError,
+  requestCliInstall,
+  requestCliUninstall,
 } from "../lib/cliInstall";
-import { requestSessionRestart } from "./activeSession";
 import styles from "./CliPanel.module.css";
 
 /// CLI catalog rendered into the center pane via the `cli` entity
-/// route. Each card runs `brew install`/`brew uninstall` on click and
-/// updates the project's CLAUDE.md so Claude knows the tool exists.
-/// Detection of installed-vs-not is `which`-based, so binaries the user
-/// installed manually (or via prior brew) flip to "Installed" without
-/// any tracking on our side.
+/// route. Click Install / Uninstall hands the request off to Claude in
+/// the embedded session — Claude runs brew (or vendor fallback), debugs
+/// failures, and edits CLAUDE.md per the marker convention. The card's
+/// installed state comes from `which` detection so it reflects what's
+/// actually on the machine, regardless of how it got there.
 export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
   const [installed, setInstalled] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
-  const [pendingId, setPendingId] = useState<string | null>(null);
-  const [errors, setErrors] = useState<
-    Record<string, { msg: string; canRecover?: boolean }>
-  >({});
+  const [requestedId, setRequestedId] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const refreshInstalled = async () => {
     if (!projectRoot) return;
@@ -62,65 +57,42 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
       return next;
     });
 
+  const flashRequested = (id: string) => {
+    setRequestedId(id);
+    // Brief feedback then clear — the actual install happens in the
+    // chat, the user's eye should follow Claude there. Catalog
+    // refreshes installed state when the panel is reopened.
+    setTimeout(() => setRequestedId((curr) => (curr === id ? null : curr)), 4000);
+  };
+
   const onInstall = async (entry: CatalogEntry) => {
-    if (!projectRoot) return;
-    setPendingId(entry.id);
     clearError(entry.id);
-    try {
-      await installCli(projectRoot, entry);
-      requestSessionRestart();
-      await refreshInstalled();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErrors((prev) => ({ ...prev, [entry.id]: { msg } }));
-    } finally {
-      setPendingId(null);
+    const ok = await requestCliInstall(entry);
+    if (!ok) {
+      setErrors((prev) => ({
+        ...prev,
+        [entry.id]: "No active Claude session — start Claude in the right pane first.",
+      }));
+      return;
     }
+    flashRequested(entry.id);
   };
 
   const onUninstall = async (entry: CatalogEntry) => {
-    if (!projectRoot) return;
     const ok = window.confirm(
-      `Uninstall ${entry.name}? This will run \`brew uninstall ${entry.brewPkg}\` and restart your Claude session — any in-progress chat will be lost.`,
+      `Hand off uninstall of ${entry.name} to Claude? Claude will run \`brew uninstall ${entry.brewPkg}\` and remove the CLAUDE.md hint.`,
     );
     if (!ok) return;
-    setPendingId(entry.id);
     clearError(entry.id);
-    try {
-      await uninstallCli(projectRoot, entry);
-      requestSessionRestart();
-      await refreshInstalled();
-    } catch (e) {
-      // brew uninstall failed (probably not brew-managed). The
-      // CLAUDE.md hint is already gone — refresh + restart anyway,
-      // but surface the error with a recovery affordance so the user
-      // knows the binary is still on disk.
-      const msg = e instanceof UninstallError ? e.message : String(e);
+    const sent = await requestCliUninstall(entry);
+    if (!sent) {
       setErrors((prev) => ({
         ...prev,
-        [entry.id]: { msg, canRecover: true },
+        [entry.id]: "No active Claude session — start Claude in the right pane first.",
       }));
-      requestSessionRestart();
-      await refreshInstalled();
-    } finally {
-      setPendingId(null);
+      return;
     }
-  };
-
-  const onRemoveHintOnly = async (entry: CatalogEntry) => {
-    if (!projectRoot) return;
-    setPendingId(entry.id);
-    clearError(entry.id);
-    try {
-      await removeHintOnly(projectRoot, entry);
-      requestSessionRestart();
-      await refreshInstalled();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErrors((prev) => ({ ...prev, [entry.id]: { msg } }));
-    } finally {
-      setPendingId(null);
-    }
+    flashRequested(entry.id);
   };
 
   if (!projectRoot) {
@@ -135,9 +107,10 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
     <div className={styles.panel}>
       <h2 className={styles.heading}>Give your agent hands</h2>
       <p className={styles.tagline}>
-        Install CLI tools so Claude can act on your IT systems via Bash. Zero
-        token cost until used — installed tools surface in the project's{" "}
-        <code>CLAUDE.md</code> so Claude knows when to reach for them.
+        Install CLI tools so Claude can act on your IT systems via Bash. Click
+        Install and Claude handles the rest in the chat — running brew, picking
+        a fallback if needed, and updating <code>CLAUDE.md</code> so it knows the
+        tool is available.
       </p>
       <input
         type="text"
@@ -152,11 +125,10 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
             key={entry.id}
             entry={entry}
             installed={installed.has(entry.id)}
-            pending={pendingId === entry.id}
+            requested={requestedId === entry.id}
             error={errors[entry.id]}
             onInstall={() => onInstall(entry)}
             onUninstall={() => onUninstall(entry)}
-            onRemoveHintOnly={() => onRemoveHintOnly(entry)}
           />
         ))}
       </div>
@@ -167,20 +139,25 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
 function CliCard({
   entry,
   installed,
-  pending,
+  requested,
   error,
   onInstall,
   onUninstall,
-  onRemoveHintOnly,
 }: {
   entry: CatalogEntry;
   installed: boolean;
-  pending: boolean;
-  error?: { msg: string; canRecover?: boolean };
+  requested: boolean;
+  error?: string;
   onInstall: () => void;
   onUninstall: () => void;
-  onRemoveHintOnly: () => void;
 }) {
+  const primaryLabel = installed
+    ? requested
+      ? "Sent to Claude →"
+      : "Uninstall"
+    : requested
+      ? "Sent to Claude →"
+      : "Install locally";
   return (
     <div className={styles.card}>
       <div className={styles.cardHeader}>
@@ -193,25 +170,14 @@ function CliCard({
       </div>
       <p className={styles.cardDesc}>{entry.description}</p>
       <div className={styles.cardActions}>
-        {installed ? (
-          <button
-            type="button"
-            className={`${styles.btn} ${styles.btnDanger}`}
-            onClick={onUninstall}
-            disabled={pending}
-          >
-            {pending ? "Uninstalling…" : "Uninstall"}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className={`${styles.btn} ${styles.btnPrimary}`}
-            onClick={onInstall}
-            disabled={pending}
-          >
-            {pending ? "Installing…" : "Install locally"}
-          </button>
-        )}
+        <button
+          type="button"
+          className={`${styles.btn} ${installed ? styles.btnDanger : styles.btnPrimary}`}
+          onClick={installed ? onUninstall : onInstall}
+          disabled={requested}
+        >
+          {primaryLabel}
+        </button>
         <a
           className={styles.docsLink}
           href={entry.docsUrl}
@@ -221,21 +187,7 @@ function CliCard({
           docs ↗
         </a>
       </div>
-      {error && (
-        <div className={styles.error}>
-          <span>{error.msg}</span>
-          {error.canRecover && (
-            <button
-              type="button"
-              className={styles.errorRecovery}
-              onClick={onRemoveHintOnly}
-              disabled={pending}
-            >
-              Already removed — just dismiss the CLAUDE.md hint
-            </button>
-          )}
-        </div>
-      )}
+      {error && <p className={styles.error}>{error}</p>}
     </div>
   );
 }

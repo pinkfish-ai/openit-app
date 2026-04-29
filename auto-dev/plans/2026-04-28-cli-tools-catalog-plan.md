@@ -1,23 +1,32 @@
-# CLI CLI Catalog — v1
+# CLI Catalog — v1
 
 **Date:** 2026-04-28
 **Branch:** `cli-tools-catalog` (off `main`)
-**Supersedes:** the closed-unmerged MCP-tools branch (PR #57). See "Why CLI not MCP" below for the pivot rationale; the spike work that informed this plan (sync exclusion, Workbench-station entity model, restart pub/sub) carries forward.
+**Supersedes:** the closed-unmerged MCP-tools branch (PR #57). See "Why CLI not MCP" below; the spike work that informed this plan (sync exclusion, Workbench-station entity model) carries forward.
 
-**Scope:** ship a curated catalog of IT-admin CLI tools the user can install with one click. Each install runs `brew install <pkg>` and adds a one-line hint to the project CLAUDE.md so Claude knows the tool is available. The catalog is reachable via the Workbench **CLI** station — there's no on-disk `cli/` directory, so it doesn't appear in the file explorer (CLIs aren't user-edited project content; they're system state).
+**Scope:** ship a curated catalog of IT-admin CLI tools. Click Install on a card and **Claude itself** runs the install (brew first, vendor fallback as needed) and updates the project's `CLAUDE.md` so it knows the tool is available. The catalog is reachable via the Workbench **CLI** station only — no on-disk `cli/` directory, no file-explorer entry.
 
 ---
 
 ## Why CLI, not MCP
 
-The MCP route would have shipped 6 first-party remote OAuth servers via `claude mcp add`. We built that, manual-tested it, and pivoted before merging. The reasons that flipped the decision:
+The MCP route shipped 6 first-party remote OAuth servers via `claude mcp add`. Built, manual-tested, and pivoted before merging:
 
-1. **Token cost.** Each MCP server's full tool schema loads into context every turn, used or not. Six rich servers ≈ 80–120K tokens of always-on tool surface. At Sonnet 4.6 pricing that's **~$10–15 per session in pure schema overhead** before the first useful turn.
-2. **Per-session tool cap.** Anthropic enforces a ceiling on tools per session. Two or three rich MCPs already crowd skills and Bash for headroom.
-3. **Already aligned with OpenIT doctrine.** `auto-dev/00-autodev-overview.md` § "Quick decision tree" says: *"calling system CLIs on the user's machine (gcloud, bq, az, aws, kubectl, okta, gh, …) — if a CLI can answer the question well, prefer it. Don't reinvent."* The MCP path was the outlier.
-4. **CLI surfaces are zero-cost until invoked.** A `gh pr list` call costs the bash command (~50 tokens) and its response, paid only when used. No baseline tax.
-5. **Claude already knows the popular CLIs from training.** `gh`, `aws`, `gcloud`, `kubectl` need zero context. For lesser-known tools (`okta`, `mgc`, `op`) the CLAUDE.md hint includes a `<tool> --help` nudge so Claude self-discovers the surface on demand.
-6. **Robust to vendor MCP churn.** Slack's reference MCP was archived mid-2025; GitHub's moved orgs; Cloudflare ships per-product surfaces. CLI tools are battle-tested and stable.
+1. **Token cost.** MCP server schemas load into context every turn whether used or not. Six rich servers ≈ 80–120K tokens of always-on tool surface. ~$10–15/session in pure schema overhead at Sonnet 4.6 prices.
+2. **Per-session tool cap.** Anthropic enforces a ceiling. Two or three rich MCPs already crowd skills and Bash for headroom.
+3. **Aligns with OpenIT doctrine.** `auto-dev/00-autodev-overview.md` § "Quick decision tree": *"calling system CLIs on the user's machine — if a CLI can answer the question well, prefer it."*
+4. **Zero-cost until invoked.** A `gh pr list` call costs the bash command and its response, paid only when used.
+5. **Claude already knows the popular CLIs.** `gh`, `aws`, `gcloud` need zero context. For lesser-known tools the CLAUDE.md hint includes a `<tool> --help` nudge for runtime discovery.
+
+---
+
+## Why agentic install (not direct shell-out)
+
+The first version of the CLI flow had OpenIT shell out to `brew install` via a Tauri command, then splice the project CLAUDE.md from Rust. First non-trivial test (Microsoft Graph CLI — bad tap name) failed with opaque stderr and no path forward. Pivoted again, mid-PR:
+
+**Click Install → write a structured prompt into the active Claude session.** Claude runs brew, sees the output, debugs failures, falls back to vendor docs, and edits CLAUDE.md per the marker convention. Same pattern Claude uses for everything else in OpenIT.
+
+Trade-off: one Claude turn per install (cost: pennies). What you get: robust to bad metadata, robust to per-OS install variation, fully transparent to the user (they see the agent work in the chat), and *much* less code on our side. No more brew shell-out, no more Rust string-splicing, no more session restart wiring.
 
 ---
 
@@ -25,15 +34,15 @@ The MCP route would have shipped 6 first-party remote OAuth servers via `claude 
 
 | # | Tool | Binary | Brew package | Notes |
 |---|---|---|---|---|
-| 1 | AWS CLI | `aws` | `awscli` | IAM, EC2, S3, RDS, CloudWatch, etc. |
+| 1 | AWS CLI | `aws` | `awscli` | IAM, EC2, S3, RDS, CloudWatch. |
 | 2 | Azure CLI | `az` | `azure-cli` | AAD/Entra, VMs, storage, networking. |
 | 3 | Google Cloud SDK | `gcloud` | `google-cloud-sdk` | GCP projects, IAM, GKE, BigQuery, Cloud Run. |
 | 4 | GitHub CLI | `gh` | `gh` | Repos, PRs, issues, releases, Actions. |
 | 5 | Okta CLI | `okta` | `okta/tap/okta-cli` | Identity admin: users, groups, apps. |
-| 6 | Microsoft Graph CLI | `mgc` | `microsoftgraph/tap/msgraph-cli` | M365/Entra admin: users, groups, licenses. |
+| 6 | Tailscale CLI | `tailscale` | `tailscale` | Zero-trust VPN admin: devices, ACLs, exit nodes. |
 | 7 | 1Password CLI | `op` | `1password-cli` | Secrets, items, service accounts. |
 
-Covers the three pillars of IT-admin daily work: **cloud infrastructure, identity/access, secrets** — plus source control. kubectl considered and dropped (more devops than helpdesk). Snowflake / Datadog / Atlassian considered and deferred (less universal).
+Microsoft Graph CLI was in v1 but pulled (no canonical brew formula — the tap I specified was fictional). Tailscale takes its slot — clean brew install, real IT-admin daily-work tool. kubectl considered and dropped (more devops than helpdesk). Snowflake / Datadog / Atlassian considered and deferred.
 
 ---
 
@@ -41,18 +50,21 @@ Covers the three pillars of IT-admin daily work: **cloud infrastructure, identit
 
 ### Backend (Rust, `src-tauri/src/cli_tools.rs`)
 
-Three Tauri commands:
+A single Tauri command — `cli_is_installed(binary: String) -> bool`. Wraps `which::which`. Free PATH lookup the catalog UI calls per entry to render install/installed state. Detection is source-agnostic — a binary the user installed manually flips the card to "Installed" without OpenIT having done anything.
 
-- **`cli_is_installed(binary: String) -> bool`** — wraps `which::which`. Free PATH lookup; called per catalog entry on every Workbench load to render install/installed state.
-- **`cli_install(args)`** — runs `brew install <brew_pkg>`, then splices the entry's hint line into the project's `CLAUDE.md` between `<!-- openit:cli-tools:start -->` / `<!-- openit:cli-tools:end -->` markers. Brew failure short-circuits without writing the hint.
-- **`cli_uninstall(args)`** — runs `brew uninstall <brew_pkg>` AND strips the entry from `CLAUDE.md`. The CLAUDE.md update happens regardless of brew exit status; brew errors are surfaced so the UI can offer "remove from CLAUDE.md only" recovery.
-- **`cli_remove_hint_only(...)`** — escape hatch for CLIs that weren't brew-managed (manual installer, pip, etc.). Strips the hint without touching the binary.
+Everything else (running brew, vendor fallback, CLAUDE.md splicing) is Claude's responsibility now.
 
-The CLAUDE.md splicing logic is pure-string and unit-tested in Rust (`#[cfg(test)] mod tests`).
+### Frontend
 
-### Marker-block format
+- **`src/lib/cliCatalog.ts`** — hardcoded 7-entry catalog with `binary`, `brewPkg`, `claudeMdHint`, `docsUrl`.
+- **`src/lib/cliInstall.ts`** — `listInstalled()` (calls `cli_is_installed` for every catalog entry in parallel), `buildInstallPrompt(entry)` / `buildUninstallPrompt(entry)` (pure functions, unit-tested), `requestCliInstall(entry)` / `requestCliUninstall(entry)` (write the prompt into the active Claude session via `writeToActiveSession`).
+- **`src/shell/CliPanel.tsx`** + scoped `CliPanel.module.css` — the catalog UI rendered into the center pane. Click Install → request flies → button flashes "Sent to Claude →" for 4 seconds.
 
-```markdown
+### Marker-block convention
+
+Documented in `scripts/openit-plugin/CLAUDE.md` so Claude reads it on session start and knows the format without OpenIT having to repeat it in every prompt:
+
+```
 <!-- openit:cli-tools:start -->
 ## Installed CLI tools
 
@@ -63,85 +75,80 @@ These CLI tools are installed locally and available via Bash. Prefer them over h
 <!-- openit:cli-tools:end -->
 ```
 
-Per-entry sub-markers (`<!-- entry:ID -->`) make parsing reliable and idempotent — re-installing the same tool overwrites in place rather than duplicating, removing the last entry strips the block entirely.
-
-### Frontend
-
-- **`src/lib/cliCatalog.ts`** — hardcoded 7-entry catalog with `binary`, `brewPkg`, `claudeMdHint`, `docsUrl`.
-- **`src/lib/cliInstall.ts`** — TS bridge: `listInstalled()` (calls `cli_is_installed` for every catalog entry in parallel), `installCli(...)`, `uninstallCli(...)`, `removeHintOnly(...)`. Wraps brew uninstall failures in `UninstallError` carrying a `hintRemoved` flag the UI keys off for the recovery affordance.
-- **`src/shell/CLIPanel.tsx`** + scoped `CLIPanel.module.css` — the catalog UI rendered into the center pane.
-- **`src/shell/activeSession.ts`** — extended with a restart pub/sub (no post-spawn command queue this time; CLI installs don't need an `/mcp` panel).
+Per-entry sub-markers (`<!-- entry:ID -->`) keep the block parseable so re-installing an entry replaces the line in place rather than duplicating, and removing the last entry strips the entire block.
 
 ### Entity-model integration
 
-CLI is a first-class entity alongside agents/workflows/databases:
+CLI is a first-class Workbench entity (no file-explorer presence — system state, not project content):
 
-- `entityIcons.tsx` — `tools` added to `EntityKind` + `ENTITY_META` with a wrench icon and the accent tone.
-- `types.ts` — `{ kind: "tools" }` ViewerSource.
-- `entityRouting.ts` — `rel === "tools"` → `{ kind: "tools" }`.
-- `Viewer.tsx` — load-effect branch (`setMode("rendered")`) + render branch (`<CLIPanel projectRoot={repo} />`) + header title.
-- `Workbench.tsx` — `tools` station with custom counter via `listInstalledCli`.
-- `project.rs` — no on-disk dir created. CLI is purely a synthetic Workbench-routed entity.
-- `Shell.tsx` — subscribes to `subscribeRestartRequested` to bump `chatSessionKey` after install/uninstall.
+- `entityIcons.tsx` — `cli` added to `EntityKind` + `ENTITY_META` with a wrench icon and accent tone.
+- `types.ts` — `{ kind: "cli" }` ViewerSource.
+- `entityRouting.ts` — `rel === "cli"` → `{ kind: "cli" }`.
+- `Viewer.tsx` — load-effect branch + render branch (`<CliPanel projectRoot={repo} />`) + header title.
+- `Workbench.tsx` — `cli` station counted via `listInstalled`.
+- `project.rs` — no on-disk dir created; CLI lives entirely in `which` + CLAUDE.md.
 
 ---
 
 ## UX
 
-1. **Workbench** shows a **CLI** station with the count of currently-detected CLIs (from `which`). It does *not* appear in the file explorer — the catalog is system state, not project content.
+1. **Workbench** shows a **CLI** station with the count of currently-detected CLIs.
 2. **Click CLI** → Viewer renders the catalog grid in the center pane.
-3. **Install** → button flips to "Installing…" → `brew install` runs → green "Installed" pill on success, inline error on failure.
-4. **Uninstall** → `window.confirm` (kills active chat) → `brew uninstall` + CLAUDE.md strip → restart. If brew fails (CLI was installed out-of-band), the error renders inline with a "Already removed — just dismiss the CLAUDE.md hint" recovery button.
-5. **Auto-restart after install/uninstall** so the freshly-spawned Claude session reads the updated CLAUDE.md hint section.
-6. **Per-card "docs ↗" link** to the vendor docs.
+3. **Click Install** → an install prompt is written into the active Claude session as a new turn. The card's button flashes "Sent to Claude →" for 4 seconds.
+4. **Watch Claude work in the chat.** Claude runs `brew install`, sees its output, debugs failures (bad tap, missing formula, network) the way a human would, and updates CLAUDE.md when the install succeeds.
+5. **Uninstall** mirrors install. `window.confirm` guards (since the chat will be visibly busy for a moment) but doesn't kill any sessions — the same Claude that runs the uninstall already has the new CLAUDE.md state in context.
+6. **No auto-restart.** The session that runs the install also edits CLAUDE.md — it doesn't need to re-read the file. Future sessions read the updated CLAUDE.md naturally on start.
+7. **Per-card "docs ↗" link** to the vendor docs.
 
-No Pinkfish CTA on the cards — Pinkfish doesn't have a parallel CLI offering, so the comparison was forced. The cloud upsell lives elsewhere in the app (the existing Connect-to-Cloud flow), not on this surface.
+No Pinkfish CTA — Pinkfish doesn't have a parallel CLI offering, so the comparison was forced. Cloud upsell stays in the existing Connect-to-Cloud flow.
 
 ---
 
 ## Checklist
 
-### Setup
-- [x] Cut `cli-tools-catalog` worktree off main
-- [x] `npm install` + `node scripts/build-slack-listener.mjs`
-
 ### Backend
-- [x] `src-tauri/src/cli_tools.rs` with the four commands + Rust unit tests for splicing
-- [x] Register in `src-tauri/src/lib.rs`
-- [x] `project.rs` left untouched — no on-disk dir for CLI, since the catalog is system state rather than project content
+- [x] `src-tauri/src/cli_tools.rs` — single `cli_is_installed` command (everything else moved to Claude).
+- [x] Register in `src-tauri/src/lib.rs`.
 
 ### Frontend
-- [x] `src/lib/cliCatalog.ts` — 7 entries
-- [x] `src/lib/cliInstall.ts` — TS bridge
-- [x] `src/shell/CLIPanel.tsx` + `CLIPanel.module.css`
-- [x] `src/shell/activeSession.ts` — restart pub/sub
-- [x] Entity wiring: `entityIcons.tsx`, `types.ts`, `entityRouting.ts`, `Viewer.tsx`, `Workbench.tsx`, `Shell.tsx`
+- [x] `src/lib/cliCatalog.ts` — 7 entries (Tailscale replaces MS Graph).
+- [x] `src/lib/cliInstall.ts` — `listInstalled`, prompt builders, `requestCliInstall` / `requestCliUninstall`.
+- [x] `src/shell/CliPanel.tsx` + `CliPanel.module.css`.
+- [x] Entity wiring: `entityIcons.tsx`, `types.ts`, `entityRouting.ts`, `Viewer.tsx`, `Workbench.tsx`.
 
 ### Plugin
-- [x] `scripts/openit-plugin/CLAUDE.md` — section telling Claude about the locally-installed-CLIs marker block. **At merge time, mirror to `/web/packages/app/public/openit-plugin/CLAUDE.md` and bump the manifest version per the plugin sync convention in `auto-dev/00-autodev-overview.md`.**
+- [x] `scripts/openit-plugin/CLAUDE.md` — marker convention spec so Claude knows the format. **At merge time, mirror to `/web/packages/app/public/openit-plugin/CLAUDE.md` and bump manifest version.**
 
 ### Tests
-- [x] **Rust unit** — splicing tests in `cli_tools.rs` cover: append-block, preserve-existing-content, replace-in-place, sort-by-id, drop-block-when-last, no-op-on-unknown-id, parse-block.
-- [x] **TS unit** — `cliCatalog.test.ts` (shape conformance), `cliInstall.test.ts` (mocked invoke for listInstalled / install / uninstall / removeHintOnly + UninstallError wrapping).
-- [ ] **Manual / E2E** — install `gh` end-to-end; restart auto-fires; ask Claude to "list my GitHub repos" and confirm the bash invocation works. Repeat with `okta` (less-known, exercises the `--help` discovery path). Uninstall and confirm CLAUDE.md is cleaned. Try uninstalling a non-brew-managed binary to exercise the recovery path.
+- [x] **TS unit** — `cliCatalog.test.ts` (shape conformance), `cliInstall.test.ts` (listInstalled, prompt builders, request functions).
 
 ### Ship
 - [ ] `npx tsc --noEmit` clean
 - [ ] `npx vitest run` clean
 - [ ] `cargo check` clean
-- [ ] Commit + push + open PR
+- [ ] Commit + push (PR #58 auto-updates)
+
+---
+
+## Manual E2E plan
+
+- **`gh` install** — Claude is well-trained on it; should run `brew install gh` and update CLAUDE.md without drama. Validates the happy path.
+- **`okta` install** — less-known to Claude; exercises the marker convention more carefully and the `<tool> --help` discovery angle.
+- **`tailscale` install** — also less-known; second pass at the discovery flow.
+- **Failure injection** — uninstall brew temporarily (`mv $(which brew) /tmp/brew.bak`) and try installing. Should see Claude debug, suggest curl, fall back to docs. Restore brew after.
+- **Uninstall** — verify the CLAUDE.md block updates correctly, including the empty-block-cleanup case (uninstall the last entry).
 
 ---
 
 ## Open questions for review
 
 1. **Catalog composition.** Locked at 7. Worth swapping any for Snowflake / Datadog / Salesforce as customer interviews come in?
-2. **Curl fallback.** v1 is brew-only; the install errors out with a helpful message if brew is missing. Adding curl-based installs as fallback is per-tool work (each vendor has its own install script). Defer to v2.
-3. **Plugin re-sync overwriting CLAUDE.md.** Plugin updates via `/web` manifest re-sync would clobber our marker block. Not common (plugin versions bump infrequently); the user can re-trigger by clicking install on each tool again. Self-healing regeneration on every Workbench load is a v2 nicety if this becomes a real pain point.
-4. **brew install side effects.** Some packages (cask installs, `--with-X` flags) require sudo or interactive prompts. None of the 7 in the catalog do; if we add packages that need it, we'll need to surface stderr in real-time rather than the buffered output we have now.
+2. **Plugin re-sync overwriting CLAUDE.md.** Plugin manifest re-syncs from `/web` would clobber the user's marker block. Infrequent in practice. Self-healing regeneration on Workbench load is a v2 nicety.
+3. **No auto-refresh of "Installed" state.** After Claude finishes installing, the catalog still shows "Install locally" until the user re-opens the panel. Polling `cli_is_installed` while a card is in "Sent" state is a v2 polish.
+4. **Cost monitoring.** Each install costs roughly one Claude turn. Worth tracking per-org install counts if billing concerns surface.
 
 ---
 
 ## Rough effort
 
-~1 day end-to-end. Most of the architectural shape (Workbench station, Viewer routing, restart pub/sub, entity model) carries forward from the MCP branch. The CLI-specific work is the Rust splicing + brew shell-out + the catalog data.
+~1 day end-to-end including the two pivots (Tools→CLI naming + Pinkfish strip, then brew shell-out → agentic install). Final shape is much smaller than the v1 plan estimated — Claude does the heavy lifting and our code is mostly catalog data + UI shell + a single PATH-lookup command in Rust.

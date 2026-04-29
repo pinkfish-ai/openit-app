@@ -49,20 +49,3 @@ export async function writeToActiveSession(text: string): Promise<boolean> {
   await ptyWrite(activeSessionId, text);
   return true;
 }
-
-const restartListeners = new Set<() => void>();
-
-/// Subscribe to "please restart the Claude session" events. Shell uses
-/// this to bump `chatSessionKey`, which forces ChatPane to remount with
-/// a fresh PTY. The CLI install/uninstall flow fires this so the
-/// freshly-spawned Claude session re-reads the updated CLAUDE.md.
-export function subscribeRestartRequested(fn: () => void): () => void {
-  restartListeners.add(fn);
-  return () => {
-    restartListeners.delete(fn);
-  };
-}
-
-export function requestSessionRestart(): void {
-  for (const l of restartListeners) l();
-}
