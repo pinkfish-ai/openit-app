@@ -975,6 +975,13 @@ export type CollectionLike = {
 
 export type CollectionConflictFile = {
   filename: string;
+  /// Identity of the collection this conflict belongs to. Set from
+  /// the per-collection adapter's pull callback. Wrappers use this to
+  /// render user-visible paths (e.g. `databases/tickets/CS123.json`)
+  /// — the orchestrator's status surface flattens conflicts across
+  /// collections, so without this the collection identity would be
+  /// lost.
+  collectionId: string;
   reason: "local-and-remote-changed";
 };
 
@@ -1184,6 +1191,7 @@ export function createCollectionEntitySync<C extends CollectionLike>(
       collectionId,
       conflicts.map((c) => ({
         filename: c.manifestKey,
+        collectionId,
         reason: "local-and-remote-changed",
       })),
     );

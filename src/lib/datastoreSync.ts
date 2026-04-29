@@ -279,21 +279,21 @@ export async function pullDatastoresOnce(args: {
     return { ok: false, error: String(e), pulled: 0, conflicts: [] };
   }
   // Map the orchestrator's flat `status.conflicts` back into the
-  // pre-Phase-3 DatastoreConflict shape. The `filename` field on each
-  // CollectionConflictFile is the bare manifestKey (`<key>`); to
-  // recover the collection name, walk every active collection's
-  // adapter prefix and match against the cross-entity conflict bus.
-  // For now, the simpler shape: dump all conflicts under collectionName=""
-  // — call sites currently only render `${col}/${key}.json: <reason>`
-  // and a missing col still produces a usable line. Tighten in stage 03
-  // if a caller actually distinguishes per-collection conflict source.
-  const collected: DatastoreConflict[] = handle
-    .getStatus()
-    .conflicts.map((c) => ({
-      collectionName: "",
-      key: c.filename,
-      reason: c.reason,
-    }));
+  // pre-Phase-3 DatastoreConflict shape. Each CollectionConflictFile
+  // carries `collectionId`; look up the collection's display name via
+  // the active-collections list. Collections that disappeared mid-cycle
+  // (rare; only on org switch) fall back to a blank name rather than
+  // dropping the conflict.
+  const status = handle.getStatus();
+  const collectionNameById = new Map<string, string>();
+  for (const c of status.collections) {
+    collectionNameById.set(c.id, displayDatastoreName(c.name));
+  }
+  const collected: DatastoreConflict[] = status.conflicts.map((c) => ({
+    collectionName: collectionNameById.get(c.collectionId) ?? "",
+    key: c.filename,
+    reason: c.reason,
+  }));
   return { ok: true, pulled: 0, conflicts: collected };
 }
 
