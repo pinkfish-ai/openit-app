@@ -208,3 +208,9 @@ The user-visible behavior change. Touches `App.tsx` only.
 | # | Finding | Severity | Disposition | Commit / Reason |
 |---|---------|----------|-------------|-----------------|
 | 1 | Fall-through from cloud-relaunch never reaches rebind branch (V1 fall-through never reaches first-run-with-creds branch) | High | Fixed | `089664e` — added `cloudRelaunchFellThrough` flag set inside the cloud-relaunch branch when the marker is missing or mismatched; first-run-with-creds condition extended to include the flag so V1 fall-through users re-bind to `~/OpenIT/local/` instead of falling into a half-loaded state. BugBot raised this twice across the two SHAs (aaa52b9 and 9bfde6b) — same root-cause finding. |
+
+### Iteration 2 (2026-04-29)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | orgId persisted as orgName in cloud.json binding | Medium | Fixed | `632acad` — App.tsx first-run-with-creds path now passes `orgName: ""` instead of `creds.orgId`. Cloud-relaunch falls back to `creds.orgId` for the display arg when `binding.orgName` is empty. Rust same-org rebind path now refuses to clobber a non-empty existing orgName with an empty one (so a future modal-connect with a real display name persists). Two new cargo tests pin the semantics. Also verified the `openit-` filter behaviour against the dev20 org's actual filestore listing — three unrelated user collections (`My File Store`, `HTML Reports`, …) are correctly filtered out. |
