@@ -29,7 +29,7 @@ import {
   type LocalItem,
   type RemoteItem,
 } from "../syncEngine";
-import { loadCollectionManifest, saveCollectionManifest } from "../filestoreManifest";
+import { loadCollectionManifest, saveCollectionManifest } from "../nestedManifest";
 
 const OPENIT_PREFIX = "openit-";
 
@@ -68,8 +68,9 @@ export function filestoreAdapter(args: {
   return {
     prefix: DIR,
 
-    loadManifest: (repo) => loadCollectionManifest(repo, collection.id),
-    saveManifest: (repo, m) => saveCollectionManifest(repo, collection.id, collection.name, m),
+    loadManifest: (repo) => loadCollectionManifest(repo, "fs", collection.id),
+    saveManifest: (repo, m) =>
+      saveCollectionManifest(repo, "fs", collection.id, collection.name, m),
 
     async listRemote(_repo) {
       const token = getToken();

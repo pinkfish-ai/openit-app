@@ -22,7 +22,7 @@ import { filestoreAdapter, type FilestoreCollection } from "./entities/filestore
 import {
   loadCollectionManifest,
   saveCollectionManifest,
-} from "./filestoreManifest";
+} from "./nestedManifest";
 import {
   classifyAsShadow,
   clearConflictsForPrefix,
@@ -600,7 +600,7 @@ async function pushAllToFilestoreInner(args: {
   // (replication bug) and tracked as if every collection had it.
   const dir = collectionLocalDir(collection.name);
   const local = await entityListLocal(repo, dir);
-  const persisted = await loadCollectionManifest(repo, collection.id);
+  const persisted = await loadCollectionManifest(repo, "fs", collection.id);
 
   // Sibling-aware shadow exclusion. Pass the full filename set; see
   // classifyAsShadow doc for why pre-filtering is wrong.
@@ -698,6 +698,7 @@ async function pushAllToFilestoreInner(args: {
 
   await saveCollectionManifest(
     repo,
+    "fs",
     collection.id,
     collection.name,
     persisted,
