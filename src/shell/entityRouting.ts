@@ -28,6 +28,12 @@ export async function resolvePathToSource(
   const rel = path.startsWith(repo + "/") ? path.slice(repo.length + 1) : null;
   if (!rel) return { kind: "file", path };
 
+  // `tools/` is a synthetic entity — the project bootstrap creates an
+  // empty directory so the file explorer surfaces it, but the catalog
+  // UI's source of truth is `which` detection of each binary plus the
+  // marker block in CLAUDE.md.
+  if (rel === "tools" || rel === "tools/") return { kind: "tools" };
+
   // .openit/agent-traces/<ticketId>/ (folder) → agent-trace-list:
   // every per-turn trace for this ticket, oldest-first, stacked
   // with separators in the viewer.

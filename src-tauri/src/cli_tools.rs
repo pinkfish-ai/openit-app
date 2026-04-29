@@ -1,0 +1,326 @@
+//! CLI-tools install/uninstall via Homebrew + project CLAUDE.md splicing.
+//!
+//! The MCP route had us pay for tool schemas in every turn whether they
+//! were used or not; CLI tools are zero-cost until invoked. This module
+//! wraps `brew install` / `brew uninstall` and maintains a marker block
+//! in the project's CLAUDE.md so Claude knows which CLIs are available.
+//!
+//! `cli_is_installed` is a free PATH lookup used by the catalog UI to
+//! reflect what's actually on the machine — independent of whether we
+//! installed it ourselves.
+
+use std::fs;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+/// Markers that bracket the OpenIT-managed CLI section in CLAUDE.md.
+/// Anything between them is owned by this module; users editing
+/// CLAUDE.md should leave the block alone (or move their additions
+/// outside the markers).
+const BLOCK_START: &str = "<!-- openit:cli-tools:start -->";
+const BLOCK_END: &str = "<!-- openit:cli-tools:end -->";
+const ENTRY_PREFIX: &str = "<!-- entry:";
+const ENTRY_SUFFIX: &str = " -->";
+
+/// Returns true if `binary` is on PATH. Used by the catalog UI to flip
+/// each card between "Install" and "Uninstall" without tracking
+/// install-source state separately.
+#[tauri::command]
+pub fn cli_is_installed(binary: String) -> bool {
+    which::which(&binary).is_ok()
+}
+
+#[derive(serde::Deserialize)]
+pub struct CliInstallArgs {
+    pub project_root: String,
+    pub brew_pkg: String,
+    pub entry_id: String,
+    /// Single-line guidance for Claude — written verbatim under the
+    /// section header so Claude knows what the CLI is good for.
+    pub claude_md_line: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CliUninstallArgs {
+    pub project_root: String,
+    pub brew_pkg: String,
+    pub entry_id: String,
+}
+
+/// Run `brew install <pkg>` and add the entry to CLAUDE.md. Failure of
+/// the brew step short-circuits — we don't write the hint for a CLI
+/// that didn't actually install. Failure of the CLAUDE.md write is
+/// surfaced too, but at that point brew has already succeeded so the
+/// tool IS installed; the user can manually edit if needed.
+#[tauri::command]
+pub async fn cli_install(args: CliInstallArgs) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || install_blocking(args))
+        .await
+        .map_err(|e| format!("background task failed: {}", e))?
+}
+
+fn install_blocking(args: CliInstallArgs) -> Result<(), String> {
+    brew_run("install", &args.brew_pkg)?;
+    splice_claude_md(&args.project_root, |existing| {
+        upsert_cli_entry(existing, &args.entry_id, &args.claude_md_line)
+    })?;
+    Ok(())
+}
+
+/// Run `brew uninstall <pkg>` and remove the entry from CLAUDE.md. We
+/// proceed with the CLAUDE.md update even if brew uninstall fails (the
+/// CLI may have been installed by some other means — manual installer,
+/// pip, etc.) so the hint goes away regardless. The error is still
+/// surfaced so the UI can offer "remove from CLAUDE.md only" recovery.
+#[tauri::command]
+pub async fn cli_uninstall(args: CliUninstallArgs) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || uninstall_blocking(args))
+        .await
+        .map_err(|e| format!("background task failed: {}", e))?
+}
+
+fn uninstall_blocking(args: CliUninstallArgs) -> Result<(), String> {
+    let brew_result = brew_run("uninstall", &args.brew_pkg);
+    splice_claude_md(&args.project_root, |existing| {
+        remove_cli_entry(existing, &args.entry_id)
+    })?;
+    brew_result
+}
+
+/// Strip the OpenIT-managed CLI block from CLAUDE.md without touching
+/// any installed binaries. Used as the "remove from CLAUDE.md only"
+/// recovery path when brew uninstall fails (CLI was installed
+/// out-of-band, brew doesn't manage it).
+#[tauri::command]
+pub async fn cli_remove_hint_only(
+    project_root: String,
+    entry_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        splice_claude_md(&project_root, |existing| {
+            remove_cli_entry(existing, &entry_id)
+        })
+    })
+    .await
+    .map_err(|e| format!("background task failed: {}", e))?
+}
+
+fn brew_run(verb: &str, pkg: &str) -> Result<(), String> {
+    let brew = which::which("brew").map_err(|_| {
+        "Homebrew not found on PATH — install brew first (https://brew.sh) or install the CLI manually.".to_string()
+    })?;
+    let output = Command::new(&brew)
+        .arg(verb)
+        .arg(pkg)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to spawn brew: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "brew {} {} failed (exit {}): {}",
+            verb,
+            pkg,
+            output.status,
+            stderr.trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Read CLAUDE.md (or treat as empty if missing), apply the mutator,
+/// write back. Mutator is a pure string transform so the upsert/remove
+/// helpers stay independently testable.
+fn splice_claude_md<F>(project_root: &str, mutator: F) -> Result<(), String>
+where
+    F: FnOnce(&str) -> String,
+{
+    let path: PathBuf = [project_root, "CLAUDE.md"].iter().collect();
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let next = mutator(&existing);
+    if next == existing {
+        return Ok(());
+    }
+    fs::write(&path, next).map_err(|e| format!("failed to write CLAUDE.md: {}", e))?;
+    Ok(())
+}
+
+/// Add or replace the line for `entry_id` in the CLAUDE.md OpenIT
+/// block, returning the full new text. Idempotent — re-installing the
+/// same entry overwrites the line in place rather than duplicating.
+fn upsert_cli_entry(claude_md: &str, entry_id: &str, line: &str) -> String {
+    let entry_line = format!("{}{}{}- {}", ENTRY_PREFIX, entry_id, ENTRY_SUFFIX, line);
+    let entries = parse_block(claude_md);
+    let mut next: Vec<(String, String)> = entries
+        .into_iter()
+        .filter(|(id, _)| id != entry_id)
+        .collect();
+    next.push((entry_id.to_string(), entry_line));
+    next.sort_by(|a, b| a.0.cmp(&b.0));
+    rewrite_block(claude_md, next)
+}
+
+fn remove_cli_entry(claude_md: &str, entry_id: &str) -> String {
+    let entries = parse_block(claude_md);
+    let next: Vec<(String, String)> = entries
+        .into_iter()
+        .filter(|(id, _)| id != entry_id)
+        .collect();
+    rewrite_block(claude_md, next)
+}
+
+/// Extract `(entry_id, full_line)` pairs from inside the marker block.
+/// Lines without an `<!-- entry:ID -->` prefix are ignored — they're
+/// either the section header or stray content the user added (which
+/// we'll regenerate-over on the next write, by design).
+fn parse_block(claude_md: &str) -> Vec<(String, String)> {
+    let Some(start) = claude_md.find(BLOCK_START) else { return Vec::new() };
+    let Some(end_rel) = claude_md[start..].find(BLOCK_END) else { return Vec::new() };
+    let body = &claude_md[start + BLOCK_START.len()..start + end_rel];
+    let mut out = Vec::new();
+    for line in body.lines() {
+        if let Some(rest) = line.strip_prefix(ENTRY_PREFIX) {
+            if let Some(idx) = rest.find(ENTRY_SUFFIX) {
+                let id = rest[..idx].to_string();
+                out.push((id, line.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// Rewrite the CLAUDE.md, replacing the existing OpenIT block (if any)
+/// with one rendered from `entries`. Appends a fresh block at the end
+/// of the file when no block exists yet. Removing the last entry
+/// strips the block entirely so the file doesn't accumulate empty
+/// scaffolding.
+fn rewrite_block(claude_md: &str, entries: Vec<(String, String)>) -> String {
+    let block = if entries.is_empty() {
+        String::new()
+    } else {
+        let mut s = String::new();
+        s.push_str(BLOCK_START);
+        s.push_str("\n## Installed CLI tools\n\n");
+        s.push_str(
+            "These CLI tools are installed locally and available via Bash. Prefer them over hand-rolled API calls or scraping; for unfamiliar commands run `<tool> --help` to discover capabilities.\n\n",
+        );
+        for (_, line) in &entries {
+            s.push_str(line);
+            s.push('\n');
+        }
+        s.push_str(BLOCK_END);
+        s
+    };
+
+    if let Some(start) = claude_md.find(BLOCK_START) {
+        if let Some(end_rel) = claude_md[start..].find(BLOCK_END) {
+            let end = start + end_rel + BLOCK_END.len();
+            let mut next = String::new();
+            next.push_str(&claude_md[..start]);
+            // If we're stripping the block entirely, also drop the
+            // blank line that typically separates it from the
+            // preceding section so the file doesn't end with a
+            // double blank.
+            if block.is_empty() {
+                let trimmed = next.trim_end_matches('\n');
+                next.truncate(trimmed.len());
+                if !next.is_empty() {
+                    next.push('\n');
+                }
+            } else {
+                next.push_str(&block);
+            }
+            next.push_str(&claude_md[end..]);
+            return next;
+        }
+    }
+
+    // No existing block — append at end with a separating blank line.
+    if block.is_empty() {
+        return claude_md.to_string();
+    }
+    let mut out = claude_md.trim_end_matches('\n').to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(&block);
+    out.push('\n');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upsert_into_empty_file_appends_block() {
+        let result = upsert_cli_entry("", "gh", "GitHub CLI is installed.");
+        assert!(result.contains(BLOCK_START));
+        assert!(result.contains(BLOCK_END));
+        assert!(result.contains("<!-- entry:gh -->- GitHub CLI is installed."));
+    }
+
+    #[test]
+    fn upsert_preserves_existing_content_above() {
+        let existing = "# My project\n\nSome notes.\n";
+        let result = upsert_cli_entry(existing, "gh", "GitHub CLI is installed.");
+        assert!(result.starts_with("# My project\n\nSome notes."));
+        assert!(result.contains("<!-- entry:gh -->"));
+    }
+
+    #[test]
+    fn upsert_replaces_in_place_for_same_id() {
+        let first = upsert_cli_entry("", "gh", "Old hint.");
+        let second = upsert_cli_entry(&first, "gh", "New hint.");
+        assert!(!second.contains("Old hint."));
+        assert!(second.contains("New hint."));
+        // No duplicate entries.
+        let count = second.matches("<!-- entry:gh -->").count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn upsert_sorts_entries_by_id() {
+        let s = upsert_cli_entry("", "gh", "gh hint.");
+        let s = upsert_cli_entry(&s, "aws", "aws hint.");
+        let aws_idx = s.find("entry:aws").unwrap();
+        let gh_idx = s.find("entry:gh").unwrap();
+        assert!(aws_idx < gh_idx, "aws should come before gh alphabetically");
+    }
+
+    #[test]
+    fn remove_drops_entry_and_block_when_last() {
+        let s = upsert_cli_entry("", "gh", "gh hint.");
+        let s = remove_cli_entry(&s, "gh");
+        assert!(!s.contains(BLOCK_START));
+        assert!(!s.contains(BLOCK_END));
+    }
+
+    #[test]
+    fn remove_keeps_block_when_other_entries_remain() {
+        let s = upsert_cli_entry("", "gh", "gh hint.");
+        let s = upsert_cli_entry(&s, "aws", "aws hint.");
+        let s = remove_cli_entry(&s, "gh");
+        assert!(s.contains(BLOCK_START));
+        assert!(s.contains("entry:aws"));
+        assert!(!s.contains("entry:gh"));
+    }
+
+    #[test]
+    fn remove_is_noop_for_unknown_id() {
+        let original = "# README\n";
+        let result = remove_cli_entry(original, "nonexistent");
+        assert_eq!(result, original);
+    }
+
+    #[test]
+    fn parse_block_returns_entries_in_file_order() {
+        let s = upsert_cli_entry("", "aws", "aws hint.");
+        let s = upsert_cli_entry(&s, "gh", "gh hint.");
+        let entries = parse_block(&s);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "aws");
+        assert_eq!(entries[1].0, "gh");
+    }
+}

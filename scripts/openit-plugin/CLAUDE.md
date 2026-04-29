@@ -137,6 +137,12 @@ If the user has connected this project to Pinkfish via the **Connect to Cloud** 
 - Semantic search would be meaningfully better than reading files (large KBs).
 - The user explicitly asks for a gateway-shaped capability.
 
+## Locally-installed CLI tools
+
+OpenIT's **Tools** entity (in the Workbench / file explorer) maintains a marker block in this same `CLAUDE.md` listing the CLI tools the admin has installed locally — `gh`, `aws`, `gcloud`, `okta`, `op`, etc. Each entry tells you what the tool is for and (for less-known tools) how to discover its surface, typically via `<tool> --help`.
+
+When a request can be answered by an installed CLI, **prefer the CLI over hand-rolled API calls or scraping**. CLI tools auth through their own flows (`gh auth login`, `aws configure`, `okta login`, etc.); if a tool reports unauthenticated, surface that to the admin rather than guessing credentials.
+
 ## Permissions
 
 Claude Code skills in this project need filesystem access. When a skill asks for `Bash` / `Read` / `Write` permission, approve once — Claude Code remembers per-project. The skills need it to:

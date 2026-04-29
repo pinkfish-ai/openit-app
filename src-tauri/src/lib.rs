@@ -1,5 +1,6 @@
 mod agent_trace;
 mod claude;
+mod cli_tools;
 mod filestore;
 mod fs_tree;
 mod git_history;
@@ -70,6 +71,10 @@ pub fn run() {
             git_ops::git_diff_name_only,
             git_ops::git_global_user_email,
             claude::claude_generate_commit_message,
+            cli_tools::cli_is_installed,
+            cli_tools::cli_install,
+            cli_tools::cli_uninstall,
+            cli_tools::cli_remove_hint_only,
             state::state_load,
             state::state_save,
             keychain::keychain_set,

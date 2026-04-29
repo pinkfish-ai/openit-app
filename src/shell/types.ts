@@ -194,4 +194,10 @@ export type ViewerSource =
   // cloud-cta layout (eyebrow + headline + lead + a single intake
   // CTA). The intake URL is read from Viewer's `intakeUrl` prop.
   | { kind: "getting-started" }
+  // Tools — the CLI-tools catalog. Backed by `which` detection rather
+  // than a real on-disk directory; the resolver matches the synthetic
+  // path `<repo>/tools` and routes here. The viewer renders
+  // <ToolsPanel> which lists installed CLIs with brew install/uninstall
+  // affordances.
+  | { kind: "tools" }
   | null;
