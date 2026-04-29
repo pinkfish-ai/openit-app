@@ -1341,9 +1341,16 @@ body::before {
   transform: translateX(2px);
 }
 
-/* Back-arrow button on the conversation-thread view — returns to
-   the parent conversations-list with the previously-selected filter
-   intact. Sits flush left in the viewer header, ahead of the title. */
+/* Back/forward pair in the viewer header — permanent on every page
+   so navigation is consistent regardless of which view is open. The
+   pair sits flush left, ahead of the entity badge and title. */
+.viewer-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+}
+
 .viewer-back-btn {
   background: transparent;
   border: 1px solid transparent;
@@ -1352,14 +1359,19 @@ body::before {
   padding: 2px 8px;
   font-size: 14px;
   line-height: 1;
-  margin-right: 4px;
   cursor: pointer;
 }
 
-.viewer-back-btn:hover {
+.viewer-back-btn:hover:not(:disabled) {
   background: var(--surface-soft);
   color: var(--text);
   border-color: var(--border);
+}
+
+.viewer-back-btn:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.5;
 }
 
 /* Markdown edit mode — full-pane textarea with a footer of action
