@@ -184,6 +184,14 @@ export async function claudeDetect(): Promise<string | null> {
   return invoke("claude_detect");
 }
 
+/// Run the official Claude Code installer
+/// (`curl -fsSL https://claude.ai/install.sh | bash`) and return the resolved
+/// binary path. Throws on installer failure. Idempotent: returns the existing
+/// path if `claude` is already on PATH or in a known install dir.
+export async function claudeInstall(): Promise<string> {
+  return invoke("claude_install");
+}
+
 /// Ask the user's Claude CLI (`claude -p`) to summarize the staged diff into
 /// a single commit subject line, matching the style of the recent log.
 /// Returns the trimmed first line; throws on missing CLI or empty staging.

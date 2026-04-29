@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   claudeDetect,
+  claudeInstall,
   pinkfishListConnections,
   type UserConnection,
 } from "./lib/api";
@@ -112,7 +113,10 @@ export function Onboarding({
   startBrowserConnect: () => void;
   cancelBrowserConnect: () => void;
 }) {
-  const [claudePath, setClaudePath] = useState<string | null | "loading">("loading");
+  const [claudePath, setClaudePath] = useState<string | null | "loading" | "installing">(
+    "loading",
+  );
+  const [claudeInstallError, setClaudeInstallError] = useState<string | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [chat, setChat] = useState<{
     state: "idle" | "loading" | "ready";
@@ -120,10 +124,54 @@ export function Onboarding({
     teams: UserConnection | null;
   }>({ state: "idle", slack: null, teams: null });
 
+  // Auto-install Claude Code on first run if it's missing. The native
+  // installer drops the binary at ~/.local/bin/claude and updates the user's
+  // shell rc; the Rust side also probes that dir directly so the GUI app
+  // sees the binary without a terminal restart.
   useEffect(() => {
-    claudeDetect()
-      .then((p) => setClaudePath(p))
-      .catch(() => setClaudePath(null));
+    let cancelled = false;
+    (async () => {
+      try {
+        const detected = await claudeDetect();
+        if (cancelled) return;
+        if (detected) {
+          setClaudePath(detected);
+          return;
+        }
+        setClaudePath("installing");
+        setClaudeInstallError(null);
+        try {
+          const installed = await claudeInstall();
+          if (cancelled) return;
+          setClaudePath(installed);
+        } catch (err) {
+          if (cancelled) return;
+          console.error("claude install failed:", err);
+          setClaudeInstallError(
+            err instanceof Error ? err.message : String(err),
+          );
+          setClaudePath(null);
+        }
+      } catch {
+        if (!cancelled) setClaudePath(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const retryInstall = useCallback(async () => {
+    setClaudePath("installing");
+    setClaudeInstallError(null);
+    try {
+      const installed = await claudeInstall();
+      setClaudePath(installed);
+    } catch (err) {
+      console.error("claude install retry failed:", err);
+      setClaudeInstallError(err instanceof Error ? err.message : String(err));
+      setClaudePath(null);
+    }
   }, []);
 
   const refreshChat = useCallback(async () => {
@@ -273,18 +321,38 @@ export function Onboarding({
 
         <Step
           n={2}
-          title={claudeReady ? "Claude Code detected" : "Install Claude Code"}
+          title={
+            claudeReady
+              ? "Claude Code installed"
+              : claudePath === "installing"
+                ? "Installing Claude Code…"
+                : claudePath === "loading"
+                  ? "Checking for Claude Code"
+                  : "Install Claude Code"
+          }
           state={
-            claudePath === "loading" ? "active" : claudeReady ? "done" : "active"
+            claudePath === "loading" || claudePath === "installing"
+              ? "active"
+              : claudeReady
+                ? "done"
+                : "active"
           }
           detail={
             claudePath === "loading" ? (
               "Checking your PATH…"
+            ) : claudePath === "installing" ? (
+              "Downloading from claude.ai/install.sh — this takes a few seconds."
             ) : claudeReady ? (
               <code className="onboard-path">{claudePath as string}</code>
             ) : (
               <>
-                <code>claude</code> isn't on your PATH yet.{" "}
+                <span style={{ color: "#b91c1c" }}>
+                  Auto-install failed.
+                </span>{" "}
+                {claudeInstallError ? (
+                  <code className="onboard-path">{claudeInstallError}</code>
+                ) : null}{" "}
+                Retry, or{" "}
                 <a
                   href={CLAUDE_INSTALL_DOCS}
                   onClick={(e) => {
@@ -292,22 +360,18 @@ export function Onboarding({
                     openUrl(CLAUDE_INSTALL_DOCS).catch(console.error);
                   }}
                 >
-                  Install instructions
+                  install manually
                 </a>
-                {". After installing, click Re-check."}
+                .
               </>
             )
           }
           action={
-            !claudeReady && claudePath !== "loading" ? (
-              <button
-                className="icon-btn"
-                onClick={() => {
-                  setClaudePath("loading");
-                  claudeDetect().then(setClaudePath).catch(() => setClaudePath(null));
-                }}
-              >
-                Re-check
+            !claudeReady &&
+            claudePath !== "loading" &&
+            claudePath !== "installing" ? (
+              <button className="icon-btn" onClick={retryInstall}>
+                Retry
               </button>
             ) : null
           }
