@@ -68,9 +68,22 @@ Phase 2 introduced the nested per-collection manifest in `nestedManifest.ts`, us
 
 The `<colName>/<key>` manifestKey convention disappears — manifestKey becomes plain `<key>` (the collection is implicit in the bucket). The plugin script `sync-resolve-conflict.mjs` and any other consumer that parsed the slash-separated key need updating.
 
-### 1e. Naming convention drift
+### 1e. Naming convention — `openit-` prefix on the cloud, stripped locally
 
-Filestore Phase 1 dropped the `-<orgId>` suffix (`openit-docs-<orgId>` → `openit-library`). KB Phase 2 followed the same pattern (`openit-default`, `openit-runbooks`). Datastore is still on the legacy `openit-tickets-<orgId>` convention (`datastoreSync.ts:137`). Phase 3 normalises: defaults rename to plain `openit-tickets`, `openit-people`. V2 hasn't launched, so test orgs with the legacy names get orphaned — same risk profile as Phase 1's `openit-docs-<orgId>` orphaning, accepted in the brief.
+The convention across all entities:
+
+- **Cloud:** every OpenIT-managed collection carries the `openit-` prefix. The discovery filter uses this prefix to ignore unrelated user collections that happen to share a Pinkfish account.
+- **Local:** the prefix is stripped for the on-disk folder name, so users see clean paths.
+
+Already the case for filestore (`openit-library` ↔ `filestores/library/`) and KB (`openit-default` ↔ `knowledge-bases/default/`). Phase 3 normalises datastore onto the same convention:
+
+| Cloud (REST) | Local (disk) |
+|---|---|
+| `openit-tickets` | `databases/tickets/` |
+| `openit-people` | `databases/people/` |
+| `openit-projects` (custom) | `databases/projects/` |
+
+Today datastore uses `openit-tickets-<orgId>` on the cloud and `databases/openit-tickets-<orgId>/` locally — both wrong under the new convention. Phase 3 fixes both. Test orgs with the legacy names see them as orphans on the cloud side and ignored on the local side; per engineer direction, this is brand-new code so no migration.
 
 ### 1f. Workbench overview (Workbench.tsx)
 
@@ -88,9 +101,7 @@ const STATIONS: Station[] = [
 ];
 ```
 
-`rel` here points at on-disk paths. Note: `databases/tickets` and `databases/people` are unprefixed (no `openit-`). After Phase 3's rename to drop the `-<orgId>` suffix, the on-disk folder is still `databases/openit-tickets/` (the cloud collection name with the openit- prefix). The current Workbench code reads from `databases/tickets` which won't match — there's an existing path mismatch we'll need to verify against running code (or it's been updated elsewhere; investigate before touching).
-
-Actually verifying via `FileExplorer.tsx:85`: `if (rel.match(/^databases\/openit-[^/]+$/)) {…}` — confirms the on-disk dir IS prefixed. So the Workbench station's `rel: "databases/tickets"` is wrong / pre-rename. **Before adding the new conditional tile, verify what the existing tickets/people stations actually open** — there may be a pre-existing path bug.
+`rel` here points at on-disk paths — already the correct unprefixed shape (`databases/tickets`, `databases/people`) under Phase 3's strip-prefix-locally convention. Phase 3's datastore rewrite makes the rest of the codebase match this expectation.
 
 Phase 3 inserts a conditional `databases` station after `people`:
 
@@ -99,7 +110,9 @@ Phase 3 inserts a conditional `databases` station after `people`:
   /* new property */ visibleIf: (state) => hasCustomDatastores(state) },
 ```
 
-`hasCustomDatastores` checks the FileExplorer's `datastores` state for any entry whose name doesn't match the two defaults.
+`hasCustomDatastores` checks the FileExplorer's `datastores` state for any entry whose name (post-strip) doesn't match `tickets` or `people`.
+
+**FileExplorer regex update.** `FileExplorer.tsx:85` currently matches `^databases/openit-[^/]+$` — the legacy prefixed-on-disk path. Phase 3 updates this regex to `^databases/[^/]+$` excluding system folders (`conversations`, future siblings) so the unprefixed path matches the per-collection card view.
 
 ### 1g. ENTITY_META
 
@@ -151,13 +164,13 @@ Three coupled pieces:
 | --- | --- |
 | `src/lib/syncEngine.ts` | Add `onAfterResolve?: (repo: string, collections: C[]) => Promise<void>` to `CollectionSyncConfig<C>`. Call it inside `start()` after `update({ collections })` and before the per-collection pull loop. Errors warn-log only (don't fail the whole sync). |
 | `src/lib/nestedManifest.ts` | Extend `EntityName` from `"fs" | "kb"` to `"fs" | "kb" | "datastore"`. Add `datastoreStateLoad` / `datastoreStateSave` to the loaders/savers maps. Existing legacy-flat-format detection migrates the old datastore manifest forward (bucket discarded — fresh state on first sync, same as Phase 2 KB). |
-| `src/lib/entities/datastore.ts` | Refactor to **per-collection** adapter: `datastoreAdapter({ creds, collection })` (singular). `prefix: \`databases/<displayName>\`` per filestore/KB pattern. `manifestKey` simplifies to `<key>` (was `<colName>/<key>`). `listRemote` paginates ONE collection (drops the across-collections flatten). `listLocal` reads `databases/<colName>/`. `onServerDelete` doesn't need to parse the slash anymore. Persistence via `loadCollectionManifest(repo, "datastore", collection.id)` / `saveCollectionManifest`. The `unreliableKeyPrefixes` mechanic moves to per-adapter (each adapter reports its own unreliability via `paginationFailed: true`). |
-| `src/lib/datastoreSync.ts` | Collapse to ~150 LOC: define the `CollectionSyncConfig<DataCollection>` (or a new `DatastoreCollection` type), supply `pushOne` (per-collection upload — the existing full-reconcile logic, scoped to one collection), supply `onAfterResolve` (calls `writeDatastoreSchemas(repo, collections)`). Drop `-<orgId>` suffix from default names — `openit-tickets`, `openit-people`. Drop `inflightResolve` / `lastCreationAttemptTime` / `createdCollections` (orchestrator owns them now). Keep `resolveProjectDatastores`, `pullDatastoresOnce`, `pushAllToDatastores`, `startDatastoreSync`, `stopDatastoreSync` exported under the same names so Shell.tsx / pushAll.ts compile unchanged. Status type `DatastoreSyncStatus = CollectionSyncStatus<DataCollection>`. |
+| `src/lib/entities/datastore.ts` | Refactor to **per-collection** adapter: `datastoreAdapter({ creds, collection })` (singular). Compute `displayName = collection.name.replace(/^openit-/, "")` once. `prefix: \`databases/<displayName>\`` per filestore/KB pattern. `manifestKey` simplifies to `<key>` (was `<colName>/<key>`). `workingTreePath: \`databases/<displayName>/<key>.json\`` — local strips the prefix. `listRemote` paginates ONE collection (drops the across-collections flatten). `listLocal` reads `databases/<displayName>/`. `onServerDelete` doesn't need to parse the slash anymore. Persistence via `loadCollectionManifest(repo, "datastore", collection.id)` / `saveCollectionManifest`. The `unreliableKeyPrefixes` mechanic moves to per-adapter (each adapter reports its own unreliability via `paginationFailed: true`). |
+| `src/lib/datastoreSync.ts` | Collapse to ~150 LOC: define the `CollectionSyncConfig<DataCollection>`, supply `pushOne` (per-collection upload — existing full-reconcile logic scoped to one collection, with `localDirExists` safety check preserved), supply `onAfterResolve` (calls `writeDatastoreSchemas(repo, collections)`). Default names: plain `openit-tickets` and `openit-people` (drop the `-<orgId>` suffix to match filestore + KB). Drop the in-house `inflightResolve` / `lastCreationAttemptTime` / `createdCollections` caches (orchestrator owns them). `displayDatastoreName(name)` helper strips `openit-` for UI labels. Keep the same export surface (`resolveProjectDatastores`, `pullDatastoresOnce`, `pushAllToDatastores`, `startDatastoreSync`, `stopDatastoreSync`) so Shell.tsx / pushAll.ts compile unchanged. Status type `DatastoreSyncStatus = CollectionSyncStatus<DataCollection>`. |
 | `src/lib/api.ts` | Confirm `datastoreStateLoad` / `datastoreStateSave` exist (they should — they were added during R2). No new wrappers. |
 | `src/lib/pushAll.ts` | Update if datastore's status surface changes (`getDatastoreSyncStatus` becomes available, replacing the side-channel through `pullDatastoresOnce`). Likely a small simplification. |
 | `src/shell/Workbench.tsx` | Add new `databases` station entry after `people`. Wire conditional visibility based on whether any non-default `openit-*` datastore is present. Reuse existing station-rendering machinery. |
 | `src/shell/entityIcons.tsx` | Add `databases` to `EntityKind`; pick icon + tone + label. |
-| `src/shell/FileExplorer.tsx` | Add a "datastores listing" route — when the user clicks the new Workbench tile, FileExplorer renders a card grid of every `openit-*` datastore. Each card shows row count + last-sync timestamp + click-through to `databases/<colName>/`. Reuse existing collection-card visual. |
+| `src/shell/FileExplorer.tsx` | (a) Update the legacy `databases/openit-[^/]+$` regex to match the new unprefixed local path (`databases/[^/]+$` with system-folder exclusions for `conversations`). (b) Add a "datastores listing" route — when the user clicks the new Workbench tile, FileExplorer renders a card grid of every `openit-*` datastore. Each card shows the unprefixed display name + row count + last-sync timestamp + click-through to `databases/<displayName>/`. Reuse existing collection-card visual. |
 | `scripts/openit-plugin/scripts/sync-resolve-conflict.mjs` | Recognise nested format for `datastore` (auto-detect). Route `--prefix databases/<name>` to the right bucket via collection_name lookup. Legacy short `datastore` prefix against a nested manifest emits the same `legacy_prefix_against_nested_manifest`-style error Phase 2 added for KB / filestore. |
 | `scripts/openit-plugin/skills/datastores.md` (new) | Plugin skill teaching Claude how to interact with datastores. File-ops first, schema-aware for structured, gateway/MCP for semantic queries. Per the brief's section 7. |
 
@@ -173,16 +186,16 @@ Three coupled pieces:
 
 ### Manual scenarios
 
-- **MS-1.** Fresh connect with no datastores on cloud → orchestrator auto-creates `openit-tickets` + `openit-people` (both structured). Local `databases/openit-tickets/_schema.json` and `databases/openit-people/_schema.json` written.
-- **MS-2.** Pre-existing structured `openit-tickets-<orgId>` on cloud (legacy name) → not picked up by the new `openit-tickets` filter. Phase 3 doesn't migrate. (Document in PR description.)
-- **MS-3.** Edit a row file `databases/openit-tickets/<key>.json` locally → next poll pushes. Verify on dashboard.
-- **MS-4.** Create a row on dashboard → next poll pulls down to `databases/openit-tickets/<key>.json`.
-- **MS-5.** Both sides edit the same row → `.server.json` shadow lands; conflict bubble names the right path; resolve script clears.
-- **MS-6.** Delete a row on dashboard → next poll removes the local file.
-- **MS-7.** Create an UNSTRUCTURED datastore `openit-notes` on the dashboard → next poll pulls it down to `databases/openit-notes/`. NO `_schema.json` written. Row round-trip works.
-- **MS-8.** Delete a row file locally, commit → push DELETE-by-id removes the row from the cloud.
+- **MS-1.** Fresh connect with no datastores on cloud → orchestrator auto-creates `openit-tickets` + `openit-people` (both structured). Local `databases/tickets/_schema.json` and `databases/people/_schema.json` written.
+- **MS-2.** Edit a row file `databases/tickets/<key>.json` locally → next poll pushes. Verify on dashboard.
+- **MS-3.** Create a row on dashboard → next poll pulls down to `databases/tickets/<key>.json`.
+- **MS-4.** Both sides edit the same row → `.server.json` shadow lands; conflict bubble names the right path; resolve script clears.
+- **MS-5.** Delete a row on dashboard → next poll removes the local file.
+- **MS-6.** Create an UNSTRUCTURED datastore `openit-notes` on the dashboard → next poll pulls it down to `databases/notes/`. NO `_schema.json` written. Row round-trip works.
+- **MS-7.** Delete a row file locally, commit → push DELETE-by-id removes the row from the cloud.
+- **MS-8.** Cloud has an unrelated non-`openit-` datastore (e.g. `customer-feedback`) → not pulled, not modified, not visible in OpenIT UI.
 - **MS-9.** Workbench overview with only `openit-tickets` + `openit-people` shows the 2 default tiles, NO "Databases" tile.
-- **MS-10.** Workbench overview after creating `openit-projects` on the dashboard → shows the 2 default tiles AND the new "Databases" tile. Click → listing view renders 3 cards. Click a card → opens FileExplorer at `databases/openit-projects/`.
+- **MS-10.** Workbench overview after creating `openit-projects` on the dashboard → shows the 2 default tiles AND the new "Databases" tile. Click → listing view renders 3 cards. Click a card → opens FileExplorer at `databases/projects/`.
 - **MS-11.** Phase 1 (filestore) + Phase 2 (KB) manual scenarios still pass — no regression.
 - **MS-12.** `cloud.json.lastSyncAt` updates after a datastore pull.
 
@@ -233,6 +246,7 @@ The structural rewrite. Largest single change.
 - [ ] Add the new conditional station to `Workbench.tsx`'s `STATIONS` array. Wire `hasCustomDatastores` check.
 - [ ] FileExplorer route for the listing view (datastore card grid). Reuse existing collection-card visual.
 - [ ] Verify the existing `databases/tickets` / `databases/people` station `rel` paths actually match disk state (path mismatch flagged in investigation 1f). Fix or confirm working.
+- [ ] Update `FileExplorer.tsx` regex `/^databases/openit-[^/]+$/` → `/^databases/[^/]+$/` (with `conversations` system-folder exclusion) so the unprefixed local path matches.
 - [ ] No new tests at this layer — UI wiring exercised by manual scenarios MS-9 through MS-11.
 
 ### Step 6 — Plugin script + skill
@@ -261,17 +275,15 @@ Hard stop per `auto-dev/02-impl.plan.md`. Don't roll into stage 03 (implementati
 
 ## Risks
 
-1. **Existing test orgs have legacy `openit-tickets-<orgId>` datastores.** Phase 3's filter looks for plain `openit-tickets`, so legacy ones get orphaned. V2 hasn't launched, surface area is small. PR description calls this out; users with stranded data manually rename in dashboard.
+1. **Schema-write hook is the first cross-engine concern that doesn't fit the per-collection adapter shape.** Risk of bloating the orchestrator's config interface. Mitigation: scope the hook to "fires once per `start()` after resolve" — cheap, datastore-shaped, doesn't grow if other engines never need it. If a future engine wants per-collection schema-write, switch to `onCollectionAdded(collection)` instead.
 
-2. **Schema-write hook is the first cross-engine concern that doesn't fit the per-collection adapter shape.** Risk of bloating the orchestrator's config interface. Mitigation: scope the hook to "fires once per `start()` after resolve" — cheap, datastore-shaped, doesn't grow if other engines never need it. If a future engine wants per-collection schema-write, switch to `onCollectionAdded(collection)` instead.
+2. **`<colName>/<key>` → bare `<key>` manifestKey change.** The plugin script + any consumer that joined-key parsed needs updating. Audit during stage 03 — grep for `<colName>/<key>` patterns before merging.
 
-3. **`<colName>/<key>` → bare `<key>` manifestKey change.** The plugin script + any consumer that joined-key parsed needs updating. Audit during stage 03 — grep for `<colName>/<key>` patterns before merging.
+3. **Push impl's `localDirExists` safety check** is critical (line 481 of current datastoreSync.ts). With per-collection adapters, each adapter's `pushOne` needs to preserve this — an empty per-collection dir is "newly synced" not "user deleted everything". Tests must cover the empty-dir case.
 
-4. **Push impl's `localDirExists` safety check** is critical (line 481 of current datastoreSync.ts). With per-collection adapters, each adapter's `pushOne` needs to preserve this — an empty per-collection dir is "newly synced" not "user deleted everything". Tests must cover the empty-dir case.
+4. **Pagination + `unreliableKeyPrefixes`.** Each per-collection adapter handles its own pagination scope. The current single-adapter version reports per-collection unreliability via the cross-cutting list. With per-collection, the orchestrator already aggregates per-adapter `paginationFailed` flags via `clearConflictsForPrefix` per prefix — same effect, simpler shape.
 
-5. **Pagination + `unreliableKeyPrefixes`.** Each per-collection adapter handles its own pagination scope. The current single-adapter version reports per-collection unreliability via the cross-cutting list. With per-collection, the orchestrator already aggregates per-adapter `paginationFailed` flags via `clearConflictsForPrefix` per prefix — same effect, simpler shape.
-
-6. **Workbench station path mismatch** (investigation 1f). The current `rel: "databases/tickets"` may not match disk reality. Don't introduce the new tile until the existing ones are verified.
+5. **FileExplorer regex update reach.** Changing `databases/openit-[^/]+$` → `databases/[^/]+$` means a system-folder exclusion list is needed (today only `conversations` lives at `databases/conversations/`, but any future sibling system folder would also need to be excluded). Stage-03 audit: grep for every regex / path-prefix check involving `databases/openit-` and update consistently.
 
 ---
 
@@ -281,6 +293,6 @@ Per the brief: agents/workflows bidirectional (Phase 4); plugin overlay revision
 
 Plus from this plan's investigation:
 
-- Migrating legacy `openit-<x>-<orgId>` datastores from existing test orgs.
 - Refactoring `pushAll.ts` to surface a unified "all engines pushed" status.
 - Renaming `databases/` → `datastores/` on disk (would touch every existing user folder; out of scope).
+- Migrating legacy `openit-<x>-<orgId>` datastores from existing test orgs — engineer confirmed brand-new code, no migration needed.
