@@ -808,7 +808,9 @@ pub fn entity_list_local(repo: String, subdir: String) -> Result<Vec<KbLocalFile
 }
 
 /// Write a string (typically JSON) to `<repo>/<subdir>/<filename>`.
-/// Creates the subdirectory if it doesn't exist.
+/// Creates the subdirectory if it doesn't exist. Empty `subdir` means
+/// "write at repo root" (e.g. `CLAUDE.md`); the filename validator
+/// already rejects path separators so the target stays inside `repo`.
 #[tauri::command]
 pub fn entity_write_file(
     repo: String,
@@ -816,9 +818,13 @@ pub fn entity_write_file(
     filename: String,
     content: String,
 ) -> Result<(), String> {
-    validate_subdir(&subdir)?;
     validate_filename(&filename)?;
-    let dir = Path::new(&repo).join(&subdir);
+    let dir = if subdir.is_empty() {
+        Path::new(&repo).to_path_buf()
+    } else {
+        validate_subdir(&subdir)?;
+        Path::new(&repo).join(&subdir)
+    };
     ensure_dir(&dir)?;
     let path = dir.join(&filename);
     fs::write(&path, content).map_err(|e| e.to_string())

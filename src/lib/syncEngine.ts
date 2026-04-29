@@ -1322,16 +1322,25 @@ export function createCollectionEntitySync<C extends CollectionLike>(
     }
     if (config.discoverLocalCollections) {
       try {
+        // Pass only the actually-on-cloud names. Don't union in
+        // `toCreate` — discovery should be allowed to surface
+        // entries for hardcoded defaults too, so a bundled
+        // `_schema.json` on disk gets picked up at create time
+        // (otherwise defaults would always create unstructured).
         const discovered = await config.discoverLocalCollections({
           repo,
-          existingNames: new Set([
-            ...existingNames,
-            ...toCreate.map((t) => t.name),
-          ]),
+          existingNames: new Set(existingNames),
         });
         for (const d of discovered) {
           if (existingNames.has(d.name)) continue;
-          if (toCreate.some((t) => t.name === d.name)) continue;
+          // If discovery names a default that's already queued without
+          // a body fragment, upgrade it in place with the discovered
+          // body (carries `isStructured`/`schema`). Otherwise append.
+          const queued = toCreate.find((t) => t.name === d.name);
+          if (queued) {
+            if (!queued.discovery) queued.discovery = d;
+            continue;
+          }
           toCreate.push({ name: d.name, discovery: d });
         }
       } catch (e) {

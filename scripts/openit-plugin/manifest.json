@@ -18,6 +18,26 @@
     { "path": "scripts/sync-resolve-conflict.mjs" },
     { "path": "scripts/sync-push.mjs" },
     { "path": "scripts/report-overview.mjs" },
-    { "path": "scripts/slack-listen.bundle.cjs" }
+    { "path": "scripts/slack-listen.bundle.cjs" },
+    { "path": "seed/tickets/sample-ticket-1.json" },
+    { "path": "seed/tickets/sample-ticket-2.json" },
+    { "path": "seed/tickets/sample-ticket-3.json" },
+    { "path": "seed/tickets/sample-ticket-4.json" },
+    { "path": "seed/tickets/sample-ticket-5.json" },
+    { "path": "seed/people/sample-person-1.json" },
+    { "path": "seed/people/sample-person-2.json" },
+    { "path": "seed/people/sample-person-3.json" },
+    { "path": "seed/people/sample-person-4.json" },
+    { "path": "seed/people/sample-person-5.json" },
+    { "path": "seed/knowledge/sample-article-1.md" },
+    { "path": "seed/knowledge/sample-article-2.md" },
+    { "path": "seed/conversations/sample-ticket-1/msg-1745848931000-aa01.json" },
+    { "path": "seed/conversations/sample-ticket-2/msg-1745858924000-bb01.json" },
+    { "path": "seed/conversations/sample-ticket-2/msg-1745861702000-bb02.json" },
+    { "path": "seed/conversations/sample-ticket-3/msg-1745749860000-cc01.json" },
+    { "path": "seed/conversations/sample-ticket-3/msg-1745751738000-cc02.json" },
+    { "path": "seed/conversations/sample-ticket-4/msg-1745916300000-dd01.json" },
+    { "path": "seed/conversations/sample-ticket-5/msg-1745667000000-ee01.json" },
+    { "path": "seed/conversations/sample-ticket-5/msg-1745669100000-ee02.json" }
   ]
 }

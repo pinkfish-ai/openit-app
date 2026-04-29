@@ -34,6 +34,8 @@ import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
 import { startAgentSync, stopAgentSync } from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
 import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
+import { applySeedAfterCloudResolve, applySeedLocalOnly } from "./lib/seedDriver";
+import { pushAllEntities } from "./lib/pushAll";
 import { invoke } from "@tauri-apps/api/core";
 import { type Bubble as PromptBubble } from "./shell/PromptBubbles";
 import "./App.css";
@@ -407,6 +409,11 @@ function App() {
             // the orgId in the UI than nothing until the user reconnects
             // through the modal (which provides a real display name).
             startCloudSyncs(creds, lastRepo, binding.orgName || creds.orgId);
+            applySeedAfterCloudResolve(lastRepo, creds, () => {
+              void pushAllEntities(lastRepo, (line) =>
+                console.log("[seedDriver:push]", line),
+              );
+            });
             finish();
             return;
           }
@@ -457,10 +464,17 @@ function App() {
               onboarding_complete: s.onboarding_complete ?? false,
             });
             startCloudSyncs(creds, result.path, creds.orgId);
+            const seedRepoPath = result.path;
+            const seedCreds = creds;
             syncSkillsToDisk(result.path, creds)
               .then((manifest) => {
                 console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
                 setBubbles(convertBubblesForPrompt(manifest.bubbles));
+                applySeedAfterCloudResolve(seedRepoPath, seedCreds, () => {
+                  void pushAllEntities(seedRepoPath, (line) =>
+                    console.log("[seedDriver:push]", line),
+                  );
+                });
               })
               .catch((e) => console.error("skill sync failed:", e));
           } catch (e) {
@@ -527,8 +541,15 @@ function App() {
               .then((manifest) => {
                 console.log("[app] bundled skill sync complete, bubbles:", manifest.bubbles);
                 setBubbles(convertBubblesForPrompt(manifest.bubbles));
+                // Local-only: no engines to wait for. Seed gate just
+                // checks folder-emptiness + sentinel.
+                void applySeedLocalOnly(projectPath);
               })
               .catch((e) => console.error("bundled skill sync failed:", e));
+          } else {
+            // Plugin sync skipped (already current) but seed might
+            // still be pending — run the gate independently.
+            void applySeedLocalOnly(projectPath);
           }
         } catch (e) {
           console.error("[app] local-only bootstrap failed:", e);
@@ -636,10 +657,17 @@ function App() {
       const fullCreds = await loadCreds();
       if (fullCreds) {
         startCloudSyncs(fullCreds, result.path, incoming);
+        const seedRepo = result.path;
+        const seedCreds = fullCreds;
         syncSkillsToDisk(result.path, fullCreds)
           .then((manifest) => {
             console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
             setBubbles(convertBubblesForPrompt(manifest.bubbles));
+            applySeedAfterCloudResolve(seedRepo, seedCreds, () => {
+              void pushAllEntities(seedRepo, (line) =>
+                console.log("[seedDriver:push]", line),
+              );
+            });
           })
           .catch((e) => console.error("skill sync failed:", e));
       }

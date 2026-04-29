@@ -1,0 +1,14 @@
+{
+  "subject": "Sample — Laptop won't turn on after weekend",
+  "description": "Came in this morning, MacBook is dead. Tried plugging in for an hour, no response from the power button. Need a loaner today if possible.",
+  "asker": "diana.sample@example.com",
+  "askerChannel": "email",
+  "status": "escalated",
+  "priority": "urgent",
+  "assignee": null,
+  "tags": ["sample", "hardware", "loaner"],
+  "createdAt": "2026-04-29T08:45:00Z",
+  "updatedAt": "2026-04-29T08:45:00Z",
+  "kbArticleRefs": [],
+  "notes": "Sample seed record — safe to delete."
+}

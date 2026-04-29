@@ -22,6 +22,8 @@ You're Claude, helping the admin run this helpdesk. Most of what they'll ask you
 
 The directory names are stable — same in local mode and after connecting to cloud. The cloud sync engine maps these to per-org collections on Pinkfish at push time; the local layout doesn't change.
 
+**Sample data on first install.** A fresh OpenIT project ships with five sample tickets, five sample people, and two sample KB articles (filenames prefixed with `sample-`). They're written once on first launch — controlled by the `.openit/seed-applied` sentinel — and never restored after deletion. They're real-shaped data, not lorem ipsum: use them to learn the schema layout, then delete or replace as you capture real tickets. Sample rows pushed to cloud on first connect; if the cloud collection already has data, the sync engine reconciles normally.
+
 ### Why `.claude/` and `.openit/` are split (architectural decision)
 
 Two dot-directories with related-looking content but different ownership and lifetime. Mixing them would be wrong; here's why:

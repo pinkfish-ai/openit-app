@@ -1,50 +1,23 @@
-## Key beats
+## Demo
 
-1. Claude Code is the OS — configure in plain English, not clicky admin UIs.
-2. Employees ask where they already work — Slack/Teams, no new app.
-3. One conversation across every system — and Claude writes the integration if it's missing.
-4. It learns from how you work — answer once, Claude handles the next one and leaves a KB article behind.
-5. Skills and scripts are the unit of work — Claude generates either on demand, and runs scripts two ways: when the IT admin asks, or automatically as part of a learned workflow. Provisioning, offboarding, reports, investigations all live as files you can read and edit.
-6. Local first, then cloud — your repo is the source of truth; no lock-in.
+OpenIT is the first IT Helpdesk, and maybe the first application ever, that runs on Claude Code. Claude Code is the operating system. 
 
----
+Its an open source downloadable application that your IT admin runs on their laptop - and that your employees access from Slack, Teams, email, or web. 
 
-OpenIT is the first IT Helpdesk, and maybe the first application ever, that runs on Claude Code.
+So you get all of the table stakes that you expect from an employee support solution like: 
+* Ticket management
+* Reporting 
+* And an AI agent to respond automatically to tickets 
 
-Its an open source downloadable application that your IT admin runs on their laptop.
+But because it runs on Claude Code, you get so much more. 
+1. Claude learns from you as you work. So when you answer a ticket manually - claude converts it into either a knowledge base article or a skill. So that the next time this issue arises, it can be solved automatically.
 
-Employees ask where they already work: Slack and Teams
+2. You get full access to all fo your apps via MCP and CLI - along with a set of skills that help you use them. So if you need to onboard a new employee across Microsoft AD, Azure, Jamf, and Github - you can do it all from one place - and with all of your team doing it the same way... following the process thats outlined in the skill. 
 
-When employees ask for help on Slack or Teams, the questions flow into OpenIT where Claude triages and attempts to answer. If Claude hasn't seen the question before, it's escalated to the IT Admin.
+You can also ask Claude to write scripts. And then those scripts are synced across team members. So for anything you need to do repetitively and at high volume, a script takes care of it. Of course, you can ask Claude to run the script and make sure that it was done correctly. 
 
-It learns from how you work: 
-After the IT admin answers once, Claude captures the answer _and the workflow_ so that it can automate the response the next time.
+3. Finally - everything is open source in markdown files. So you can edit and expand absolutely any part. So lets say that there's a feature that you really want, like Asset Management. You've got all of the primitives here: databases, filestorage, and a knowledge base... so you can ask Claude to build you the new feature. 
 
-Here's an example where an employee asks the most common suport question ever: I can't login.
+You're no longer locked into static SaaS software. This is the future of software - and it runs on Claude Code. 
 
-Since we're on a brand new instance of OpenIT, Claude hasn't seen the question before, and so it's escalated to a human.
-
-The human answers the question: 
-To reset your password, visit this link [link] and request a password reset.
-
-After answering, Claude captures the answer and converts it into a new knowledge base article.
-
-And so the next time someone asks this kind of question, it'll return the knowledge base article.[show another one]
-
-But we've just scratched the surface. As you can see, we've got Claude Code integrated right into the app.
-
-So any and all IT functionality is at your fingertips. 
-
-Like: 
-* Running a workflow to provision a new user - that's just a claude Skill 
-* Investigating an error on your GCP app - that's running a query to Cloudlogs with the GCP CLI. 
-* Creating a custom report based on your ticket data - that's a conversation with Claude 
-* Running a complex offboarding sequence, that's a Skill with a script.
-
-And if we haven't bundled it into OpenIT already, it's Open! So you can ask Claude to build you a new skill or a new script to your spec.
-
-There's no lock in. All the skills and scripts are right there in the file system for you to see and edit.
-
-We offer a sync-to-cloud option - so you can run OpenIT in the cloud when you're ready to move it off your desktop.
-
-With Claude Code as the Operating Sytem - there's an incredible vareity of work you can do - so if you're on one of those systems that costs $29 or $29,000 a month, I'm betting you can do most of what that system does with Claude Code and OpenIT.
+So if you're on one of those systems that costs $29 or $29,000 a month, I'm betting you can do most of what that system does with Claude Code and OpenIT.

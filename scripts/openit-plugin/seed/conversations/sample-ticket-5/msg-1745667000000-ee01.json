@@ -1,0 +1,8 @@
+{
+  "id": "msg-1745667000000-ee01",
+  "ticketId": "sample-ticket-5",
+  "role": "asker",
+  "sender": "eric.sample@example.com",
+  "timestamp": "2026-04-26T11:30:00Z",
+  "body": "I forgot my Slack password and the reset email isn't coming through. Can someone help walk me through it?"
+}

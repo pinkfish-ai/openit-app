@@ -199,6 +199,117 @@ export class PinkfishClient {
   }
 
   /**
+   * Create a data collection. Mirrors the POST our app sends in
+   * `autoCreateDefaultsIfMissing` (syncEngine.ts) so tests reproduce
+   * the exact create body and can observe whether the backend
+   * auto-populates rows after create.
+   *
+   * Endpoint: POST /datacollection/
+   */
+  async createCollection(body: Record<string, unknown>): Promise<DataCollection> {
+    const url = new URL("/datacollection/", this.skillsBaseUrl);
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        ...(await this.authHeaders()),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `createCollection failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+    return (await response.json()) as DataCollection;
+  }
+
+  /**
+   * Delete an entire data collection by id. Best-effort cleanup —
+   * tolerates 403/404 like deleteFilestoreItem does.
+   *
+   * Endpoint: DELETE /datacollection/{id}
+   */
+  async deleteCollection(id: string): Promise<void> {
+    const url = new URL(
+      `/datacollection/${encodeURIComponent(id)}`,
+      this.skillsBaseUrl,
+    );
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: await this.authHeaders(),
+    });
+    if (response.ok || response.status === 404) return;
+    if (response.status === 403) {
+      console.warn(`[pinkfish-api] cleanup delete forbidden for collection ${id}`);
+      return;
+    }
+    throw new Error(
+      `deleteCollection failed: HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+
+  /**
+   * Set or update a structured datastore's schema. Server-side this
+   * also flips `isStructured` to true. Mirror of the PUT we'll start
+   * sending from `pushAllToDatastoreImpl` (the schema-push step).
+   *
+   * Endpoint: PUT /datacollection/{id}/schema
+   */
+  async putCollectionSchema(
+    id: string,
+    schema: Record<string, unknown>,
+  ): Promise<void> {
+    const url = new URL(
+      `/datacollection/${encodeURIComponent(id)}/schema`,
+      this.skillsBaseUrl,
+    );
+    const response = await fetch(url.toString(), {
+      method: "PUT",
+      headers: {
+        ...(await this.authHeaders()),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ schema }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `putCollectionSchema failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+  }
+
+  /**
+   * List items in a datastore collection (`/memory/bquery`). Returns
+   * the raw items array and total count so a test can assert "this
+   * collection was created with N pre-existing rows" right after a
+   * POST /datacollection/.
+   *
+   * Endpoint: GET /memory/bquery?collectionId={id}&limit=100
+   */
+  async listDatastoreItems(collectionId: string): Promise<{
+    items: Array<Record<string, unknown>>;
+    total: number;
+  }> {
+    const url = new URL("/memory/bquery", this.skillsBaseUrl);
+    url.searchParams.set("collectionId", collectionId);
+    url.searchParams.set("limit", "100");
+    const response = await fetch(url.toString(), {
+      headers: await this.authHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `listDatastoreItems failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+    const data = (await response.json()) as {
+      items?: Array<Record<string, unknown>>;
+      total?: number;
+    };
+    return { items: data.items ?? [], total: data.total ?? (data.items?.length ?? 0) };
+  }
+
+  /**
    * Delete an item from a filestorage collection by its server id.
    * Endpoint: DELETE /filestorage/items/{itemId}
    *

@@ -1,0 +1,14 @@
+{
+  "subject": "Sample — How do I reset my Slack password?",
+  "description": "I forgot my Slack password and the reset email isn't coming through. Can someone help walk me through it?",
+  "asker": "eric.sample@example.com",
+  "askerChannel": "email",
+  "status": "closed",
+  "priority": "normal",
+  "assignee": "admin",
+  "tags": ["sample", "slack", "auth"],
+  "createdAt": "2026-04-26T11:30:00Z",
+  "updatedAt": "2026-04-26T12:05:00Z",
+  "kbArticleRefs": ["knowledge-bases/default/sample-article-1.md"],
+  "notes": "Sample seed record — closed; user reset via SSO portal."
+}

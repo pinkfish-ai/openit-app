@@ -102,6 +102,40 @@ describe("routeFile", () => {
     });
   });
 
+  describe("seed/", () => {
+    it("routes seed/tickets/<file> to databases/tickets/<file> with isSeed=true", () => {
+      expect(routeFile("seed/tickets/sample-ticket-1.json", slug)).toEqual({
+        subdir: "databases/tickets",
+        filename: "sample-ticket-1.json",
+        substituteSlug: false,
+        isSeed: true,
+      });
+    });
+
+    it("routes seed/people/<file> to databases/people/<file> with isSeed=true", () => {
+      expect(routeFile("seed/people/sample-person-3.json", slug)).toEqual({
+        subdir: "databases/people",
+        filename: "sample-person-3.json",
+        substituteSlug: false,
+        isSeed: true,
+      });
+    });
+
+    it("routes seed/knowledge/<file> to knowledge-bases/default/<file> with isSeed=true", () => {
+      expect(routeFile("seed/knowledge/sample-article-1.md", slug)).toEqual({
+        subdir: "knowledge-bases/default",
+        filename: "sample-article-1.md",
+        substituteSlug: false,
+        isSeed: true,
+      });
+    });
+
+    it("non-seed routes do not carry isSeed", () => {
+      const r = routeFile("schemas/tickets._schema.json", slug);
+      expect(r?.isSeed).toBeUndefined();
+    });
+  });
+
   describe("default path preservation", () => {
     it("keeps unrecognized layouts under repo root", () => {
       expect(routeFile("misc/notes.md", slug)).toEqual({

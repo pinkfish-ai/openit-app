@@ -46,19 +46,28 @@ import {
 const OPENIT_PREFIX = "openit-";
 
 /// Hardcoded defaults — auto-created on connect when no `openit-*`
-/// datastore exists yet. Both structured (templateId picks the
-/// initial schema). Custom user-named datastores (created via
-/// dashboard OR by dropping a folder under `databases/` locally) get
-/// auto-created via `discoverLocalCollections` below.
+/// datastore exists yet. Both structured. The schema is bundled
+/// locally in `scripts/openit-plugin/schemas/{tickets,people}._schema.json`
+/// and synced to disk by `skillsSync` before this runs, so by the
+/// time we create the cloud collection the local `_schema.json` is
+/// already on disk and gets picked up via `discoverLocalDatastores`.
+///
+/// We deliberately do NOT pass a cloud `templateId` here — that would
+/// have the cloud seed sample rows server-side. Sample rows are
+/// instead bundled locally (`seed/tickets/`, `seed/people/`) and
+/// pushed up through the normal sync path on first connect, which
+/// keeps "what ships with OpenIT" wholly under our control.
+///
+/// Custom user-named datastores (created via dashboard OR by dropping
+/// a folder under `databases/` locally) get auto-created via
+/// `discoverLocalCollections` below.
 const DEFAULT_DATASTORES = [
   {
     name: "openit-tickets",
-    templateId: "case-management",
     description: "IT ticket tracking",
   },
   {
     name: "openit-people",
-    templateId: "contacts",
     description: "Contact/people directory",
   },
 ] as const;
@@ -209,26 +218,20 @@ const handle = createCollectionEntitySync<DataCollection>({
   onAfterResolve: writeStructuredSchemas,
   discoverLocalCollections: discoverLocalDatastores,
   buildCreateBody: ({ name, creds, discovery }) => {
-    // Hardcoded defaults bring their own templateId + isStructured.
+    // Both hardcoded defaults and user-created folders flow through
+    // here. The discovery body fragment (built by
+    // `discoverLocalDatastores`) carries `isStructured` + the local
+    // schema when present. Defaults always have a bundled schema on
+    // disk, so they end up structured automatically — no templateId
+    // shortcut needed (and we explicitly avoid it: cloud-side
+    // templates seed sample data we don't want).
     const def = DEFAULT_DATASTORES.find((d) => d.name === name);
-    if (def) {
-      return {
-        name,
-        type: "datastore",
-        templateId: def.templateId,
-        description: def.description,
-        createdBy: creds.orgId,
-        createdByName: "OpenIT",
-        triggerUrls: [],
-        isStructured: true,
-      };
-    }
-    // Locally-discovered: use the discovery body fragment (carries
-    // isStructured + optional schema).
+    const description =
+      def?.description ?? `OpenIT datastore: ${displayDatastoreName(name)}`;
     return {
       name,
       type: "datastore",
-      description: `OpenIT datastore: ${displayDatastoreName(name)}`,
+      description,
       createdBy: creds.orgId,
       createdByName: "OpenIT",
       triggerUrls: [],
