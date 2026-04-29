@@ -338,3 +338,4 @@ Plus from this plan's investigation:
 - Refactoring `pushAll.ts` to surface a unified "all engines pushed" status.
 - Renaming `databases/` → `datastores/` on disk (would touch every existing user folder; out of scope).
 - Migrating legacy `openit-<x>-<orgId>` datastores from existing test orgs — engineer confirmed brand-new code, no migration needed.
+- **CSV import path** (`POST /datacollection/{id}/import-csv`). Useful for bulk-loading a fresh datastore from a CSV, but bypasses the per-row sync semantics (conflict detection, `pulled_at_mtime_ms`, `.server.json` shadows). Phase 3's per-row JSON path round-trips correctly for the typical OpenIT shape (tens-to-hundreds of rows per datastore, mostly single-author edits). If bulk-load perf becomes a real problem on large datastores, file a separate ticket — likely a UX entry point ("Import this CSV into a new datastore") distinct from the sync hot path.
