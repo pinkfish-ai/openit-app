@@ -258,28 +258,34 @@ describe.skipIf(skip)("Datastore create — auto-template detection", () => {
     const ALLOWED = new Set(["string", "number", "boolean", "select"]);
     const fields = (schema.fields as Array<Record<string, unknown>> | undefined) ?? [];
     const safeFields: Array<Record<string, unknown>> = [];
+    let counter = 1;
     for (const f of fields) {
       const t = String(f.type ?? "");
       if (t.endsWith("[]")) continue;
-      if (t === "text") {
-        safeFields.push({ ...f, type: "string" });
-        continue;
-      }
-      if (t === "datetime") {
-        // PUT rejects "datetime"; coerce to "string" so the field still
-        // round-trips (rows store ISO-8601 strings anyway).
-        safeFields.push({ ...f, type: "string" });
+      const fid = `f_${counter}`;
+      counter += 1;
+      const base = {
+        id: fid,
+        label: f.label ?? f.id,
+        nullable: f.nullable ?? !f.required,
+      };
+      if (t === "text" || t === "datetime") {
+        safeFields.push({ ...base, type: "string" });
         continue;
       }
       if (t === "enum") {
-        // PUT rejects "enum"; remap to "select" (Pinkfish's term).
-        // Pass the values list through under the same key.
-        safeFields.push({ ...f, type: "select", options: f.values ?? f.options });
+        safeFields.push({
+          ...base,
+          type: "select",
+          options: f.values ?? f.options ?? [],
+        });
         continue;
       }
-      if (ALLOWED.has(t)) safeFields.push(f);
+      if (ALLOWED.has(t)) {
+        safeFields.push({ ...base, type: t });
+      }
     }
-    return { ...schema, fields: safeFields };
+    return { ...schema, fields: safeFields, nextFieldId: counter };
   }
 
   it("WORKAROUND: minimal create, then PUT sanitized schema → 0 rows", async () => {

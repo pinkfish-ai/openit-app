@@ -26,7 +26,9 @@ import {
   type DataCollection,
   type MemoryBqueryResponse,
   type MemoryItem,
+  fetchImportStatus,
   getCollection,
+  importCsv,
 } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
@@ -196,6 +198,244 @@ async function writeStructuredSchemas(
       await entityWriteFile(repo, subdir, "_schema.json", content);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Cloud-format schema conversion + CSV builder.
+//
+// Pinkfish's `/datacollection/` POST and `import-csv` endpoints expect a
+// schema that uses `f_N` field IDs and a narrower type vocabulary than
+// our on-disk `_schema.json` (which uses semantic ids like `displayName`
+// and types like `text`/`datetime`/`enum`/`string[]`). These helpers do
+// the round-trip mapping so the engine can ship a structured collection
+// without losing data.
+//
+// Confirmed mappings (see `integration_tests/datastore-import-csv.test.ts`):
+//   string  → string
+//   text    → string
+//   number  → number
+//   boolean → boolean
+//   datetime → string  (ISO-8601 round-trips fine; MDY/DMY parsing is
+//                       opt-in and the cloud doesn't need it)
+//   enum    → select   (with `options` derived from `values`)
+//   string[] → DROPPED (PUT /datacollection/{id}/schema rejects array
+//                       types; we drop them rather than crash)
+// ---------------------------------------------------------------------------
+
+type CloudSchema = {
+  fields: Array<Record<string, unknown>>;
+  nextFieldId: number;
+};
+
+type SchemaMapping = {
+  cloud: CloudSchema;
+  /// localFieldId → cloud column header label (used when emitting CSV
+  /// columns). E.g. "displayName" → "Name".
+  idToLabel: Record<string, string>;
+  /// Cloud header label → local field id (reverse lookup so a CSV
+  /// builder can find the row's value for a given column).
+  labelToLocalId: Record<string, string>;
+};
+
+export function localSchemaToCloud(local: CollectionSchema | Record<string, unknown>): SchemaMapping {
+  const localFields =
+    ((local as Record<string, unknown>).fields as Array<Record<string, unknown>>) ?? [];
+  const cloudFields: Array<Record<string, unknown>> = [];
+  const idToLabel: Record<string, string> = {};
+  const labelToLocalId: Record<string, string> = {};
+  let counter = 1;
+  for (const f of localFields) {
+    const t = String(f.type ?? "");
+    if (t.endsWith("[]")) continue;
+    const localId = String(f.id);
+    const label = String(f.label ?? localId);
+    const fid = `f_${counter}`;
+    counter += 1;
+    idToLabel[localId] = label;
+    labelToLocalId[label] = localId;
+
+    let cloudType: string;
+    const extra: Record<string, unknown> = {};
+    if (t === "string" || t === "text" || t === "datetime") {
+      cloudType = "string";
+    } else if (t === "number") {
+      cloudType = "number";
+    } else if (t === "boolean") {
+      cloudType = "boolean";
+    } else if (t === "enum") {
+      cloudType = "select";
+      extra.options = (f.values as unknown[]) ?? (f.options as unknown[]) ?? [];
+    } else {
+      cloudType = "string"; // unknown type → best-effort
+    }
+    cloudFields.push({
+      id: fid,
+      label,
+      type: cloudType,
+      required: !!f.required,
+      ...extra,
+    });
+  }
+  return {
+    cloud: { fields: cloudFields, nextFieldId: counter },
+    idToLabel,
+    labelToLocalId,
+  };
+}
+
+function csvQuote(s: string): string {
+  if (s.includes(",") || s.includes("\n") || s.includes('"')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function serializeForCsv(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.join("; ");
+  return JSON.stringify(v);
+}
+
+function buildCsvFromRows(args: {
+  rows: Array<Record<string, unknown>>;
+  cloudFields: Array<Record<string, unknown>>;
+  labelToLocalId: Record<string, string>;
+}): string {
+  const headers = args.cloudFields.map((f) => String(f.label));
+  const lines: string[] = [headers.map(csvQuote).join(",")];
+  for (const row of args.rows) {
+    const cells = headers.map((h) => {
+      const localId = args.labelToLocalId[h];
+      const v = localId != null ? row[localId] : undefined;
+      return csvQuote(serializeForCsv(v));
+    });
+    lines.push(cells.join(","));
+  }
+  return lines.join("\n");
+}
+
+/// Read every row JSON in `<repo>/databases/<folder>/` (skipping
+/// `_schema.json` and dotfiles). Returns parsed objects in
+/// filename-sorted order so CSVs are deterministic.
+async function readLocalRows(
+  repo: string,
+  folderName: string,
+): Promise<Array<{ key: string; row: Record<string, unknown> }>> {
+  const out: Array<{ key: string; row: Record<string, unknown> }> = [];
+  const dir = `${repo}/${DATASTORE_DIR_PREFIX}/${folderName}`;
+  let nodes;
+  try {
+    nodes = await fsList(dir);
+  } catch {
+    return [];
+  }
+  const prefix = `${dir}/`;
+  const files = nodes
+    .filter((n) => n.path.startsWith(prefix))
+    .filter((n) => !n.is_dir)
+    .filter((n) => !n.name.startsWith("."))
+    .filter((n) => n.name !== "_schema.json")
+    .filter((n) => n.name.endsWith(".json"))
+    .filter((n) => !n.path.slice(prefix.length).includes("/"))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const f of files) {
+    try {
+      const raw = await fsRead(f.path);
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const key = f.name.replace(/\.json$/, "");
+      out.push({ key, row: parsed });
+    } catch (e) {
+      console.warn(`[datastore] readLocalRows: failed to parse ${f.path}:`, e);
+    }
+  }
+  return out;
+}
+
+/// Custom create for structured datastores. Reads the local schema,
+/// converts it to cloud shape, builds a CSV from local rows, and
+/// POSTs to `/datacollection/import-csv`. The endpoint creates the
+/// collection AND populates rows in one shot — bypassing the cloud's
+/// auto-template behavior that fires on a plain `POST /datacollection/`
+/// with `isStructured + schema`.
+///
+/// Returns `null` (engine falls through to the standard POST) when:
+///   - local `_schema.json` is missing or malformed
+///   - access token isn't available
+///
+/// On success, returns the created collection's id + name. Engine then
+/// runs its post-create refetch and pull as usual; the rows we just
+/// uploaded will look like a normal cloud-side row set.
+async function importCsvCustomCreate(args: {
+  name: string;
+  creds: PinkfishCreds;
+  repo: string;
+}): Promise<{ id: string; name: string; description?: string } | null> {
+  const { name, creds, repo } = args;
+  const folderName = displayDatastoreName(name);
+  const schemaPath = `${repo}/${DATASTORE_DIR_PREFIX}/${folderName}/_schema.json`;
+  let localSchema: CollectionSchema;
+  try {
+    localSchema = JSON.parse(await fsRead(schemaPath)) as CollectionSchema;
+  } catch (e) {
+    console.warn(
+      `[datastore] importCsvCustomCreate: ${name} has no local schema, deferring to standard POST:`,
+      e,
+    );
+    return null;
+  }
+
+  const token = getToken();
+  if (!token) {
+    console.warn("[datastore] importCsvCustomCreate: no access token, deferring");
+    return null;
+  }
+  const urls = derivedUrls(creds.tokenUrl);
+
+  const { cloud, labelToLocalId } = localSchemaToCloud(localSchema);
+  const rows = (await readLocalRows(repo, folderName)).map((r) => r.row);
+  const csv = buildCsvFromRows({
+    rows,
+    cloudFields: cloud.fields,
+    labelToLocalId,
+  });
+
+  const description = (localSchema as { description?: string }).description ?? `OpenIT datastore: ${folderName}`;
+  const importRes = await importCsv(urls.skillsBaseUrl, token.accessToken, {
+    name,
+    csv,
+    schema: cloud,
+    createdByName: "OpenIT",
+  });
+  console.log(
+    `[datastore] import-csv ${name} → collection ${importRes.collectionId}, job ${importRes.jobId}`,
+  );
+
+  // Poll up to ~30s; non-fatal if we time out (rows will keep
+  // importing server-side; engine's normal pull will see them on the
+  // next tick).
+  for (let i = 0; i < 30; i++) {
+    try {
+      const status = await fetchImportStatus(importRes.statusFileUrl);
+      if (status.status === "completed") {
+        console.log(
+          `[datastore] import-csv ${name} done: inserted=${status.inserted ?? 0}, failed=${status.failed ?? 0}`,
+        );
+        break;
+      }
+      if (status.status === "failed") {
+        console.warn(`[datastore] import-csv ${name} failed:`, status);
+        break;
+      }
+    } catch (e) {
+      console.warn(`[datastore] import-csv status poll threw:`, e);
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+
+  return { id: importRes.collectionId, name, description };
 }
 
 // ---------------------------------------------------------------------------

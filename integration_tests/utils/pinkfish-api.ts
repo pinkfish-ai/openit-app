@@ -250,6 +250,89 @@ export class PinkfishClient {
   }
 
   /**
+   * Create a structured datastore + import rows in a single multipart
+   * POST. This is the only way to make a structured collection without
+   * triggering Pinkfish's auto-template behavior — see
+   * `datastore-create-no-template.test.ts` for the diagnosis.
+   *
+   * Endpoint: POST /datacollection/import-csv?dateFormat=<fmt>&async=true
+   * Multipart fields:
+   *   file          — text/csv body
+   *   name          — collection name
+   *   schema        — JSON: { fields: [{id, label, type, required, ...}], nextFieldId }
+   *   createdByName — string ("OpenIT")
+   * Returns: { status, collectionId, jobId, statusFileUrl, schema, ... }
+   */
+  async importCsv(args: {
+    name: string;
+    csv: string;
+    schema: Record<string, unknown>;
+    createdByName: string;
+    dateFormat?: string; // "MDY" | "DMY" | "YMD" — picks how date columns parse
+  }): Promise<{
+    status: string;
+    collectionId: string;
+    jobId: string;
+    statusFileUrl: string;
+  }> {
+    const url = new URL("/datacollection/import-csv", this.skillsBaseUrl);
+    url.searchParams.set("dateFormat", args.dateFormat ?? "MDY");
+    url.searchParams.set("async", "true");
+
+    const form = new FormData();
+    form.append(
+      "file",
+      new Blob([args.csv], { type: "text/csv" }),
+      `${args.name}.csv`,
+    );
+    form.append("name", args.name);
+    form.append("schema", JSON.stringify(args.schema));
+    form.append("createdByName", args.createdByName);
+
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        // Don't set Content-Type — fetch sets the multipart boundary.
+        "Auth-Token": `Bearer ${await this.getToken()}`,
+      },
+      body: form,
+    });
+    if (!response.ok) {
+      throw new Error(
+        `importCsv failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+    return (await response.json()) as {
+      status: string;
+      collectionId: string;
+      jobId: string;
+      statusFileUrl: string;
+    };
+  }
+
+  /**
+   * Poll the signed URL returned by `importCsv`. Returns the parsed
+   * status JSON (status: queued | running | completed | failed; counts;
+   * timing).
+   */
+  async fetchImportStatus(statusFileUrl: string): Promise<{
+    status: string;
+    inserted?: number;
+    updated?: number;
+    failed?: number;
+    total?: number;
+    completedAt?: string;
+  }> {
+    const response = await fetch(statusFileUrl);
+    if (!response.ok) {
+      throw new Error(
+        `fetchImportStatus failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+    return await response.json();
+  }
+
+  /**
    * Set or update a structured datastore's schema. Server-side this
    * also flips `isStructured` to true. Mirror of the PUT we'll start
    * sending from `pushAllToDatastoreImpl` (the schema-push step).

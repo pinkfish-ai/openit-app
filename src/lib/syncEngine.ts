@@ -1102,6 +1102,25 @@ export type CollectionSyncConfig<C extends CollectionLike> = {
     creds: PinkfishCreds;
     discovery?: DiscoveredCollection;
   }) => Record<string, unknown>;
+
+  /// Optional async create override. When defined and returns a
+  /// non-null value, the engine uses it INSTEAD of the standard
+  /// `POST /datacollection/`. Returns the same `{id, name, ...}`
+  /// shape the standard POST returns so downstream code (manifest
+  /// state, status updates) doesn't need to branch.
+  ///
+  /// Returning `null` means "I don't want to handle this one — fall
+  /// back to the standard POST." Datastore uses this for structured
+  /// defaults (openit-tickets, openit-people): the standard POST
+  /// auto-applies a cloud template that ignores our schema and seeds
+  /// 10 unrelated rows. The `import-csv` endpoint creates the
+  /// collection AND uploads our seed in one shot, with no template.
+  customCreate?: (args: {
+    name: string;
+    creds: PinkfishCreds;
+    repo: string;
+    discovery?: DiscoveredCollection;
+  }) => Promise<{ id?: string | number; name?: string; description?: string } | null>;
 };
 
 export type CollectionSyncHandle<C extends CollectionLike> = {
@@ -1350,31 +1369,53 @@ export function createCollectionEntitySync<C extends CollectionLike>(
 
     for (const entry of toCreate) {
       try {
-        const fetchFn = makeSkillsFetch(token.accessToken);
-        const url = new URL("/datacollection/", urls.skillsBaseUrl);
-        const body = config.buildCreateBody
-          ? config.buildCreateBody({
+        // Engine config can opt into a non-standard create flow (e.g.
+        // datastore's `import-csv` to bypass the cloud auto-template).
+        // If it returns null we fall through to the standard POST.
+        let result: { id?: string | number; description?: string } | null = null;
+        if (config.customCreate) {
+          try {
+            result = await config.customCreate({
               name: entry.name,
               creds,
+              repo,
               discovery: entry.discovery,
-            })
-          : defaultCreateBody(entry.name, creds, entry.discovery);
-        const response = await fetchFn(url.toString(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!response.ok) {
-          if (response.status === 409) {
-            // Conflict means another concurrent caller created it
-            // between our list and our create. Re-resolve will pick it
-            // up below.
-            console.log(`[${tag}] ${entry.name} already exists (409)`);
-            continue;
+            });
+            if (result) {
+              console.log(`[${tag}] customCreate handled ${entry.name}`);
+            }
+          } catch (e) {
+            console.warn(`[${tag}] customCreate ${entry.name} failed, falling back:`, e);
+            result = null;
           }
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        const result = (await response.json()) as { id?: string | number; description?: string } | null;
+        if (!result) {
+          const fetchFn = makeSkillsFetch(token.accessToken);
+          const url = new URL("/datacollection/", urls.skillsBaseUrl);
+          const body = config.buildCreateBody
+            ? config.buildCreateBody({
+                name: entry.name,
+                creds,
+                discovery: entry.discovery,
+              })
+            : defaultCreateBody(entry.name, creds, entry.discovery);
+          const response = await fetchFn(url.toString(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!response.ok) {
+            if (response.status === 409) {
+              // Conflict means another concurrent caller created it
+              // between our list and our create. Re-resolve will pick it
+              // up below.
+              console.log(`[${tag}] ${entry.name} already exists (409)`);
+              continue;
+            }
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          }
+          result = (await response.json()) as { id?: string | number; description?: string } | null;
+        }
         if (result?.id) {
           out.push(
             config.fromDataCollection({

@@ -14,10 +14,10 @@ But because it runs on Claude Code, you get so much more.
 
 2. You get full access to all fo your apps via MCP and CLI - along with a set of skills that help you use them. So if you need to onboard a new employee across Microsoft AD, Azure, Jamf, and Github - you can do it all from one place - and with all of your team doing it the same way... following the process thats outlined in the skill. 
 
-You can also ask Claude to write scripts. And then those scripts are synced across team members. So for anything you need to do repetitively and at high volume, a script takes care of it. Of course, you can ask Claude to run the script and make sure that it was done correctly. 
+Of course, you can also ask Claude to write scripts. And then those scripts are synced across team members. So for anything you need to do repetitively and at high volume like custom reporting - or a complex workflow, a script takes care of it. Of course, you can ask Claude to run the script and make sure that it was done correctly. 
 
-3. Finally - everything is open source in markdown files. So you can edit and expand absolutely any part. So lets say that there's a feature that you really want, like Asset Management. You've got all of the primitives here: databases, filestorage, and a knowledge base... so you can ask Claude to build you the new feature. 
+3. Finally - everything is open source in markdown and json files. So you can edit and expand absolutely any part. So lets say that there's a feature that you really want, like Asset Management. You've got all of the primitives here: databases, filestorage, and a knowledge base... so you can ask Claude to build you the new feature. 
 
-You're no longer locked into static SaaS software. This is the future of software - and it runs on Claude Code. 
+You're no longer locked into static SaaS software. This is the future of software - it grows and adapts to your business.
 
 So if you're on one of those systems that costs $29 or $29,000 a month, I'm betting you can do most of what that system does with Claude Code and OpenIT.
