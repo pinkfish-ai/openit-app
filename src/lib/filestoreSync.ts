@@ -305,18 +305,28 @@ export async function startFilestoreSync(args: {
 
   // Auto-create remote collections for local folders that don't exist yet.
   // Scan filestores/ for folders and ensure each has a corresponding openit-* collection on remote.
+  // Use org-scoped cache to prevent duplicate creation on repeated startFilestoreSync calls.
   try {
     const token = getToken();
     const urls = derivedUrls(creds.tokenUrl);
     if (!token) throw new Error("not authenticated");
     
+    const orgCache = getOrgCache(creds.orgId);
     const localFolderNames = ["library", "attachments"]; // Known default folders
+    
     for (const folderName of localFolderNames) {
       const remoteName = `${OPENIT_FILESTORE_PREFIX}${folderName}`;
       
-      // Check if remote collection exists
+      // Check if already exists in remote list
       if (collections.some((c) => c.name === remoteName)) {
         console.log(`[filestoreSync] Remote collection ${remoteName} already exists`);
+        orgCache.set(remoteName, collections.find((c) => c.name === remoteName)!);
+        continue;
+      }
+      
+      // Check if we recently created this one (avoid duplicate creation from eventual consistency delays)
+      if (orgCache.has(remoteName)) {
+        console.log(`[filestoreSync] Collection ${remoteName} cached as recently created, skipping duplicate attempt`);
         continue;
       }
       
@@ -353,6 +363,7 @@ export async function startFilestoreSync(args: {
             description: `OpenIT filestore: ${folderName}`,
           } as FilestoreCollection;
           collections.push(newCollection);
+          orgCache.set(remoteName, newCollection);
           console.log(`[filestoreSync] ✓ Created ${remoteName} with id: ${result.id}`);
         }
       } catch (e) {
