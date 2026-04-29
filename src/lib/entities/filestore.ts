@@ -44,11 +44,8 @@ export type FilestoreCollection = {
 async function ensureDirectoryExists(repo: string, dir: string): Promise<void> {
   const placeholder = ".placeholder";
   try {
-    console.log(`[filestore] ensuring directory exists: ${dir}`);
     await entityWriteFile(repo, dir, placeholder, "");
-    console.log(`[filestore] ✓ created placeholder at ${dir}/${placeholder}`);
     await entityDeleteFile(repo, dir, placeholder);
-    console.log(`[filestore] ✓ deleted placeholder`);
   } catch (e) {
     console.warn(`[filestore] failed to ensure directory exists: ${dir}`, e);
   }
@@ -78,19 +75,16 @@ export function filestoreAdapter(args: {
       const token = getToken();
       if (!token) throw new Error("not authenticated");
       const urls = derivedUrls(creds.tokenUrl);
-      console.log(`[filestore] listRemote for collection: ${collection.name} (id: ${collection.id}) → DIR: ${DIR}`);
       const rows = await kbListRemote({
         collectionId: collection.id,
         skillsBaseUrl: urls.skillsBaseUrl,
         accessToken: token.accessToken,
       });
-      console.log(`[filestore] listRemote returned ${rows.length} files for ${collection.name}`);
       const items: RemoteItem[] = [];
       for (const r of rows) {
         if (!r.filename || !r.signed_url) continue;
         const downloadUrl = r.signed_url;
         const filename = r.filename;
-        console.log(`[filestore] mapping file ${filename} to ${DIR}/${filename}`);
         items.push({
           manifestKey: filename,
           workingTreePath: `${DIR}/${filename}`,

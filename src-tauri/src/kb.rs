@@ -725,6 +725,7 @@ pub fn entity_state_save(repo: String, name: String, state: KbState) -> Result<(
 /// dumb file-system primitive.
 #[tauri::command]
 pub fn entity_list_local(repo: String, subdir: String) -> Result<Vec<KbLocalFile>, String> {
+    validate_subdir(&subdir)?;
     let dir = Path::new(&repo).join(&subdir);
     if !dir.exists() {
         return Ok(Vec::new());
@@ -867,6 +868,9 @@ pub fn entity_rename_file(
 /// Used to do a clean sync of entity directories.
 #[tauri::command]
 pub fn entity_clear_dir(repo: String, subdir: String) -> Result<(), String> {
+    // Most destructive entity_* command: a missing guard here lets a
+    // crafted subdir like ".." trigger remove_dir_all on the parent.
+    validate_subdir(&subdir)?;
     let dir = Path::new(&repo).join(&subdir);
     if dir.exists() {
         fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
