@@ -330,6 +330,11 @@ export async function startFilestoreSync(args: {
         continue;
       }
       
+      // MARK IN CACHE BEFORE CREATING: if another concurrent call checks cache, it will see that we're creating this
+      // Use a sentinel to indicate "in progress" — we set the real collection AFTER creation succeeds
+      const sentinel = { id: "pending", name: remoteName, description: "pending creation" } as FilestoreCollection;
+      orgCache.set(remoteName, sentinel);
+      
       // Create missing remote collection
       try {
         console.log(`[filestoreSync] Creating remote collection ${remoteName}...`);
@@ -350,6 +355,8 @@ export async function startFilestoreSync(args: {
         if (!response.ok) {
           if (response.status === 409) {
             console.log(`[filestoreSync] Collection ${remoteName} already exists (409)`);
+            // Remove the sentinel and fetch the real collection info
+            orgCache.delete(remoteName);
             continue;
           }
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -363,7 +370,7 @@ export async function startFilestoreSync(args: {
             description: `OpenIT filestore: ${folderName}`,
           } as FilestoreCollection;
           collections.push(newCollection);
-          orgCache.set(remoteName, newCollection);
+          orgCache.set(remoteName, newCollection); // Update sentinel with real collection
           console.log(`[filestoreSync] ✓ Created ${remoteName} with id: ${result.id}`);
           
           // Post-create refetch to handle eventual consistency: verify the collection is now visible on the API
@@ -379,9 +386,14 @@ export async function startFilestoreSync(args: {
           } catch (refetchErr) {
             console.warn(`[filestoreSync] post-create refetch failed:`, refetchErr);
           }
+        } else {
+          // No ID in response, clear the cache sentinel
+          orgCache.delete(remoteName);
         }
       } catch (e) {
         console.warn(`[filestoreSync] Failed to create ${remoteName}:`, e);
+        // Clear the cache sentinel on error
+        orgCache.delete(remoteName);
       }
     }
   } catch (e) {
