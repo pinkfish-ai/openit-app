@@ -75,7 +75,13 @@ fn untrack_gitignored_paths(repo: &str) -> Result<(), String> {
     // newly-ignored pathspecs. SCOPE: pathspecs on both the diff check
     // AND the commit, so we don't sweep up unrelated staged changes
     // the user may have left behind in the SourceControl tab.
-    const PATHSPECS: &[&str] = &[".openit/", ".claude/", "CLAUDE.md", "getting-started.md", "connect-to-cloud.md"];
+    const PATHSPECS: &[&str] = &[
+        ".openit/",
+        ".claude/",
+        "CLAUDE.md",
+        "getting-started.md",
+        "connect-to-cloud.md",
+    ];
     let mut diff_args: Vec<&str> = vec!["diff", "--cached", "--quiet", "--"];
     diff_args.extend_from_slice(PATHSPECS);
     let cached = run_git(repo, &diff_args)?;
