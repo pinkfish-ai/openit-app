@@ -556,12 +556,12 @@ pub async fn fs_store_download_to_local(
     let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
 
     let path = fs_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
-    
+
     // Ensure parent directory exists (including subdirectories)
     if let Some(parent) = path.parent() {
         ensure_dir(parent)?;
     }
-    
+
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     Ok(())
 }
