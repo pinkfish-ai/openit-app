@@ -38,36 +38,12 @@ const release = await getLatestRelease();
     <a href="https://support.apple.com/en-us/HT211814">Not sure which Mac you have?</a>
   </p>
 
-  <h2>First-time install on macOS</h2>
-  <div class="callout">
-    <p>
-      <strong>You'll see <em>"OpenIT can't be opened because Apple cannot check
-      it for malicious software."</em></strong> That's expected for the beta —
-      we're in the process of getting an Apple Developer ID, after which this
-      step will go away.
-    </p>
-    <p>To open OpenIT, do this once:</p>
-    <ol>
-      <li>Drag <strong>OpenIT.app</strong> from the DMG into <strong>/Applications</strong>.</li>
-      <li>Open <strong>System Settings &rarr; Privacy &amp; Security</strong>.</li>
-      <li>Scroll down to the <em>Security</em> section. You'll see a line about OpenIT being blocked. Click <strong>Open Anyway</strong>.</li>
-      <li>Confirm in the dialog that follows. OpenIT will launch normally from now on.</li>
-    </ol>
-    <p>
-      Prefer the terminal? Run <code>xattr -cr /Applications/OpenIT.app</code>
-      and then double-click the app.
-    </p>
-    <details>
-      <summary>Why does this happen?</summary>
-      <p>
-        macOS Gatekeeper requires apps distributed outside the App Store to be
-        signed with an Apple Developer ID and notarized by Apple. We're working
-        through Apple's organization enrollment for Pinkfish; once that's done,
-        future versions will install without this prompt and existing users
-        will be auto-updated to the signed build.
-      </p>
-    </details>
-  </div>
+  <h2>Install</h2>
+  <p>
+    Open the DMG, drag <strong>OpenIT.app</strong> into <strong>/Applications</strong>,
+    and launch. OpenIT is signed with an Apple Developer ID and notarized by
+    Apple, so Gatekeeper won't prompt on first launch.
+  </p>
 
   <h2>Updates</h2>
   <p>
