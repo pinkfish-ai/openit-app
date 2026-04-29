@@ -1,19 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
-import { CATALOG, type CatalogEntry } from "../lib/cliCatalog";
+import { CATALOG, type CatalogEntry } from "../lib/toolsCatalog";
 import {
   getTargetOs,
-  installCli,
+  installTool,
   listInstalled,
   removeHintOnly,
   requestAgentInstall,
   requestAgentUninstall,
-  uninstallCli,
+  uninstallTool,
   UninstallError,
   type TargetOs,
-} from "../lib/cliInstall";
-import styles from "./CliPanel.module.css";
+} from "../lib/toolsInstall";
+import styles from "./ToolsPanel.module.css";
 
-/// CLI catalog rendered into the center pane via the `cli` entity
+/// Tools catalog rendered into the center pane via the `tools` entity
 /// route.
 ///
 /// **macOS:** programmatic `brew install` runs directly so the UI sees
@@ -36,7 +36,7 @@ type CardStatus =
     }
   | { kind: "handed-off" };
 
-export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
+export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
   const [installed, setInstalled] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [statuses, setStatuses] = useState<Record<string, CardStatus>>({});
@@ -47,7 +47,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
     try {
       setInstalled(await listInstalled());
     } catch (e) {
-      console.error("[CliPanel] listInstalled failed:", e);
+      console.error("[ToolsPanel] listInstalled failed:", e);
     }
   };
 
@@ -120,7 +120,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
     // macOS happy path: programmatic brew install.
     setStatus(entry.id, { kind: "busy", verb: "install" });
     try {
-      await installCli(projectRoot, entry);
+      await installTool(projectRoot, entry);
       setStatus(entry.id, { kind: "idle" });
       await refreshInstalled();
     } catch (e) {
@@ -159,7 +159,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
     if (!ok) return;
     setStatus(entry.id, { kind: "busy", verb: "uninstall" });
     try {
-      await uninstallCli(projectRoot, entry);
+      await uninstallTool(projectRoot, entry);
       setStatus(entry.id, { kind: "idle" });
       await refreshInstalled();
     } catch (e) {
@@ -212,7 +212,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
   if (!projectRoot) {
     return (
       <div className={styles.panel}>
-        <p className={styles.empty}>Connect a project to install CLI tools.</p>
+        <p className={styles.empty}>Connect a project to install tools.</p>
       </div>
     );
   }
@@ -221,7 +221,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
     <div className={styles.panel}>
       <h2 className={styles.heading}>Give your agent hands</h2>
       <p className={styles.tagline}>
-        Install CLI tools so Claude can act on your IT systems via Bash.
+        Install tools so Claude can act on your IT systems via Bash.
       </p>
       <input
         type="text"
@@ -232,7 +232,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
       />
       <div className={styles.grid}>
         {sortedFiltered.map((entry) => (
-          <CliCard
+          <ToolCard
             key={entry.id}
             entry={entry}
             installed={installed.has(entry.id)}
@@ -250,7 +250,7 @@ export function CliPanel({ projectRoot }: { projectRoot: string | null }) {
   );
 }
 
-function CliCard({
+function ToolCard({
   entry,
   installed,
   status,

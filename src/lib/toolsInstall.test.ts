@@ -10,18 +10,18 @@ vi.mock("../shell/activeSession", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import { writeToActiveSession } from "../shell/activeSession";
-import { CATALOG, findEntry } from "./cliCatalog";
+import { CATALOG, findEntry } from "./toolsCatalog";
 import {
   buildAgentInstallPrompt,
   buildAgentUninstallPrompt,
-  installCli,
+  installTool,
   listInstalled,
   removeHintOnly,
   requestAgentInstall,
   requestAgentUninstall,
-  uninstallCli,
+  uninstallTool,
   UninstallError,
-} from "./cliInstall";
+} from "./toolsInstall";
 
 const mockedInvoke = vi.mocked(invoke);
 const mockedWrite = vi.mocked(writeToActiveSession);
@@ -32,9 +32,9 @@ beforeEach(() => {
 });
 
 describe("listInstalled", () => {
-  it("returns the set of catalog ids whose binary cli_is_installed reports true", async () => {
+  it("returns the set of catalog ids whose binary tools_is_installed reports true", async () => {
     mockedInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd !== "cli_is_installed") return false;
+      if (cmd !== "tools_is_installed") return false;
       const binary = (args as { binary?: string } | undefined)?.binary;
       return binary === "gh" || binary === "aws";
     });
@@ -51,12 +51,12 @@ describe("listInstalled", () => {
   });
 });
 
-describe("installCli (macOS programmatic path)", () => {
-  it("invokes cli_install with the entry's brew_pkg, id, and CLAUDE.md hint", async () => {
+describe("installTool (macOS programmatic path)", () => {
+  it("invokes tools_install with the entry's brew_pkg, id, and CLAUDE.md hint", async () => {
     mockedInvoke.mockResolvedValueOnce(undefined);
     const entry = findEntry("gh")!;
-    await installCli("/tmp/proj", entry);
-    expect(mockedInvoke).toHaveBeenCalledWith("cli_install", {
+    await installTool("/tmp/proj", entry);
+    expect(mockedInvoke).toHaveBeenCalledWith("tools_install", {
       args: {
         project_root: "/tmp/proj",
         brew_pkg: entry.brewPkg,
@@ -71,16 +71,16 @@ describe("installCli (macOS programmatic path)", () => {
       new Error("brew install gh failed (exit 1): No formula found"),
     );
     const entry = findEntry("gh")!;
-    await expect(installCli("/tmp/proj", entry)).rejects.toThrow(/No formula found/);
+    await expect(installTool("/tmp/proj", entry)).rejects.toThrow(/No formula found/);
   });
 });
 
-describe("uninstallCli", () => {
-  it("calls cli_uninstall with the entry's brew_pkg and id", async () => {
+describe("uninstallTool", () => {
+  it("calls tools_uninstall with the entry's brew_pkg and id", async () => {
     mockedInvoke.mockResolvedValueOnce(undefined);
     const entry = CATALOG[0];
-    await uninstallCli("/tmp/proj", entry);
-    expect(mockedInvoke).toHaveBeenCalledWith("cli_uninstall", {
+    await uninstallTool("/tmp/proj", entry);
+    expect(mockedInvoke).toHaveBeenCalledWith("tools_uninstall", {
       args: {
         project_root: "/tmp/proj",
         brew_pkg: entry.brewPkg,
@@ -93,7 +93,7 @@ describe("uninstallCli", () => {
     mockedInvoke.mockRejectedValueOnce(new Error("brew uninstall failed"));
     const entry = CATALOG[0];
     try {
-      await uninstallCli("/tmp/proj", entry);
+      await uninstallTool("/tmp/proj", entry);
       expect.fail("expected UninstallError");
     } catch (e) {
       expect(e).toBeInstanceOf(UninstallError);
@@ -102,11 +102,11 @@ describe("uninstallCli", () => {
 });
 
 describe("removeHintOnly", () => {
-  it("calls cli_remove_hint_only with project root and entry id", async () => {
+  it("calls tools_remove_hint_only with project root and entry id", async () => {
     mockedInvoke.mockResolvedValueOnce(undefined);
     const entry = CATALOG[0];
     await removeHintOnly("/tmp/proj", entry);
-    expect(mockedInvoke).toHaveBeenCalledWith("cli_remove_hint_only", {
+    expect(mockedInvoke).toHaveBeenCalledWith("tools_remove_hint_only", {
       projectRoot: "/tmp/proj",
       entryId: entry.id,
     });

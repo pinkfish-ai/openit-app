@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { fsList, type FileNode } from "../lib/api";
 import { scanEscalatedTickets } from "../lib/escalatedTickets";
-import { listInstalled as listInstalledCli } from "../lib/cliInstall";
+import { listInstalled as listInstalledTools } from "../lib/toolsInstall";
 import { ENTITY_META, type EntityKind } from "./entityIcons";
 
 type Station = {
@@ -26,10 +26,10 @@ const STATIONS: Station[] = [
   { id: "knowledge", kind: "knowledge", rel: "knowledge-bases",   countMode: "dirs" },
   { id: "files",     kind: "files",     rel: "filestores",        countMode: "dirs" },
   { id: "agents",    kind: "agents",    rel: "agents",            countMode: "json-rows" },
-  // CLI is synthetic — no on-disk directory at all (so it doesn't
+  // Tools is synthetic — no on-disk directory at all (so it doesn't
   // appear in the file explorer; only reachable via this station).
-  // Count comes from `which`-detected CLIs.
-  { id: "cli",       kind: "cli",       rel: "cli",               countMode: "files" },
+  // Count comes from `which`-detected tools.
+  { id: "tools",     kind: "tools",     rel: "tools",             countMode: "files" },
 ];
 
 /** fs_list walks recursively (depth 6), so a naive `.length` over its
@@ -92,11 +92,11 @@ export function Workbench({
       const next: Record<string, number> = {};
       await Promise.all(
         STATIONS.map(async (s) => {
-          // CLI is a synthetic station — counted from `which`
+          // Tools is a synthetic station — counted from `which`
           // detection per catalog entry, not from a real directory.
-          if (s.id === "cli") {
+          if (s.id === "tools") {
             try {
-              const ids = await listInstalledCli();
+              const ids = await listInstalledTools();
               next[s.id] = ids.size;
             } catch {
               next[s.id] = 0;
