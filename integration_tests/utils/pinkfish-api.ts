@@ -1,0 +1,211 @@
+import { deriveSkillsBaseUrl, type IntegrationTestConfig } from "./config";
+import { getAccessTokenWithConfig } from "./auth";
+
+export interface DataCollection {
+  id: string;
+  name: string;
+  type: string;
+  description?: string;
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface RemoteFile {
+  filename: string;
+  signed_url: string;
+  updated_at?: string;
+  size?: number;
+}
+
+/**
+ * Wrapper around the Pinkfish skills API for integration tests.
+ * Uses the same endpoints and headers the Tauri app uses.
+ */
+export class PinkfishClient {
+  private token: string | null = null;
+  private skillsBaseUrl: string;
+  private appBaseUrl: string;
+
+  constructor(private config: IntegrationTestConfig) {
+    this.skillsBaseUrl = deriveSkillsBaseUrl(config.credentials.tokenUrl);
+    // app-api host (e.g., https://app-api.dev20.pinkfish.dev) — derived
+    // from the tokenUrl by stripping /oauth/token. Used for collection
+    // create/delete which live on the app-api surface, not skills.
+    this.appBaseUrl = config.credentials.tokenUrl.replace(
+      /\/oauth\/token\/?$/,
+      "",
+    );
+  }
+
+  async getToken(): Promise<string> {
+    if (this.token) return this.token;
+    this.token = await getAccessTokenWithConfig(this.config);
+    return this.token;
+  }
+
+  getSkillsBaseUrl(): string {
+    return this.skillsBaseUrl;
+  }
+
+  getAppBaseUrl(): string {
+    return this.appBaseUrl;
+  }
+
+  /**
+   * Headers for skills API requests.
+   * The Pinkfish skills API uses `Auth-Token: Bearer <token>`, NOT
+   * the standard `Authorization` header.
+   */
+  private async authHeaders(): Promise<Record<string, string>> {
+    const token = await this.getToken();
+    return {
+      "Auth-Token": `Bearer ${token}`,
+      Accept: "*/*",
+    };
+  }
+
+  /**
+   * List all data collections of a given type (e.g., "filestorage", "datastore").
+   * Endpoint: GET /datacollection/?type={type}
+   */
+  async listCollections(type: string): Promise<DataCollection[]> {
+    const url = new URL("/datacollection/", this.skillsBaseUrl);
+    url.searchParams.set("type", type);
+
+    const response = await fetch(url.toString(), {
+      headers: await this.authHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `listCollections failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+
+    const data = await response.json();
+    return Array.isArray(data) ? (data as DataCollection[]) : [];
+  }
+
+  /**
+   * List items in a filestorage collection.
+   * Endpoint: GET /filestorage/items?collectionId={id}&format=full
+   * (Same endpoint kb_list_remote uses in the Tauri backend)
+   */
+  async listFilestoreItems(collectionId: string): Promise<RemoteFile[]> {
+    const url = new URL("/filestorage/items", this.skillsBaseUrl);
+    url.searchParams.set("collectionId", collectionId);
+    url.searchParams.set("format", "full");
+
+    const response = await fetch(url.toString(), {
+      headers: await this.authHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `listFilestoreItems failed for ${collectionId}: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+
+    const data = await response.json();
+    if (Array.isArray(data)) return data as RemoteFile[];
+    if (data && typeof data === "object" && Array.isArray((data as any).items)) {
+      return (data as any).items;
+    }
+    return [];
+  }
+
+  /**
+   * Find a collection by exact name match.
+   * Returns null if not found.
+   */
+  async findCollectionByName(
+    type: string,
+    name: string,
+  ): Promise<DataCollection | null> {
+    const all = await this.listCollections(type);
+    return all.find((c) => c.name === name) ?? null;
+  }
+
+  /**
+   * Get all openit-* filestore collections.
+   */
+  async listOpenitFilestores(): Promise<DataCollection[]> {
+    const all = await this.listCollections("filestorage");
+    return all.filter((c) => c.name.startsWith("openit-"));
+  }
+
+  /**
+   * Upload a file to a filestorage collection. Multipart form upload to
+   * the same endpoint the Tauri backend uses.
+   * Endpoint: POST /filestorage/items/upload?collectionId={id}
+   * Returns the response object (which may contain a sanitized filename
+   * if the server normalized it).
+   */
+  async uploadFilestoreFile(args: {
+    collectionId: string;
+    filename: string;
+    bytes: Uint8Array | ArrayBuffer;
+    mime?: string;
+  }): Promise<{ id?: string; filename?: string; file_url?: string }> {
+    const url = new URL("/filestorage/items/upload", this.skillsBaseUrl);
+    url.searchParams.set("collectionId", args.collectionId);
+
+    const blob = new Blob(
+      [args.bytes instanceof Uint8Array ? args.bytes : new Uint8Array(args.bytes)],
+      { type: args.mime ?? "application/octet-stream" },
+    );
+    const form = new FormData();
+    form.append("file", blob, args.filename);
+    form.append("metadata", "{}");
+
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: await this.authHeaders(),
+      body: form,
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `uploadFilestoreFile failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+    const json = await response.json();
+    return {
+      id: json?.id,
+      filename: json?.metadata?.filename ?? args.filename,
+      file_url: json?.file_url,
+    };
+  }
+
+  /**
+   * Delete an item from a filestorage collection by its server id.
+   * Endpoint: DELETE /filestorage/items/{itemId}
+   *
+   * Best-effort cleanup for tests: tolerates 403 (some credential
+   * scopes can write but not delete) and 404 (already gone) so an
+   * upload-then-delete fixture cycle still completes the assertion
+   * even if the delete leg can't run. Logs a warning so the test
+   * artifacts in the org stay visible.
+   */
+  async deleteFilestoreItem(itemId: string): Promise<void> {
+    const url = new URL(
+      `/filestorage/items/${encodeURIComponent(itemId)}`,
+      this.skillsBaseUrl,
+    );
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: await this.authHeaders(),
+    });
+    if (response.ok || response.status === 404) return;
+    if (response.status === 403) {
+      console.warn(
+        `[pinkfish-api] cleanup delete forbidden for item ${itemId} — leaving artifact in remote (test will pass, org will accumulate fixtures)`,
+      );
+      return;
+    }
+    throw new Error(
+      `deleteFilestoreItem failed: HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+}

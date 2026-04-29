@@ -1,0 +1,10 @@
+{
+  "repo": "/Users/yourname/OpenIT/local",
+  "orgId": "your-org-id",
+  "credentials": {
+    "tokenUrl": "https://app-api.dev20.pinkfish.dev/oauth/token",
+    "webUrl": "https://dev20.pinkfish.dev",
+    "clientId": "your-client-id",
+    "clientSecret": "your-client-secret"
+  }
+}

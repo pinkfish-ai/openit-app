@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::git_ops;
 
@@ -172,4 +172,272 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
         path: path.to_string_lossy().into_owned(),
         created: !already_existed,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Cloud binding marker (Phase 1 of V2 sync — PIN-5775).
+//
+// `~/OpenIT/<orgId>/` as a folder convention is going away. Instead, the
+// user's bound folder (default `~/OpenIT/local/`) holds a metadata file at
+// `.openit/cloud.json` that records which Pinkfish org it's associated with.
+// This lets the app know the binding without renaming the folder.
+//
+// `cloud.json` lives under `.openit/` which is already gitignored, so the
+// marker doesn't end up in git history.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct CloudBinding {
+    #[serde(rename = "orgId")]
+    pub org_id: String,
+    #[serde(rename = "orgName")]
+    pub org_name: String,
+    /// Unix epoch milliseconds when the binding was first written.
+    #[serde(rename = "connectedAt")]
+    pub connected_at: u64,
+    /// Unix epoch milliseconds of the most recent successful sync. `None`
+    /// before the first poll completes.
+    #[serde(rename = "lastSyncAt")]
+    pub last_sync_at: Option<u64>,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn cloud_json_path(repo: &str) -> PathBuf {
+    Path::new(repo).join(".openit").join("cloud.json")
+}
+
+fn read_cloud_binding_from_disk(path: &Path) -> Result<Option<CloudBinding>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let s = fs::read_to_string(path).map_err(|e| format!("read cloud.json: {}", e))?;
+    let binding: CloudBinding =
+        serde_json::from_str(&s).map_err(|e| format!("parse cloud.json: {}", e))?;
+    Ok(Some(binding))
+}
+
+fn write_cloud_binding_to_disk(path: &Path, binding: &CloudBinding) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create_dir_all: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(binding)
+        .map_err(|e| format!("serialize cloud.json: {}", e))?;
+    fs::write(path, json).map_err(|e| format!("write cloud.json: {}", e))
+}
+
+/// Bind a folder to a Pinkfish org. Writes `.openit/cloud.json`. Idempotent
+/// for the same `org_id` — reuses the existing `connected_at` and returns
+/// the (possibly-pre-existing) binding. Errors if the folder is already
+/// bound to a *different* org so callers can surface the conflict instead
+/// of silently overwriting.
+#[tauri::command]
+pub fn project_bind_to_cloud(
+    repo: String,
+    org_id: String,
+    org_name: String,
+) -> Result<CloudBinding, String> {
+    if repo.is_empty() {
+        return Err("repo cannot be empty".into());
+    }
+    if org_id.is_empty() {
+        return Err("org_id cannot be empty".into());
+    }
+    let path = cloud_json_path(&repo);
+    if let Some(existing) = read_cloud_binding_from_disk(&path)? {
+        if existing.org_id == org_id {
+            // Same org: idempotent — keep connected_at. Refresh
+            // org_name when the caller has a real display name to
+            // contribute. An empty incoming `org_name` (the
+            // first-run-with-creds startup path stores "" because no
+            // modal provided a display name) never clobbers an existing
+            // real name.
+            if org_name.is_empty() || existing.org_name == org_name {
+                return Ok(existing);
+            }
+            let updated = CloudBinding {
+                org_id: existing.org_id,
+                org_name,
+                connected_at: existing.connected_at,
+                last_sync_at: existing.last_sync_at,
+            };
+            write_cloud_binding_to_disk(&path, &updated)?;
+            return Ok(updated);
+        }
+        return Err(format!(
+            "folder already bound to org '{}' (id: {}); cannot rebind to org '{}' (id: {})",
+            existing.org_name, existing.org_id, org_name, org_id
+        ));
+    }
+    let binding = CloudBinding {
+        org_id,
+        org_name,
+        connected_at: now_ms(),
+        last_sync_at: None,
+    };
+    write_cloud_binding_to_disk(&path, &binding)?;
+    Ok(binding)
+}
+
+/// Read the current binding. `Ok(None)` for unbound folders.
+#[tauri::command]
+pub fn project_get_cloud_binding(repo: String) -> Result<Option<CloudBinding>, String> {
+    if repo.is_empty() {
+        return Ok(None);
+    }
+    let path = cloud_json_path(&repo);
+    read_cloud_binding_from_disk(&path)
+}
+
+/// Update `last_sync_at` to the current time. No-op (returns Ok) if the
+/// folder is unbound — callers shouldn't have to special-case that.
+#[tauri::command]
+pub fn project_update_last_sync_at(repo: String) -> Result<(), String> {
+    if repo.is_empty() {
+        return Ok(());
+    }
+    let path = cloud_json_path(&repo);
+    let Some(mut binding) = read_cloud_binding_from_disk(&path)? else {
+        return Ok(());
+    };
+    binding.last_sync_at = Some(now_ms());
+    write_cloud_binding_to_disk(&path, &binding)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn repo() -> (TempDir, String) {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().to_string_lossy().into_owned();
+        (dir, path)
+    }
+
+    #[test]
+    fn bind_writes_cloud_json_with_expected_shape() {
+        let (_dir, repo) = repo();
+        let binding =
+            project_bind_to_cloud(repo.clone(), "org-123".into(), "Acme Inc".into()).unwrap();
+        assert_eq!(binding.org_id, "org-123");
+        assert_eq!(binding.org_name, "Acme Inc");
+        assert!(binding.connected_at > 0);
+        assert_eq!(binding.last_sync_at, None);
+
+        let path = cloud_json_path(&repo);
+        assert!(path.exists(), "cloud.json should exist after bind");
+        let raw = fs::read_to_string(&path).unwrap();
+        // Camel-case JSON keys for frontend consumption.
+        assert!(raw.contains("\"orgId\""));
+        assert!(raw.contains("\"orgName\""));
+        assert!(raw.contains("\"connectedAt\""));
+        assert!(raw.contains("\"lastSyncAt\""));
+    }
+
+    #[test]
+    fn bind_is_idempotent_for_same_org() {
+        let (_dir, repo) = repo();
+        let first =
+            project_bind_to_cloud(repo.clone(), "org-1".into(), "First Org".into()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let second =
+            project_bind_to_cloud(repo.clone(), "org-1".into(), "First Org".into()).unwrap();
+        assert_eq!(
+            first.connected_at, second.connected_at,
+            "connected_at should be preserved on rebind"
+        );
+    }
+
+    #[test]
+    fn bind_updates_org_name_for_same_org_id() {
+        let (_dir, repo) = repo();
+        let _ = project_bind_to_cloud(repo.clone(), "org-1".into(), "Old Name".into()).unwrap();
+        let updated =
+            project_bind_to_cloud(repo.clone(), "org-1".into(), "New Name".into()).unwrap();
+        assert_eq!(updated.org_name, "New Name");
+    }
+
+    #[test]
+    fn bind_with_empty_org_name_does_not_clobber_existing_name() {
+        let (_dir, repo) = repo();
+        // Modal connect provides a real display name.
+        let _ = project_bind_to_cloud(repo.clone(), "org-1".into(), "Acme Inc".into()).unwrap();
+        // Subsequent first-run-with-creds startup passes "" because
+        // it doesn't have a display name handy. We must not wipe the
+        // real one.
+        let after = project_bind_to_cloud(repo.clone(), "org-1".into(), "".into()).unwrap();
+        assert_eq!(after.org_name, "Acme Inc");
+    }
+
+    #[test]
+    fn bind_with_real_org_name_updates_empty_existing_name() {
+        let (_dir, repo) = repo();
+        // First-run-with-creds bound first with no display name.
+        let _ = project_bind_to_cloud(repo.clone(), "org-1".into(), "".into()).unwrap();
+        // User reconnects via the modal — real name should land.
+        let after = project_bind_to_cloud(repo.clone(), "org-1".into(), "Acme Inc".into()).unwrap();
+        assert_eq!(after.org_name, "Acme Inc");
+    }
+
+    #[test]
+    fn bind_rejects_different_org_id() {
+        let (_dir, repo) = repo();
+        let _ = project_bind_to_cloud(repo.clone(), "org-1".into(), "First".into()).unwrap();
+        let err = project_bind_to_cloud(repo.clone(), "org-2".into(), "Second".into()).unwrap_err();
+        assert!(err.contains("already bound"), "got: {}", err);
+        assert!(err.contains("org-1"), "should mention existing org id");
+        assert!(err.contains("org-2"), "should mention attempted org id");
+    }
+
+    #[test]
+    fn bind_rejects_empty_inputs() {
+        let (_dir, repo) = repo();
+        assert!(project_bind_to_cloud("".into(), "org".into(), "Org".into()).is_err());
+        assert!(project_bind_to_cloud(repo, "".into(), "Org".into()).is_err());
+    }
+
+    #[test]
+    fn get_binding_returns_none_for_unbound() {
+        let (_dir, repo) = repo();
+        let result = project_get_cloud_binding(repo).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn get_binding_round_trips() {
+        let (_dir, repo) = repo();
+        let written =
+            project_bind_to_cloud(repo.clone(), "org-9".into(), "Round Trip".into()).unwrap();
+        let read = project_get_cloud_binding(repo).unwrap().expect("binding");
+        assert_eq!(written, read);
+    }
+
+    #[test]
+    fn update_last_sync_at_sets_field_and_preserves_others() {
+        let (_dir, repo) = repo();
+        let original = project_bind_to_cloud(repo.clone(), "org-1".into(), "Org".into()).unwrap();
+        // Sleep so now_ms strictly advances past `original.connected_at`.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        project_update_last_sync_at(repo.clone()).unwrap();
+        let after = project_get_cloud_binding(repo).unwrap().expect("binding");
+        assert_eq!(after.org_id, original.org_id);
+        assert_eq!(after.org_name, original.org_name);
+        assert_eq!(after.connected_at, original.connected_at);
+        assert!(after.last_sync_at.is_some());
+        assert!(after.last_sync_at.unwrap() >= original.connected_at);
+    }
+
+    #[test]
+    fn update_last_sync_at_is_noop_for_unbound() {
+        let (_dir, repo) = repo();
+        // Should not error even though there's no binding to update.
+        project_update_last_sync_at(repo.clone()).unwrap();
+        assert_eq!(project_get_cloud_binding(repo).unwrap(), None);
+    }
 }

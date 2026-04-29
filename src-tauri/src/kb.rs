@@ -448,26 +448,6 @@ fn fs_dir(repo: &str) -> PathBuf {
     Path::new(repo).join(FS_DIR)
 }
 
-fn safe_fs_path(repo: &str, filename: &str) -> Result<PathBuf, String> {
-    if filename.is_empty() {
-        return Err("filename is empty".into());
-    }
-    if filename.contains('/') || filename.contains('\\') {
-        return Err(format!(
-            "filename must not contain path separators: {}",
-            filename
-        ));
-    }
-    let as_path = Path::new(filename);
-    if as_path.is_absolute() || as_path.components().count() != 1 {
-        return Err(format!("invalid filename: {}", filename));
-    }
-    if filename == "." || filename == ".." {
-        return Err(format!("invalid filename: {}", filename));
-    }
-    Ok(fs_dir(repo).join(filename))
-}
-
 #[tauri::command]
 pub fn fs_store_init(repo: String) -> Result<String, String> {
     let dir = fs_dir(&repo);
@@ -494,23 +474,84 @@ pub fn fs_store_write_file_bytes(
     repo: String,
     filename: String,
     bytes: Vec<u8>,
+    subdir: Option<String>,
 ) -> Result<(), String> {
-    let dir = fs_dir(&repo);
-    ensure_dir(&dir)?;
-    let path = dir.join(&filename);
+    let path = fs_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
+    if let Some(parent) = path.parent() {
+        ensure_dir(parent)?;
+    }
     fs::write(&path, &bytes).map_err(|e| e.to_string())
 }
 
-// Datastore manifest now goes through entity_state_load / entity_state_save
-// with name="datastore". datastore-specific row listing is handled by the
-// generic entity_list_local with subdir="databases/<collection>", filtered
-// in the TS adapter.
+/// Reject a filename that contains separators, is "." or "..", is
+/// absolute, or contains anything other than a single normal component.
+/// Without this, a server-supplied "../../etc/passwd" or absolute path
+/// would let the caller write outside the intended subdir.
+fn validate_filename(filename: &str) -> Result<(), String> {
+    if filename.is_empty() {
+        return Err("filename is empty".into());
+    }
+    if filename.contains('/') || filename.contains('\\') {
+        return Err(format!(
+            "filename must not contain path separators: {}",
+            filename
+        ));
+    }
+    if filename == "." || filename == ".." {
+        return Err(format!("invalid filename: {}", filename));
+    }
+    let as_path = Path::new(filename);
+    if as_path.is_absolute() || as_path.components().count() != 1 {
+        return Err(format!("invalid filename: {}", filename));
+    }
+    Ok(())
+}
+
+/// Reject a subdir path that's absolute or contains any non-Normal
+/// component (e.g. ".." which escapes upward, or root-prefixed). The
+/// subdir is constructed from server-supplied collection names —
+/// `openit-../../evil` would otherwise produce
+/// `filestores/../../evil` and let downloads escape the repo entirely.
+fn validate_subdir(subdir: &str) -> Result<(), String> {
+    if subdir.is_empty() {
+        return Err("subdir is empty".into());
+    }
+    let p = Path::new(subdir);
+    if p.is_absolute() {
+        return Err(format!("subdir must be relative: {}", subdir));
+    }
+    for c in p.components() {
+        if !matches!(c, std::path::Component::Normal(_)) {
+            return Err(format!("subdir contains invalid component: {}", subdir));
+        }
+    }
+    Ok(())
+}
+
+/// Helper to build a filestore path with optional subdirectory.
+/// If subdir is provided, the final path is <repo>/<subdir>/<filename>.
+/// If subdir is not provided, uses the default filestores/library directory.
+fn fs_path_with_optional_subdir(
+    repo: &str,
+    filename: &str,
+    subdir: Option<&str>,
+) -> Result<PathBuf, String> {
+    validate_filename(filename)?;
+    let base_dir = if let Some(subdir) = subdir {
+        validate_subdir(subdir)?;
+        Path::new(repo).join(subdir)
+    } else {
+        fs_dir(repo)
+    };
+    Ok(base_dir.join(filename))
+}
 
 #[tauri::command]
 pub async fn fs_store_download_to_local(
     repo: String,
     filename: String,
     url: String,
+    subdir: Option<String>,
 ) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -532,8 +573,13 @@ pub async fn fs_store_download_to_local(
     }
     let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
 
-    let path = safe_fs_path(&repo, &filename)?;
-    ensure_dir(&fs_dir(&repo))?;
+    let path = fs_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
+
+    // Ensure parent directory exists (including subdirectories)
+    if let Some(parent) = path.parent() {
+        ensure_dir(parent)?;
+    }
+
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -545,8 +591,9 @@ pub async fn fs_store_upload_file(
     collection_id: String,
     skills_base_url: String,
     access_token: String,
+    subdir: Option<String>,
 ) -> Result<KbUploadResult, String> {
-    let path = safe_fs_path(&repo, &filename)?;
+    let path = fs_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
     if !path.exists() {
         return Err(format!("file not found: {}", path.display()));
     }
@@ -678,6 +725,7 @@ pub fn entity_state_save(repo: String, name: String, state: KbState) -> Result<(
 /// dumb file-system primitive.
 #[tauri::command]
 pub fn entity_list_local(repo: String, subdir: String) -> Result<Vec<KbLocalFile>, String> {
+    validate_subdir(&subdir)?;
     let dir = Path::new(&repo).join(&subdir);
     if !dir.exists() {
         return Ok(Vec::new());
@@ -724,6 +772,8 @@ pub fn entity_write_file(
     filename: String,
     content: String,
 ) -> Result<(), String> {
+    validate_subdir(&subdir)?;
+    validate_filename(&filename)?;
     let dir = Path::new(&repo).join(&subdir);
     ensure_dir(&dir)?;
     let path = dir.join(&filename);
@@ -741,6 +791,8 @@ pub fn entity_write_file_bytes(
     filename: String,
     bytes: Vec<u8>,
 ) -> Result<(), String> {
+    validate_subdir(&subdir)?;
+    validate_filename(&filename)?;
     let dir = Path::new(&repo).join(&subdir);
     ensure_dir(&dir)?;
     let path = dir.join(&filename);
@@ -753,6 +805,8 @@ pub fn entity_write_file_bytes(
 /// style canonicalization on the parent dir.
 #[tauri::command]
 pub fn entity_delete_file(repo: String, subdir: String, filename: String) -> Result<(), String> {
+    validate_subdir(&subdir)?;
+    validate_filename(&filename)?;
     let dir = Path::new(&repo).join(&subdir);
     let path = dir.join(&filename);
     // Only act if the resolved path stays inside the repo. Cheap check —
@@ -778,10 +832,45 @@ pub fn entity_delete_file(repo: String, subdir: String, filename: String) -> Res
     Ok(())
 }
 
+/// Rename a file within a subdir. Used by filestore push to reconcile
+/// when the server sanitizes a filename (e.g. spaces → dashes) so the
+/// local working tree matches what comes back on the next pull and we
+/// don't end up with both the original and the sanitized version.
+#[tauri::command]
+pub fn entity_rename_file(
+    repo: String,
+    subdir: String,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    if from == to {
+        return Ok(());
+    }
+    validate_subdir(&subdir)?;
+    validate_filename(&from)?;
+    validate_filename(&to)?;
+    let dir = Path::new(&repo).join(&subdir);
+    let from_path = dir.join(&from);
+    let to_path = dir.join(&to);
+    if !from_path.exists() {
+        return Ok(());
+    }
+    let repo_canon = fs::canonicalize(&repo).map_err(|e| e.to_string())?;
+    if let Ok(parent_canon) = fs::canonicalize(&dir) {
+        if !parent_canon.starts_with(&repo_canon) {
+            return Err(format!("refusing to rename outside repo: {}", subdir));
+        }
+    }
+    fs::rename(&from_path, &to_path).map_err(|e| e.to_string())
+}
+
 /// Remove all files in `<repo>/<subdir>` then recreate it empty.
 /// Used to do a clean sync of entity directories.
 #[tauri::command]
 pub fn entity_clear_dir(repo: String, subdir: String) -> Result<(), String> {
+    // Most destructive entity_* command: a missing guard here lets a
+    // crafted subdir like ".." trigger remove_dir_all on the parent.
+    validate_subdir(&subdir)?;
     let dir = Path::new(&repo).join(&subdir);
     if dir.exists() {
         fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -793,6 +882,63 @@ pub fn entity_clear_dir(repo: String, subdir: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fs_path_with_optional_subdir_rejects_dot_dot() {
+        // ".." has no path separators so the basic guard wouldn't catch it,
+        // but joining ".." onto the subdir resolves to its parent —
+        // letting a server-supplied filename escape the intended dir.
+        assert!(fs_path_with_optional_subdir("/repo", "..", Some("filestores/library")).is_err());
+        assert!(fs_path_with_optional_subdir("/repo", ".", Some("filestores/library")).is_err());
+    }
+
+    #[test]
+    fn fs_path_with_optional_subdir_rejects_absolute() {
+        assert!(fs_path_with_optional_subdir("/repo", "/etc/passwd", None).is_err());
+    }
+
+    #[test]
+    fn fs_path_with_optional_subdir_accepts_normal_filename() {
+        let p = fs_path_with_optional_subdir("/repo", "doc.md", Some("filestores/library"))
+            .expect("should accept a normal filename");
+        assert!(p.ends_with("filestores/library/doc.md"));
+    }
+
+    #[test]
+    fn fs_path_with_optional_subdir_rejects_traversal_in_subdir() {
+        // The subdir is built from server-supplied collection names. A
+        // collection named "openit-../../evil" would otherwise produce
+        // "filestores/../../evil" and let downloads escape the repo.
+        assert!(
+            fs_path_with_optional_subdir("/repo", "doc.md", Some("filestores/../../evil")).is_err()
+        );
+        assert!(fs_path_with_optional_subdir("/repo", "doc.md", Some("..")).is_err());
+        assert!(fs_path_with_optional_subdir("/repo", "doc.md", Some("/etc")).is_err());
+        assert!(fs_path_with_optional_subdir("/repo", "doc.md", Some("")).is_err());
+    }
+
+    #[test]
+    fn validate_filename_basics() {
+        assert!(validate_filename("doc.md").is_ok());
+        assert!(validate_filename("with spaces.txt").is_ok());
+        assert!(validate_filename("").is_err());
+        assert!(validate_filename(".").is_err());
+        assert!(validate_filename("..").is_err());
+        assert!(validate_filename("a/b").is_err());
+        assert!(validate_filename("a\\b").is_err());
+        assert!(validate_filename("/abs").is_err());
+    }
+
+    #[test]
+    fn validate_subdir_basics() {
+        assert!(validate_subdir("filestores/library").is_ok());
+        assert!(validate_subdir("filestores/docs-123").is_ok());
+        assert!(validate_subdir("").is_err());
+        assert!(validate_subdir("..").is_err());
+        assert!(validate_subdir("a/../b").is_err());
+        assert!(validate_subdir("/abs").is_err());
+        assert!(validate_subdir("./relative").is_err());
+    }
 
     #[test]
     fn urlencode_handles_ascii_unreserved() {

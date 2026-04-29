@@ -42,3 +42,6 @@ scripts/openit-plugin/scripts/slack-listen.bundle.cjs
 # Machine-specific (session id, pid, start time); commits cause noise
 # and merge conflicts.
 .claude/scheduled_tasks.lock
+
+# Test configuration with real credentials
+test-config.json

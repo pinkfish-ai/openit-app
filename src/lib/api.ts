@@ -219,6 +219,49 @@ export async function projectBootstrap(args: {
   return invoke("project_bootstrap", { orgName: args.orgName, orgId: args.orgId });
 }
 
+/// Cloud-binding marker stored at `<repo>/.openit/cloud.json`. Records which
+/// Pinkfish org the folder is currently bound to. Phase 1 of V2 sync (PIN-5775)
+/// — replaces the `~/OpenIT/<orgId>/` folder convention with a per-folder
+/// metadata file so the user keeps working in their existing folder when they
+/// connect to cloud.
+export type CloudBinding = {
+  orgId: string;
+  orgName: string;
+  /// Unix epoch milliseconds when the binding was first written.
+  connectedAt: number;
+  /// Unix epoch ms of the most recent successful sync. `null` until the first
+  /// poll completes.
+  lastSyncAt: number | null;
+};
+
+/// Write `.openit/cloud.json` for `repo`. Idempotent for the same `orgId`
+/// (preserves `connectedAt`); rejects with an error if the folder is already
+/// bound to a different org so the caller can surface a clear conflict
+/// instead of silently overwriting.
+export async function projectBindToCloud(args: {
+  repo: string;
+  orgId: string;
+  orgName: string;
+}): Promise<CloudBinding> {
+  return invoke("project_bind_to_cloud", {
+    repo: args.repo,
+    orgId: args.orgId,
+    orgName: args.orgName,
+  });
+}
+
+/// Read the binding. `null` for unbound folders.
+export async function projectGetCloudBinding(repo: string): Promise<CloudBinding | null> {
+  return invoke("project_get_cloud_binding", { repo });
+}
+
+/// Refresh `lastSyncAt` to the current time. No-op (resolves) if the folder
+/// is unbound — sync engines call this after every successful poll without
+/// having to special-case the local-only path.
+export async function projectUpdateLastSyncAt(repo: string): Promise<void> {
+  return invoke("project_update_last_sync_at", { repo });
+}
+
 /// Start the localhost ticket-intake HTTP server scoped to `repo`.
 /// Returns the URL clients hit (e.g. `http://127.0.0.1:54123`). If a
 /// server is already running, it's stopped first so calling this on
@@ -488,11 +531,20 @@ export async function fsStoreInit(repo: string): Promise<string> {
   return invoke("fs_store_init", { repo });
 }
 
+/// Generic entity_list_local wrapper. Pass the subdir relative to repo
+/// (e.g. "filestores/library", "filestores/docs-123", "knowledge-bases/default").
+/// Returns local files in that directory only.
+export async function entityListLocal(
+  repo: string,
+  subdir: string,
+): Promise<KbLocalFile[]> {
+  return invoke("entity_list_local", { repo, subdir });
+}
+
 export async function fsStoreListLocal(repo: string): Promise<KbLocalFile[]> {
-  // The cloud-synced filestore lives at `filestores/library/` after
-  // the 2026-04-27 split. `attachments/` is a separate, server-managed
-  // surface (per-ticket conversation uploads) and isn't routed
-  // through the cloud sync engine.
+  // Legacy: lists files in the default filestores/library/ directory.
+  // For multi-collection sync, use entityListLocal with the collection-specific
+  // subdir (e.g. filestores/<collection-name>/) instead.
   return invoke("entity_list_local", { repo, subdir: "filestores/library" });
 }
 
@@ -512,9 +564,10 @@ export async function fsStoreWriteFileBytes(
   repo: string,
   filename: string,
   bytes: ArrayBuffer | Uint8Array,
+  subdir?: string,
 ): Promise<void> {
   const arr = bytes instanceof Uint8Array ? Array.from(bytes) : Array.from(new Uint8Array(bytes));
-  return invoke("fs_store_write_file_bytes", { repo, filename, bytes: arr });
+  return invoke("fs_store_write_file_bytes", { repo, filename, bytes: arr, subdir: subdir ?? null });
 }
 
 export async function fsStoreStateLoad(repo: string): Promise<KbStatePersisted> {
@@ -559,8 +612,9 @@ export async function fsStoreDownloadToLocal(
   repo: string,
   filename: string,
   url: string,
+  subdir?: string,
 ): Promise<void> {
-  return invoke("fs_store_download_to_local", { repo, filename, url });
+  return invoke("fs_store_download_to_local", { repo, filename, url, subdir: subdir ?? null });
 }
 
 export async function fsStoreUploadFile(args: {
@@ -569,6 +623,7 @@ export async function fsStoreUploadFile(args: {
   collectionId: string;
   skillsBaseUrl: string;
   accessToken: string;
+  subdir?: string;
 }): Promise<KbUploadResult> {
   return invoke("fs_store_upload_file", {
     repo: args.repo,
@@ -576,6 +631,7 @@ export async function fsStoreUploadFile(args: {
     collectionId: args.collectionId,
     skillsBaseUrl: args.skillsBaseUrl,
     accessToken: args.accessToken,
+    subdir: args.subdir ?? null,
   });
 }
 
@@ -585,6 +641,19 @@ export async function entityWriteFile(repo: string, subdir: string, filename: st
 
 export async function entityDeleteFile(repo: string, subdir: string, filename: string): Promise<void> {
   return invoke("entity_delete_file", { repo, subdir, filename });
+}
+
+/// Rename a file within a subdir. Used to reconcile when the filestore
+/// server sanitizes a filename on upload (e.g. spaces → dashes) so the
+/// local working tree matches the canonical name and the next pull
+/// doesn't create a duplicate.
+export async function entityRenameFile(
+  repo: string,
+  subdir: string,
+  from: string,
+  to: string,
+): Promise<void> {
+  return invoke("entity_rename_file", { repo, subdir, from, to });
 }
 
 export async function entityClearDir(repo: string, subdir: string): Promise<void> {

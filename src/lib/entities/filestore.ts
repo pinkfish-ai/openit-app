@@ -1,23 +1,24 @@
 // Filestore adapter for syncEngine. The remote API is the same `kb_list_remote`
 // shape (skills `/datacollection/{id}/items`) but the working-tree dir is
-// `filestores/library/` and downloads use `fs_store_download_to_local`.
+// `filestores/<collection-name>/` and downloads use `fs_store_download_to_local`.
 // Filestore had no shadow handling pre-engine; engine now provides it for
 // free, with the shadow filename mirroring KB's `<base>.server.<ext>`
 // convention.
 //
-// Layout split (2026-04-27): `filestores/library/` holds curated docs/scripts
-// and is what this adapter maps to. `filestores/attachments/<ticketId>/` is a
-// separate, server-managed surface for chat-intake uploads — those live
-// under conversations operationally and aren't routed through this
-// adapter (no shadow needed; auto-commit driver handles them).
+// Layout (Phase 1, 2026-04-29): Each openit-* collection maps to a local folder.
+// - openit-library → filestores/library/
+// - openit-attachments → filestores/attachments/
+// - (Phase 2: custom user-named collections)
+//
+// Each adapter gets its own prefix and manifest so multi-collection sync
+// doesn't cross-pollinate files.
 
 import {
   entityDeleteFile,
+  entityListLocal,
   fsStoreDownloadToLocal,
-  fsStoreListLocal,
-  fsStoreStateLoad,
-  fsStoreStateSave,
   kbListRemote,
+  entityWriteFile,
 } from "../api";
 import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
 import {
@@ -28,8 +29,9 @@ import {
   type LocalItem,
   type RemoteItem,
 } from "../syncEngine";
+import { loadCollectionManifest, saveCollectionManifest } from "../filestoreManifest";
 
-const DIR = "filestores/library";
+const OPENIT_PREFIX = "openit-";
 
 export type FilestoreCollection = {
   id: string;
@@ -37,16 +39,37 @@ export type FilestoreCollection = {
   description?: string;
 };
 
+// Ensure a filestore subdirectory exists by writing a placeholder file,
+// then delete it. This forces the backend to create the directory structure.
+async function ensureDirectoryExists(repo: string, dir: string): Promise<void> {
+  const placeholder = ".placeholder";
+  try {
+    await entityWriteFile(repo, dir, placeholder, "");
+    await entityDeleteFile(repo, dir, placeholder);
+  } catch (e) {
+    console.warn(`[filestore] failed to ensure directory exists: ${dir}`, e);
+  }
+}
+
 export function filestoreAdapter(args: {
   creds: PinkfishCreds;
   collection: FilestoreCollection;
 }): EntityAdapter {
   const { creds, collection } = args;
-  return {
-    prefix: "filestores/library",
 
-    loadManifest: (repo) => fsStoreStateLoad(repo),
-    saveManifest: (repo, m) => fsStoreStateSave(repo, m),
+  // Derive local folder name from collection name by stripping openit- prefix
+  // openit-library → filestores/library
+  // openit-attachments → filestores/attachments
+  const collectionFolderName = collection.name.startsWith(OPENIT_PREFIX)
+    ? collection.name.slice(OPENIT_PREFIX.length)
+    : collection.name; // Fallback for non-openit collections (Phase 2)
+  const DIR = `filestores/${collectionFolderName}`;
+
+  return {
+    prefix: DIR,
+
+    loadManifest: (repo) => loadCollectionManifest(repo, collection.id),
+    saveManifest: (repo, m) => saveCollectionManifest(repo, collection.id, collection.name, m),
 
     async listRemote(_repo) {
       const token = getToken();
@@ -66,21 +89,31 @@ export function filestoreAdapter(args: {
           manifestKey: filename,
           workingTreePath: `${DIR}/${filename}`,
           updatedAt: r.updated_at ?? "",
-          fetchAndWrite: (repo) =>
-            fsStoreDownloadToLocal(repo, filename, downloadUrl),
-          writeShadow: (repo) =>
-            fsStoreDownloadToLocal(
+          fetchAndWrite: async (repo) => {
+            await ensureDirectoryExists(repo, DIR);
+            return fsStoreDownloadToLocal(repo, filename, downloadUrl, DIR);
+          },
+          writeShadow: async (repo) => {
+            await ensureDirectoryExists(repo, DIR);
+            return fsStoreDownloadToLocal(
               repo,
               shadowFilename(filename),
               downloadUrl,
-            ),
+              DIR,
+            );
+          },
         });
       }
       return { items, paginationFailed: false };
     },
 
     async listLocal(repo) {
-      const files = await fsStoreListLocal(repo);
+      // List files from THIS collection's subdirectory only — not the
+      // legacy hardcoded filestores/library/ directory. Without this
+      // every collection's adapter would see files from every other
+      // collection mixed together, making the engine think files are
+      // already on disk when they're actually in the wrong folder.
+      const files = await entityListLocal(repo, DIR);
       // Sibling-aware shadow classification — see KB adapter for details.
       // Use the full filename set so a legit `a.server.conf` appears in
       // siblings and a follow-on `a.server.server.conf` shadow maps back
