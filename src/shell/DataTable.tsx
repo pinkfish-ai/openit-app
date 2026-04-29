@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { DataCollection, MemoryItem } from "../lib/skillsApi";
+import { TrashIcon } from "./TrashIcon";
 
 type Props = {
   collection: DataCollection;
@@ -7,6 +8,11 @@ type Props = {
   hasMore?: boolean;
   onLoadMore?: () => void;
   onRowClick?: (key: string) => void;
+  /** When set, every row gets a trailing trash cell that calls this
+   *  handler with the row's key. The handler is responsible for
+   *  confirmation; the table just stops propagation so the row's
+   *  onRowClick doesn't fire alongside the delete. */
+  onRowDelete?: (key: string) => void | Promise<void>;
 };
 
 type SortState = { fieldId: string; direction: "asc" | "desc" } | null;
@@ -17,7 +23,7 @@ function formatCell(value: unknown, fieldType: string): string {
   return String(value);
 }
 
-export function DataTable({ collection, items, hasMore, onLoadMore, onRowClick }: Props) {
+export function DataTable({ collection, items, hasMore, onLoadMore, onRowClick, onRowDelete }: Props) {
   const [sort, setSort] = useState<SortState>(null);
 
   const fields = collection.schema?.fields ?? [];
@@ -99,6 +105,7 @@ export function DataTable({ collection, items, hasMore, onLoadMore, onRowClick }
                   : ""}
               </th>
             ))}
+            {onRowDelete && <th className="data-table-action-col" aria-label="actions" />}
           </tr>
         </thead>
         <tbody>
@@ -114,6 +121,24 @@ export function DataTable({ collection, items, hasMore, onLoadMore, onRowClick }
                   {formatCell(row.parsed[field.id], field.type)}
                 </td>
               ))}
+              {onRowDelete && (
+                <td className="data-table-cell data-table-action-cell">
+                  {row.key && (
+                    <button
+                      type="button"
+                      className="data-table-delete"
+                      title={`Delete ${row.key}`}
+                      aria-label={`Delete ${row.key}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onRowDelete(row.key);
+                      }}
+                    >
+                      <TrashIcon />
+                    </button>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

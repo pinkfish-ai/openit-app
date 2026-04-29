@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ENTITY_META, type EntityKind } from "./entityIcons";
 import { TrashIcon } from "./TrashIcon";
 
@@ -27,8 +27,13 @@ export type EntityCard = {
   /** When set, the card shows a hover-revealed trash button that
    *  invokes this handler. The handler is responsible for any
    *  confirmation prompt — the grid just wires the click + stops
-   *  propagation so the card's `onClick` doesn't fire. */
+   *  propagation so the card's `onClick` doesn't fire. Also bound
+   *  to Backspace/Delete when the card is focused, and exposed
+   *  as a "Delete" entry in the right-click context menu. */
   onDelete?: () => void | Promise<void>;
+  /** When set, the right-click context menu shows a "Reveal in
+   *  Finder" entry that calls this handler. */
+  onReveal?: () => void | Promise<void>;
 };
 
 /**
@@ -48,6 +53,27 @@ export function EntityCardGrid({
   empty?: ReactNode;
 }) {
   const meta = ENTITY_META[kind];
+  const [menu, setMenu] = useState<{
+    cardKey: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Dismiss the menu on Escape or any click outside; re-arm the
+  // delete confirmation each time the menu re-opens so a stray
+  // double-click can't slip past the safety prompt.
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenu(null);
+        setConfirmDelete(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menu]);
 
   if (cards.length === 0) {
     return (
@@ -60,11 +86,74 @@ export function EntityCardGrid({
     );
   }
 
+  const activeCard = menu ? cards.find((c) => c.key === menu.cardKey) : null;
+
   return (
     <div className={`entity-grid entity-tone-${meta.tone}`}>
       {cards.map((c) => (
-        <EntityCardItem key={c.key} card={c} fallbackIcon={meta.icon} />
+        <EntityCardItem
+          key={c.key}
+          card={c}
+          fallbackIcon={meta.icon}
+          onContextMenu={(x, y) => {
+            if (!c.onDelete && !c.onReveal) return;
+            setMenu({ cardKey: c.key, x, y });
+            setConfirmDelete(false);
+          }}
+        />
       ))}
+      {menu && activeCard && (
+        <>
+          <div
+            className="context-menu-overlay"
+            onClick={() => {
+              setMenu(null);
+              setConfirmDelete(false);
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu(null);
+              setConfirmDelete(false);
+            }}
+          />
+          <div
+            className="context-menu"
+            style={{ top: menu.y, left: menu.x }}
+            role="menu"
+          >
+            {activeCard.onReveal && (
+              <button
+                type="button"
+                className="context-menu-item"
+                onClick={() => {
+                  void activeCard.onReveal?.();
+                  setMenu(null);
+                  setConfirmDelete(false);
+                }}
+              >
+                Reveal in Finder
+              </button>
+            )}
+            {activeCard.onDelete && (
+              <button
+                type="button"
+                className="context-menu-item context-menu-item-danger"
+                onClick={() => {
+                  if (!confirmDelete) {
+                    setConfirmDelete(true);
+                    return;
+                  }
+                  void activeCard.onDelete?.();
+                  setMenu(null);
+                  setConfirmDelete(false);
+                }}
+              >
+                {confirmDelete ? "Click again to confirm" : "Delete"}
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -72,9 +161,11 @@ export function EntityCardGrid({
 function EntityCardItem({
   card: c,
   fallbackIcon,
+  onContextMenu,
 }: {
   card: EntityCard;
   fallbackIcon: ReactNode;
+  onContextMenu: (x: number, y: number) => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
   const Tag = c.onClick ? "button" : "div";
@@ -99,6 +190,19 @@ function EntityCardItem({
         },
       }
     : {};
+  // Keyboard delete: a focused clickable card responds to Backspace
+  // or Delete by triggering its onDelete handler. The handler runs
+  // its own confirm() so a fat-finger keystroke can't silently nuke
+  // a file. Only clickable cards (which render as <button>) can
+  // receive focus, so this is naturally scoped.
+  const onKeyDown = c.onDelete
+    ? (e: React.KeyboardEvent) => {
+        if (e.key === "Backspace" || e.key === "Delete") {
+          e.preventDefault();
+          void c.onDelete?.();
+        }
+      }
+    : undefined;
   const card = (
     <Tag
       type={c.onClick ? "button" : undefined}
@@ -106,6 +210,12 @@ function EntityCardItem({
         dragOver ? " entity-card-drag" : ""
       }`}
       onClick={c.onClick}
+      onKeyDown={onKeyDown}
+      onContextMenu={(e) => {
+        if (!c.onDelete && !c.onReveal) return;
+        e.preventDefault();
+        onContextMenu(e.clientX, e.clientY);
+      }}
       {...dropProps}
     >
       <span className="entity-card-glyph" aria-hidden>
@@ -157,4 +267,3 @@ function EntityCardItem({
     </div>
   );
 }
-

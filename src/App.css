@@ -261,6 +261,7 @@ body::before {
 }
 .viewer {
   background: var(--surface);
+  position: relative;
 }
 
 .shell-loading {
@@ -1676,6 +1677,81 @@ body::before {
   outline: 2px dashed var(--accent, #c43e3e);
   outline-offset: -6px;
   background: var(--accent-soft, rgba(196, 62, 62, 0.05));
+}
+
+/* Empty-folder state dressed up as a drop zone. Activates only on
+   entity-folder views that accept drops (library / knowledge-base);
+   the dashed border + drag-here hint tell new users they can pull
+   files in from Finder without first reading the empty-state copy. */
+.viewer-summary-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 14px;
+  padding: 24px 18px;
+  background: var(--surface-soft, rgba(0, 0, 0, 0.015));
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.viewer-summary-dropzone.viewer-summary-drag {
+  border-color: var(--accent, #c43e3e);
+  background: var(--accent-soft, rgba(196, 62, 62, 0.05));
+}
+
+.viewer-summary-dropzone-hint {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* Toolbar above the entity-folder card grid — currently hosts the
+   sort-reverse toggle. Right-aligned so it sits where the eye lands
+   for table-style controls. */
+.viewer-folder-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 0 8px 0;
+}
+
+.viewer-folder-sort {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+}
+
+.viewer-folder-sort:hover {
+  background: var(--surface-soft, rgba(0, 0, 0, 0.03));
+  color: var(--text);
+}
+
+/* Ephemeral confirmation toast. Floats top-center of the viewer; the
+   useToast hook auto-dismisses after 2.5s. Stays visually quiet —
+   the goal is "yes, your action took" not "look at me". */
+.toast-notice {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  background: var(--accent, #2c2c2c);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  animation: toast-fade-in 0.15s ease;
+  pointer-events: none;
+}
+
+@keyframes toast-fade-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 .thread-reply-chips {
@@ -3175,6 +3251,37 @@ body::before {
   font-size: 12px;
   cursor: pointer;
   text-align: center;
+}
+
+.data-table-action-col {
+  width: 36px;
+}
+
+.data-table-action-cell {
+  text-align: right;
+  padding-right: 6px !important;
+}
+
+.data-table-delete {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.data-table-row:hover .data-table-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.data-table-delete:hover {
+  color: #c74e4e;
+  background: rgba(199, 78, 78, 0.08);
 }
 
 .data-table-load-more:hover {
@@ -4869,6 +4976,26 @@ button.status-chip-info:hover {
   top: 50%;
   transform: translateY(-50%);
   right: 10px;
+}
+
+/* File-type badge — slots into the same 30×30 glyph well as the
+   kind icon. Uppercase extension reads as a small "tag" rather than
+   an icon. Sizing matches the kind glyph so cards stay aligned. */
+.entity-card-typebadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--accent-faint, #f4eee5);
+  border: 1px solid var(--accent-soft, rgba(196, 62, 62, 0.18));
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .entity-card-glyph {

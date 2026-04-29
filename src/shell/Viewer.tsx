@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { fsRead, fsReadBytes, fsList, reportOverviewRun, entityWriteFileBytes, entityDeleteFile } from "../lib/api";
+import { fsRead, fsReadBytes, fsList, fsReveal, reportOverviewRun, entityWriteFileBytes, entityDeleteFile, entityListLocal } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
 import type { MemoryItem } from "../lib/skillsApi";
@@ -12,6 +12,8 @@ import { FileThumbnail, isImageFile } from "./FileThumbnail";
 import { EntityBadge, type EntityKind } from "./entityIcons";
 import { CliPanel } from "./CliPanel";
 import { TrashIcon } from "./TrashIcon";
+import { useToast, ToastView } from "./Toast";
+import { FileTypeBadge, formatBytes } from "./FileTypeBadge";
 import { RowEditForm } from "./RowEditForm";
 import { AttachmentList } from "./AttachmentList";
 import { ImageViewer } from "./viewers/ImageViewer";
@@ -55,20 +57,44 @@ async function uploadFilesToSubdir(
   subdir: string,
   files: File[],
   setError: (msg: string | null) => void,
+  onToast?: (msg: string) => void,
 ): Promise<void> {
   const relSubdir = toRepoRelative(repo, subdir);
   setError(null);
+  // Pre-flight: discover any same-named files already on disk so we
+  // can ask once for the whole drop instead of one prompt per file.
+  let existing = new Set<string>();
+  try {
+    const listed = await entityListLocal(repo, relSubdir);
+    existing = new Set(listed.map((f) => f.filename));
+  } catch {
+    /* fresh dir — nothing to clobber */
+  }
+  const intended = files.map((f) => ({
+    file: f,
+    filename: sanitizeUploadFilename(f.name || "upload"),
+  }));
+  const collisions = intended.filter((i) => existing.has(i.filename));
+  if (collisions.length > 0) {
+    const list =
+      collisions.length === 1
+        ? `"${collisions[0].filename}"`
+        : `${collisions.length} files (${collisions
+            .map((c) => c.filename)
+            .slice(0, 3)
+            .join(", ")}${collisions.length > 3 ? "…" : ""})`;
+    const ok = window.confirm(
+      `${list} already exist${collisions.length === 1 ? "s" : ""} in this folder.\n\nReplace?`,
+    );
+    if (!ok) return;
+  }
   const failed: { name: string; reason: string }[] = [];
-  for (const f of files) {
-    // Sanitize the filename for the on-disk write. macOS-generated
-    // screenshot names include a U+202F (narrow no-break space) and
-    // `:` colons that survive Finder but break sync/upload paths
-    // downstream — collapse all whitespace to a single ASCII space
-    // and strip the chars that aren't safe across filesystems.
-    const filename = sanitizeUploadFilename(f.name || "upload");
+  let succeeded = 0;
+  for (const { file: f, filename } of intended) {
     try {
       const buf = await f.arrayBuffer();
       await entityWriteFileBytes(repo, relSubdir, filename, buf);
+      succeeded += 1;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       console.error(`[folder-upload] failed for ${filename}:`, err);
@@ -82,6 +108,13 @@ async function uploadFilesToSubdir(
         .join(", ")}`,
     );
   }
+  if (succeeded > 0 && onToast) {
+    onToast(
+      succeeded === 1
+        ? `Uploaded ${intended.find((i) => !failed.some((f) => f.name === i.filename))?.filename ?? "file"}`
+        : `Uploaded ${succeeded} files`,
+    );
+  }
 }
 
 /// Confirm + delete a single file in an entity folder. Used by the
@@ -93,12 +126,14 @@ async function deleteFileInSubdir(
   subdir: string,
   filename: string,
   setError: (msg: string | null) => void,
+  onToast?: (msg: string) => void,
 ): Promise<void> {
   const ok = window.confirm(`Delete "${filename}"?\n\nThis cannot be undone.`);
   if (!ok) return;
   setError(null);
   try {
     await entityDeleteFile(repo, toRepoRelative(repo, subdir), filename);
+    onToast?.(`Deleted ${filename}`);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`[folder-delete] failed for ${filename}:`, err);
@@ -406,6 +441,12 @@ export function Viewer({
   // show up as new cards without a manual refresh.
   const [folderDragOver, setFolderDragOver] = useState(false);
   const [folderUploadError, setFolderUploadError] = useState<string | null>(null);
+  const { toast, show: showToast } = useToast();
+  // Reverse the entity-folder card order. Default is the routing
+  // layer's natural order (alphabetical for files, newest-first for
+  // reports). Per-folder via source.path so flipping one folder's
+  // sort doesn't bleed into another.
+  const [sortReversed, setSortReversed] = useState<Record<string, boolean>>({});
   // "Generate overview" button state on the reports/ entity-folder
   // view. Run kicks off the local script via the Tauri command and,
   // on success, jumps the viewer to the freshly-written file. fsTick
@@ -961,6 +1002,18 @@ export function Viewer({
             const filePath = `${repo}/databases/${source.collection.name}/${key}.json`;
             writeToActiveSession(filePath + " ");
           }}
+          onRowDelete={
+            repo
+              ? (key) =>
+                  deleteFileInSubdir(
+                    repo,
+                    `databases/${source.collection.name}`,
+                    `${key}.json`,
+                    setFolderUploadError,
+                    showToast,
+                  )
+              : undefined
+          }
         />
       );
     }
@@ -1265,6 +1318,9 @@ export function Viewer({
       if (view === "table") {
         return (
           <div className="viewer-summary viewer-people">
+            {folderUploadError && (
+              <p className="viewer-edit-error">{folderUploadError}</p>
+            )}
             <DataTable
               collection={source.collection}
               items={source.items}
@@ -1272,6 +1328,18 @@ export function Viewer({
                 const filePath = `${repo}/databases/${source.collection.name}/${key}.json`;
                 writeToActiveSession(filePath + " ");
               }}
+              onRowDelete={
+                repo
+                  ? (key) =>
+                      deleteFileInSubdir(
+                        repo,
+                        `databases/${source.collection.name}`,
+                        `${key}.json`,
+                        setFolderUploadError,
+                        showToast,
+                      )
+                  : undefined
+              }
             />
           </div>
         );
@@ -1336,6 +1404,7 @@ export function Viewer({
                         "databases/people",
                         `${p.key}.json`,
                         setFolderUploadError,
+                        showToast,
                       );
                     }}
                   >
@@ -1497,8 +1566,9 @@ export function Viewer({
                 : { label: "custom", tone: "info" },
               onClick: () => onOpenPath && void onOpenPath(c.path),
               onFilesDropped: repo
-                ? (files) => uploadFilesToSubdir(repo, c.path, files, setFolderUploadError)
+                ? (files) => uploadFilesToSubdir(repo, c.path, files, setFolderUploadError, showToast)
                 : undefined,
+              onReveal: () => void fsReveal(c.path).catch(console.error),
             }))}
           />
         </div>
@@ -1529,8 +1599,9 @@ export function Viewer({
               onFilesDropped:
                 repo && c.name !== "attachments"
                   ? (files) =>
-                      uploadFilesToSubdir(repo, c.path, files, setFolderUploadError)
+                      uploadFilesToSubdir(repo, c.path, files, setFolderUploadError, showToast)
                   : undefined,
+              onReveal: () => void fsReveal(c.path).catch(console.error),
             }))}
           />
         </div>
@@ -1574,6 +1645,7 @@ export function Viewer({
                   void onOpenPath(t.path);
                 }
               },
+              onReveal: () => void fsReveal(t.path).catch(console.error),
             }))}
           />
         </div>
@@ -1609,6 +1681,7 @@ export function Viewer({
                 c.name === "conversations" ? "thread" : "row"
               }${c.itemCount === 1 ? "" : "s"}`,
               onClick: () => onOpenPath && void onOpenPath(c.path),
+              onReveal: () => void fsReveal(c.path).catch(console.error),
             }))}
           />
         </div>
@@ -1622,7 +1695,9 @@ export function Viewer({
     // workflow / file) take over on click.
     if (source.kind === "entity-folder") {
       const isReport = source.entity === "reports";
-      const cards = source.files.map((f) => {
+      const reversed = !!sortReversed[source.path];
+      const orderedFiles = reversed ? [...source.files].reverse() : source.files;
+      const cards = orderedFiles.map((f) => {
         let slug = f.displayName;
         let dateLabel = "";
         if (isReport) {
@@ -1648,17 +1723,37 @@ export function Viewer({
         // readable label) becomes the title; filename + parsed date
         // become muted metadata. Other entities keep the standard
         // layout (filename as title, description as subtitle).
+        // File-type glyph is shown for non-image files in library /
+        // reports / attachments-ticket — surfaces (PDF, MD, CSV, …)
+        // where the generic folder glyph wasted scanning real estate.
+        // Agents and workflows keep their entity glyph (the kind icon)
+        // because the kind itself is the meaningful tag there. Images
+        // already get a thumbnail via FileThumbnail.
+        const useTypeBadge =
+          (source.entity === "library" ||
+            source.entity === "reports" ||
+            source.entity === "attachments-ticket" ||
+            source.entity === "knowledge-base") &&
+          !isImageFile(f.path);
+        const sizeLabel = formatBytes(f.size);
         return {
           key: f.path,
           title: isReport ? f.description || slug : f.displayName,
           description: isReport ? undefined : f.description,
-          meta: isReport ? dateLabel : undefined,
-          icon: isImageFile(f.path) ? <FileThumbnail absPath={f.path} /> : undefined,
+          meta: isReport
+            ? dateLabel
+            : sizeLabel || undefined,
+          icon: isImageFile(f.path) ? (
+            <FileThumbnail absPath={f.path} />
+          ) : useTypeBadge ? (
+            <FileTypeBadge filename={f.name} />
+          ) : undefined,
           onClick: () => onOpenPath && void onOpenPath(f.path),
           onDelete: repo
             ? () =>
-                deleteFileInSubdir(repo, source.path, f.name, setFolderUploadError)
+                deleteFileInSubdir(repo, source.path, f.name, setFolderUploadError, showToast)
             : undefined,
+          onReveal: () => void fsReveal(f.path).catch(console.error),
         };
       });
       // Drag-and-drop upload from the desktop is enabled for the two
@@ -1669,11 +1764,17 @@ export function Viewer({
       const acceptsDrop =
         source.entity === "library" || source.entity === "knowledge-base";
       const subdir = source.path;
+      // When the folder accepts drops AND has nothing in it yet, the
+      // wrapper itself becomes the visible drop zone (dashed border,
+      // soft fill, "drag here" hint). Once at least one file lands,
+      // the drop region collapses back to a no-chrome wrapper that
+      // simply hosts the card list.
+      const showDropZone = acceptsDrop && cards.length === 0;
       return (
         <div
           className={`viewer-summary${
             acceptsDrop && folderDragOver ? " viewer-summary-drag" : ""
-          }`}
+          }${showDropZone ? " viewer-summary-dropzone" : ""}`}
           onDragOver={(e) => {
             if (!acceptsDrop || !repo) return;
             if (Array.from(e.dataTransfer.types).includes("Files")) {
@@ -1693,14 +1794,37 @@ export function Viewer({
             e.preventDefault();
             e.stopPropagation();
             setFolderDragOver(false);
-            await uploadFilesToSubdir(repo, subdir, files, setFolderUploadError);
+            await uploadFilesToSubdir(repo, subdir, files, setFolderUploadError, showToast);
           }}
         >
           {source.entity === "reports" && reportError && (
             <p className="viewer-edit-error">{reportError}</p>
           )}
-          {acceptsDrop && folderUploadError && (
+          {folderUploadError && (
             <p className="viewer-edit-error">{folderUploadError}</p>
+          )}
+          {cards.length > 1 && (
+            <div className="viewer-folder-toolbar">
+              <button
+                type="button"
+                className="viewer-folder-sort"
+                onClick={() =>
+                  setSortReversed((prev) => ({
+                    ...prev,
+                    [source.path]: !prev[source.path],
+                  }))
+                }
+                title="Reverse sort order"
+              >
+                {isReport
+                  ? reversed
+                    ? "oldest first"
+                    : "newest first"
+                  : reversed
+                    ? "Z → A"
+                    : "A → Z"}
+              </button>
+            </div>
           )}
           <EntityCardGrid
             kind={source.entity === "attachments-ticket" ? "attachments" : source.entity}
@@ -1708,6 +1832,11 @@ export function Viewer({
             empty={
               <p className="summary-desc">
                 {ENTITY_FOLDER_EMPTY_COPY[source.entity]}
+                {showDropZone && (
+                  <span className="viewer-summary-dropzone-hint">
+                    Drop files here from Finder to add them.
+                  </span>
+                )}
               </p>
             }
           />
@@ -2245,6 +2374,7 @@ export function Viewer({
 
   return (
     <div className="viewer">
+      <ToastView message={toast} />
       <div className="viewer-header">
         {source && source.kind === "conversation-thread" && onOpenPath && (
           <button
