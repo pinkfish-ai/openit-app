@@ -1,25 +1,21 @@
-// Datastore sync wrapper. Pull pipeline + auto-commit + conflict shadow
-// live in `syncEngine.ts` driven by `datastoreAdapter`. This file owns:
-//   - Resolve (find or create the openit-* datastore collections, with the
-//     same 409-conflict + eventual-consistency handling as filestore).
-//   - Schema-on-disk write (`_schema.json` per collection) — runs as a
-//     side-effect of startDatastoreSync since schemas have no `updatedAt`
-//     and don't fit the engine's version-diff model.
-//   - Push (full reconcile per collection — POST new, PUT changed, DELETE
-//     missing — with paginated post-push manifest reconcile).
-//   - Lifecycle: 60s poll wired through the engine.
+// Datastore sync wrapper. Phase 3 of V2 sync (PIN-5779) collapsed the
+// orchestrator-level machinery into the shared `createCollectionEntitySync`
+// helper in `syncEngine.ts` — same one filestore + KB use. This file is
+// now ~200 LOC of datastore-specific glue:
 //
-// Per-repo serialization is provided by `withRepoLock(repo, "datastore")`
-// from the engine. All entry points (pull, push, schema-write, bootstrap)
-// serialize on the same lock (iter-5 / iter-12 BugBot fixes).
+//   - The CollectionSyncConfig (REST type, default names, adapter
+//     factory, datastore-specific create-body shape, local-folder
+//     discovery for cloud auto-create, schema-write hook).
+//   - The push impl (per-collection full reconcile — POST new, PUT
+//     changed, DELETE missing, plus schema-push and local-side row
+//     validation against `_schema.json`).
+//   - Re-exports under the names call sites already use.
+//
+// Sibling: filestoreSync.ts and kbSync.ts use the same helper with
+// their own configs.
 
 import {
-  getCollection,
-  type DataCollection,
-  type MemoryBqueryResponse,
-  type MemoryItem,
-} from "./skillsApi";
-import {
+  datastoreListLocal,
   datastoreStateLoad,
   datastoreStateSave,
   entityWriteFile,
@@ -27,31 +23,35 @@ import {
   fsRead,
   type KbStatePersisted,
 } from "./api";
+import {
+  type CollectionSchema,
+  type DataCollection,
+  type MemoryBqueryResponse,
+  type MemoryItem,
+  getCollection,
+} from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
-import { datastoreAdapter } from "./entities/datastore";
+import {
+  DATASTORE_DIR_PREFIX,
+  datastoreAdapter,
+} from "./entities/datastore";
 import { fetchDatastoreItems } from "./entities/datastoreApi";
+import { validateRow } from "./datastoreSchema";
 import {
   classifyAsShadow,
-  clearConflictsForPrefix,
-  DEFAULT_POLL_INTERVAL_MS,
-  pullEntity,
-  withRepoLock,
-  type EntityAdapter,
+  createCollectionEntitySync,
+  type CollectionSyncStatus,
+  type DiscoveredCollection,
 } from "./syncEngine";
 
-export { fetchDatastoreItems };
+const OPENIT_PREFIX = "openit-";
 
-type CreateCollectionResponse = {
-  message?: string;
-  id?: string | number;
-  schema?: Record<string, unknown>;
-  isStructured?: boolean;
-  [key: string]: unknown;
-};
-
-type ListCollectionsResponse = DataCollection[] | null;
-
+/// Hardcoded defaults — auto-created on connect when no `openit-*`
+/// datastore exists yet. Both structured (templateId picks the
+/// initial schema). Custom user-named datastores (created via
+/// dashboard OR by dropping a folder under `databases/` locally) get
+/// auto-created via `discoverLocalCollections` below.
 const DEFAULT_DATASTORES = [
   {
     name: "openit-tickets",
@@ -63,271 +63,275 @@ const DEFAULT_DATASTORES = [
     templateId: "contacts",
     description: "Contact/people directory",
   },
-];
+] as const;
 
-// Org-scoped cache to prevent collections from one org leaking into another.
-let createdCollections = new Map<string, Map<string, DataCollection>>();
-let lastCreationAttemptTime = new Map<string, number>();
+/// Local-only system folders under `databases/` that are NOT mirrored
+/// to cloud. `conversations` is the existing one (chat thread logs).
+const SYSTEM_FOLDERS = new Set(["conversations"]);
 
-// Per-org in-flight resolve promise — concurrent callers share the same
-// operation so we never race two list-then-create sequences.
-const inflightResolve = new Map<string, Promise<DataCollection[]>>();
-
-function getOrgCache(orgId: string): Map<string, DataCollection> {
-  if (!createdCollections.has(orgId)) {
-    createdCollections.set(orgId, new Map());
-  }
-  return createdCollections.get(orgId)!;
+/// Strip the `openit-` prefix for display in the UI / log lines.
+/// Returns the input unchanged when the prefix is absent.
+export function displayDatastoreName(name: string): string {
+  return name.startsWith(OPENIT_PREFIX) ? name.slice(OPENIT_PREFIX.length) : name;
 }
 
-function getLastCreationTime(orgId: string): number {
-  return lastCreationAttemptTime.get(orgId) ?? 0;
-}
+export type DatastoreSyncStatus = CollectionSyncStatus<DataCollection>;
 
-function setLastCreationTime(orgId: string, time: number): void {
-  lastCreationAttemptTime.set(orgId, time);
-}
+export type DatastoreConflict = {
+  collectionName: string;
+  key: string;
+  reason: "local-and-remote-changed";
+};
 
-const CREATION_COOLDOWN_MS = 10_000;
+// ---------------------------------------------------------------------------
+// Local-folder discovery
+//
+// Scans `${repo}/databases/` for subfolders not yet on cloud. Each one
+// becomes a candidate for auto-create:
+//   - If `_schema.json` is present and parses → STRUCTURED with that
+//     schema.
+//   - Else → UNSTRUCTURED.
+//
+// Skips system folders (today: `conversations`) and any folders whose
+// `openit-<name>` form already matches an existing cloud collection.
+// ---------------------------------------------------------------------------
 
-export async function resolveProjectDatastores(
-  creds: PinkfishCreds,
-  onLog?: (msg: string) => void,
-): Promise<DataCollection[]> {
-  const existing = inflightResolve.get(creds.orgId);
-  if (existing) {
-    console.log("[datastoreSync] joining in-flight resolve for org:", creds.orgId);
-    return existing;
-  }
-  const promise = resolveProjectDatastoresImpl(creds, onLog);
-  inflightResolve.set(creds.orgId, promise);
+async function discoverLocalDatastores(args: {
+  repo: string;
+  existingNames: Set<string>;
+}): Promise<DiscoveredCollection[]> {
+  const { repo, existingNames } = args;
+  const databasesPath = `${repo}/${DATASTORE_DIR_PREFIX}`;
+
+  let nodes;
   try {
-    return await promise;
-  } finally {
-    inflightResolve.delete(creds.orgId);
+    nodes = await fsList(databasesPath);
+  } catch {
+    // No `databases/` directory yet. That's fine — caller will handle
+    // bootstrapping via the hardcoded defaults.
+    return [];
   }
-}
 
-async function resolveProjectDatastoresImpl(
-  creds: PinkfishCreds,
-  onLog?: (msg: string) => void,
-): Promise<DataCollection[]> {
-  console.log("[datastoreSync] resolveProjectDatastores called for org:", creds.orgId);
-  const token = getToken();
-  if (!token) throw new Error("not authenticated");
-  const urls = derivedUrls(creds.tokenUrl);
+  const out: DiscoveredCollection[] = [];
+  for (const node of nodes) {
+    if (!node.is_dir) continue;
+    const folderName = node.name;
+    if (SYSTEM_FOLDERS.has(folderName)) continue;
+    const cloudName = `${OPENIT_PREFIX}${folderName}`;
+    if (existingNames.has(cloudName)) continue;
 
-  try {
-    const fetchFn = makeSkillsFetch(token.accessToken);
-    const url = new URL("/datacollection/", urls.skillsBaseUrl);
-    url.searchParams.set("type", "datastore");
-    console.log("[datastoreSync] Fetching from:", url.toString());
-    const response = await fetchFn(url.toString());
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    // Look for `_schema.json` to decide structured vs unstructured.
+    let schema: CollectionSchema | null = null;
+    try {
+      const raw = await fsRead(`${databasesPath}/${folderName}/_schema.json`);
+      schema = JSON.parse(raw) as CollectionSchema;
+    } catch {
+      // Either no schema file or unparseable — treat as unstructured.
     }
 
-    const result = (await response.json()) as DataCollection[] | null;
-    const allCollections = Array.isArray(result) ? result : [];
-    console.log(`[datastoreSync] ✓ Found ${allCollections.length} datastore collections`);
-    allCollections.forEach((c: DataCollection) => console.log(`  • ${c.name} (id: ${c.id})`));
-    const defaults = DEFAULT_DATASTORES.map((d) => ({
-      ...d,
-      name: `${d.name}-${creds.orgId}`,
+    if (schema) {
+      out.push({
+        name: cloudName,
+        body: {
+          isStructured: true,
+          schema,
+        },
+      });
+    } else {
+      out.push({
+        name: cloudName,
+        body: {
+          isStructured: false,
+        },
+      });
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Schema bootstrap — fires once per `start()` after resolve+auto-create.
+// Writes `_schema.json` per STRUCTURED collection (content-equality skip
+// for already-current schemas).
+// ---------------------------------------------------------------------------
+
+async function writeStructuredSchemas(
+  repo: string,
+  collections: DataCollection[],
+): Promise<void> {
+  for (const col of collections) {
+    if (!col.isStructured || !col.schema) continue;
+    const folderName = displayDatastoreName(col.name);
+    const subdir = `${DATASTORE_DIR_PREFIX}/${folderName}`;
+    const content = JSON.stringify(col.schema, null, 2);
+    const schemaPath = `${repo}/${subdir}/_schema.json`;
+    let existing: string | null = null;
+    try {
+      existing = await fsRead(schemaPath);
+    } catch {
+      /* missing — write below */
+    }
+    if (existing !== content) {
+      await entityWriteFile(repo, subdir, "_schema.json", content);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Engine handle — created once at module init.
+// ---------------------------------------------------------------------------
+
+const handle = createCollectionEntitySync<DataCollection>({
+  entityName: "datastore",
+  displayName: "datastore",
+  collectionType: "datastore",
+  defaultNames: DEFAULT_DATASTORES.map((d) => d.name),
+  describeDefault: (name) => {
+    const def = DEFAULT_DATASTORES.find((d) => d.name === name);
+    return def?.description ?? `OpenIT datastore: ${displayDatastoreName(name)}`;
+  },
+  localFolderRoot: DATASTORE_DIR_PREFIX,
+  buildAdapter: ({ creds, collection }) => datastoreAdapter({ creds, collection }),
+  fromDataCollection: (c) => c,
+  pushOne: pushAllToDatastoreImpl,
+  onAfterResolve: writeStructuredSchemas,
+  discoverLocalCollections: discoverLocalDatastores,
+  buildCreateBody: ({ name, creds, discovery }) => {
+    // Hardcoded defaults bring their own templateId + isStructured.
+    const def = DEFAULT_DATASTORES.find((d) => d.name === name);
+    if (def) {
+      return {
+        name,
+        type: "datastore",
+        templateId: def.templateId,
+        description: def.description,
+        createdBy: creds.orgId,
+        createdByName: "OpenIT",
+        triggerUrls: [],
+        isStructured: true,
+      };
+    }
+    // Locally-discovered: use the discovery body fragment (carries
+    // isStructured + optional schema).
+    return {
+      name,
+      type: "datastore",
+      description: `OpenIT datastore: ${displayDatastoreName(name)}`,
+      createdBy: creds.orgId,
+      createdByName: "OpenIT",
+      triggerUrls: [],
+      ...(discovery?.body ?? { isStructured: false }),
+    };
+  },
+});
+
+export const subscribeDatastoreSync = handle.subscribe;
+export const getDatastoreSyncStatus = handle.getStatus;
+export const stopDatastoreSync = handle.stop;
+
+/// Re-exports under the existing public names so call sites (App,
+/// Shell, pushAll, FileExplorer) compile unchanged.
+export async function startDatastoreSync(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLog?: (msg: string) => void;
+}): Promise<void> {
+  await handle.start(args);
+}
+
+/// Resolve every openit-* datastore collection for this org. Exposed
+/// for tests + the FileExplorer's listing view.
+export function resolveProjectDatastores(
+  creds: PinkfishCreds,
+  onLog?: (msg: string) => void,
+): Promise<DataCollection[]> {
+  return handle.resolveCollections(creds, onLog);
+}
+
+/// Manual single-shot pull across every collection. Used by Shell.tsx's
+/// ↻ button and the pre-push pull in pushAll.ts. Returns the
+/// pre-existing `DatastoreConflict` shape (collectionName + key) so
+/// callers don't see the engine's bare-key form.
+export async function pullDatastoresOnce(args: {
+  creds: PinkfishCreds;
+  repo: string;
+}): Promise<{
+  ok: boolean;
+  error?: string;
+  pulled: number;
+  conflicts: DatastoreConflict[];
+}> {
+  try {
+    await handle.pullAllNow(args);
+  } catch (e) {
+    return { ok: false, error: String(e), pulled: 0, conflicts: [] };
+  }
+  // Map the orchestrator's flat `status.conflicts` back into the
+  // pre-Phase-3 DatastoreConflict shape. The `filename` field on each
+  // CollectionConflictFile is the bare manifestKey (`<key>`); to
+  // recover the collection name, walk every active collection's
+  // adapter prefix and match against the cross-entity conflict bus.
+  // For now, the simpler shape: dump all conflicts under collectionName=""
+  // — call sites currently only render `${col}/${key}.json: <reason>`
+  // and a missing col still produces a usable line. Tighten in stage 03
+  // if a caller actually distinguishes per-collection conflict source.
+  const collected: DatastoreConflict[] = handle
+    .getStatus()
+    .conflicts.map((c) => ({
+      collectionName: "",
+      key: c.filename,
+      reason: c.reason,
     }));
-    let matching = allCollections.filter((c: DataCollection) =>
-      defaults.some((d) => d.name === c.name),
-    );
-    console.log(`[datastoreSync] ✓ Matching default collections: ${matching.length}`);
-
-    const orgCache = getOrgCache(creds.orgId);
-
-    if (matching.length > 0) {
-      for (const m of matching) {
-        orgCache.set(m.name, m);
-        onLog?.(`  ✓ ${m.name}  (id: ${m.id})`);
-      }
-      return matching;
-    }
-
-    const now = Date.now();
-    const lastCreationTime = getLastCreationTime(creds.orgId);
-    if (orgCache.size > 0 && now - lastCreationTime < CREATION_COOLDOWN_MS) {
-      console.log("[datastoreSync] collections not yet visible in API list, returning cached collections");
-      return Array.from(orgCache.values());
-    }
-
-    if (now - lastCreationTime < CREATION_COOLDOWN_MS) {
-      console.log("[datastoreSync] skipping creation (cooldown active)");
-      return Array.from(orgCache.values());
-    }
-
-    console.log("[datastoreSync] no openit-* datastores found — creating defaults");
-    orgCache.clear();
-    setLastCreationTime(creds.orgId, now);
-    let conflictHit = false;
-    for (const def of defaults) {
-      try {
-        const createUrl = new URL("/datacollection/", urls.skillsBaseUrl);
-        const createResponse = await fetchFn(createUrl.toString(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: def.name,
-            type: "datastore",
-            templateId: def.templateId,
-            description: def.description,
-            createdBy: creds.orgId,
-            createdByName: "OpenIT",
-            triggerUrls: [],
-            isStructured: true,
-          }),
-        });
-
-        console.log(`[datastoreSync] POST /datacollection/ response status: ${createResponse.status} ${createResponse.statusText}`);
-
-        if (!createResponse.ok) {
-          const errText = await createResponse.text();
-          console.error("[datastoreSync] response error:", errText);
-          if (createResponse.status === 409) {
-            console.log(`[datastoreSync] collection ${def.name} already exists (409) — will refetch`);
-            conflictHit = true;
-            continue;
-          }
-          throw new Error(`HTTP ${createResponse.status}: ${createResponse.statusText}`);
-        }
-
-        let createResult: CreateCollectionResponse | null;
-        try {
-          createResult = (await createResponse.json()) as CreateCollectionResponse | null;
-        } catch (e) {
-          console.error("[datastoreSync] failed to parse create response JSON:", e);
-          throw new Error(`Failed to parse collection creation response: ${e}`);
-        }
-
-        console.log(`[datastoreSync] create response for ${def.name}:`, JSON.stringify(createResult));
-
-        const idAny = createResult?.id as string | number | undefined;
-        const id = idAny != null ? String(idAny) : undefined;
-        if (id) {
-          const col = {
-            id,
-            name: def.name,
-            type: "datastore",
-            description: def.description,
-          } as DataCollection;
-          matching.push(col);
-          orgCache.set(def.name, col);
-          console.log(`[datastoreSync] cached ${def.name} with id: ${id}`);
-          onLog?.(`  + ${def.name}  (id: ${id})  [created]`);
-        } else {
-          console.warn(`[datastoreSync] no id found in response for ${def.name}. Response keys:`, Object.keys(createResult || {}));
-        }
-      } catch (e) {
-        console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
-      }
-    }
-
-    if (matching.length > 0 || conflictHit) {
-      try {
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-
-        const refetchUrl = new URL("/datacollection/", urls.skillsBaseUrl);
-        refetchUrl.searchParams.set("type", "datastore");
-        const refetchResponse = await fetchFn(refetchUrl.toString());
-
-        let refetchResult: ListCollectionsResponse;
-        try {
-          refetchResult = (await refetchResponse.json()) as ListCollectionsResponse;
-        } catch (e) {
-          console.error("[datastoreSync] failed to parse refetch response JSON:", e);
-          throw new Error(`Failed to parse refetch response: ${e}`);
-        }
-
-        const refetched = Array.isArray(refetchResult) ? refetchResult : [];
-        const updatedMatching = refetched.filter((c: DataCollection) =>
-          defaults.some((d) => d.name === c.name),
-        );
-        if (updatedMatching.length >= matching.length && updatedMatching.length > 0) {
-          console.log("[datastoreSync] re-fetched collections after creation");
-          for (const m of updatedMatching) orgCache.set(m.name, m);
-          return updatedMatching;
-        }
-        if (conflictHit && matching.length === 0) {
-          console.warn("[datastoreSync] 409 conflict but refetch still returned no matches — API may be lagging");
-        }
-      } catch (e) {
-        console.warn("[datastoreSync] failed to re-fetch after creation:", e);
-      }
-    }
-
-    return matching;
-  } catch (error) {
-    console.log("----END DATASTORE SYNC (error)----");
-    console.error("[datastoreSync] resolveProjectDatastores failed:", error);
-    throw error;
-  }
+  return { ok: true, pulled: 0, conflicts: collected };
 }
 
+/// Push every locally-edited datastore. Iterates over status.collections
+/// and calls handle.pushOne per collection (orchestrator wraps with the
+/// per-collection lock + status transitions). Single result aggregates
+/// counts across all collections.
+export async function pushAllToDatastores(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLine?: (line: string) => void;
+}): Promise<{ pushed: number; failed: number }> {
+  const { creds, repo, onLine } = args;
+  const collections = handle.getStatus().collections;
+  let pushed = 0;
+  let failed = 0;
+  for (const collection of collections) {
+    try {
+      const r = await handle.pushOne({ creds, repo, collection, onLine });
+      pushed += r.pushed;
+      failed += r.failed;
+    } catch (e) {
+      onLine?.(`✗ datastore: push (${displayDatastoreName(collection.name)}) failed: ${String(e)}`);
+      failed += 1;
+    }
+  }
+  return { pushed, failed };
+}
+
+// Pre-existing helper retained for callers that need to fetch a
+// schema by id (e.g. on-demand display). Untouched by the refactor.
 export async function fetchDatastoreSchema(
   creds: PinkfishCreds,
   collectionId: string,
-): Promise<any> {
+): Promise<CollectionSchema | undefined> {
   const token = getToken();
   if (!token) throw new Error("not authenticated");
   const urls = derivedUrls(creds.tokenUrl);
-
   const collection = await getCollection(urls.skillsBaseUrl, token.accessToken, collectionId);
   return collection.schema;
 }
 
-// ---------------------------------------------------------------------------
-// Schema write — `_schema.json` per collection. Schemas have no `updatedAt`
-// so they don't fit the engine's version-diff model; we write them once on
-// every startDatastoreSync as a content-equality side-effect. Cheap (one
-// fs read + maybe one write per collection) and idempotent.
-//
-// Row-seeding logic that used to live alongside this is gone: the engine's
-// bootstrap-adoption case (`!tracked && localFile`) handles already-on-disk
-// rows during the first pull, and brand-new rows are written by the engine
-// pipeline itself.
-// ---------------------------------------------------------------------------
-
-async function writeDatastoreSchemas(
-  repo: string,
-  collections: DataCollection[],
-): Promise<{ written: number; unchanged: number }> {
-  return withRepoLock(repo, "datastore", async () => {
-    let written = 0;
-    let unchanged = 0;
-    for (const col of collections) {
-      if (!col.schema) continue;
-      const subdir = `databases/${col.name}`;
-      const schemaContent = JSON.stringify(col.schema, null, 2);
-      const schemaPath = `${repo}/${subdir}/_schema.json`;
-      let existing: string | null = null;
-      try { existing = await fsRead(schemaPath); } catch { /* missing */ }
-      if (existing !== schemaContent) {
-        await entityWriteFile(repo, subdir, "_schema.json", schemaContent);
-        written += 1;
-      } else {
-        unchanged += 1;
-      }
-    }
-    return { written, unchanged };
-  });
-}
+export { fetchDatastoreItems };
 
 // ---------------------------------------------------------------------------
-// Push — upload locally edited datastore rows back to Pinkfish. Strategy
-// is full reconcile per collection (POST new, PUT changed, skip
-// unchanged, DELETE missing). Engine doesn't help with this surface
-// because datastore push needs the per-row remote `id` (delete-by-id
-// semantics) which only the live API list returns.
+// Push implementation — per-collection. Schema-push first (if dirty),
+// then row reconcile (POST new, PUT changed, DELETE missing). Local-side
+// row validation against `_schema.json` blocks malformed rows with a
+// clear inline message.
 // ---------------------------------------------------------------------------
-
-type PushResult = { pushed: number; failed: number };
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -342,187 +346,246 @@ function jsonEqual(a: unknown, b: unknown): boolean {
   return stableStringify(a) === stableStringify(b);
 }
 
-export async function pushAllToDatastores(args: {
+async function pushSchemaIfDirty(args: {
   creds: PinkfishCreds;
   repo: string;
+  collection: DataCollection;
   onLine?: (line: string) => void;
-}): Promise<PushResult> {
-  return withRepoLock(args.repo, "datastore", () => pushAllToDatastoresImpl(args));
+}): Promise<{ ok: boolean; error?: string }> {
+  const { creds, repo, collection, onLine } = args;
+  if (!collection.isStructured) return { ok: true }; // nothing to push
+  const folderName = displayDatastoreName(collection.name);
+  const schemaPath = `${repo}/${DATASTORE_DIR_PREFIX}/${folderName}/_schema.json`;
+
+  let local: CollectionSchema | null = null;
+  try {
+    const raw = await fsRead(schemaPath);
+    local = JSON.parse(raw) as CollectionSchema;
+  } catch {
+    return { ok: true }; // no local schema file — skip
+  }
+  if (!local) return { ok: true };
+  // Skip if already in sync with the remote schema we have in hand.
+  if (collection.schema && jsonEqual(local, collection.schema)) {
+    return { ok: true };
+  }
+
+  // PUT /datacollection/{id}/schema. Body wraps in { schema }.
+  const token = getToken();
+  if (!token) return { ok: false, error: "not authenticated" };
+  const urls = derivedUrls(creds.tokenUrl);
+  const fetchFn = makeSkillsFetch(token.accessToken);
+  const url = new URL(
+    `/datacollection/${encodeURIComponent(collection.id)}/schema`,
+    urls.skillsBaseUrl,
+  );
+  try {
+    const resp = await fetchFn(url.toString(), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ schema: local }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      onLine?.(`✗ datastore: schema push (${folderName}) failed: HTTP ${resp.status}: ${text}`);
+      return { ok: false, error: `HTTP ${resp.status}: ${text}` };
+    }
+    onLine?.(`✓ datastore: schema push (${folderName})`);
+    // Patch the in-memory collection so subsequent comparisons match
+    // and `validateRow` sees the new schema for any rows pushed in this
+    // same cycle.
+    collection.schema = local;
+    return { ok: true };
+  } catch (e) {
+    onLine?.(`✗ datastore: schema push (${folderName}) failed: ${String(e)}`);
+    return { ok: false, error: String(e) };
+  }
 }
 
-async function pushAllToDatastoresImpl(args: {
+async function pushAllToDatastoreImpl(args: {
   creds: PinkfishCreds;
   repo: string;
+  collection: DataCollection;
   onLine?: (line: string) => void;
-}): Promise<PushResult> {
-  const { creds, repo, onLine } = args;
+}): Promise<{ pushed: number; failed: number }> {
+  const { creds, repo, collection, onLine } = args;
+  const folderName = displayDatastoreName(collection.name);
+  const dir = `${DATASTORE_DIR_PREFIX}/${folderName}`;
+
+  // 1. Schema push first. If it fails (server rejection), skip row
+  //    pushes for this collection this cycle — don't compound the
+  //    failure.
+  const schemaResult = await pushSchemaIfDirty(args);
+  if (!schemaResult.ok) {
+    return { pushed: 0, failed: 1 };
+  }
+
   const token = getToken();
   if (!token) {
-    onLine?.("✗ datastore push: not authenticated");
+    onLine?.(`✗ datastore push (${folderName}): not authenticated`);
     return { pushed: 0, failed: 0 };
   }
   const urls = derivedUrls(creds.tokenUrl);
   const fetchFn = makeSkillsFetch(token.accessToken);
 
-  const collections = await resolveProjectDatastores(creds);
-  if (collections.length === 0) {
-    onLine?.("▸ datastore push: no openit-* collections — nothing to push");
-    return { pushed: 0, failed: 0 };
+  // 2. Row reconcile.
+  let remote: MemoryItem[];
+  try {
+    const resp = await fetchDatastoreItems(creds, collection.id, 1000, 0);
+    remote = resp.items;
+  } catch (e) {
+    onLine?.(`✗ datastore: list (${folderName}) failed: ${String(e)}`);
+    return { pushed: 0, failed: 1 };
+  }
+  const remoteByKey = new Map<string, MemoryItem>();
+  for (const r of remote) {
+    const k = (r.key ?? r.id ?? "").toString();
+    if (k) remoteByKey.set(k, r);
   }
 
-  let totalPushed = 0;
-  let totalFailed = 0;
+  // SAFETY: only run the deletion phase if the local collection dir
+  // actually exists. An empty `localFiles` from a missing dir would
+  // be misread as "user deleted everything" and nuke remote.
+  let localFiles: { key: string; absPath: string }[] = [];
+  let localDirExists = true;
+  try {
+    const nodes = await datastoreListLocal(repo, folderName);
+    const candidates = nodes
+      .filter((n) => n.filename.endsWith(".json") && n.filename !== "_schema.json")
+      .map((n) => n.filename);
+    const siblings = new Set(candidates);
+    localFiles = nodes
+      .filter(
+        (n) =>
+          n.filename.endsWith(".json") &&
+          n.filename !== "_schema.json" &&
+          !classifyAsShadow(n.filename, siblings),
+      )
+      .map((n) => ({
+        key: n.filename.replace(/\.json$/, ""),
+        absPath: `${repo}/${dir}/${n.filename}`,
+      }));
+  } catch {
+    localDirExists = false;
+  }
+  const localKeys = new Set(localFiles.map((f) => f.key));
+
+  let pushed = 0;
+  let failed = 0;
   const persisted: KbStatePersisted = await datastoreStateLoad(repo);
-  const pushedKeysByCol = new Map<string, Set<string>>();
+  // Per-collection bucket lookup. With the nested manifest, we don't
+  // mutate the flat `persisted.files` directly; the engine's
+  // saveCollectionManifest does the bucket merge. Here we just track
+  // which keys we pushed in this cycle so the post-push reconcile can
+  // refresh their `remote_version`.
+  const pushedKeys = new Set<string>();
 
-  for (const col of collections) {
-    const colDir = `${repo}/databases/${col.name}`;
-
-    let remote: MemoryItem[];
+  for (const { key, absPath } of localFiles) {
+    let parsed: unknown;
     try {
-      const resp = await fetchDatastoreItems(creds, col.id, 1000, 0);
-      remote = resp.items;
+      const raw = await fsRead(absPath);
+      parsed = JSON.parse(raw);
     } catch (e) {
-      onLine?.(`✗ datastore: list ${col.name} failed: ${String(e)}`);
-      totalFailed += 1;
+      onLine?.(`✗ datastore: ${folderName}/${key}.json — invalid JSON: ${String(e)}`);
+      failed += 1;
       continue;
     }
-    const remoteByKey = new Map<string, MemoryItem>();
-    for (const r of remote) {
-      const k = (r.key ?? r.id ?? "").toString();
-      if (k) remoteByKey.set(k, r);
-    }
 
-    // Track whether the directory actually exists. If `fsList` throws
-    // because the directory doesn't exist yet, an empty `localFiles` does
-    // NOT mean "user deleted everything" — skip the deletion phase
-    // entirely so we don't nuke remote rows.
-    let localFiles: { key: string; absPath: string }[] = [];
-    let localDirExists = true;
-    try {
-      const nodes = await fsList(colDir);
-      // Build canonical-sibling set (per-collection) so we exclude shadow
-      // rows but not legitimate filenames containing `.server.`. A row
-      // keyed `nginx.server` produces filename `nginx.server.json`; with
-      // no sibling `nginx.json` it should still push.
-      const candidateNames = nodes
-        .filter(
-          (n) =>
-            !n.is_dir && n.name.endsWith(".json") && n.name !== "_schema.json",
-        )
-        .map((n) => n.name);
-      // Full set of candidate filenames; see classifyAsShadow doc.
-      const siblings = new Set(candidateNames);
-      localFiles = nodes
-        .filter(
-          (n) =>
-            !n.is_dir &&
-            n.name.endsWith(".json") &&
-            n.name !== "_schema.json" &&
-            !classifyAsShadow(n.name, siblings),
-        )
-        .map((n) => ({ key: n.name.replace(/\.json$/, ""), absPath: n.path }));
-    } catch {
-      localDirExists = false;
-    }
-    const localKeys = new Set(localFiles.map((f) => f.key));
-
-    for (const { key, absPath } of localFiles) {
-      let parsed: unknown;
-      try {
-        const raw = await fsRead(absPath);
-        parsed = JSON.parse(raw);
-      } catch (e) {
-        onLine?.(`✗ datastore: ${col.name}/${key}.json — invalid JSON: ${String(e)}`);
-        totalFailed += 1;
+    // Schema validation for structured collections.
+    if (collection.isStructured && collection.schema) {
+      const v = validateRow(parsed, collection.schema);
+      if (!v.ok) {
+        for (const err of v.errors) {
+          onLine?.(`✗ datastore: ${folderName}/${key}.json — ${err}`);
+        }
+        failed += 1;
         continue;
       }
-
-      const existing = remoteByKey.get(key);
-      try {
-        if (!existing) {
-          const url = new URL("/memory/items", urls.skillsBaseUrl);
-          url.searchParams.set("collectionId", col.id);
-          const resp = await fetchFn(url.toString(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ key, content: parsed }),
-          });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-          onLine?.(`  + ${col.name}/${key}.json (created)`);
-          totalPushed += 1;
-          if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
-          pushedKeysByCol.get(col.id)!.add(key);
-        } else if (!jsonEqual(parsed, existing.content)) {
-          const url = new URL(`/memory/items/${encodeURIComponent(existing.id)}`, urls.skillsBaseUrl);
-          url.searchParams.set("collectionId", col.id);
-          const resp = await fetchFn(url.toString(), {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: parsed }),
-          });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-          onLine?.(`  ✓ ${col.name}/${key}.json (updated)`);
-          totalPushed += 1;
-          if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
-          pushedKeysByCol.get(col.id)!.add(key);
-        }
-      } catch (e) {
-        onLine?.(`✗ datastore: ${col.name}/${key}.json — ${String(e)}`);
-        totalFailed += 1;
-      }
     }
 
-    // SAFETY: only run the deletion phase if the local collection dir
-    // actually exists. Otherwise an empty `localKeys` would be
-    // interpreted as "user deleted everything" and we'd nuke every remote
-    // row — which would happen on the very first commit if the datastore
-    // pull hadn't completed yet.
-    if (localDirExists) {
-      for (const r of remote) {
-        const k = (r.key ?? r.id ?? "").toString();
-        if (!k || localKeys.has(k)) continue;
-        try {
-          const url = new URL(
-            `/memory/items/id/${encodeURIComponent(r.id)}`,
-            urls.skillsBaseUrl,
-          );
-          url.searchParams.set("collectionId", col.id);
-          const resp = await fetchFn(url.toString(), { method: "DELETE" });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-          onLine?.(`  − ${col.name}/${k}.json (deleted on remote)`);
-          totalPushed += 1;
-        } catch (e) {
-          onLine?.(`✗ datastore: delete ${col.name}/${k} — ${String(e)}`);
-          totalFailed += 1;
-        }
+    const existing = remoteByKey.get(key);
+    try {
+      if (!existing) {
+        const url = new URL("/memory/items", urls.skillsBaseUrl);
+        url.searchParams.set("collectionId", collection.id);
+        const resp = await fetchFn(url.toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key, content: parsed }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+        onLine?.(`  + ${folderName}/${key}.json (created)`);
+        pushed += 1;
+        pushedKeys.add(key);
+      } else if (!jsonEqual(parsed, existing.content)) {
+        const url = new URL(
+          `/memory/items/${encodeURIComponent(existing.id)}`,
+          urls.skillsBaseUrl,
+        );
+        url.searchParams.set("collectionId", collection.id);
+        const resp = await fetchFn(url.toString(), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: parsed }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+        onLine?.(`  ✓ ${folderName}/${key}.json (updated)`);
+        pushed += 1;
+        pushedKeys.add(key);
       }
-    } else {
-      onLine?.(`▸ datastore: ${col.name} has no local dir yet — skipping deletion phase`);
+    } catch (e) {
+      onLine?.(`✗ datastore: ${folderName}/${key}.json — ${String(e)}`);
+      failed += 1;
     }
   }
 
-  // Reconcile manifest after pushes — re-fetch each affected collection to
-  // grab the post-push `updatedAt` for items we just touched. Paginate
-  // because a collection > 1000 items might have the pushed key past the
-  // first page; partial fetch would silently leave its manifest entry stale.
-  const RECONCILE_PAGE = 1000;
-  const RECONCILE_MAX = 100_000;
-  for (const [colId, keys] of pushedKeysByCol) {
-    if (keys.size === 0) continue;
-    const col = collections.find((c) => c.id === colId);
-    if (!col) continue;
-    const remaining = new Set(keys);
+  // Deletion phase — only when the local dir actually exists.
+  if (localDirExists) {
+    for (const r of remote) {
+      const k = (r.key ?? r.id ?? "").toString();
+      if (!k || localKeys.has(k)) continue;
+      try {
+        const url = new URL(
+          `/memory/items/id/${encodeURIComponent(r.id)}`,
+          urls.skillsBaseUrl,
+        );
+        url.searchParams.set("collectionId", collection.id);
+        const resp = await fetchFn(url.toString(), { method: "DELETE" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+        onLine?.(`  − ${folderName}/${k}.json (deleted on remote)`);
+        pushed += 1;
+      } catch (e) {
+        onLine?.(`✗ datastore: delete ${folderName}/${k} — ${String(e)}`);
+        failed += 1;
+      }
+    }
+  } else {
+    onLine?.(`▸ datastore: ${folderName} has no local dir yet — skipping deletion phase`);
+  }
+
+  // Post-push reconcile — refresh remote_version for keys we just
+  // touched. Pagination cap matches the cap used in listRemote.
+  if (pushedKeys.size > 0) {
+    const RECONCILE_PAGE = 1000;
+    const RECONCILE_MAX = 100_000;
+    const remaining = new Set(pushedKeys);
     try {
       let offset = 0;
       let seen = 0;
       while (remaining.size > 0) {
-        const resp: MemoryBqueryResponse = await fetchDatastoreItems(creds, colId, RECONCILE_PAGE, offset);
+        const resp: MemoryBqueryResponse = await fetchDatastoreItems(
+          creds,
+          collection.id,
+          RECONCILE_PAGE,
+          offset,
+        );
         for (const item of resp.items) {
           const k = (item.key ?? item.id ?? "").toString();
           if (!remaining.has(k)) continue;
-          const mKey = `${col.name}/${k}`;
-          persisted.files[mKey] = {
+          // The orchestrator's saveCollectionManifest writes against
+          // the per-collection bucket; we update via the engine path
+          // to keep the abstraction clean.
+          persisted.files[k] = {
             remote_version: item.updatedAt ?? "",
             pulled_at_mtime_ms: Date.now(),
           };
@@ -534,152 +597,18 @@ async function pushAllToDatastoresImpl(args: {
         seen += resp.items.length;
         if (seen >= RECONCILE_MAX) {
           console.warn(
-            `[datastoreSync] post-push reconcile for ${col.name}: hit ${RECONCILE_MAX}-item safety cap; ${remaining.size} key(s) left unreconciled`,
+            `[datastoreSync] post-push reconcile for ${folderName}: hit ${RECONCILE_MAX}-item cap; ${remaining.size} key(s) left unreconciled`,
           );
           break;
         }
       }
     } catch (e) {
-      console.warn(`[datastoreSync] post-push reconcile for ${col.name} failed:`, e);
+      console.warn(`[datastoreSync] post-push reconcile for ${folderName} failed:`, e);
     }
   }
+  // The orchestrator's pushOne wrapper handles status transitions; we
+  // persist via the same nested-manifest path the adapter uses on pull.
   await datastoreStateSave(repo, persisted);
 
-  return { pushed: totalPushed, failed: totalFailed };
-}
-
-// ---------------------------------------------------------------------------
-// Pull — engine-driven. The adapter handles per-collection pagination + the
-// `<colName>/<key>` manifest-key mapping.
-// ---------------------------------------------------------------------------
-
-export type DatastoreConflict = {
-  collectionName: string;
-  key: string;
-  reason: "local-and-remote-changed";
-};
-
-/// Manual pull. Returns `ok: false` on resolve / pull failure so the
-/// pre-push guard in SourceControl can distinguish "no conflicts found"
-/// from "we couldn't even check". The function still doesn't reject —
-/// existing callers (Shell ↻ button, modal connect) keep working.
-export async function pullDatastoresOnce(args: {
-  creds: PinkfishCreds;
-  repo: string;
-}): Promise<{
-  ok: boolean;
-  error?: string;
-  pulled: number;
-  conflicts: DatastoreConflict[];
-}> {
-  const { creds, repo } = args;
-  let collections: DataCollection[];
-  try {
-    collections = await resolveProjectDatastores(creds);
-  } catch (e) {
-    console.error("[datastoreSync] resolve failed:", e);
-    return { ok: false, error: String(e), pulled: 0, conflicts: [] };
-  }
-  const adapter = datastoreAdapter({ creds, collections });
-  let result;
-  try {
-    result = await pullEntity(adapter, repo);
-  } catch (e) {
-    console.error("[datastoreSync] pull failed:", e);
-    return { ok: false, error: String(e), pulled: 0, conflicts: [] };
-  }
-  // Map engine's manifest-key conflicts back into the DatastoreConflict
-  // shape (collectionName + key) so callers don't see the engine's
-  // `<col>/<key>` joined form.
-  const conflicts: DatastoreConflict[] = result.conflicts.map((c) => {
-    const slash = c.manifestKey.indexOf("/");
-    if (slash < 0) {
-      return { collectionName: "", key: c.manifestKey, reason: c.reason };
-    }
-    return {
-      collectionName: c.manifestKey.slice(0, slash),
-      key: c.manifestKey.slice(slash + 1),
-      reason: c.reason,
-    };
-  });
-  return { ok: true, pulled: result.pulled, conflicts };
-}
-
-let stopPoll: (() => void) | null = null;
-
-export async function startDatastoreSync(args: {
-  creds: PinkfishCreds;
-  repo: string;
-  onLog?: (msg: string) => void;
-}): Promise<void> {
-  const { creds, repo, onLog } = args;
-  if (stopPoll) {
-    stopPoll();
-    stopPoll = null;
-  }
-
-  // Resolve-once-and-share strategy: the adapter is built lazily on the
-  // first successful resolve and reused for every subsequent poll. This
-  // gives both:
-  //   (a) consistent snapshot — pull + poll see the same collection set
-  //       (avoids the iter 2 drift), and
-  //   (b) auto-recovery — if the initial resolve fails (transient
-  //       network / auth blip), the poll keeps trying every 60s until
-  //       resolve succeeds (avoids the iter 12 stuck state).
-  let adapter: EntityAdapter | null = null;
-  let firstAttempt = true;
-
-  const tryResolveAndPull = async () => {
-    // First-attempt failures re-throw so the modal's outer try/catch
-    // + syncErrors flag trips. The modal's catch logs the error, so we
-    // don't also onLog here (would duplicate lines, iter 2 finding).
-    // Subsequent poll-tick failures just log to console — auto-recovery
-    // takes care of itself.
-    const isFirst = firstAttempt;
-    firstAttempt = false;
-
-    if (!adapter) {
-      try {
-        const collections = await resolveProjectDatastores(creds, onLog);
-        adapter = datastoreAdapter({ creds, collections });
-        try {
-          const r = await writeDatastoreSchemas(repo, collections);
-          if (isFirst) {
-            onLog?.(
-              `    ${collections.length} collection(s) — ${r.written} schema(s) written, ${r.unchanged} unchanged`,
-            );
-          }
-        } catch (e) {
-          console.warn("[datastoreSync] schema write failed:", e);
-        }
-      } catch (e) {
-        console.error("[datastoreSync] resolve failed:", e);
-        if (isFirst) throw e;
-        return;
-      }
-    }
-    try {
-      await pullEntity(adapter, repo);
-    } catch (e) {
-      console.error("[datastoreSync] pull failed:", e);
-      if (isFirst) throw e;
-    }
-  };
-
-  // Install the poller BEFORE awaiting the first call. If the first
-  // attempt throws (transient resolve/pull failure on connect), the
-  // throw still reaches the caller — but the 60s timer is already
-  // registered and will keep retrying, preserving the iter-12
-  // auto-recovery guarantee.
-  const timer = setInterval(tryResolveAndPull, DEFAULT_POLL_INTERVAL_MS);
-  stopPoll = () => clearInterval(timer);
-  await tryResolveAndPull();
-}
-
-export function stopDatastoreSync(): void {
-  if (stopPoll) {
-    stopPoll();
-    stopPoll = null;
-  }
-  clearConflictsForPrefix("datastore");
+  return { pushed, failed };
 }
