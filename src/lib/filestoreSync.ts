@@ -58,6 +58,10 @@ export function getDefaultFilestores(_orgId: string) {
       name: "openit-library",
       description: "Shared document storage for OpenIT",
     },
+    {
+      name: "openit-attachments",
+      description: "OpenIT filestore: attachments",
+    },
   ];
 }
 
