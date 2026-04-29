@@ -402,7 +402,12 @@ function App() {
               console.warn("[app] cloud-relaunch bootstrap failed (non-fatal):", e);
             }
             setBypassOnboarding(true);
-            startCloudSyncs(creds, lastRepo, binding.orgName);
+            // Fall back to creds.orgId when orgName is empty — the
+            // first-run-with-creds path doesn't have a display name
+            // available (no modal), so it stores `""`. Better to show
+            // the orgId in the UI than nothing until the user reconnects
+            // through the modal (which provides a real display name).
+            startCloudSyncs(creds, lastRepo, binding.orgName || creds.orgId);
             finish();
             return;
           }
@@ -425,10 +430,17 @@ function App() {
               orgId: LOCAL_ORG_ID,
             });
             try {
+              // No display name available in this code path (no modal
+              // gave us one). Store empty string; cloud-relaunch falls
+              // back to orgId when reading. The next time the user
+              // connects via the modal, `incoming` will overwrite this
+              // with the real display name (same-org rebind branch in
+              // project_bind_to_cloud preserves connectedAt + updates
+              // orgName).
               await projectBindToCloud({
                 repo: result.path,
                 orgId: creds.orgId,
-                orgName: creds.orgId,
+                orgName: "",
               });
             } catch (e) {
               console.warn(

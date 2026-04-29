@@ -251,9 +251,13 @@ pub fn project_bind_to_cloud(
     let path = cloud_json_path(&repo);
     if let Some(existing) = read_cloud_binding_from_disk(&path)? {
         if existing.org_id == org_id {
-            // Same org: idempotent — keep connected_at, refresh org_name in
-            // case the user's display name changed upstream.
-            if existing.org_name == org_name {
+            // Same org: idempotent — keep connected_at. Refresh
+            // org_name when the caller has a real display name to
+            // contribute. An empty incoming `org_name` (the
+            // first-run-with-creds startup path stores "" because no
+            // modal provided a display name) never clobbers an existing
+            // real name.
+            if org_name.is_empty() || existing.org_name == org_name {
                 return Ok(existing);
             }
             let updated = CloudBinding {
@@ -357,6 +361,28 @@ mod tests {
         let updated =
             project_bind_to_cloud(repo.clone(), "org-1".into(), "New Name".into()).unwrap();
         assert_eq!(updated.org_name, "New Name");
+    }
+
+    #[test]
+    fn bind_with_empty_org_name_does_not_clobber_existing_name() {
+        let (_dir, repo) = repo();
+        // Modal connect provides a real display name.
+        let _ = project_bind_to_cloud(repo.clone(), "org-1".into(), "Acme Inc".into()).unwrap();
+        // Subsequent first-run-with-creds startup passes "" because
+        // it doesn't have a display name handy. We must not wipe the
+        // real one.
+        let after = project_bind_to_cloud(repo.clone(), "org-1".into(), "".into()).unwrap();
+        assert_eq!(after.org_name, "Acme Inc");
+    }
+
+    #[test]
+    fn bind_with_real_org_name_updates_empty_existing_name() {
+        let (_dir, repo) = repo();
+        // First-run-with-creds bound first with no display name.
+        let _ = project_bind_to_cloud(repo.clone(), "org-1".into(), "".into()).unwrap();
+        // User reconnects via the modal — real name should land.
+        let after = project_bind_to_cloud(repo.clone(), "org-1".into(), "Acme Inc".into()).unwrap();
+        assert_eq!(after.org_name, "Acme Inc");
     }
 
     #[test]
