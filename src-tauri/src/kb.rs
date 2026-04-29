@@ -500,6 +500,18 @@ fn fs_path_with_optional_subdir(
             filename
         ));
     }
+    // Block path traversal: a server-supplied filename of "." or ".."
+    // contains no separators so the path-separator guard above lets it
+    // through, but joining ".." onto the subdir resolves to its parent
+    // and writes the downloaded bytes outside the intended directory.
+    // The old safe_fs_path helper had these checks; preserve them here.
+    if filename == "." || filename == ".." {
+        return Err(format!("invalid filename: {}", filename));
+    }
+    let as_path = Path::new(filename);
+    if as_path.is_absolute() || as_path.components().count() != 1 {
+        return Err(format!("invalid filename: {}", filename));
+    }
     let base_dir = if let Some(subdir) = subdir {
         Path::new(repo).join(subdir)
     } else {
@@ -837,6 +849,27 @@ pub fn entity_clear_dir(repo: String, subdir: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fs_path_with_optional_subdir_rejects_dot_dot() {
+        // ".." has no path separators so the basic guard wouldn't catch it,
+        // but joining ".." onto the subdir resolves to its parent —
+        // letting a server-supplied filename escape the intended dir.
+        assert!(fs_path_with_optional_subdir("/repo", "..", Some("filestores/library")).is_err());
+        assert!(fs_path_with_optional_subdir("/repo", ".", Some("filestores/library")).is_err());
+    }
+
+    #[test]
+    fn fs_path_with_optional_subdir_rejects_absolute() {
+        assert!(fs_path_with_optional_subdir("/repo", "/etc/passwd", None).is_err());
+    }
+
+    #[test]
+    fn fs_path_with_optional_subdir_accepts_normal_filename() {
+        let p = fs_path_with_optional_subdir("/repo", "doc.md", Some("filestores/library"))
+            .expect("should accept a normal filename");
+        assert!(p.ends_with("filestores/library/doc.md"));
+    }
 
     #[test]
     fn urlencode_handles_ascii_unreserved() {

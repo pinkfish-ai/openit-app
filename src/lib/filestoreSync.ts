@@ -186,39 +186,13 @@ export async function resolveProjectFilestores(
   }
 }
 
-/// Pick one collection per default name. If the API returned multiple
-/// collections with the same name (legacy duplicates), keep the
-/// lexicographically smallest id so every caller in the same session
-/// converges on the same one.
+/// Pick one collection per name across all openit-* collections, keeping
+/// the lexicographically smallest id when the API returned duplicates so
+/// every caller in the same session converges on the same one.
 ///
-/// Filters non-OpenIT collections via the `openit-` prefix before matching
-/// defaults, so a user with unrelated filestores on their Pinkfish account
-/// (e.g. `customer-feedback`) is never seen by the sync engine. The defaults
-/// themselves all carry the prefix; the explicit filter is forward-compatible
-/// for Phase 2 where multiple OpenIT collections may exist beyond the
-/// `getDefaultFilestores` set.
-export function dedupeByName(
-  all: DataCollection[],
-  defaults: ReturnType<typeof getDefaultFilestores>,
-): FilestoreCollection[] {
-  const byName = new Map<string, FilestoreCollection>();
-  for (const c of all) {
-    if (!c.name.startsWith(OPENIT_FILESTORE_PREFIX)) continue;
-    if (!defaults.some((d) => d.name === c.name)) continue;
-    const existing = byName.get(c.name);
-    if (!existing || String(c.id) < existing.id) {
-      byName.set(c.name, { id: String(c.id), name: c.name, description: c.description });
-    }
-  }
-  return Array.from(byName.values());
-}
-
-/// Permissive variant: dedupe by name across **all** openit-* collections
-/// without filtering to the hardcoded defaults. Phase 1 returns every
-/// openit-* collection (defaults + per-org dynamic ones); the tighter
-/// `dedupeByName` is kept for callers that explicitly want defaults-only
-/// behavior. Both helpers share the same lex-smallest-id tie-break so a
-/// session converges on the same collection across every callsite.
+/// Filters non-OpenIT collections via the `openit-` prefix so a user's
+/// unrelated filestores (e.g. `customer-feedback`) are never seen by the
+/// sync engine.
 export function dedupeOpenitByName(
   all: DataCollection[],
 ): FilestoreCollection[] {

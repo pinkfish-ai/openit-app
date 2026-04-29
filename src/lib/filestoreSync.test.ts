@@ -10,7 +10,6 @@ import { describe, expect, it } from "vitest";
 import type { DataCollection } from "./skillsApi";
 import {
   OPENIT_FILESTORE_PREFIX,
-  dedupeByName,
   dedupeOpenitByName,
   displayFilestoreName,
   getDefaultFilestores,
@@ -59,76 +58,6 @@ describe("displayFilestoreName", () => {
 
   it("handles the prefix as the entire name (degenerate but defined)", () => {
     expect(displayFilestoreName("openit-")).toBe("");
-  });
-});
-
-describe("dedupeByName", () => {
-  const defaults = getDefaultFilestores("any-org");
-
-  it("filters out collections without the openit- prefix", () => {
-    const result = dedupeByName(
-      [
-        row({ id: "1", name: "customer-feedback" }),
-        row({ id: "2", name: "openit-library" }),
-        row({ id: "3", name: "internal-archive" }),
-      ],
-      defaults,
-    );
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe("openit-library");
-    expect(result[0].id).toBe("2");
-  });
-
-  it("filters out openit-prefixed collections that aren't in the defaults list", () => {
-    // Phase 1 only manages `openit-library`. A user manually creating
-    // `openit-experimental` shouldn't get auto-synced.
-    const result = dedupeByName(
-      [
-        row({ id: "1", name: "openit-library" }),
-        row({ id: "2", name: "openit-experimental" }),
-      ],
-      defaults,
-    );
-    expect(result).toHaveLength(1);
-    expect(result[0].name).toBe("openit-library");
-  });
-
-  it("returns the lexicographically smallest id when duplicates exist", () => {
-    // Legacy duplicates (same name, different ids) — keep the smallest id
-    // so every caller in the same session converges on the same one.
-    const result = dedupeByName(
-      [
-        row({ id: "Z", name: "openit-library" }),
-        row({ id: "A", name: "openit-library" }),
-        row({ id: "M", name: "openit-library" }),
-      ],
-      defaults,
-    );
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe("A");
-  });
-
-  it("returns an empty list when no openit-* collections are present", () => {
-    const result = dedupeByName(
-      [
-        row({ id: "1", name: "library" }), // missing prefix
-        row({ id: "2", name: "customer-feedback" }),
-      ],
-      defaults,
-    );
-    expect(result).toHaveLength(0);
-  });
-
-  it("returns an empty list for an empty input", () => {
-    expect(dedupeByName([], defaults)).toEqual([]);
-  });
-
-  it("preserves description when matching", () => {
-    const result = dedupeByName(
-      [row({ id: "1", name: "openit-library", description: "remote desc" })],
-      defaults,
-    );
-    expect(result[0].description).toBe("remote desc");
   });
 });
 
@@ -187,73 +116,56 @@ describe("dedupeOpenitByName", () => {
 });
 
 describe("Eventual consistency handling", () => {
-  describe("dedupeByName with eventual consistency scenarios", () => {
-    const defaults = getDefaultFilestores("any-org");
-
+  describe("dedupeOpenitByName with eventual consistency scenarios", () => {
     it("handles case where API list doesn't include newly created collection yet", () => {
-      // Scenario: POST /datacollection creates openit-library with id=new123,
-      // but immediate LIST returns empty (eventual consistency delay).
-      // The post-create refetch logic would see this and log a warning.
+      // POST /datacollection creates openit-library, but immediate LIST
+      // returns empty (eventual consistency delay). Post-create refetch
+      // sees the same and logs a warning.
       const listBeforeCreate = [] as DataCollection[];
-      const listAfterCreate = [] as DataCollection[]; // Still empty due to delay
+      const listAfterCreate = [] as DataCollection[];
 
-      const beforeResult = dedupeByName(listBeforeCreate, defaults);
-      const afterResult = dedupeByName(listAfterCreate, defaults);
-
-      expect(beforeResult).toHaveLength(0);
-      expect(afterResult).toHaveLength(0);
-      // In this case, the post-create refetch would log a warning but continue.
-      // The cache tracks that we created it locally, preventing duplicate attempts.
+      expect(dedupeOpenitByName(listBeforeCreate)).toHaveLength(0);
+      expect(dedupeOpenitByName(listAfterCreate)).toHaveLength(0);
     });
 
     it("handles case where API list includes newly created collection after refetch", () => {
-      // Scenario: POST /datacollection succeeds, and a short time later
-      // LIST includes the newly created collection.
-      const listBeforeCreate = [] as DataCollection[];
       const listAfterCreate = [
         row({ id: "new123", name: "openit-library", description: "Created by sync" }),
       ] as DataCollection[];
 
-      const beforeResult = dedupeByName(listBeforeCreate, defaults);
-      const afterResult = dedupeByName(listAfterCreate, defaults);
+      const result = dedupeOpenitByName(listAfterCreate);
 
-      expect(beforeResult).toHaveLength(0);
-      expect(afterResult).toHaveLength(1);
-      expect(afterResult[0].id).toBe("new123");
-      expect(afterResult[0].name).toBe("openit-library");
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe("new123");
+      expect(result[0].name).toBe("openit-library");
     });
 
     it("converges to one collection when duplicates exist due to concurrent creates", () => {
-      // Scenario: Two concurrent calls to startFilestoreSync both see an empty list,
-      // both POST to create openit-library, both succeed with different IDs (true dupe).
-      // When LIST is refetched, it includes both. dedupeByName picks the smallest ID.
+      // Two concurrent startFilestoreSync calls both see an empty list,
+      // both POST openit-library, both succeed with different ids. The
+      // smallest id wins so both callers converge on the same row.
       const listWithDuplicates = [
         row({ id: "second-create-999", name: "openit-library" }),
         row({ id: "first-create-111", name: "openit-library" }),
       ] as DataCollection[];
 
-      const result = dedupeByName(listWithDuplicates, defaults);
+      const result = dedupeOpenitByName(listWithDuplicates);
 
       expect(result).toHaveLength(1);
       expect(result[0].id).toBe("first-create-111");
-      // The smallest ID wins, so both callers converge on the same collection.
     });
 
-    it("filters mixed remote collections correctly after eventual consistency resolves", () => {
-      // Scenario: User has unrelated collections (customer-data, my-docs) plus
-      // newly created openit-library. After connect + create + refetch, LIST includes all.
-      // dedupeByName filters to only openit-* AND in defaults.
+    it("filters non-openit collections out of the resolved set", () => {
       const listWithMixed = [
         row({ id: "1", name: "customer-data" }),
         row({ id: "2", name: "openit-library" }),
         row({ id: "3", name: "my-docs" }),
       ] as DataCollection[];
 
-      const result = dedupeByName(listWithMixed, defaults);
+      const result = dedupeOpenitByName(listWithMixed);
 
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe("openit-library");
-      // Unrelated collections are never returned; sync never touches them.
     });
   });
 
