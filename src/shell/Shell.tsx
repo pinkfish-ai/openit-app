@@ -73,6 +73,66 @@ const PANE_DEFAULT: Record<PaneId, number> = { left: 24, center: 40, right: 36 }
 /// fanned out into 3 parallel push runs in the wild.
 const pushInFlightByRepo = new Set<string>();
 
+/// Stable identity for a ViewerSource — used by the nav-history wrapper
+/// to distinguish "refresh of the current view" (fs-tick re-resolve,
+/// agent-trace reload, sync-line append) from "user navigated to a new
+/// view". Refreshes replace in place; navigations push onto the back
+/// stack. Without this, every fs change would stack a duplicate entry
+/// and the back arrow would feel broken.
+function sourceKey(s: ViewerSource): string {
+  if (!s) return "null";
+  switch (s.kind) {
+    case "file":
+      return `file:${s.path}`;
+    case "sync":
+      return "sync";
+    case "diff":
+      return "diff";
+    case "datastore-table":
+      return `datastore-table:${s.collection.name}`;
+    case "datastore-row":
+      return `datastore-row:${s.collection.name}:${(s.item as { key?: string }).key ?? ""}`;
+    case "datastore-schema":
+      return `datastore-schema:${s.collection.name}`;
+    case "agent":
+      return `agent:${(s.agent as { name?: string }).name ?? ""}`;
+    case "workflow":
+      return `workflow:${(s.workflow as { name?: string }).name ?? ""}`;
+    case "conversation-thread":
+      return `conversation-thread:${s.ticketId}`;
+    case "conversations-list":
+      return "conversations-list";
+    case "people-list":
+      return "people-list";
+    case "agent-trace":
+      return `agent-trace:${s.ticketId}`;
+    case "agent-trace-list":
+      return `agent-trace-list:${s.ticketId}`;
+    case "entity-folder":
+      return `entity-folder:${s.entity}:${s.path}`;
+    case "databases-list":
+      return "databases-list";
+    case "filestores-list":
+      return "filestores-list";
+    case "attachments-folder":
+      return "attachments-folder";
+    case "knowledge-bases-list":
+      return "knowledge-bases-list";
+    case "cloud-cta":
+      return "cloud-cta";
+    case "getting-started":
+      return "getting-started";
+    case "tools":
+      return "tools";
+  }
+}
+
+const NAV_HISTORY_CAP = 50;
+
+function capStack(s: ViewerSource[]): ViewerSource[] {
+  return s.length > NAV_HISTORY_CAP ? s.slice(s.length - NAV_HISTORY_CAP) : s;
+}
+
 export function Shell({
   repo,
   syncLines,
@@ -145,7 +205,66 @@ export function Shell({
   registerShowCloudCta: (fn: () => void) => void;
 }) {
   const [state, setState] = useState<AppPersistedState | null>(null);
-  const [source, setSource] = useState<ViewerSource>(null);
+  /// Single combined nav state for the center-pane viewer. Source +
+  /// back/forward stacks live together so every transition is one
+  /// pure `setNav` call — earlier split-state version had side-effect
+  /// setState calls nested inside another setState updater, which
+  /// React StrictMode (enabled in main.tsx) double-invoked, doubling
+  /// every history push and corrupting the stacks. The combined state
+  /// makes the updater pure: same input → same output, safe to invoke
+  /// twice.
+  const [nav, setNav] = useState<{
+    source: ViewerSource;
+    back: ViewerSource[];
+    forward: ViewerSource[];
+  }>({ source: null, back: [], forward: [] });
+  const source = nav.source;
+  const canGoBack = nav.back.length > 0;
+  const canGoForward = nav.forward.length > 0;
+  const setSource = useCallback(
+    (next: ViewerSource | ((prev: ViewerSource) => ViewerSource)) => {
+      setNav((prev) => {
+        const resolved =
+          typeof next === "function"
+            ? (next as (p: ViewerSource) => ViewerSource)(prev.source)
+            : next;
+        if (sourceKey(prev.source) === sourceKey(resolved)) {
+          // Same logical view — refresh in place, leave history alone.
+          return { ...prev, source: resolved };
+        }
+        // Real navigation: push prev.source (if non-null) onto back,
+        // clear forward.
+        const nextBack =
+          prev.source !== null ? capStack([...prev.back, prev.source]) : prev.back;
+        return { source: resolved, back: nextBack, forward: [] };
+      });
+    },
+    [],
+  );
+  const goBack = useCallback(() => {
+    setNav((prev) => {
+      if (prev.back.length === 0) return prev;
+      const target = prev.back[prev.back.length - 1];
+      const nextBack = prev.back.slice(0, -1);
+      const nextForward =
+        prev.source !== null
+          ? capStack([...prev.forward, prev.source])
+          : prev.forward;
+      return { source: target, back: nextBack, forward: nextForward };
+    });
+  }, []);
+  const goForward = useCallback(() => {
+    setNav((prev) => {
+      if (prev.forward.length === 0) return prev;
+      const target = prev.forward[prev.forward.length - 1];
+      const nextForward = prev.forward.slice(0, -1);
+      const nextBack =
+        prev.source !== null
+          ? capStack([...prev.back, prev.source])
+          : prev.back;
+      return { source: target, back: nextBack, forward: nextForward };
+    });
+  }, []);
   const [conflictBubbles, setConflictBubbles] = useState<Bubble[]>([]);
   const [leftTab, setLeftTab] = useState<LeftTab>("overview");
   const [fsTick, setFsTick] = useState(0);
@@ -856,6 +975,10 @@ export function Shell({
                   }}
                   onConnectCloud={onConnectRequest}
                   onConnectSlack={onConnectSlack}
+                  onGoBack={goBack}
+                  onGoForward={goForward}
+                  canGoBack={canGoBack}
+                  canGoForward={canGoForward}
                 />
               )}
             </div>

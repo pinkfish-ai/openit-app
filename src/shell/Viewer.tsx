@@ -359,6 +359,10 @@ export function Viewer({
   onOpenPath,
   onConnectCloud,
   onConnectSlack,
+  onGoBack,
+  onGoForward,
+  canGoBack,
+  canGoForward,
 }: {
   source: ViewerSource;
   repo: string;
@@ -382,6 +386,13 @@ export function Viewer({
   /** Kick off the Slack-connect skill. Wired by the Getting Started
    *  page's "Connect Slack" button. */
   onConnectSlack?: () => void;
+  /** Browser-style back/forward across the center-pane view history.
+   *  Wired by Shell so every page gets the same pair of arrows in
+   *  the viewer header instead of relying on per-page back buttons. */
+  onGoBack?: () => void;
+  onGoForward?: () => void;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
 }) {
   const [content, setContent] = useState<string>("");
   const [binaryData, setBinaryData] = useState<Uint8Array | null>(null);
@@ -2408,58 +2419,32 @@ export function Viewer({
     <div className="viewer">
       <ToastView message={toast} />
       <div className="viewer-header">
-        {source && source.kind === "conversation-thread" && onOpenPath && (
+        {/* Permanent back/forward pair — every viewer page gets the
+            same navigation affordance instead of relying on per-kind
+            back buttons that only existed for a few views. Disabled
+            when the corresponding history stack is empty. */}
+        <div className="viewer-nav" role="group" aria-label="Viewer navigation">
           <button
             type="button"
             className="viewer-back-btn"
-            onClick={() => {
-              // Navigate back to the parent conversations list. The
-              // filter pill state lives in this Viewer instance and
-              // is preserved across the round-trip — clicking back
-              // lands on the same `Open` / `All` / `Resolved` /
-              // `Escalated` selection the user had before opening
-              // the thread.
-              void onOpenPath(`${repo}/databases/conversations`);
-            }}
-            title="Back to conversations"
-            aria-label="Back to conversations"
+            onClick={() => onGoBack?.()}
+            disabled={!canGoBack}
+            title="Back"
+            aria-label="Back"
           >
             ←
           </button>
-        )}
-        {source &&
-          source.kind === "entity-folder" &&
-          source.entity === "attachments-ticket" &&
-          onOpenPath && (
-            <button
-              type="button"
-              className="viewer-back-btn"
-              onClick={() => {
-                void onOpenPath(`${repo}/filestores/attachments`);
-              }}
-              title="Back to attachments"
-              aria-label="Back to attachments"
-            >
-              ←
-            </button>
-          )}
-        {source &&
-          source.kind === "file" &&
-          onOpenPath &&
-          source.path.startsWith(`${repo}/`) &&
-          source.path.lastIndexOf("/") > repo.length && (
-            <button
-              type="button"
-              className="viewer-back-btn"
-              onClick={() => {
-                void onOpenPath(source.path.slice(0, source.path.lastIndexOf("/")));
-              }}
-              title="Back to folder"
-              aria-label="Back to folder"
-            >
-              ←
-            </button>
-          )}
+          <button
+            type="button"
+            className="viewer-back-btn"
+            onClick={() => onGoForward?.()}
+            disabled={!canGoForward}
+            title="Forward"
+            aria-label="Forward"
+          >
+            →
+          </button>
+        </div>
         {headerKind && <EntityBadge kind={headerKind} showLabel={false} />}
         <span className="viewer-title">{title}</span>
         {source && source.kind === "conversation-thread" && onOpenPath && (
