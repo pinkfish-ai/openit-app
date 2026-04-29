@@ -137,6 +137,39 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
         let _ = fs::write(&getting_started_path, getting_started);
     }
 
+    // Connect-to-Cloud pitch page. Idempotent like getting-started.md
+    // — only writes when missing so user edits survive. The CTA link
+    // uses the `openit://connect-cloud` scheme; the markdown viewer's
+    // link renderer dispatches an event that App.tsx routes into the
+    // OAuth-start flow.
+    let connect_cloud_path = path.join("connect-to-cloud.md");
+    if !connect_cloud_path.exists() {
+        let connect_cloud = "# Connect to Pinkfish Cloud\n\n\
+             ## Unlock the rest of OpenIT.\n\n\
+             Bring your team in, run agents in the cloud, and plug in \
+             200+ systems.\n\n\
+             ## Work with your team\n\n\
+             Tickets and knowledge sync across the team — instantly.\n\n\
+             ## Cloud agents that don't sleep\n\n\
+             Run agents in the cloud, even with your laptop closed.\n\n\
+             ## 200+ integrations\n\n\
+             Plug in the systems your tickets actually live in.\n\n\
+             - Jamf\n\
+             - Okta\n\
+             - Microsoft 365\n\
+             - Google Workspace\n\
+             - Intune\n\
+             - ServiceNow\n\
+             - JumpCloud\n\
+             - Slack\n\
+             - 1Password\n\
+             - Zendesk\n\
+             - *+ 190 more*\n\n\
+             [**Connect to Pinkfish Cloud**](openit://connect-cloud)\n\n\
+             *Local mode keeps working — cloud just adds.*\n";
+        let _ = fs::write(&connect_cloud_path, connect_cloud);
+    }
+
     // One-time migration: legacy `filestore/<file>` content moves into
     // the new `filestores/library/<file>` location. Idempotent — runs
     // only when the legacy dir exists; once empty it is removed so
