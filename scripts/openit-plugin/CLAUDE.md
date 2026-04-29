@@ -137,6 +137,34 @@ If the user has connected this project to Pinkfish via the **Connect to Cloud** 
 - Semantic search would be meaningfully better than reading files (large KBs).
 - The user explicitly asks for a gateway-shaped capability.
 
+## Locally-installed CLI tools
+
+OpenIT's **CLI** Workbench station maintains a marker block in this same `CLAUDE.md` listing the CLI tools the admin has installed locally — `gh`, `aws`, `gcloud`, `okta`, `op`, `tailscale`, etc. Each entry tells you what the tool is for and (for less-known tools) how to discover its surface, typically via `<tool> --help`.
+
+When a request can be answered by an installed CLI, **prefer the CLI over hand-rolled API calls or scraping**. CLI tools auth through their own flows (`gh auth login`, `aws configure`, `okta login`, etc.); if a tool reports unauthenticated, surface that to the admin rather than guessing credentials.
+
+### Marker block convention
+
+OpenIT will sometimes ask you to install or uninstall CLI tools by writing a request into this chat. When that happens, you own the install (run brew, fall back to vendor docs if brew fails, debug as needed) AND the CLAUDE.md update. The block is bracketed by:
+
+```
+<!-- openit:cli-tools:start -->
+## Installed CLI tools
+
+These CLI tools are installed locally and available via Bash. Prefer them over hand-rolled API calls or scraping; for unfamiliar commands run `<tool> --help` to discover capabilities.
+
+<!-- entry:aws -->- AWS CLI hint line here
+<!-- entry:gh -->- GitHub CLI hint line here
+<!-- openit:cli-tools:end -->
+```
+
+Rules:
+- Each entry is one line keyed by `<!-- entry:ID -->`. The ID matches the catalog id from OpenIT's request.
+- Sort entries alphabetically by id inside the block.
+- Re-installing the same id replaces the line in place (no duplicates).
+- If the marker block doesn't exist yet, append it at the end of `CLAUDE.md` with the standard preamble shown above.
+- Removing the last entry strips the entire block (don't leave an empty scaffold).
+
 ## Permissions
 
 Claude Code skills in this project need filesystem access. When a skill asks for `Bash` / `Read` / `Write` permission, approve once — Claude Code remembers per-project. The skills need it to:

@@ -194,4 +194,11 @@ export type ViewerSource =
   // cloud-cta layout (eyebrow + headline + lead + a single intake
   // CTA). The intake URL is read from Viewer's `intakeUrl` prop.
   | { kind: "getting-started" }
+  // CLI — the CLI-tools catalog. Backed by `which` detection rather
+  // than a real on-disk directory; the resolver matches the synthetic
+  // path `<repo>/cli` and routes here. The viewer renders <CliPanel>
+  // which lists installed CLIs with brew install/uninstall affordances.
+  // Reachable via the Workbench station only — there's no `cli/` dir in
+  // the file explorer.
+  | { kind: "cli" }
   | null;
