@@ -483,25 +483,11 @@ pub fn fs_store_write_file_bytes(
     fs::write(&path, &bytes).map_err(|e| e.to_string())
 }
 
-/// Helper to build a filestore path with optional subdirectory.
-/// If subdir is provided, the final path is <repo>/<subdir>/<filename>.
-/// If subdir is not provided, uses the default filestores/library directory.
-///
-/// Filename must be a single non-empty path component. We reject:
-///   - empty strings
-///   - any `/` or `\` (would escape into a sibling dir)
-///   - `.` and `..` (would silently land at the subdir or its parent —
-///     a server-supplied filename of "." or ".." in fs_store_download_to_local
-///     would otherwise overwrite the directory itself or write into the
-///     parent).
-///   - absolute paths or multi-component paths (defense-in-depth — the
-///     separator check above already rejects these, but Path::components
-///     also catches Windows drive letters and other oddities).
-fn fs_path_with_optional_subdir(
-    repo: &str,
-    filename: &str,
-    subdir: Option<&str>,
-) -> Result<PathBuf, String> {
+/// Reject a filename that contains separators, is "." or "..", is
+/// absolute, or contains anything other than a single normal component.
+/// Without this, a server-supplied "../../etc/passwd" or absolute path
+/// would let the caller write outside the intended subdir.
+fn validate_filename(filename: &str) -> Result<(), String> {
     if filename.is_empty() {
         return Err("filename is empty".into());
     }
@@ -511,11 +497,6 @@ fn fs_path_with_optional_subdir(
             filename
         ));
     }
-    // Block path traversal: a server-supplied filename of "." or ".."
-    // contains no separators so the path-separator guard above lets it
-    // through, but joining ".." onto the subdir resolves to its parent
-    // and writes the downloaded bytes outside the intended directory.
-    // The old safe_fs_path helper had these checks; preserve them here.
     if filename == "." || filename == ".." {
         return Err(format!("invalid filename: {}", filename));
     }
@@ -523,7 +504,41 @@ fn fs_path_with_optional_subdir(
     if as_path.is_absolute() || as_path.components().count() != 1 {
         return Err(format!("invalid filename: {}", filename));
     }
+    Ok(())
+}
+
+/// Reject a subdir path that's absolute or contains any non-Normal
+/// component (e.g. ".." which escapes upward, or root-prefixed). The
+/// subdir is constructed from server-supplied collection names —
+/// `openit-../../evil` would otherwise produce
+/// `filestores/../../evil` and let downloads escape the repo entirely.
+fn validate_subdir(subdir: &str) -> Result<(), String> {
+    if subdir.is_empty() {
+        return Err("subdir is empty".into());
+    }
+    let p = Path::new(subdir);
+    if p.is_absolute() {
+        return Err(format!("subdir must be relative: {}", subdir));
+    }
+    for c in p.components() {
+        if !matches!(c, std::path::Component::Normal(_)) {
+            return Err(format!("subdir contains invalid component: {}", subdir));
+        }
+    }
+    Ok(())
+}
+
+/// Helper to build a filestore path with optional subdirectory.
+/// If subdir is provided, the final path is <repo>/<subdir>/<filename>.
+/// If subdir is not provided, uses the default filestores/library directory.
+fn fs_path_with_optional_subdir(
+    repo: &str,
+    filename: &str,
+    subdir: Option<&str>,
+) -> Result<PathBuf, String> {
+    validate_filename(filename)?;
     let base_dir = if let Some(subdir) = subdir {
+        validate_subdir(subdir)?;
         Path::new(repo).join(subdir)
     } else {
         fs_dir(repo)
@@ -756,6 +771,8 @@ pub fn entity_write_file(
     filename: String,
     content: String,
 ) -> Result<(), String> {
+    validate_subdir(&subdir)?;
+    validate_filename(&filename)?;
     let dir = Path::new(&repo).join(&subdir);
     ensure_dir(&dir)?;
     let path = dir.join(&filename);
@@ -773,6 +790,8 @@ pub fn entity_write_file_bytes(
     filename: String,
     bytes: Vec<u8>,
 ) -> Result<(), String> {
+    validate_subdir(&subdir)?;
+    validate_filename(&filename)?;
     let dir = Path::new(&repo).join(&subdir);
     ensure_dir(&dir)?;
     let path = dir.join(&filename);
@@ -785,6 +804,8 @@ pub fn entity_write_file_bytes(
 /// style canonicalization on the parent dir.
 #[tauri::command]
 pub fn entity_delete_file(repo: String, subdir: String, filename: String) -> Result<(), String> {
+    validate_subdir(&subdir)?;
+    validate_filename(&filename)?;
     let dir = Path::new(&repo).join(&subdir);
     let path = dir.join(&filename);
     // Only act if the resolved path stays inside the repo. Cheap check —
@@ -824,12 +845,9 @@ pub fn entity_rename_file(
     if from == to {
         return Ok(());
     }
-    if from.is_empty() || to.is_empty() {
-        return Err("filenames must not be empty".into());
-    }
-    if from.contains('/') || from.contains('\\') || to.contains('/') || to.contains('\\') {
-        return Err("filenames must not contain path separators".into());
-    }
+    validate_subdir(&subdir)?;
+    validate_filename(&from)?;
+    validate_filename(&to)?;
     let dir = Path::new(&repo).join(&subdir);
     let from_path = dir.join(&from);
     let to_path = dir.join(&to);
@@ -880,6 +898,42 @@ mod tests {
         let p = fs_path_with_optional_subdir("/repo", "doc.md", Some("filestores/library"))
             .expect("should accept a normal filename");
         assert!(p.ends_with("filestores/library/doc.md"));
+    }
+
+    #[test]
+    fn fs_path_with_optional_subdir_rejects_traversal_in_subdir() {
+        // The subdir is built from server-supplied collection names. A
+        // collection named "openit-../../evil" would otherwise produce
+        // "filestores/../../evil" and let downloads escape the repo.
+        assert!(
+            fs_path_with_optional_subdir("/repo", "doc.md", Some("filestores/../../evil")).is_err()
+        );
+        assert!(fs_path_with_optional_subdir("/repo", "doc.md", Some("..")).is_err());
+        assert!(fs_path_with_optional_subdir("/repo", "doc.md", Some("/etc")).is_err());
+        assert!(fs_path_with_optional_subdir("/repo", "doc.md", Some("")).is_err());
+    }
+
+    #[test]
+    fn validate_filename_basics() {
+        assert!(validate_filename("doc.md").is_ok());
+        assert!(validate_filename("with spaces.txt").is_ok());
+        assert!(validate_filename("").is_err());
+        assert!(validate_filename(".").is_err());
+        assert!(validate_filename("..").is_err());
+        assert!(validate_filename("a/b").is_err());
+        assert!(validate_filename("a\\b").is_err());
+        assert!(validate_filename("/abs").is_err());
+    }
+
+    #[test]
+    fn validate_subdir_basics() {
+        assert!(validate_subdir("filestores/library").is_ok());
+        assert!(validate_subdir("filestores/docs-123").is_ok());
+        assert!(validate_subdir("").is_err());
+        assert!(validate_subdir("..").is_err());
+        assert!(validate_subdir("a/../b").is_err());
+        assert!(validate_subdir("/abs").is_err());
+        assert!(validate_subdir("./relative").is_err());
     }
 
     #[test]
