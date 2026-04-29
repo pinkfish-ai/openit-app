@@ -291,9 +291,7 @@ struct SlackSendIntroBody {
 const DEFAULT_INTRO_TEXT: &str =
     "Hi! I'm the OpenIT triage bot. Try asking me a question — e.g. \"how do I reset my Mac password?\" — and I'll either answer from your knowledge base or escalate to your IT team.";
 
-async fn skill_slack_send_intro(
-    Json(body): Json<SlackSendIntroBody>,
-) -> Response {
+async fn skill_slack_send_intro(Json(body): Json<SlackSendIntroBody>) -> Response {
     // Bot token lives in a process-global Arc that `slack.rs`
     // updates on listener bring-up / exit. No AppHandle needed —
     // we just lock the global, clone the string, and call the
@@ -339,8 +337,7 @@ async fn skill_slack_send_intro(
             }
         };
     let text = body.text.unwrap_or_else(|| DEFAULT_INTRO_TEXT.to_string());
-    if let Err(e) =
-        crate::slack::slack_post_message(&http, &bot_token, &user_id, text.trim()).await
+    if let Err(e) = crate::slack::slack_post_message(&http, &bot_token, &user_id, text.trim()).await
     {
         return (
             StatusCode::BAD_GATEWAY,
