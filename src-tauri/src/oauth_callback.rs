@@ -166,13 +166,11 @@ pub async fn oauth_callback_await(
     };
 
     let rx_opt = creds_rx_arc.lock().await.take();
-    let rx =
-        rx_opt.ok_or_else(|| "oauth_callback_await: already awaited".to_string())?;
+    let rx = rx_opt.ok_or_else(|| "oauth_callback_await: already awaited".to_string())?;
 
     // Race the receiver against the timeout. Whichever wins, we tear
     // the listener down (we're done, one way or another).
-    let result =
-        tokio::time::timeout(Duration::from_secs(CALLBACK_TIMEOUT_SECS), rx).await;
+    let result = tokio::time::timeout(Duration::from_secs(CALLBACK_TIMEOUT_SECS), rx).await;
 
     // Hold cmd_lock across cleanup so a concurrent
     // `oauth_callback_start` (e.g. user clicked Cancel and immediately
@@ -307,7 +305,13 @@ mod tests {
         (status, body)
     }
 
-    fn build_test_app(expected_state: &str) -> (Router, Arc<Mutex<Option<oneshot::Sender<CallbackCreds>>>>, oneshot::Receiver<CallbackCreds>) {
+    fn build_test_app(
+        expected_state: &str,
+    ) -> (
+        Router,
+        Arc<Mutex<Option<oneshot::Sender<CallbackCreds>>>>,
+        oneshot::Receiver<CallbackCreds>,
+    ) {
         let (tx, rx) = oneshot::channel::<CallbackCreds>();
         let creds_tx = Arc::new(Mutex::new(Some(tx)));
         let ctx = ServerCtx {
@@ -327,12 +331,15 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
 
-        let body = "client_id=cid&client_secret=sec&org_id=oid&token_url=https://t&state=expected-state";
+        let body =
+            "client_id=cid&client_secret=sec&org_id=oid&token_url=https://t&state=expected-state";
         let (status, _) = post_form(&format!("http://{}/cb", addr), body).await;
         assert_eq!(status, 200);
 
-        let creds =
-            tokio::time::timeout(Duration::from_secs(2), rx).await.unwrap().unwrap();
+        let creds = tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(creds.client_id, "cid");
         assert_eq!(creds.client_secret, "sec");
         assert_eq!(creds.org_id, "oid");
