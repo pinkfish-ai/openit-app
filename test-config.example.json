@@ -1,14 +1,10 @@
 {
-  "repo": "/Users/benrigby/OpenIT/test-repo",
-  "orgId": "653713545258",
+  "repo": "/Users/yourname/OpenIT/local",
+  "orgId": "your-org-id",
   "credentials": {
-    "tokenUrl": "https://oauth.dev20.pinkfish.dev",
+    "tokenUrl": "https://app-api.dev20.pinkfish.dev/oauth/token",
+    "webUrl": "https://dev20.pinkfish.dev",
     "clientId": "your-client-id",
     "clientSecret": "your-client-secret"
-  },
-  "collectionIds": {
-    "docs": "78pGdERv7DywHXfho7bm",
-    "attachments": "v8XiJsWHf1lyOBON02An",
-    "library": "z0uW6vAPJu2xL5T112eP"
   }
 }

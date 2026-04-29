@@ -8,6 +8,7 @@ vi.mock("../api", () => ({
   entityDeleteFile: vi.fn(),
   fsStoreDownloadToLocal: vi.fn(),
   fsStoreListLocal: vi.fn(),
+  entityListLocal: vi.fn().mockResolvedValue([]),
   kbListRemote: vi.fn(),
   entityWriteFile: vi.fn(),
 }));

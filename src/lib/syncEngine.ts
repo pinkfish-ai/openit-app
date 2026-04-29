@@ -550,6 +550,34 @@ async function pullEntityImpl(
       continue;
     }
 
+    // 1b. Tracked but missing from disk → re-fetch.
+    // Manifest claims the file was synced, but it's not on disk anymore.
+    // This can happen if a previous sync recorded the manifest entry but
+    // the actual file write failed (e.g., directory creation issues), or
+    // if the user deleted the file locally without a manifest update.
+    // Without this branch, the engine would silently skip and the file
+    // would never reappear.
+    if (tracked && !localFile) {
+      console.log(
+        `[syncEngine:${adapter.prefix}] re-fetching ${r.manifestKey} (tracked but missing from disk)`,
+      );
+      try {
+        await r.fetchAndWrite(repo);
+        manifest.files[r.manifestKey] = {
+          remote_version: r.updatedAt,
+          pulled_at_mtime_ms: Date.now(),
+        };
+        touched.push(r.workingTreePath);
+        pulled += 1;
+      } catch (e) {
+        console.error(
+          `[syncEngine:${adapter.prefix}] re-fetch ${r.manifestKey} failed:`,
+          e,
+        );
+      }
+      continue;
+    }
+
     // 2. Bootstrap-adoption: file already on disk but no manifest entry
     // (e.g. modal connect's `*ToDisk` seeded the working tree). Seed the
     // manifest using the file's current mtime as the baseline so future

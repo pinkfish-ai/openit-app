@@ -15,8 +15,8 @@
 
 import {
   entityDeleteFile,
+  entityListLocal,
   fsStoreDownloadToLocal,
-  fsStoreListLocal,
   kbListRemote,
   entityWriteFile,
 } from "../api";
@@ -114,7 +114,12 @@ export function filestoreAdapter(args: {
     },
 
     async listLocal(repo) {
-      const files = await fsStoreListLocal(repo);
+      // List files from THIS collection's subdirectory only — not the
+      // legacy hardcoded filestores/library/ directory. Without this
+      // every collection's adapter would see files from every other
+      // collection mixed together, making the engine think files are
+      // already on disk when they're actually in the wrong folder.
+      const files = await entityListLocal(repo, DIR);
       // Sibling-aware shadow classification — see KB adapter for details.
       // Use the full filename set so a legit `a.server.conf` appears in
       // siblings and a follow-on `a.server.server.conf` shadow maps back

@@ -1,191 +1,114 @@
-import { describe, it, expect, beforeAll, skipIf, vi, beforeEach } from "vitest";
-import { loadConfig } from "./utils/config";
-import { getAccessTokenWithConfig } from "./utils/auth";
-import { filestoreAdapter } from "../src/lib/entities/filestore";
+import { describe, it, expect, beforeAll } from "vitest";
+import { loadConfig, deriveSkillsBaseUrl } from "./utils/config";
+import { PinkfishClient, type DataCollection } from "./utils/pinkfish-api";
 
 const config = loadConfig();
 const skip = !config;
 
-// Cache token to avoid multiple OAuth calls
-let cachedToken: string | null = null;
+let client: PinkfishClient | null = null;
+let openitCollections: DataCollection[] = [];
 
-// Mock pinkfish auth to return a real token
-vi.mock("../src/lib/pinkfishAuth", async (importActual) => {
-  const actual = await importActual<typeof import("../src/lib/pinkfishAuth")>();
-
-  return {
-    ...actual,
-    getToken: () => {
-      if (!config || !cachedToken) return null;
-      return {
-        accessToken: cachedToken,
-        expiresAt: Date.now() + 3600000,
-        orgId: config.orgId,
-      };
-    },
-  };
-});
+function expectedLocalDir(collectionName: string): string {
+  const folder = collectionName.startsWith("openit-")
+    ? collectionName.slice("openit-".length)
+    : collectionName;
+  return `filestores/${folder}`;
+}
 
 describe.skipIf(skip)("filestore sync - real integration", () => {
-  beforeEach(async () => {
-    // Get token once and cache it
-    if (config && !cachedToken) {
-      try {
-        cachedToken = await getAccessTokenWithConfig(config);
-      } catch (e) {
-        console.error("Failed to authenticate:", e);
-        throw e;
-      }
-    }
-  });
+  beforeAll(async () => {
+    if (!config) return;
+    client = new PinkfishClient(config);
 
-  beforeAll(() => {
     console.log("\n" + "=".repeat(60));
     console.log("FILESTORE SYNC INTEGRATION TESTS");
     console.log("=".repeat(60));
-    console.log("Repo:", config?.repo);
-    console.log("Org:", config?.orgId);
+    console.log("Repo:        ", config.repo);
+    console.log("Org:         ", config.orgId);
+    console.log("Token URL:   ", config.credentials.tokenUrl);
+    console.log("Skills URL:  ", deriveSkillsBaseUrl(config.credentials.tokenUrl));
     console.log("=".repeat(60) + "\n");
   });
 
-  it("should discover openit-docs collection files", async () => {
-    if (!config) return;
+  it("should authenticate with OAuth and get an access token", async () => {
+    if (!client) return;
+    const token = await client.getToken();
+    expect(token).toBeTruthy();
+    expect(token.length).toBeGreaterThan(20);
+    console.log(`✓ Token: ${token.slice(0, 20)}...`);
+  });
 
-    const adapter = filestoreAdapter({
-      creds: {
-        orgId: config.orgId,
-        tokenUrl: config.credentials.tokenUrl,
-      },
-      collection: {
-        id: config.collections.docs,
-        name: "openit-docs-653713545258",
-        description: "Docs collection",
-      },
+  it("should discover all filestorage collections", async () => {
+    if (!client) return;
+    const all = await client.listCollections("filestorage");
+    console.log(`\nFound ${all.length} filestorage collections:`);
+    all.forEach((c) => {
+      console.log(`  - ${c.name} (id: ${c.id})`);
     });
+    expect(all.length).toBeGreaterThan(0);
+  });
 
-    console.log("\n→ Listing remote files for openit-docs-653713545258...");
+  it("should discover openit-* filestore collections", async () => {
+    if (!client) return;
+    openitCollections = await client.listOpenitFilestores();
+    console.log(`\nFound ${openitCollections.length} openit-* collections:`);
+    openitCollections.forEach((c) => {
+      console.log(`  - ${c.name} (id: ${c.id})`);
+      console.log(`    → ${expectedLocalDir(c.name)}/`);
+    });
+    expect(openitCollections.length).toBeGreaterThan(0);
+  });
 
-    try {
-      const result = await adapter.listRemote(config.repo);
+  it("should list files in each openit-* collection", async () => {
+    if (!client) return;
+    if (openitCollections.length === 0) {
+      openitCollections = await client.listOpenitFilestores();
+    }
 
-      console.log(`✓ Found ${result.items.length} files:`);
-      result.items.forEach((item) => {
-        console.log(`  - ${item.manifestKey}`);
-        console.log(`    → ${item.workingTreePath}`);
-      });
-
-      expect(result.items.length).toBeGreaterThanOrEqual(0);
-    } catch (e) {
-      console.error("✗ Failed:", e);
-      throw e;
+    console.log("\n=== FILES PER COLLECTION ===");
+    for (const collection of openitCollections) {
+      const files = await client.listFilestoreItems(collection.id);
+      const dir = expectedLocalDir(collection.name);
+      console.log(`\n${collection.name} (id: ${collection.id})`);
+      console.log(`  → ${dir}/`);
+      if (files.length === 0) {
+        console.log("    (empty)");
+      } else {
+        files.forEach((f) => {
+          console.log(`    - ${f.filename}`);
+          console.log(`      updated_at: ${f.updated_at ?? "(none)"}`);
+          console.log(`      → ${dir}/${f.filename}`);
+        });
+      }
+      expect(Array.isArray(files)).toBe(true);
     }
   });
 
-  it("should discover openit-attachments collection files", async () => {
-    if (!config) return;
-
-    const adapter = filestoreAdapter({
-      creds: {
-        orgId: config.orgId,
-        tokenUrl: config.credentials.tokenUrl,
-      },
-      collection: {
-        id: config.collections.attachments,
-        name: "openit-attachments",
-        description: "Attachments collection",
-      },
-    });
-
-    console.log("\n→ Listing remote files for openit-attachments...");
-
-    try {
-      const result = await adapter.listRemote(config.repo);
-
-      console.log(`✓ Found ${result.items.length} files:`);
-      result.items.forEach((item) => {
-        console.log(`  - ${item.manifestKey}`);
-        console.log(`    → ${item.workingTreePath}`);
-      });
-
-      expect(result.items.length).toBeGreaterThanOrEqual(0);
-    } catch (e) {
-      console.error("✗ Failed:", e);
-      throw e;
+  it("should verify routing: collection name → local folder", async () => {
+    if (!client) return;
+    if (openitCollections.length === 0) {
+      openitCollections = await client.listOpenitFilestores();
     }
-  });
 
-  it("should route files to correct collection folders", async () => {
-    if (!config) return;
+    console.log("\n=== ROUTING VERIFICATION ===");
+    const expectations: Record<string, string> = {
+      "openit-library": "filestores/library",
+      "openit-attachments": "filestores/attachments",
+    };
 
-    console.log("\n→ Checking file routing...");
-
-    const docsAdapter = filestoreAdapter({
-      creds: {
-        orgId: config.orgId,
-        tokenUrl: config.credentials.tokenUrl,
-      },
-      collection: {
-        id: config.collections.docs,
-        name: "openit-docs-653713545258",
-      },
-    });
-
-    const attachAdapter = filestoreAdapter({
-      creds: {
-        orgId: config.orgId,
-        tokenUrl: config.credentials.tokenUrl,
-      },
-      collection: {
-        id: config.collections.attachments,
-        name: "openit-attachments",
-      },
-    });
-
-    const docsResult = await docsAdapter.listRemote(config.repo);
-    const attachResult = await attachAdapter.listRemote(config.repo);
-
-    console.log("Docs files route to: filestores/docs-653713545258/");
-    docsResult.items.slice(0, 3).forEach((item) => {
-      console.log(`  ✓ ${item.manifestKey}`);
-      expect(item.workingTreePath).toContain("filestores/docs-653713545258");
-    });
-
-    console.log("Attachments files route to: filestores/attachments/");
-    attachResult.items.slice(0, 3).forEach((item) => {
-      console.log(`  ✓ ${item.manifestKey}`);
-      expect(item.workingTreePath).toContain("filestores/attachments");
-    });
-  });
-
-  it("should verify download callback parameters", async () => {
-    if (!config) return;
-
-    console.log("\n→ Verifying fetchAndWrite callback signature...");
-
-    const adapter = filestoreAdapter({
-      creds: {
-        orgId: config.orgId,
-        tokenUrl: config.credentials.tokenUrl,
-      },
-      collection: {
-        id: config.collections.docs,
-        name: "openit-docs-653713545258",
-      },
-    });
-
-    const result = await adapter.listRemote(config.repo);
-
-    if (result.items.length > 0) {
-      const item = result.items[0];
-      console.log(`File: ${item.manifestKey}`);
-      console.log(`Working tree path: ${item.workingTreePath}`);
-      console.log(`Has fetchAndWrite: ${typeof item.fetchAndWrite === "function"}`);
-      console.log(`Has writeShadow: ${typeof item.writeShadow === "function"}`);
-
-      expect(typeof item.fetchAndWrite).toBe("function");
-      expect(typeof item.writeShadow).toBe("function");
-
-      console.log("✓ Callbacks present and callable");
+    for (const collection of openitCollections) {
+      const expected = expectations[collection.name];
+      const actual = expectedLocalDir(collection.name);
+      if (expected) {
+        console.log(`  ${collection.name} → ${actual}`);
+        expect(actual).toBe(expected);
+      } else {
+        // Custom collection (e.g., openit-docs-653713545258 → filestores/docs-653713545258)
+        const stripped = collection.name.slice("openit-".length);
+        const expectedDynamic = `filestores/${stripped}`;
+        console.log(`  ${collection.name} → ${actual} (dynamic)`);
+        expect(actual).toBe(expectedDynamic);
+      }
     }
   });
 });

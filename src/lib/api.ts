@@ -531,11 +531,20 @@ export async function fsStoreInit(repo: string): Promise<string> {
   return invoke("fs_store_init", { repo });
 }
 
+/// Generic entity_list_local wrapper. Pass the subdir relative to repo
+/// (e.g. "filestores/library", "filestores/docs-123", "knowledge-bases/default").
+/// Returns local files in that directory only.
+export async function entityListLocal(
+  repo: string,
+  subdir: string,
+): Promise<KbLocalFile[]> {
+  return invoke("entity_list_local", { repo, subdir });
+}
+
 export async function fsStoreListLocal(repo: string): Promise<KbLocalFile[]> {
-  // The cloud-synced filestore lives at `filestores/library/` after
-  // the 2026-04-27 split. `attachments/` is a separate, server-managed
-  // surface (per-ticket conversation uploads) and isn't routed
-  // through the cloud sync engine.
+  // Legacy: lists files in the default filestores/library/ directory.
+  // For multi-collection sync, use entityListLocal with the collection-specific
+  // subdir (e.g. filestores/<collection-name>/) instead.
   return invoke("entity_list_local", { repo, subdir: "filestores/library" });
 }
 
