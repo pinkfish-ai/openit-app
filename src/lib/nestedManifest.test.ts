@@ -1,8 +1,8 @@
-// Unit tests for the shared nested-manifest module. Cover both entity
-// names (`fs`, `kb`) so a regression in one doesn't slip through via the
-// other. Concurrent-save serialisation is covered too — same race that
-// the predecessor `filestoreManifest.test.ts` guarded against, now via
-// the per-(repo, entity) lock in nestedManifest.ts.
+// Unit tests for the shared nested-manifest module. Cover all three
+// entity names (`fs`, `kb`, `datastore`) so a regression in one doesn't
+// slip through via another. Concurrent-save serialisation is covered too
+// — same race that the predecessor `filestoreManifest.test.ts` guarded
+// against, now via the per-(repo, entity) lock in nestedManifest.ts.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { KbStatePersisted } from "./api";
@@ -10,6 +10,7 @@ import type { KbStatePersisted } from "./api";
 vi.mock("./api", () => {
   let fsStore: KbStatePersisted | null = null;
   let kbStore: KbStatePersisted | null = null;
+  let dsStore: KbStatePersisted | null = null;
   return {
     fsStoreStateLoad: vi.fn(async () => {
       // Simulate a slow read so concurrent callers actually overlap if
@@ -31,9 +32,18 @@ vi.mock("./api", () => {
     kbStateSave: vi.fn(async (_repo: string, value: KbStatePersisted) => {
       kbStore = JSON.parse(JSON.stringify(value));
     }),
+    datastoreStateLoad: vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      if (!dsStore) throw new Error("not found");
+      return JSON.parse(JSON.stringify(dsStore)) as KbStatePersisted;
+    }),
+    datastoreStateSave: vi.fn(async (_repo: string, value: KbStatePersisted) => {
+      dsStore = JSON.parse(JSON.stringify(value));
+    }),
     __reset: () => {
       fsStore = null;
       kbStore = null;
+      dsStore = null;
     },
   };
 });
@@ -85,6 +95,30 @@ describe("nestedManifest concurrent saves (kb)", () => {
     await saveCollectionManifest(repo, "fs", "x", "openit-x", baseManifest("x"));
     // The kb-side load should NOT see the fs save.
     const kbX = await loadCollectionManifest(repo, "kb", "x");
+    expect(kbX.files).toEqual({});
+  });
+});
+
+describe("nestedManifest concurrent saves (datastore)", () => {
+  it("datastore backend serialises through its own lock independent of fs/kb", async () => {
+    const repo = "/tmp/openit-test-race-datastore";
+    await Promise.all([
+      saveCollectionManifest(repo, "datastore", "tickets", "openit-tickets", baseManifest("tickets")),
+      saveCollectionManifest(repo, "datastore", "people", "openit-people", baseManifest("people")),
+    ]);
+
+    const tickets = await loadCollectionManifest(repo, "datastore", "tickets");
+    const people = await loadCollectionManifest(repo, "datastore", "people");
+    expect(tickets.files["tickets.txt"]).toBeDefined();
+    expect(people.files["people.txt"]).toBeDefined();
+  });
+
+  it("datastore stays isolated from fs and kb stores", async () => {
+    const repo = "/tmp/openit-test-isolation-ds";
+    await saveCollectionManifest(repo, "datastore", "x", "openit-x", baseManifest("x"));
+    const fsX = await loadCollectionManifest(repo, "fs", "x");
+    const kbX = await loadCollectionManifest(repo, "kb", "x");
+    expect(fsX.files).toEqual({});
     expect(kbX.files).toEqual({});
   });
 });

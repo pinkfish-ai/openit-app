@@ -15,6 +15,8 @@
 
 import type { KbStatePersisted } from "./api";
 import {
+  datastoreStateLoad,
+  datastoreStateSave,
   fsStoreStateLoad,
   fsStoreStateSave,
   kbStateLoad,
@@ -22,8 +24,9 @@ import {
 } from "./api";
 
 /// Entity-state file name — the per-engine state file under .openit/.
-/// `fs` → `.openit/fs-state.json`, `kb` → `.openit/kb-state.json`.
-export type EntityName = "fs" | "kb";
+/// `fs` → `.openit/fs-state.json`, `kb` → `.openit/kb-state.json`,
+/// `datastore` → `.openit/datastore-state.json`.
+export type EntityName = "fs" | "kb" | "datastore";
 
 export type NestedManifestRoot = {
   [collectionId: string]: KbStatePersisted;
@@ -32,6 +35,7 @@ export type NestedManifestRoot = {
 const loaders: Record<EntityName, (repo: string) => Promise<KbStatePersisted>> = {
   fs: fsStoreStateLoad,
   kb: kbStateLoad,
+  datastore: datastoreStateLoad,
 };
 
 const savers: Record<
@@ -40,6 +44,7 @@ const savers: Record<
 > = {
   fs: fsStoreStateSave,
   kb: kbStateSave,
+  datastore: datastoreStateSave,
 };
 
 /// Per-repo+entity serialisation for the manifest read-modify-write.

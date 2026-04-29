@@ -25,6 +25,12 @@ vi.mock("../api", () => ({
     files: {},
   }),
   kbStateSave: vi.fn(),
+  datastoreStateLoad: vi.fn().mockResolvedValue({
+    collection_id: "",
+    collection_name: "",
+    files: {},
+  }),
+  datastoreStateSave: vi.fn(),
 }));
 
 // Mock pinkfish auth
