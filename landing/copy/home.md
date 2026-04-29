@@ -26,21 +26,7 @@ No new app to learn. Employees ask wherever they already work — Claude answers
 
 ---
 
-## §01 — Before & After
-
-### What changes.
-
-| Before — other ITs | After — OpenIT |
-|---|---|
-| Employees file a ticket. Wait. | Employees ask in Slack or Teams. Answered instantly. |
-| The knowledge base goes stale. | The KB writes itself from real questions. |
-| Configure workflows in clicky admin UIs. | Show Claude once. It handles the rest. |
-| Wait quarters for a missing integration. | Claude writes the integration. Ships today. |
-| Three tabs to debug an access issue. | One conversation across every system. |
-
----
-
-## §02 — The thesis
+## §01 — The thesis
 
 ### Configure in Claude Code. Not UI.
 
@@ -48,15 +34,15 @@ Every other ITSM is configured the same way: clicky admin screens, proprietary w
 
 > Claude Code is the operating system.
 
-OpenIT inverts it. You configure in plain English with Claude Code; the result is files in your repo. Sync to Pinkfish cloud and the same files run there 24/7. Cloud is a deploy target — your repo is the source of truth. Edit it directly. Branch it. Take it with you.
+OpenIT inverts it. You configure in plain English with Claude Code; the result is plain files on your machine. Open them. Edit them. Take them with you.
 
 ---
 
-## §03 — Native access
+## §02 — Native access
 
-### Every system IT runs. One conversation.
+### Every tool. One chat.
 
-Claude doesn't bounce between tools. It *is* the tool — with native access to every system in your stack.
+Stop logging into five dashboards. Claude has direct access to every system you use — so you ask in one place, and it acts everywhere.
 
 - **Identity** — Okta, Google Workspace, Microsoft Entra
 - **Chat** — Slack, Microsoft Teams
@@ -70,50 +56,66 @@ No middleware. No glue scripts. No tab-switching. The investigation, the fix, an
 
 ---
 
-## §04 — Week one
+## §03 — How it learns
 
-### Smarter every day.
+### Answer once. Claude handles the next one.
 
-Every ticket you handle teaches Claude one more thing. Two weeks in, your queue runs differently.
+The first time someone asks something Claude hasn't seen, it escalates to you. After you answer, the moment is captured as a saved automation — so the next time, Claude just handles it.
 
-- **Day 1** — Install. Claude joins chat, watches how you work.
-- **Day 3** — The questions Claude has seen you answer start handling themselves.
-- **Week 1** — Routine asks self-resolve. Every escalation leaves a KB article behind.
-- **Week 2** — You're spending mornings on hard problems, not the queue.
+The chat (illustrated):
+- *Marcus:* "i can't log in"
+- *OpenIT (escalating to you):* haven't seen this one before
+- *You:* "reset your password at company.okta.com/reset"
+- **✓ Automation saved — `skills/login-reset.md` · KB article published**
+- *(three days later)*
+- *Priya:* "can't log in either, what do i do"
+- *OpenIT (auto-resolved):* Reset your password at company.okta.com/reset.
 
----
-
-## §05 — The shift
-
-### Don't do the work. Supervise it.
-
-Claude watches how you handle a ticket, then handles the next one itself. Workflows take shape from how you actually work — not from a UI you have to configure.
-
-No agents to prompt-engineer. No rules to write. No staging tenant to maintain. The helpdesk teaches itself from your queue.
-
-The files are there if you want them — readable, editable, portable. But you don't have to touch them.
+Every question Claude can't answer becomes a saved automation. Two weeks in, your queue runs differently.
 
 ---
 
-## §06 — Local, then cloud
+## §04 — What gets saved
 
-### Try it locally. Run it in cloud.
+### Done once. Saved forever.
 
-Run OpenIT on your machine first — real Claude Code, real integrations, real tickets. No paid sandbox tenant.
+Each fix becomes a file you can read, edit, and reuse — plain instructions when that's enough, code when it's not.
 
-When it earns your trust, sync to Pinkfish: the same project runs in cloud, 24/7. Slack and Teams stay live for your team, a public link picks up outside askers, agents act while you sleep. Production is durable, because IT can't depend on your laptop being awake.
+**Skill (plain English) — `skills/login-reset.md`**
+```
+# Login & password reset
+
+When someone says they can't log in:
+1. Confirm their email is on file
+2. Send the reset link from company.okta.com/reset
+3. If no email arrives in 5 min, escalate
+```
+
+**Script (for code) — `scripts/offboard.ts`**
+```
+async function offboard(email) {
+  await okta.deactivate(email)
+  await jamf.unenroll(email)
+  await drive.transferOwnership(email)
+  await slack.archiveDMs(email)
+}
+```
+
+Claude builds them. Then runs them — when you ask, or automatically when a familiar request comes in.
 
 ---
 
-## §07 — Ownership
+## §05 — Local, then cloud
 
-### Yours, in plain files.
+### Try it on your Mac. Deploy when you trust it.
 
-Every workflow Claude learned, every KB article it wrote, every connector it shaped — readable, diffable, in your repo. Hand it to a terminal-native engineer when you hire one and they're productive immediately. If you ever leave OpenIT, you walk out with everything.
+Run OpenIT on your laptop. Real Claude Code, real integrations, real tickets — no paid sandbox.
+
+When it earns your trust, sync to Pinkfish. The same project runs in cloud, 24/7. Slack and Teams stay live, agents act while you sleep, public links stay reachable.
 
 ---
 
-## §08 — Status
+## §06 — Status
 
 ### Public beta.
 
