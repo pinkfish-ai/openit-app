@@ -70,10 +70,27 @@ async function uploadFilesToSubdir(
   } catch {
     /* fresh dir — nothing to clobber */
   }
-  const intended = files.map((f) => ({
-    file: f,
-    filename: sanitizeUploadFilename(f.name || "upload"),
-  }));
+  // Sanitize once per file. A second pass de-duplicates within the
+  // batch itself: if two dropped files sanitize to the same name
+  // (e.g. `file:1.txt` and `file/1.txt` both become `file-1.txt`,
+  // or two files with identical names from different source dirs),
+  // we suffix collisions with `-2`, `-3`, … so neither write
+  // silently overwrites the other.
+  const usedInBatch = new Set<string>();
+  const intended = files.map((f) => {
+    const base = sanitizeUploadFilename(f.name || "upload");
+    let filename = base;
+    if (usedInBatch.has(filename)) {
+      const dot = base.lastIndexOf(".");
+      const stem = dot > 0 ? base.slice(0, dot) : base;
+      const ext = dot > 0 ? base.slice(dot) : "";
+      let i = 2;
+      while (usedInBatch.has(`${stem}-${i}${ext}`)) i += 1;
+      filename = `${stem}-${i}${ext}`;
+    }
+    usedInBatch.add(filename);
+    return { file: f, filename };
+  });
   const collisions = intended.filter((i) => existing.has(i.filename));
   if (collisions.length > 0) {
     const list =
@@ -1788,12 +1805,16 @@ export function Viewer({
             if (acceptsDrop) setFolderDragOver(false);
           }}
           onDrop={async (e) => {
+            // Reset the drag highlight first, before any early
+            // returns. Otherwise an empty-files drop (or a drop on
+            // a non-acceptsDrop folder) leaves the dashed outline
+            // stuck until the user navigates away.
+            setFolderDragOver(false);
             if (!acceptsDrop || !repo) return;
             const files = Array.from(e.dataTransfer.files ?? []);
             if (files.length === 0) return;
             e.preventDefault();
             e.stopPropagation();
-            setFolderDragOver(false);
             await uploadFilesToSubdir(repo, subdir, files, setFolderUploadError, showToast);
           }}
         >
