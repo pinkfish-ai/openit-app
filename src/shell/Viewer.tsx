@@ -928,14 +928,20 @@ export function Viewer({
 
   // Media file viewers (image, pdf, spreadsheet, office) want the pane
   // body to be full-bleed — they manage their own internal padding /
-  // toolbars / canvas sizing. Everything else uses the canonical pane
-  // padding so content's left edge sits in the same place across pages.
+  // toolbars / canvas sizing. The conversation thread also goes flush
+  // so the pane has a single scroll container (the messages list) with
+  // the reply composer pinned as a non-scrolling flex sibling at the
+  // bottom — without this, PaneBody became a second scroll container
+  // and the composer drifted upward past later turns. Everything else
+  // uses the canonical pane padding so content's left edge sits in the
+  // same place across pages.
   const flushBody =
-    source.kind === "file" &&
-    (isImage(source.path) ||
-      isPdf(source.path) ||
-      isSpreadsheet(source.path) ||
-      isOfficeDoc(source.path));
+    source.kind === "conversation-thread" ||
+    (source.kind === "file" &&
+      (isImage(source.path) ||
+        isPdf(source.path) ||
+        isSpreadsheet(source.path) ||
+        isOfficeDoc(source.path)));
 
   // --- Render body ---
   const renderBody = () => {
@@ -2421,7 +2427,7 @@ export function Viewer({
         {headerKind && <EntityBadge kind={headerKind} showLabel={false} />}
         <span className="viewer-title">{title}</span>
         {source && source.kind === "conversation-thread" && onOpenPath && (
-          <TabStrip>
+          <TabStrip variant="segmented">
             <Tab active>Conversation</Tab>
             <Tab
               onClick={() => {

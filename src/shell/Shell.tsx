@@ -41,8 +41,7 @@ import { PaneDragHandle } from "./PaneDragHandle";
 import { Workbench } from "./Workbench";
 import { ConflictBanner } from "./ConflictBanner";
 import { FileExplorer } from "./FileExplorer";
-// EscalatedTicketBanner is gone — the escalation indicator now lives
-// on the left pane's TODAY card (see Workbench.tsx).
+import { EscalatedTicketBanner } from "./EscalatedTicketBanner";
 import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
@@ -834,8 +833,14 @@ export function Shell({
           }
         }}
       />
-      {/* The escalated-tickets indicator now lives on the TODAY card
-          in the left pane (Workbench), not as a separate banner. */}
+      <EscalatedTicketBanner
+        repo={repo}
+        fsTick={fsTick}
+        onOpenPath={async (path) => {
+          const resolved = await resolvePathToSource(path, repo);
+          setSource(resolved);
+        }}
+      />
       {(() => {
         const paneClass = (id: PaneId) =>
           `${id === "left" ? "left-pane" : id === "center" ? "center-pane" : "right-pane"} ${
