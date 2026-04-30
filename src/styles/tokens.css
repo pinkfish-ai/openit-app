@@ -123,8 +123,8 @@
   --r-md: 10px;
   --r-lg: 14px;
   --r-pill: 999px;
-  /* Pane card radius — 16px reads as clearly rounded against cream
-     gutter without the "pillow" feel of 24px+. */
+  /* TWEAK PANE RADIUS — how rounded the pane corners are.
+     Try: 12 (subtle) · 14 · 16 (current) · 20 · 24 (pillow) */
   --r-pane: 16px;
 
   /* ─── SIZES ─────────────────────────────────────────────── */
@@ -140,10 +140,11 @@
        - sides:  14px — comfortable breathing on the left/right
        - bottom: 18px — extra room for each pane's drop shadow to
                        fall and the rounded bottom corner to read */
-  --layout-gutter-top: 4px;
-  --layout-gutter: 14px;
-  --layout-gutter-bottom: 10px;
-  --layout-pane-gap: 10px;
+  /* TWEAK GUTTERS — cream space around the panes. */
+  --layout-gutter-top: 4px;       /* gap between pills row & panes */
+  --layout-gutter: 14px;          /* gap on left/right edges */
+  --layout-gutter-bottom: 10px;   /* gap below panes */
+  --layout-pane-gap: 10px;        /* gap between adjacent panes */
 
   /* Traffic-light clearance (macOS) */
   --layout-traffic-clear: 64px;
@@ -155,9 +156,11 @@
   --shadow-lg:
     0 1px 0 rgba(60, 40, 20, 0.06), 0 12px 32px -12px rgba(60, 40, 20, 0.24);
   --shadow-pop: 0 16px 48px -14px rgba(40, 28, 14, 0.4);
-  /* Pane card shadow — separate token because dark and light panes
-     need slightly different drop-shadow geometry to make their
-     rounded bottom corners visibly pop against the cream canvas. */
+  /* TWEAK PANE SHADOW — drop shadow geometry. Each line of the
+     stack is "x y blur spread color".
+       • Bigger y-offset (e.g. 18-20px) = more lifted feel.
+       • Smaller spread |negative| (e.g. -10px) = larger softness.
+       • Higher alpha (e.g. .35-.4) = darker drop. */
   --shadow-pane:
     0 1px 0 rgba(60, 40, 20, 0.05), 0 2px 0 rgba(60, 40, 20, 0.025),
     0 14px 28px -14px rgba(60, 40, 20, 0.28);

@@ -238,23 +238,47 @@ body::before {
      visual purposes but enforces clipping at a higher level. */
   clip-path: inset(0 round var(--r-pane));
 }
+/* ════════════════════════════════════════════════════════════
+   ▼▼▼ PANE BORDER + SHADOW — TWEAK ME ▼▼▼            (line 241)
+   Search for "TWEAK PANE BORDER" to find this block fast.
+   Light panes (.left-pane + .viewer) and the dark .right-pane
+   each have their own border + shadow rule. Change values here.
+   ════════════════════════════════════════════════════════════ */
+
+/* TWEAK PANE BORDER — light panes (left + viewer). */
 .left-pane,
 .viewer {
+  /* DROP SHADOW — token defined in src/styles/tokens.css line 161
+     as --shadow-pane. Bigger y-offset = more lifted feel. */
   box-shadow: var(--shadow-pane);
-  /* Bumped from 1px / --color-border-strong (#cfc3a3) to 1.5px /
-     --color-text-faint (#978d76) — the previous combo still read
-     as cream-on-cream at the bottom rounded corners against the
-     gutter; this thickness + tone draws an unambiguous line all
-     the way around the curve. */
+
+  /* BORDER — change THIS line to tune visibility of the rounded
+     edge against the cream gutter. Two knobs:
+       • Width:   1px       — subtle
+                  1.5px     — current default
+                  2px       — heavy (bottom curve becomes very
+                                     unmistakable)
+       • Color:   var(--color-border)        #e7decb  subtlest
+                  var(--color-border-strong) #cfc3a3  beige
+                  var(--color-text-faint)    #978d76  ← current
+                  var(--color-text-muted)    #67604f  deep brown
+       (Or any custom hex like #8a7a5e if you want a specific tone.) */
   border: 1.5px solid var(--color-text-faint);
 }
-/* Right pane is the dark Claude theatre — needs its own deeper
-   shadow to make the rounded bottom corner visibly pop against
-   the cream canvas. */
+
+/* TWEAK PANE BORDER — dark Claude theatre (right pane).
+   Darker drop shadow to make the rounded bottom corner pop
+   against cream. Keep the dark border-dark token; using a
+   light-pane color here would visually conflict with the dark
+   surface. */
 .right-pane {
   box-shadow: var(--shadow-pane-dark);
   border: 1px solid var(--color-border-dark);
 }
+
+/* ════════════════════════════════════════════════════════════
+   ▲▲▲ END PANE BORDER + SHADOW ▲▲▲
+   ════════════════════════════════════════════════════════════ */
 
 /* react-resizable-panels wraps each <Panel> in a div with
    data-panel attributes and applies overflow:hidden by default to
