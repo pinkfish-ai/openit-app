@@ -120,6 +120,11 @@
   --r-md:   10px;
   --r-lg:   14px;
   --r-pill: 999px;
+  /* Pane card radius — bigger than --r-lg so the rounded curves
+     read unambiguously against the cream gutter. The previous 14px
+     was a reasonable arc but visually marginal at typical pane
+     heights. */
+  --r-pane: 18px;
 
   /* ─── SIZES ─────────────────────────────────────────────── */
   --h-control-sm: 24px;
@@ -134,9 +139,9 @@
        - sides:  14px — comfortable breathing on the left/right
        - bottom: 18px — extra room for each pane's drop shadow to
                        fall and the rounded bottom corner to read */
-  --layout-gutter-top: 6px;
+  --layout-gutter-top: 4px;
   --layout-gutter: 14px;
-  --layout-gutter-bottom: 18px;
+  --layout-gutter-bottom: 24px;
   --layout-pane-gap: 10px;
 
   /* Traffic-light clearance (macOS) */

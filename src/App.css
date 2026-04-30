@@ -221,19 +221,22 @@ body::before {
      anything that would escape the window. */
 }
 
-/* Float each pane as a card on the cream canvas. v5: bumped to
-   --r-lg (14px) — the previous 10px curve was too small to read
-   visually. 14px is unmistakably rounded against the cream. */
+/* Float each pane as a card on the cream canvas. v5: uses
+   --r-pane (18px) — large enough that the rounded corners are
+   unambiguously visible against the cream, including the bottom. */
 .left-pane,
 .right-pane,
 .viewer,
 .sc-panel,
 .explorer {
-  border-radius: var(--r-lg);
+  border-radius: var(--r-pane);
   overflow: hidden;
-  /* Belt-and-suspenders: ensure no inherited clip-path masks the
-     rounded corners. */
-  clip-path: none;
+  /* Defensive clip-path so rounded corners are guaranteed by mask
+     even if some internal element somehow paints past the
+     border-radius (xterm canvas, react-resizable-panels wrapper,
+     etc). inset(0 round X) is identical to border-radius X for
+     visual purposes but enforces clipping at a higher level. */
+  clip-path: inset(0 round var(--r-pane));
 }
 .left-pane,
 .viewer {
