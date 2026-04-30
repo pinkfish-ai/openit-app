@@ -241,11 +241,12 @@ body::before {
 .left-pane,
 .viewer {
   box-shadow: var(--shadow-pane);
-  /* --color-border-strong gives the rounded edge enough contrast
-     against both the pane fill (cream-tinted on the left, white in
-     the viewer) AND the cream gutter outside. With --color-border
-     the rounded corners read as "chipped" against cream-on-cream. */
-  border: 1px solid var(--color-border-strong);
+  /* Bumped from 1px / --color-border-strong (#cfc3a3) to 1.5px /
+     --color-text-faint (#978d76) — the previous combo still read
+     as cream-on-cream at the bottom rounded corners against the
+     gutter; this thickness + tone draws an unambiguous line all
+     the way around the curve. */
+  border: 1.5px solid var(--color-text-faint);
 }
 /* Right pane is the dark Claude theatre — needs its own deeper
    shadow to make the rounded bottom corner visibly pop against
