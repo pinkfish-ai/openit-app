@@ -29,6 +29,35 @@ const mockFsRead = vi.mocked(fsRead);
 const mockFsDelete = vi.mocked(fsDelete);
 const mockOnFsChanged = vi.mocked(onFsChanged);
 
+describe("isNotFoundError", () => {
+  it("returns true for Unix ENOENT messages", () => {
+    expect(
+      __test.isNotFoundError(
+        new Error("No such file or directory (os error 2)"),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true for Windows not-found messages", () => {
+    expect(
+      __test.isNotFoundError(
+        new Error("The system cannot find the file specified."),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false for permission / IO errors", () => {
+    expect(
+      __test.isNotFoundError(new Error("Permission denied (os error 13)")),
+    ).toBe(false);
+    expect(__test.isNotFoundError(new Error("Resource busy"))).toBe(false);
+  });
+
+  it("returns false for arbitrary string errors that don't match", () => {
+    expect(__test.isNotFoundError("network unreachable")).toBe(false);
+  });
+});
+
 describe("classifyPath — the loop-prevention gate", () => {
   const repo = "/repo";
 
@@ -147,16 +176,35 @@ describe("startSkillMirrorDriver — end-to-end behavior", () => {
     );
   });
 
-  it("falls back to delete when the source vanished mid-debounce", async () => {
+  it("falls back to delete when the source vanished mid-debounce (NotFound)", async () => {
     // Source file no longer exists by the time the mirror reads it
-    // (e.g. user deleted it before the debounce flushed).
-    mockFsRead.mockRejectedValue(new Error("not found"));
+    // (e.g. user deleted it before the debounce flushed). The Rust
+    // `fs_read` wraps `std::io::Error::to_string()` which says "No such
+    // file or directory (os error 2)" on Unix.
+    mockFsRead.mockRejectedValue(
+      new Error("No such file or directory (os error 2)"),
+    );
     await startSkillMirrorDriver("/repo");
     fsHandler!(["/repo/filestores/skills/gone.md"]);
     await vi.advanceTimersByTimeAsync(600);
 
     expect(mockFsDelete).toHaveBeenCalledWith("/repo/.claude/skills/gone");
     // No write should have landed.
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("does NOT delete the mirror on a transient (non-NotFound) read error", async () => {
+    // A permission flip, file lock, or EIO should NOT propagate as a
+    // delete — the mirror is still valid, we just couldn't refresh it
+    // this tick. Next successful read picks up the change.
+    mockFsRead.mockRejectedValue(
+      new Error("Permission denied (os error 13)"),
+    );
+    await startSkillMirrorDriver("/repo");
+    fsHandler!(["/repo/filestores/skills/foo.md"]);
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(mockFsDelete).not.toHaveBeenCalled();
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 

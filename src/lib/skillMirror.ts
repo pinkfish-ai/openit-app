@@ -76,19 +76,44 @@ function actionKey(a: Action): string {
   return `script:${a.filename}`;
 }
 
+/// Did `fsRead` fail because the file is genuinely gone, or because of
+/// a transient I/O / permission / lock issue? Only the former should
+/// propagate to a mirror delete — destroying the mirror on a transient
+/// read failure would lose state for no reason. (PIN-5829 BugBot R3.)
+///
+/// `fs_read` on the Rust side surfaces `std::io::Error::to_string()`,
+/// which on macOS / Linux includes `"No such file or directory (os
+/// error 2)"`. Windows uses `"The system cannot find the file
+/// specified."` plus the same `os error 2`. Match either form.
+function isNotFoundError(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return (
+    msg.includes("no such file") ||
+    msg.includes("cannot find the file") ||
+    msg.includes("os error 2")
+  );
+}
+
 /// Read the source filestore copy and write the `.claude/` mirror.
 /// File-not-found on the source means the user deleted it — flip to the
-/// matching delete action so the mirror is removed too.
+/// matching delete action. Other read failures (lock contention,
+/// permission flip, EIO) skip the mirror update; the next successful
+/// read picks them back up.
 async function applyAction(repo: string, action: Action): Promise<void> {
   if (action.kind === "skill-write") {
     const sourcePath = `${repo}/${SKILLS_PREFIX}${action.slug}.md`;
     let content: string;
     try {
       content = await fsRead(sourcePath);
-    } catch {
-      // Source vanished between fs-watcher fire and our read → treat
-      // as delete. Falls into skill-delete branch.
-      await applyAction(repo, { kind: "skill-delete", slug: action.slug });
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        await applyAction(repo, { kind: "skill-delete", slug: action.slug });
+      } else {
+        console.warn(
+          `[skillMirror] transient read failure for skill ${action.slug}; skipping mirror update:`,
+          err,
+        );
+      }
       return;
     }
     try {
@@ -114,11 +139,18 @@ async function applyAction(repo: string, action: Action): Promise<void> {
     let content: string;
     try {
       content = await fsRead(sourcePath);
-    } catch {
-      await applyAction(repo, {
-        kind: "script-delete",
-        filename: action.filename,
-      });
+    } catch (err) {
+      if (isNotFoundError(err)) {
+        await applyAction(repo, {
+          kind: "script-delete",
+          filename: action.filename,
+        });
+      } else {
+        console.warn(
+          `[skillMirror] transient read failure for script ${action.filename}; skipping mirror update:`,
+          err,
+        );
+      }
       return;
     }
     try {
@@ -200,4 +232,4 @@ export async function stopSkillMirrorDriver(): Promise<void> {
 }
 
 // Exported for tests.
-export const __test = { classifyPath, actionKey };
+export const __test = { classifyPath, actionKey, isNotFoundError };
