@@ -1,0 +1,40 @@
+/* Pane + SectionBar — the canonical pane card chrome and its
+   44px-locked top rail. Every pane in the v5 shell uses these. */
+
+.pane {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pane);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.dark {
+  background: var(--color-surface-dark);
+  border-color: var(--color-border-dark);
+  box-shadow: var(--shadow-pane-dark);
+}
+
+.sectionBar {
+  flex: 0 0 auto;
+  height: var(--h-rail);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--color-border-faint);
+  background: var(--color-surface);
+}
+.dark .sectionBar {
+  background: var(--color-surface-dark-2);
+  border-bottom-color: var(--color-border-dark);
+}
+.spacer { flex: 1; }
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}

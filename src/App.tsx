@@ -27,6 +27,8 @@ import {
 } from "./lib/skillState";
 import { onFsChanged } from "./lib/fsWatcher";
 import { useToast } from "./Toast";
+import { Button, TitleRail } from "./ui";
+import { StatusChips } from "./shell/StatusBar";
 import { clearCreds, loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { useBrowserConnect } from "./lib/useBrowserConnect";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
@@ -844,80 +846,97 @@ function App() {
     );
   }
 
+  // Cloud-connect button label/variant logic — extracted from the
+  // legacy header so the merged TitleRail can render it cleanly.
+  const cloudLabel = connected
+    ? `Cloud · ${orgName ?? "connected"}`
+    : browserConnect.state.kind === "waiting"
+      ? "Authorize in browser…"
+      : browserConnect.state.kind === "validating"
+        ? "Validating…"
+        : "Connect to Cloud";
+  const cloudDisabled =
+    browserConnect.state.kind !== "idle" &&
+    browserConnect.state.kind !== "error";
+
   return (
     <>
     <main className="app">
-      <header className="app-header">
-        <div className="wordmark">
-          <span className="app-title">OpenIT</span>
-          <span className="app-title-sep" aria-hidden>·</span>
-          <span className="app-tagline">get IT done</span>
-        </div>
-        <div className="app-header-actions">
-          <button
-            className="header-cmdk-hint"
-            onClick={() => setPaletteOpen(true)}
-            title="Command palette"
-          >
-            <kbd>⌘</kbd>
-            <kbd>K</kbd>
-            <span>jump anywhere</span>
-          </button>
-          <button
-            className="icon-btn icon-btn-ghost"
-            onClick={() => window.dispatchEvent(new CustomEvent("openit:open-welcome"))}
-            title="Open the welcome / getting-started doc"
-          >
-            Getting Started
-          </button>
-          <button
-            className={`icon-btn ${connected ? "key-set" : "icon-btn-primary"}`}
-            onClick={() => {
-              // Connected admins click the pill to update creds —
-              // jump straight to onboarding. Local-only admins go
-              // through the CTA pitch first (their click on its
-              // primary button triggers the browser handoff).
-              if (connected) setBypassOnboarding(false);
-              else showCloudCtaRef.current?.();
-            }}
-            disabled={browserConnect.state.kind !== "idle" &&
-              browserConnect.state.kind !== "error"}
-            title={connected ? "Connected — click to update credentials" : "Connect to Cloud"}
-          >
-            {connected
-              ? `Cloud · ${orgName ?? "connected"}`
-              : browserConnect.state.kind === "waiting"
-                ? "Authorize in browser…"
-                : browserConnect.state.kind === "validating"
-                  ? "Validating…"
-                  : "Connect to Cloud"}
-          </button>
-        </div>
-      </header>
-      <section className="app-pane">
-        <Shell
-          key={repo ?? "none"}
-          repo={repo}
-          syncLines={syncLines}
-          onSyncLine={onSyncLine}
-          bubbles={bubbles}
-          cloudConnected={connected}
-          intakeUrl={intakeServerUrl}
-          tunnelUrl={tunnelPublicUrl}
-          dock={dock}
-          slackOrgId={slackOrgId}
-          stagedSlackBotToken={stagedSlackBotToken}
-          onStagedSlackBotTokenChange={setStagedSlackBotToken}
-          slackConfig={slackConfig}
-          slackStatus={slackStatus}
-          orgName={orgName}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onConnectSlack={triggerSlackFlow}
-          registerManualPull={(fn) => { manualPullRef.current = fn; }}
-          registerSwitchToSync={(fn) => { switchToSyncRef.current = fn; }}
-          registerShowCloudCta={(fn) => { showCloudCtaRef.current = fn; }}
-        />
-      </section>
+      <TitleRail
+        left={
+          <StatusChips
+            repo={repo}
+            cloudConnected={connected}
+            orgName={orgName}
+            intakeUrl={intakeServerUrl}
+            tunnelUrl={tunnelPublicUrl}
+            slackConfig={slackConfig}
+            slackStatus={slackStatus}
+            onOpenPalette={() => setPaletteOpen(true)}
+            onConnectSlack={triggerSlackFlow}
+          />
+        }
+        right={
+          <>
+            <Button
+              variant="cmdk"
+              size="md"
+              onClick={() => setPaletteOpen(true)}
+              title="Command palette"
+            >
+              <kbd>⌘</kbd>
+              <kbd>K</kbd>
+              <span>jump anywhere</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="md"
+              onClick={() =>
+                window.dispatchEvent(new CustomEvent("openit:open-welcome"))
+              }
+              title="Open the welcome / getting-started doc"
+            >
+              Getting Started
+            </Button>
+            <Button
+              variant={connected ? "secondary" : "primary"}
+              size="md"
+              disabled={cloudDisabled}
+              title={
+                connected
+                  ? "Connected — click to update credentials"
+                  : "Connect to Cloud"
+              }
+              onClick={() => {
+                // Connected admins click the pill to update creds —
+                // jump straight to onboarding. Local-only admins go
+                // through the CTA pitch first (their click on its
+                // primary button triggers the browser handoff).
+                if (connected) setBypassOnboarding(false);
+                else showCloudCtaRef.current?.();
+              }}
+            >
+              {cloudLabel}
+            </Button>
+          </>
+        }
+      />
+      <Shell
+        key={repo ?? "none"}
+        repo={repo}
+        syncLines={syncLines}
+        onSyncLine={onSyncLine}
+        bubbles={bubbles}
+        cloudConnected={connected}
+        intakeUrl={intakeServerUrl}
+        dock={dock}
+        slackOrgId={slackOrgId}
+        stagedSlackBotToken={stagedSlackBotToken}
+        onStagedSlackBotTokenChange={setStagedSlackBotToken}
+        registerManualPull={(fn) => { manualPullRef.current = fn; }}
+        registerSwitchToSync={(fn) => { switchToSyncRef.current = fn; }}
+        registerShowCloudCta={(fn) => { showCloudCtaRef.current = fn; }}
+      />
     </main>
     <CommandPalette
       open={paletteOpen}

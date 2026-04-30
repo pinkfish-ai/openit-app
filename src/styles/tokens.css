@@ -1,0 +1,184 @@
+/* ════════════════════════════════════════════════════════════
+   OPENIT DESIGN SYSTEM v5 — TOKENS
+   ════════════════════════════════════════════════════════════
+   Spec: auto-dev/design-explorations/2026-04-29-shell-chrome/v5/index.html
+   Plan: auto-dev/plans/2026-04-29-design-system-v5-foundation.md
+
+   Imported once at the top of src/App.css. Every primitive in
+   src/ui/ reads from here. No hardcoded hex, no arbitrary px,
+   no off-scale weights anywhere downstream.
+
+   Note: legacy --bg / --surface / --accent tokens defined in
+   App.css continue to work; the v5 system uses --color-*,
+   --space-*, --r-*, --fs-* prefixes so the two coexist while
+   we migrate. Phase 6 deletes the legacy ones.
+   ──────────────────────────────────────────────────────────── */
+
+:root {
+  /* ─── COLOR ──────────────────────────────────────────────── */
+  /* Surfaces (warm cream, layered) */
+  --color-bg: #fbf7ec;
+  --color-bg-canvas: #f7f1e1;
+  --color-surface: #ffffff;
+  --color-surface-soft: #f5edd8;
+  --color-surface-hover: #efe6cf;
+  --color-surface-active: #e8dfc4;
+  --color-surface-dark: #1a1410;
+  --color-surface-dark-2: #15110d;
+  --color-surface-dark-3: #2a241c;
+
+  /* Borders — one hairline weight per role */
+  --color-border: #e7decb;
+  --color-border-strong: #cfc3a3;
+  --color-border-faint: #f0e7d3;
+  --color-border-dark: #3a3225;
+
+  /* Ink (warm) */
+  --color-text: #25201a;
+  --color-text-muted: #67604f;
+  --color-text-faint: #978d76;
+  --color-text-on-accent: #ffffff;
+  --color-text-on-dark: #f5edd8;
+  --color-text-on-dark-mute: #b3a47e;
+
+  /* Brand accent — clay/terracotta */
+  --color-accent: #c75a2c;
+  --color-accent-hover: #ad4a22;
+  --color-accent-active: #8e3a18;
+  --color-accent-soft: #f5d9c2;
+  --color-accent-faint: #fbeede;
+  --color-on-accent: #ffffff;
+
+  /* Status — sage (success), ochre (warn), clay-red (critical) */
+  --color-success: #6f8f6a;
+  --color-success-soft: #dee9d6;
+  --color-success-deep: #2c4d27;
+
+  --color-warn: #c79a2e;
+  --color-warn-soft: #f5e7c2;
+  --color-warn-deep: #5c3d00;
+
+  --color-critical: #b34a3a;
+  --color-critical-soft: #f3d8d2;
+  --color-critical-deep: #6e1a0e;
+
+  /* Link */
+  --color-link: #4a5cb8;
+
+  /* Hover/active overlays — single token, used everywhere */
+  --color-hover-overlay: rgba(60, 40, 20, 0.05);
+  --color-active-overlay: rgba(60, 40, 20, 0.08);
+
+  /* Focus ring */
+  --color-focus-ring: rgba(199, 90, 44, 0.45);
+
+  /* ─── TYPOGRAPHY ─────────────────────────────────────────── */
+  --font-display:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-serif:
+    'Source Serif 4 Variable', 'Source Serif 4', Charter, Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'Berkeley Mono', 'SF Mono', Menlo, monospace;
+
+  /* Type scale (7 sizes) */
+  --fs-caption: 11px;
+  --fs-meta: 12px;
+  --fs-body: 13px;
+  --fs-lead: 14px;
+  --fs-h3: 16px;
+  --fs-h2: 22px;
+  --fs-h1: 28px;
+
+  /* Line heights */
+  --lh-tight: 1.15;
+  --lh-snug: 1.35;
+  --lh-normal: 1.5;
+  --lh-relaxed: 1.65;
+
+  /* Weights — 3 only. Never use `normal` or `bold` keywords. */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+
+  /* Letter spacing */
+  --tracking-tight: -0.02em;
+  --tracking-snug: -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+  --tracking-caps: 0.1em;
+
+  /* ─── SPACING (8-step, 4px base) ────────────────────────── */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+
+  /* ─── RADIUS (4 values) ─────────────────────────────────── */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+  /* TWEAK PANE RADIUS — how rounded the pane corners are.
+     Try: 12 (subtle) · 14 · 16 (current) · 20 · 24 (pillow) */
+  --r-pane: 12px;
+
+  /* ─── SIZES ─────────────────────────────────────────────── */
+  --h-control-sm: 24px;
+  --h-control: 28px;
+  --h-control-lg: 36px;
+  --h-rail: 44px; /* every section bar height */
+
+  /* Layout — cream gutters around the panes row. Asymmetric on
+     purpose:
+       - top:    6px  — tight, the title rail's bottom edge feels
+                       adjacent to the panes (not floating above)
+       - sides:  14px — comfortable breathing on the left/right
+       - bottom: 18px — extra room for each pane's drop shadow to
+                       fall and the rounded bottom corner to read */
+  /* TWEAK GUTTERS — cream space around the panes. */
+  --layout-gutter-top: 4px; /* gap between pills row & panes */
+  --layout-gutter: 14px; /* gap on left/right edges */
+  --layout-gutter-bottom: 13px; /* gap below panes */
+  --layout-pane-gap: 10px; /* gap between adjacent panes */
+
+  /* Traffic-light clearance (macOS) */
+  --layout-traffic-clear: 64px;
+
+  /* ─── SHADOWS ───────────────────────────────────────────── */
+  --shadow-sm: 0 1px 0 rgba(60, 40, 20, 0.05);
+  --shadow-md:
+    0 1px 0 rgba(60, 40, 20, 0.05), 0 8px 22px -8px rgba(60, 40, 20, 0.22);
+  --shadow-lg:
+    0 1px 0 rgba(60, 40, 20, 0.06), 0 12px 32px -12px rgba(60, 40, 20, 0.24);
+  --shadow-pop: 0 16px 48px -14px rgba(40, 28, 14, 0.4);
+  /* TWEAK PANE SHADOW — drop shadow geometry. Each line of the
+     stack is "x y blur spread color".
+       • Bigger y-offset (e.g. 18-20px) = more lifted feel.
+       • Smaller spread |negative| (e.g. -10px) = larger softness.
+       • Higher alpha (e.g. .35-.4) = darker drop. */
+  --shadow-pane:
+    0 1px 0 rgba(60, 40, 20, 0.05), 0 2px 0 rgba(60, 40, 20, 0.025),
+    0 14px 28px -14px rgba(60, 40, 20, 0.28);
+  --shadow-pane-dark:
+    0 1px 0 rgba(0, 0, 0, 0.35), 0 2px 0 rgba(0, 0, 0, 0.18),
+    0 14px 28px -14px rgba(0, 0, 0, 0.55);
+
+  /* ─── MOTION ────────────────────────────────────────────── */
+  --t-fast: 120ms;
+  --t-base: 200ms;
+  --t-slow: 320ms;
+  --ease: cubic-bezier(0.32, 0.72, 0.32, 1);
+
+  /* ─── Z ─────────────────────────────────────────────────── */
+  --z-pane: 1;
+  --z-sticky: 10;
+  --z-banner: 100;
+  --z-toast: 200;
+  --z-modal: 300;
+  --z-cmdk: 400;
+}

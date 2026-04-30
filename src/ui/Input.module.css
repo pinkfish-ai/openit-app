@@ -1,0 +1,76 @@
+/* Input + Field — one base for text, search, commit message,
+   row-edit, key-paste. Replaces 6 input recipes catalogued. */
+
+.input {
+  --_h: var(--h-control);
+  display: block;
+  width: 100%;
+  height: var(--_h);
+  padding: 0 var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-sm);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-regular);
+  outline: none;
+  transition:
+    border-color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+.input:hover:not(:disabled) { border-color: var(--color-text-faint); }
+.input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+}
+.input::placeholder { color: var(--color-text-faint); }
+.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--color-bg-canvas);
+}
+.lg { --_h: var(--h-control-lg); padding: 0 var(--space-4); font-size: var(--fs-lead); }
+.sm { --_h: var(--h-control-sm); padding: 0 var(--space-3); font-size: var(--fs-caption); }
+
+textarea.input {
+  --_h: auto;
+  height: auto;
+  min-height: 72px;
+  padding: var(--space-3);
+  line-height: var(--lh-normal);
+  resize: vertical;
+}
+
+.error {
+  border-color: var(--color-critical);
+  box-shadow: 0 0 0 3px rgba(179, 74, 58, 0.2);
+}
+
+/* Field wrapper — label + input + help/error */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.label {
+  font-family: var(--font-body);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-muted);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+.help {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--fs-meta);
+  color: var(--color-text-faint);
+  line-height: var(--lh-snug);
+}
+.errorText {
+  font-family: var(--font-body);
+  font-size: var(--fs-meta);
+  color: var(--color-critical-deep);
+  line-height: var(--lh-snug);
+}

@@ -1,0 +1,28 @@
+/* Badge — count indicator. Tabular mono numerals.
+   Replaces .left-tab-badge, .tree-badge, .sc-badge,
+   .entity-card-badge, .entity-badge. */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+  font-weight: var(--fw-semibold);
+  font-size: 9px;
+  letter-spacing: 0;
+  border-radius: var(--r-pill);
+  line-height: 1;
+}
+.muted    { background: var(--color-text-faint); }
+.success  { background: var(--color-success); }
+.warn     {
+  background: var(--color-warn);
+  color: var(--color-warn-deep);
+}
+.critical { background: var(--color-critical); }
