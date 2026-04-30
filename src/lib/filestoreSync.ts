@@ -14,7 +14,6 @@
 
 import {
   entityListLocal,
-  entityRenameFile,
   fsStoreInit,
   fsStoreUploadFile,
   kbListRemote,
@@ -201,33 +200,27 @@ async function pushAllToFilestoreImpl(args: {
         accessToken: token.accessToken,
         subdir: dir,
       });
-      // The skills API may sanitise filenames on upload (spaces → dashes,
-      // etc.). When that happens, rename the local file to match the
-      // server's canonical name so the next pull doesn't download the
-      // sanitised version as a "new" file alongside the original.
-      let canonical = f.filename;
-      if (
+      // The skills API may rewrite filenames on upload — most commonly
+      // by prefixing a UUID (e.g. `chart.json` → `<uuid>-chart.json`).
+      // Pre-PIN-5827 we renamed the local file to match; that doubled
+      // the change set on every first push and broke any external
+      // reference to the original path. Now we keep the local file at
+      // the user's name and stash the server's canonical name as
+      // `cloud_filename` in the manifest. listRemote uses that bridge
+      // to recognize the round-trip without a duplicate download.
+      const cloudFilename =
         result?.filename &&
         result.filename !== f.filename &&
         !result.filename.includes("/") &&
         !result.filename.includes("\\")
-      ) {
-        try {
-          await entityRenameFile(repo, dir, f.filename, result.filename);
-          onLine?.(`  renamed locally: ${f.filename} → ${result.filename}`);
-          canonical = result.filename;
-        } catch (renameErr) {
-          console.warn(
-            `[filestore] rename ${f.filename}→${result.filename} failed:`,
-            renameErr,
-          );
-        }
-      }
-      persisted.files[canonical] = {
+          ? result.filename
+          : undefined;
+      persisted.files[f.filename] = {
         remote_version: new Date().toISOString(),
         pulled_at_mtime_ms: f.mtime_ms ?? Date.now(),
+        ...(cloudFilename ? { cloud_filename: cloudFilename } : {}),
       };
-      pushedNames.add(canonical);
+      pushedNames.add(cloudFilename ?? f.filename);
       pushed += 1;
     } catch (e) {
       failed += 1;
@@ -237,6 +230,9 @@ async function pushAllToFilestoreImpl(args: {
 
   // Reconcile remote_version after push: refresh from server's authoritative
   // updatedAt so the next pull doesn't false-flag a conflict.
+  // The manifest is keyed by *local* filename now (PIN-5827), so look up
+  // the tracked entry via cloud_filename when the server's name differs
+  // from the local one.
   if (pushedNames.size > 0) {
     try {
       const remote = await kbListRemote({
@@ -244,9 +240,14 @@ async function pushAllToFilestoreImpl(args: {
         skillsBaseUrl: urls.skillsBaseUrl,
         accessToken: token.accessToken,
       });
+      const cloudToLocal = new Map<string, string>();
+      for (const [localName, state] of Object.entries(persisted.files)) {
+        cloudToLocal.set(state.cloud_filename ?? localName, localName);
+      }
       for (const r of remote) {
         if (pushedNames.has(r.filename) && r.updated_at) {
-          const tracked = persisted.files[r.filename];
+          const localName = cloudToLocal.get(r.filename);
+          const tracked = localName ? persisted.files[localName] : undefined;
           if (tracked) tracked.remote_version = r.updated_at;
         }
       }

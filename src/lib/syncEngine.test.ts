@@ -258,6 +258,87 @@ describe("syncEngine.pullEntity", () => {
     expect(paths).toEqual(["knowledge-bases/default/intro.md"]);
   });
 
+  it("preserves cloud_filename across fast-forward pulls (PIN-5827)", async () => {
+    // PIN-5827: filestore push leaves the local file at its original
+    // name and stashes the server's UUID-prefixed name as
+    // `cloud_filename` in the manifest. A fast-forward pull (server
+    // updates content) MUST preserve that mapping; otherwise the next
+    // listRemote sees the cloud row as unmapped and lands a duplicate.
+    const TRACKED_VERSION = "2026-04-30T10:00:00Z";
+    const REMOTE_NEW_VERSION = "2026-04-30T11:00:00Z";
+
+    const h = buildHarness({
+      prefix: "fs",
+      initialManifest: {
+        collection_id: null,
+        collection_name: null,
+        files: {
+          "chart.json": {
+            remote_version: TRACKED_VERSION,
+            pulled_at_mtime_ms: 1000,
+            cloud_filename: "uuid-abc-chart.json",
+          },
+        },
+      },
+      remote: [
+        {
+          manifestKey: "chart.json",
+          workingTreePath: "filestores/library/chart.json",
+          updatedAt: REMOTE_NEW_VERSION,
+        },
+      ],
+      local: [
+        {
+          manifestKey: "chart.json",
+          workingTreePath: "filestores/library/chart.json",
+          mtime_ms: 1000,
+          isShadow: false,
+        },
+      ],
+    });
+
+    await pullEntity(h.adapter, "/repo");
+
+    const entry = h.savedManifest?.files["chart.json"];
+    expect(entry?.remote_version).toBe(REMOTE_NEW_VERSION);
+    expect(entry?.cloud_filename).toBe("uuid-abc-chart.json");
+  });
+
+  it("preserves cloud_filename across re-fetch (tracked but missing from disk)", async () => {
+    // Same invariant as the fast-forward test, but for the re-fetch
+    // path: manifest claims the file is synced but the local copy
+    // disappeared. We re-download → the cloud↔local mapping must
+    // survive the re-fetch.
+    const h = buildHarness({
+      prefix: "fs",
+      initialManifest: {
+        collection_id: null,
+        collection_name: null,
+        files: {
+          "report.pdf": {
+            remote_version: "2026-04-30T10:00:00Z",
+            pulled_at_mtime_ms: 1000,
+            cloud_filename: "uuid-xyz-report.pdf",
+          },
+        },
+      },
+      remote: [
+        {
+          manifestKey: "report.pdf",
+          workingTreePath: "filestores/library/report.pdf",
+          updatedAt: "2026-04-30T10:00:00Z",
+        },
+      ],
+      local: [], // file missing from disk
+    });
+
+    await pullEntity(h.adapter, "/repo");
+
+    expect(h.savedManifest?.files["report.pdf"].cloud_filename).toBe(
+      "uuid-xyz-report.pdf",
+    );
+  });
+
   it("bootstrap-adoption: file on disk, not in manifest → seed manifest, do NOT rewrite or commit", async () => {
     // This case fires after a connect-modal `*ToDisk` step seeds files
     // on disk before the engine has a manifest entry for them. Engine
