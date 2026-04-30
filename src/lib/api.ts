@@ -552,28 +552,6 @@ export async function kbUploadFile(args: {
   });
 }
 
-/// Two-step upload via `/filestorage/items/upload-request` + signed GCS
-/// PUT (PIN-5847). Replaces `kbUploadFile` for sync push: same name in →
-/// same name out → same Firestore row, every time. The multipart `/upload`
-/// path adds a UUID prefix on each call and creates a fresh doc, which is
-/// why repeat-pushes accumulated `<uuid>-<name>` duplicates pre-PIN-5847.
-export async function kbUploadFileSigned(args: {
-  repo: string;
-  filename: string;
-  collectionId: string;
-  skillsBaseUrl: string;
-  accessToken: string;
-  subdir?: string;
-}): Promise<KbUploadResult> {
-  return invoke("kb_upload_via_signed_url", {
-    repo: args.repo,
-    filename: args.filename,
-    collectionId: args.collectionId,
-    skillsBaseUrl: args.skillsBaseUrl,
-    accessToken: args.accessToken,
-    subdir: args.subdir ?? null,
-  });
-}
 
 // ---------------------------------------------------------------------------
 // Filestore local commands (mirrors kb_* but for filestore/ directory)
@@ -671,9 +649,14 @@ export async function fsStoreUploadFile(args: {
   });
 }
 
-/// Filestore counterpart of `kbUploadFileSigned`. See PIN-5847 / the JSDoc
-/// on `kbUploadFileSigned` for the rationale — same contract, different
-/// path resolver on the Rust side.
+/// PIN-5847: filestore push uses the signed-URL flow
+/// (`/filestorage/items/upload-request` + signed GCS PUT). Server
+/// sanitizes filename via `formatFileName` and dedupes the Firestore
+/// row by `filename + collectionId`, so same-name re-pushes overwrite
+/// in place — no UUID prefix, no duplicate accumulation. KB push
+/// stays on multipart `kbUploadFile` because the vector-store
+/// indexing pipeline only runs there; a KB twin will follow once
+/// indexing is decoupled server-side.
 export async function fsStoreUploadFileSigned(args: {
   repo: string;
   filename: string;

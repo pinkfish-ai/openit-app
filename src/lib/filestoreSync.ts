@@ -14,6 +14,7 @@
 
 import {
   entityListLocal,
+  entityRenameFile,
   fsStoreInit,
   fsStoreUploadFileSigned,
   kbListRemote,
@@ -215,7 +216,7 @@ async function pushAllToFilestoreImpl(args: {
   for (const f of toPush) {
     try {
       onLine?.(`▸ uploading ${dir}/${f.filename}`);
-      await fsStoreUploadFileSigned({
+      const result = await fsStoreUploadFileSigned({
         repo,
         filename: f.filename,
         collectionId: collection.id,
@@ -223,11 +224,46 @@ async function pushAllToFilestoreImpl(args: {
         accessToken: token.accessToken,
         subdir: dir,
       });
-      persisted.files[f.filename] = {
+      // Server's `formatFileName` may sanitize the filename (spaces →
+      // hyphens, special chars dropped). Most local filenames pass
+      // through unchanged, but if the server returned something
+      // different, rename local to match — that's the only way to
+      // preserve the post-PIN-5847 invariant that
+      // `manifestKey === local filename === remote filename`. Without
+      // this, `pushedNames.has(r.filename)` in the reconcile below
+      // misses (we'd have added the local name, server reports the
+      // sanitized one), the manifest never gets the server's
+      // `updatedAt`, and the sanitized-name file looks brand-new on
+      // the next pull → duplicate.
+      const cloudName =
+        result.filename &&
+        result.filename !== f.filename &&
+        !result.filename.includes("/") &&
+        !result.filename.includes("\\")
+          ? result.filename
+          : f.filename;
+      if (cloudName !== f.filename) {
+        try {
+          await entityRenameFile(repo, dir, f.filename, cloudName);
+          onLine?.(
+            `  ↳ server sanitized name: ${f.filename} → ${cloudName} (renamed local)`,
+          );
+        } catch (e) {
+          // If the rename fails (e.g. a file with the cloud name
+          // already exists on disk), skip the manifest update for
+          // this row — better to surface as an upload that didn't
+          // commit than to lie about state. Pull will pick the
+          // sanitized name up on the next poll.
+          onLine?.(`✗ ${dir}/${f.filename}: rename to ${cloudName} failed: ${String(e)}`);
+          failed += 1;
+          continue;
+        }
+      }
+      persisted.files[cloudName] = {
         remote_version: new Date().toISOString(),
         pulled_at_mtime_ms: f.mtime_ms ?? Date.now(),
       };
-      pushedNames.add(f.filename);
+      pushedNames.add(cloudName);
       pushed += 1;
     } catch (e) {
       failed += 1;

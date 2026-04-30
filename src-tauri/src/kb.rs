@@ -714,10 +714,10 @@ pub async fn fs_store_upload_file(
 }
 
 /// Two-step upload via the signed-URL endpoint (PIN-5847). Replaces the
-/// multipart `kb_upload_file` / `fs_store_upload_file` path for sync
-/// pushes. The multipart `/upload` endpoint adds a UUID prefix on every
-/// call and creates a fresh Firestore doc each time, so re-pushing the
-/// same file accumulates duplicates server- and client-side. The
+/// multipart `fs_store_upload_file` path for filestore sync pushes. The
+/// multipart `/upload` endpoint adds a UUID prefix on every call and
+/// creates a fresh Firestore doc each time, so re-pushing the same
+/// file accumulates duplicates server- and client-side. The
 /// `/upload-request` endpoint:
 ///   1. POST JSON `{ filename, content_type, size_prelim, metadata }`.
 ///   2. Server sanitizes the filename via `formatFileName` (no UUID),
@@ -732,33 +732,11 @@ pub async fn fs_store_upload_file(
 /// time. The three-rule contract (upload-by-local-name,
 /// download-by-remote-name, overwrite-on-same-name) is enforced
 /// server-side.
-#[tauri::command]
-pub async fn kb_upload_via_signed_url(
-    repo: String,
-    filename: String,
-    collection_id: String,
-    skills_base_url: String,
-    access_token: String,
-    subdir: Option<String>,
-) -> Result<KbUploadResult, String> {
-    let path = kb_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
-    if !path.exists() {
-        return Err(format!("file not found: {}", path.display()));
-    }
-    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-    upload_via_signed_url_inner(
-        filename,
-        collection_id,
-        skills_base_url,
-        access_token,
-        bytes,
-    )
-    .await
-}
-
-/// Filestore equivalent of `kb_upload_via_signed_url`. Same body, only
-/// the path resolver differs (filestore uses `fs_path_with_optional_subdir`
-/// which permits the `attachments/` placeholder dir, etc.).
+///
+/// KB push intentionally stays on the multipart `kb_upload_file` path —
+/// the vector-store indexing pipeline runs only there. A KB twin of
+/// this command is left out until the indexing pipeline is decoupled
+/// (server-side fix tracked separately).
 #[tauri::command]
 pub async fn fs_store_upload_via_signed_url(
     repo: String,
