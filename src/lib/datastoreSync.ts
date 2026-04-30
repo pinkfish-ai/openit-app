@@ -26,9 +26,8 @@ import {
   type DataCollection,
   type MemoryBqueryResponse,
   type MemoryItem,
-  fetchImportStatus,
   getCollection,
-  importCsv,
+  listCollections,
 } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
@@ -283,90 +282,35 @@ export function localSchemaToCloud(local: CollectionSchema | Record<string, unkn
   };
 }
 
-function csvQuote(s: string): string {
-  if (s.includes(",") || s.includes("\n") || s.includes('"')) {
-    return '"' + s.replace(/"/g, '""') + '"';
-  }
-  return s;
-}
+// CSV-builder helpers were used by the import-csv path that we
+// abandoned in favor of minimal POST + per-row /memory/items pushes.
+// `localSchemaToCloud` is kept (still useful as a future PUT-schema
+// translator if cloud accepts our types). Removed: csvQuote,
+// serializeForCsv, buildCsvFromRows, readLocalRows.
 
-function serializeForCsv(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (Array.isArray(v)) return v.join("; ");
-  return JSON.stringify(v);
-}
-
-function buildCsvFromRows(args: {
-  rows: Array<Record<string, unknown>>;
-  cloudFields: Array<Record<string, unknown>>;
-  labelToLocalId: Record<string, string>;
-}): string {
-  const headers = args.cloudFields.map((f) => String(f.label));
-  const lines: string[] = [headers.map(csvQuote).join(",")];
-  for (const row of args.rows) {
-    const cells = headers.map((h) => {
-      const localId = args.labelToLocalId[h];
-      const v = localId != null ? row[localId] : undefined;
-      return csvQuote(serializeForCsv(v));
-    });
-    lines.push(cells.join(","));
-  }
-  return lines.join("\n");
-}
-
-/// Read every row JSON in `<repo>/databases/<folder>/` (skipping
-/// `_schema.json` and dotfiles). Returns parsed objects in
-/// filename-sorted order so CSVs are deterministic.
-async function readLocalRows(
-  repo: string,
-  folderName: string,
-): Promise<Array<{ key: string; row: Record<string, unknown> }>> {
-  const out: Array<{ key: string; row: Record<string, unknown> }> = [];
-  const dir = `${repo}/${DATASTORE_DIR_PREFIX}/${folderName}`;
-  let nodes;
-  try {
-    nodes = await fsList(dir);
-  } catch {
-    return [];
-  }
-  const prefix = `${dir}/`;
-  const files = nodes
-    .filter((n) => n.path.startsWith(prefix))
-    .filter((n) => !n.is_dir)
-    .filter((n) => !n.name.startsWith("."))
-    .filter((n) => n.name !== "_schema.json")
-    .filter((n) => n.name.endsWith(".json"))
-    .filter((n) => !n.path.slice(prefix.length).includes("/"))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  for (const f of files) {
-    try {
-      const raw = await fsRead(f.path);
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      const key = f.name.replace(/\.json$/, "");
-      out.push({ key, row: parsed });
-    } catch (e) {
-      console.warn(`[datastore] readLocalRows: failed to parse ${f.path}:`, e);
-    }
-  }
-  return out;
-}
-
-/// Custom create for structured datastores. Reads the local schema,
-/// converts it to cloud shape, builds a CSV from local rows, and
-/// POSTs to `/datacollection/import-csv`. The endpoint creates the
-/// collection AND populates rows in one shot — bypassing the cloud's
-/// auto-template behavior that fires on a plain `POST /datacollection/`
-/// with `isStructured + schema`.
+/// Custom create for structured-schema datastores.
 ///
-/// Returns `null` (engine falls through to the standard POST) when:
-///   - local `_schema.json` is missing or malformed
-///   - access token isn't available
+/// Why this exists:
+///   - The standard `POST /datacollection/` with `isStructured + schema`
+///     auto-applies a cloud template (10 phantom rows with `f_N` field
+///     IDs) that ignores our schema entirely.
+///   - The earlier import-csv workaround populated rows in one shot but
+///     forced cloud-assigned keys (`csv-import-<ts>-<rand>-N`) — which
+///     broke the local layout that depends on filename = ticketId =
+///     conversation folder name, and forced rows into the cloud's
+///     `f_N` shape that the local Cards UI doesn't understand.
 ///
-/// On success, returns the created collection's id + name. Engine then
-/// runs its post-create refetch and pull as usual; the rows we just
-/// uploaded will look like a normal cloud-side row set.
+/// Current path: minimal POST (no isStructured, no schema). The cloud
+/// collection ends up unstructured but cleanly empty (no template).
+/// The engine's normal push then POSTs each local row via `/memory/items`
+/// with OUR chosen key (= filename), preserving:
+///   - semantic field IDs in row content (`displayName`, `email`, …)
+///   - filename ↔ ticketId ↔ conversation-folder-name linking
+///   - the local `_schema.json` bundled with the plugin
+///
+/// Trade-off: cloud admin UI shows rows as raw JSON instead of a
+/// schema-aware table. Accepted — primary editing surface is OpenIT
+/// itself, not the Pinkfish web admin.
 async function importCsvCustomCreate(args: {
   name: string;
   creds: PinkfishCreds;
@@ -375,14 +319,13 @@ async function importCsvCustomCreate(args: {
   const { name, creds, repo } = args;
   const folderName = displayDatastoreName(name);
   const schemaPath = `${repo}/${DATASTORE_DIR_PREFIX}/${folderName}/_schema.json`;
-  let localSchema: CollectionSchema;
+  let localSchema: CollectionSchema | null = null;
   try {
     localSchema = JSON.parse(await fsRead(schemaPath)) as CollectionSchema;
-  } catch (e) {
-    console.warn(
-      `[datastore] importCsvCustomCreate: ${name} has no local schema, deferring to standard POST:`,
-      e,
-    );
+  } catch {
+    // No local schema — this is an unstructured user folder. Defer to
+    // the standard POST in `buildCreateBody` (which sends
+    // isStructured: false, no template hazard).
     return null;
   }
 
@@ -392,50 +335,67 @@ async function importCsvCustomCreate(args: {
     return null;
   }
   const urls = derivedUrls(creds.tokenUrl);
+  const description =
+    (localSchema as { description?: string }).description ??
+    `OpenIT datastore: ${folderName}`;
 
-  const { cloud, labelToLocalId } = localSchemaToCloud(localSchema);
-  const rows = (await readLocalRows(repo, folderName)).map((r) => r.row);
-  const csv = buildCsvFromRows({
-    rows,
-    cloudFields: cloud.fields,
-    labelToLocalId,
-  });
-
-  const description = (localSchema as { description?: string }).description ?? `OpenIT datastore: ${folderName}`;
-  const importRes = await importCsv(urls.skillsBaseUrl, token.accessToken, {
-    name,
-    csv,
-    schema: cloud,
-    createdByName: "OpenIT",
-  });
-  console.log(
-    `[datastore] import-csv ${name} → collection ${importRes.collectionId}, job ${importRes.jobId}`,
-  );
-
-  // Poll up to ~30s; non-fatal if we time out (rows will keep
-  // importing server-side; engine's normal pull will see them on the
-  // next tick).
-  for (let i = 0; i < 30; i++) {
-    try {
-      const status = await fetchImportStatus(importRes.statusFileUrl);
-      if (status.status === "completed") {
-        console.log(
-          `[datastore] import-csv ${name} done: inserted=${status.inserted ?? 0}, failed=${status.failed ?? 0}`,
-        );
-        break;
-      }
-      if (status.status === "failed") {
-        console.warn(`[datastore] import-csv ${name} failed:`, status);
-        break;
-      }
-    } catch (e) {
-      console.warn(`[datastore] import-csv status poll threw:`, e);
-      break;
+  // Race guard: a concurrent engine start (React strict mode, HMR
+  // reload, or the user re-clicking Connect) can double-fire the
+  // create. Re-list freshly and short-circuit if the cloud already
+  // has the collection — return the existing record so the engine
+  // treats it as "created" without doing anything.
+  try {
+    const fresh = await listCollections(urls.skillsBaseUrl, token.accessToken, "datastore");
+    const existing = fresh.find((c) => c.name === name);
+    if (existing) {
+      console.log(`[datastore] ${name} already exists (id ${existing.id}) — skipping create`);
+      return {
+        id: String(existing.id),
+        name: existing.name,
+        description: existing.description,
+      };
     }
-    await new Promise((r) => setTimeout(r, 1000));
+  } catch (e) {
+    console.warn("[datastore] pre-create list failed (continuing):", e);
   }
 
-  return { id: importRes.collectionId, name, description };
+  // Minimal POST: no `isStructured`, no schema → no auto-template.
+  // Engine's normal pushOne picks up local rows and POSTs them via
+  // /memory/items with our chosen keys (= filenames), preserving the
+  // local layout that the conversations + people-cards UI depends on.
+  console.log(`[datastore] ${name}: minimal POST (no template, rows handled by next push)`);
+  const fetchFn = makeSkillsFetch(token.accessToken);
+  const url = new URL("/datacollection/", urls.skillsBaseUrl);
+  const response = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      type: "datastore",
+      description,
+      createdBy: creds.orgId,
+      createdByName: "OpenIT",
+      triggerUrls: [],
+    }),
+  });
+  if (!response.ok) {
+    // Last-ditch race recovery: a sibling concurrent call may have won.
+    try {
+      const refresh = await listCollections(urls.skillsBaseUrl, token.accessToken, "datastore");
+      const found = refresh.find((c) => c.name === name);
+      if (found) {
+        console.log(`[datastore] ${name} found by sibling concurrent create (id ${found.id})`);
+        return { id: String(found.id), name: found.name, description: found.description };
+      }
+    } catch {
+      /* swallow */
+    }
+    console.warn(`[datastore] minimal POST for ${name} failed: ${response.status}`);
+    return null;
+  }
+  const result = (await response.json()) as { id?: string | number };
+  if (!result?.id) return null;
+  return { id: String(result.id), name, description };
 }
 
 // ---------------------------------------------------------------------------
@@ -458,13 +418,9 @@ const handle = createCollectionEntitySync<DataCollection>({
   onAfterResolve: writeStructuredSchemas,
   discoverLocalCollections: discoverLocalDatastores,
   buildCreateBody: ({ name, creds, discovery }) => {
-    // Both hardcoded defaults and user-created folders flow through
-    // here. The discovery body fragment (built by
-    // `discoverLocalDatastores`) carries `isStructured` + the local
-    // schema when present. Defaults always have a bundled schema on
-    // disk, so they end up structured automatically — no templateId
-    // shortcut needed (and we explicitly avoid it: cloud-side
-    // templates seed sample data we don't want).
+    // Fallback path only — defaults route through `customCreate` below.
+    // For unstructured discoveries (no schema) the standard POST is
+    // safe (no template fires without isStructured + schema).
     const def = DEFAULT_DATASTORES.find((d) => d.name === name);
     const description =
       def?.description ?? `OpenIT datastore: ${displayDatastoreName(name)}`;
@@ -477,6 +433,16 @@ const handle = createCollectionEntitySync<DataCollection>({
       triggerUrls: [],
       ...(discovery?.body ?? { isStructured: false }),
     };
+  },
+  // Structured creates go via `import-csv` (see helper at top of file)
+  // to dodge the cloud's POST /datacollection/ auto-template behavior.
+  // `importCsvCustomCreate` returns null when the local `_schema.json`
+  // is missing, in which case the engine falls through to the
+  // standard `buildCreateBody` POST — appropriate for unstructured
+  // user-created folders that don't carry a schema.
+  customCreate: async ({ name, creds, repo }) => {
+    const result = await importCsvCustomCreate({ name, creds, repo });
+    return result;
   },
 });
 

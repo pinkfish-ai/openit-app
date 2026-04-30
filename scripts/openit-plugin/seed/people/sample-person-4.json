@@ -1,5 +1,6 @@
 {
-  "displayName": "Sample — Diana Sample",
+  "firstName": "Sample — Diana",
+  "lastName": "Sample",
   "email": "diana.sample@example.com",
   "role": "Account Executive",
   "department": "Sales",

@@ -64,16 +64,20 @@ function pathSpecForAutoCommit(repo: string, abs: string): string | null {
   }
   if (rel.startsWith("databases/conversations/")) {
     // Roll up to the per-thread directory so a burst of msg-*.json
-    // writes inside one ticket coalesces into a single commit.
+    // writes inside one ticket coalesces into a single commit. Skip
+    // dotfile-named segments (e.g. `.placeholder` from
+    // `ensureCollectionDir`'s briefly-written-then-deleted marker)
+    // — those produce `git add` "pathspec did not match" warnings
+    // when we race the delete.
     const m = rel.match(/^databases\/conversations\/([^/]+)/);
-    if (m) return `databases/conversations/${m[1]}`;
+    if (m && !m[1].startsWith(".")) return `databases/conversations/${m[1]}`;
   }
   if (rel.startsWith("filestores/attachments/")) {
     // Same per-ticket roll-up: each attachment lives under
-    // `filestores/attachments/<ticketId>/<filename>`. A drag of
-    // multiple files coalesces into a single commit per thread.
+    // `filestores/attachments/<ticketId>/<filename>`. Skip dotfile
+    // segments (see databases/conversations/ above for context).
     const m = rel.match(/^filestores\/attachments\/([^/]+)/);
-    if (m) return `filestores/attachments/${m[1]}`;
+    if (m && !m[1].startsWith(".")) return `filestores/attachments/${m[1]}`;
   }
   return null;
 }

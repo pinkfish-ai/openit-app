@@ -488,21 +488,6 @@ export function FileExplorer({
       if (!n.is_dir && n.name.includes(".server.")) return false;
       if (isOpenitNoise(n)) return false;
       if (!showSystemFiles && isSystemEntry(n)) return false;
-      // Hide `databases/conversations/` and everything under it.
-      // Conversations are a per-ticket implementation detail (the
-      // raw msg-*.json turns); the ticket-list overview is the
-      // user-facing surface, and clicking a ticket card opens the
-      // thread directly. Showing both `tickets` and `conversations`
-      // in the explorer was confusing — same data, two entry points.
-      // The "show system files" toggle re-reveals them for admins
-      // who want to inspect the underlying msg-*.json data.
-      const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : "";
-      if (
-        !showSystemFiles &&
-        (rel === "databases/conversations" || rel.startsWith("databases/conversations/"))
-      ) {
-        return false;
-      }
       for (const c of collapsed) {
         if (n.path !== c && n.path.startsWith(c + "/")) return false;
       }

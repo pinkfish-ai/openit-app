@@ -5,7 +5,63 @@ import type {
   PersonSummary,
   ViewerSource,
 } from "./types";
-import type { DataCollection } from "../lib/skillsApi";
+import type { CollectionSchema, DataCollection } from "../lib/skillsApi";
+
+/// Pull a string value from a row by trying, in order:
+///   1. semantic field IDs (e.g. `displayName`, `email`) — works for
+///      rows we wrote ourselves with bundled schemas
+///   2. label-based schema lookup (e.g. label "Name" → schema field
+///      id `f_1` → `row.f_1`) — works for rows whose IDs were
+///      assigned by the cloud (Pinkfish renames everything to
+///      `f_N` regardless of what we send)
+///
+/// Returns `""` when nothing matches.
+function readField(
+  content: Record<string, unknown>,
+  schema: CollectionSchema | null | undefined,
+  candidates: { ids: string[]; labels: string[] },
+): string {
+  for (const id of candidates.ids) {
+    const v = content[id];
+    if (typeof v === "string" && v) return v;
+  }
+  if (schema?.fields) {
+    const labelsLc = candidates.labels.map((l) => l.toLowerCase());
+    for (const f of schema.fields) {
+      if (labelsLc.includes(String(f.label ?? "").toLowerCase())) {
+        const v = content[f.id];
+        if (typeof v === "string" && v) return v;
+      }
+    }
+  }
+  return "";
+}
+
+/// Same as `readField` but returns an array (used for `channels` etc.).
+function readFieldArray(
+  content: Record<string, unknown>,
+  schema: CollectionSchema | null | undefined,
+  candidates: { ids: string[]; labels: string[] },
+): string[] {
+  const tryValue = (v: unknown): string[] | null => {
+    if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
+    return null;
+  };
+  for (const id of candidates.ids) {
+    const arr = tryValue(content[id]);
+    if (arr) return arr;
+  }
+  if (schema?.fields) {
+    const labelsLc = candidates.labels.map((l) => l.toLowerCase());
+    for (const f of schema.fields) {
+      if (labelsLc.includes(String(f.label ?? "").toLowerCase())) {
+        const arr = tryValue(content[f.id]);
+        if (arr) return arr;
+      }
+    }
+  }
+  return [];
+}
 
 /**
  * Given an absolute file path, determine if it's an entity file
@@ -155,6 +211,18 @@ export async function resolvePathToSource(
     try {
       const ticketsDir = `${repo}/databases/tickets`;
       const conversationsDir = `${repo}/databases/conversations`;
+      // Load `_schema.json` so we can do label-based field lookups.
+      // The cloud rewrites our semantic IDs (subject, asker, status…)
+      // to `f_N` on first push, so reading by hardcoded ID misses
+      // every field once a ticket has round-tripped through cloud.
+      let ticketsSchema: CollectionSchema | undefined;
+      try {
+        ticketsSchema = JSON.parse(
+          await fsRead(`${ticketsDir}/_schema.json`),
+        ) as CollectionSchema;
+      } catch {
+        /* no schema file — fall back to semantic-id lookup only */
+      }
       const ticketNodes = await fsList(ticketsDir);
       const threads: ConversationThreadSummary[] = [];
       const ticketsPrefix = `${ticketsDir}/`;
@@ -177,13 +245,27 @@ export async function resolvePathToSource(
           const raw = await fsRead(node.path);
           const ticket = JSON.parse(raw);
           if (ticket && typeof ticket === "object") {
-            subject = typeof ticket.subject === "string" ? ticket.subject : "";
-            asker = typeof ticket.asker === "string" ? ticket.asker : "";
-            status = typeof ticket.status === "string" ? ticket.status : "";
-            createdAt = typeof ticket.createdAt === "string" ? ticket.createdAt : "";
-            tags = Array.isArray(ticket.tags)
-              ? ticket.tags.filter((v: unknown): v is string => typeof v === "string")
-              : [];
+            const c = ticket as Record<string, unknown>;
+            subject = readField(c, ticketsSchema, {
+              ids: ["subject"],
+              labels: ["Subject"],
+            });
+            asker = readField(c, ticketsSchema, {
+              ids: ["asker"],
+              labels: ["From", "Asker"],
+            });
+            status = readField(c, ticketsSchema, {
+              ids: ["status"],
+              labels: ["Status"],
+            });
+            createdAt = readField(c, ticketsSchema, {
+              ids: ["createdAt"],
+              labels: ["Created"],
+            });
+            tags = readFieldArray(c, ticketsSchema, {
+              ids: ["tags"],
+              labels: ["Tags"],
+            });
           }
         } catch {
           /* unparseable — keep defaults; fall back to ticketId in subject */
@@ -307,9 +389,20 @@ export async function resolvePathToSource(
   // subfolders don't get rendered as tables.
   const threadMatch = rel.match(/^databases\/conversations\/([^/]+)$/);
   if (threadMatch) {
+    const ticketId = threadMatch[1];
+    let nodes;
     try {
-      const ticketId = threadMatch[1];
-      const nodes = await fsList(path);
+      nodes = await fsList(path);
+    } catch {
+      // Conversation folder doesn't exist yet — common for tickets
+      // pulled from cloud (cloud's openit-tickets has rows but
+      // openit-conversations isn't synced as a datastore yet, so the
+      // local subfolder hasn't been populated). Render an empty
+      // thread so the click doesn't surface a fatal-looking
+      // "No such file or directory" error.
+      return { kind: "conversation-thread", ticketId, turns: [] };
+    }
+    try {
       const turns: ConversationTurn[] = [];
       const tPrefix = `${path}/`;
       for (const node of nodes) {
@@ -354,10 +447,10 @@ export async function resolvePathToSource(
   if (dirMatch) {
     try {
       const colName = dirMatch[1];
-      let schema;
+      let schema: CollectionSchema | undefined;
       try {
         const schemaRaw = await fsRead(`${path}/_schema.json`);
-        schema = JSON.parse(schemaRaw);
+        schema = JSON.parse(schemaRaw) as CollectionSchema;
       } catch { /* no schema file */ }
 
       const col: DataCollection = { id: "", name: colName, type: "datastore", numItems: 0, schema };
@@ -390,29 +483,44 @@ export async function resolvePathToSource(
           .map((it): PersonSummary | null => {
             const c = it.content as Record<string, unknown> | null;
             if (!c || typeof c !== "object") return null;
-            const channelsRaw = (c as { channels?: unknown }).channels;
-            const channels = Array.isArray(channelsRaw)
-              ? channelsRaw.filter((v): v is string => typeof v === "string")
-              : [];
+            const sch = (col.schema ?? schema) as CollectionSchema | undefined;
+            // First/last name preferred (current schema); fall back to
+            // the legacy `displayName` for older data on disk.
+            const firstName = readField(c, sch, {
+              ids: ["firstName"],
+              labels: ["First name", "First Name"],
+            });
+            const lastName = readField(c, sch, {
+              ids: ["lastName"],
+              labels: ["Last name", "Last Name"],
+            });
+            const legacyName = readField(c, sch, {
+              ids: ["displayName", "name"],
+              labels: ["Name", "Display name", "Display Name"],
+            });
+            const composedName =
+              firstName && lastName
+                ? `${firstName} ${lastName}`
+                : firstName || lastName || legacyName;
             return {
               key: typeof it.key === "string" ? it.key : it.id,
-              name:
-                typeof (c as { displayName?: unknown }).displayName === "string"
-                  ? ((c as { displayName: string }).displayName)
-                  : "",
-              email:
-                typeof (c as { email?: unknown }).email === "string"
-                  ? ((c as { email: string }).email)
-                  : "",
-              role:
-                typeof (c as { role?: unknown }).role === "string"
-                  ? ((c as { role: string }).role)
-                  : "",
-              department:
-                typeof (c as { department?: unknown }).department === "string"
-                  ? ((c as { department: string }).department)
-                  : "",
-              channels,
+              name: composedName,
+              email: readField(c, sch, {
+                ids: ["email"],
+                labels: ["Email", "E-mail"],
+              }),
+              role: readField(c, sch, {
+                ids: ["role", "title"],
+                labels: ["Role / title", "Role", "Title"],
+              }),
+              department: readField(c, sch, {
+                ids: ["department"],
+                labels: ["Department"],
+              }),
+              channels: readFieldArray(c, sch, {
+                ids: ["channels"],
+                labels: ["Reachable on", "Channels"],
+              }),
             };
           })
           .filter((p): p is PersonSummary => p !== null)

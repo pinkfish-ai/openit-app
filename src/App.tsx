@@ -34,8 +34,8 @@ import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
 import { startAgentSync, stopAgentSync } from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
 import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
-import { applySeedAfterCloudResolve, applySeedLocalOnly } from "./lib/seedDriver";
-import { pushAllEntities } from "./lib/pushAll";
+import { applySeedBeforeCloudConnect, applySeedLocalOnly } from "./lib/seedDriver";
+import { useOnceEffect } from "./lib/useOnceEffect";
 import { invoke } from "@tauri-apps/api/core";
 import { type Bubble as PromptBubble } from "./shell/PromptBubbles";
 import "./App.css";
@@ -351,7 +351,11 @@ function App() {
     return () => window.removeEventListener("openit:show-cloud-cta", onShowCta);
   }, [connected]);
 
-  useEffect(() => {
+  // Bootstrap is intentionally non-idempotent (creates cloud
+  // collections, starts engines, writes seed). StrictMode would run it
+  // twice and the parallel customCreate calls would each create their
+  // own openit-tickets/openit-people. `useOnceEffect` guards that.
+  useOnceEffect(() => {
     Promise.all([stateLoad(), startAuth(), loadCreds()])
       .then(async ([s, _token, creds]) => {
         // Repos created before we moved out of ~/Documents are stale — TCC blocks
@@ -408,12 +412,10 @@ function App() {
             // available (no modal), so it stores `""`. Better to show
             // the orgId in the UI than nothing until the user reconnects
             // through the modal (which provides a real display name).
+            // Seed BEFORE engines so customCreate (datastoreSync's
+            // import-csv path) has rows to upload when it fires.
+            await applySeedBeforeCloudConnect(lastRepo, creds);
             startCloudSyncs(creds, lastRepo, binding.orgName || creds.orgId);
-            applySeedAfterCloudResolve(lastRepo, creds, () => {
-              void pushAllEntities(lastRepo, (line) =>
-                console.log("[seedDriver:push]", line),
-              );
-            });
             finish();
             return;
           }
@@ -463,20 +465,19 @@ function App() {
               pinned_bubbles: s.pinned_bubbles ?? null,
               onboarding_complete: s.onboarding_complete ?? false,
             });
+            // Skills sync writes _schema.json + scaffolding; await
+            // before the seed gate so the schemas are on disk when
+            // import-csv reads them. Then seed-before-connect, then
+            // start engines. The order is load-bearing.
+            try {
+              const manifest = await syncSkillsToDisk(result.path, creds);
+              console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
+              setBubbles(convertBubblesForPrompt(manifest.bubbles));
+            } catch (e) {
+              console.error("skill sync failed:", e);
+            }
+            await applySeedBeforeCloudConnect(result.path, creds);
             startCloudSyncs(creds, result.path, creds.orgId);
-            const seedRepoPath = result.path;
-            const seedCreds = creds;
-            syncSkillsToDisk(result.path, creds)
-              .then((manifest) => {
-                console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
-                setBubbles(convertBubblesForPrompt(manifest.bubbles));
-                applySeedAfterCloudResolve(seedRepoPath, seedCreds, () => {
-                  void pushAllEntities(seedRepoPath, (line) =>
-                    console.log("[seedDriver:push]", line),
-                  );
-                });
-              })
-              .catch((e) => console.error("skill sync failed:", e));
           } catch (e) {
             console.error("[app] startup bootstrap failed:", e);
           }
@@ -557,6 +558,14 @@ function App() {
         finish();
       })
       .catch(() => setLoaded(true));
+  });
+
+  // Token + sync-engine lifecycle. Separate from the once-only
+  // bootstrap so subscriptions get cleanup on unmount without
+  // re-running the non-idempotent startup. (In a Tauri app the
+  // unmount fires only on process exit, but the cleanup discipline
+  // keeps a future hot-reload tidy.)
+  useEffect(() => {
     const unsub = subscribeToken((t) => setConnected(t !== null));
     return () => {
       unsub();
@@ -656,20 +665,18 @@ function App() {
       });
       const fullCreds = await loadCreds();
       if (fullCreds) {
+        // Same load-bearing order as the first-run-with-creds path:
+        // skills first, then seed, then engines. import-csv inside
+        // customCreate reads `_schema.json` + sample rows from disk.
+        try {
+          const manifest = await syncSkillsToDisk(result.path, fullCreds);
+          console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
+          setBubbles(convertBubblesForPrompt(manifest.bubbles));
+        } catch (e) {
+          console.error("skill sync failed:", e);
+        }
+        await applySeedBeforeCloudConnect(result.path, fullCreds);
         startCloudSyncs(fullCreds, result.path, incoming);
-        const seedRepo = result.path;
-        const seedCreds = fullCreds;
-        syncSkillsToDisk(result.path, fullCreds)
-          .then((manifest) => {
-            console.log("[app] skill sync complete, bubbles:", manifest.bubbles);
-            setBubbles(convertBubblesForPrompt(manifest.bubbles));
-            applySeedAfterCloudResolve(seedRepo, seedCreds, () => {
-              void pushAllEntities(seedRepo, (line) =>
-                console.log("[seedDriver:push]", line),
-              );
-            });
-          })
-          .catch((e) => console.error("skill sync failed:", e));
       }
     } catch (e) {
       console.error("[app] project bootstrap failed:", e);
