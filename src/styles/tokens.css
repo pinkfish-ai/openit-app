@@ -146,6 +146,12 @@
   --layout-gutter-bottom: 13px; /* gap below panes */
   --layout-pane-gap: 10px; /* gap between adjacent panes */
 
+  /* Canonical inner padding for every pane body. One pair of values
+     shared across left / center / right panes so content's left edge
+     never visibly slides between tabs/pages. PaneBody owns this. */
+  --pane-body-pad-x: 16px;
+  --pane-body-pad-y: 14px;
+
   /* Traffic-light clearance (macOS) */
   --layout-traffic-clear: 64px;
 
