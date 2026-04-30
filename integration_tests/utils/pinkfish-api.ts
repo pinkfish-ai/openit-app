@@ -238,12 +238,22 @@ export class PinkfishClient {
    *
    * Endpoint: GET /memory/items?collectionId={id}&limit={n}
    */
-  async listDatastoreItems(collectionId: string, limit = 200): Promise<{
-    items: Array<{ id?: string; key?: string; content?: unknown; updatedAt?: string }>;
+  async listDatastoreItems(
+    collectionId: string,
+    opts: { limit?: number; key?: string } = {},
+  ): Promise<{
+    items: Array<{
+      id?: string;
+      key?: string;
+      sortField?: string;
+      content?: unknown;
+      updatedAt?: string;
+    }>;
   }> {
     const url = new URL("/memory/items", this.skillsBaseUrl);
     url.searchParams.set("collectionId", collectionId);
-    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("limit", String(opts.limit ?? 200));
+    if (opts.key !== undefined) url.searchParams.set("key", opts.key);
     const response = await fetch(url.toString(), { headers: await this.authHeaders() });
     if (!response.ok) {
       throw new Error(
@@ -260,19 +270,30 @@ export class PinkfishClient {
   /**
    * POST one row to a datastore collection. Mirrors what
    * `pushAllToDatastoresImpl` does for new local files.
+   *
+   * `sortField` is the second leg of the cloud's composite primary key.
+   * Omitting it makes the cloud auto-stamp `Date.now().toString()` —
+   * see `firebase-helpers/functions/src/utils/owner.ts:174-176, 308-311`.
+   * Conversations sync passes the message id (filename without `.json`)
+   * so `(key, sortField) = (ticketId, msgId)` mirrors the on-disk
+   * `databases/conversations/<ticketId>/<msgId>.json` layout.
+   *
    * Endpoint: POST /memory/items?collectionId={id}
    */
   async postDatastoreRow(
     collectionId: string,
     key: string,
     content: unknown,
+    sortField?: string,
   ): Promise<{ id: string }> {
     const url = new URL("/memory/items", this.skillsBaseUrl);
     url.searchParams.set("collectionId", collectionId);
+    const body: Record<string, unknown> = { key, content };
+    if (sortField !== undefined) body.sortField = sortField;
     const response = await fetch(url.toString(), {
       method: "POST",
       headers: { ...(await this.authHeaders()), "Content-Type": "application/json" },
-      body: JSON.stringify({ key, content }),
+      body: JSON.stringify(body),
     });
     if (!response.ok) {
       throw new Error(
@@ -281,6 +302,35 @@ export class PinkfishClient {
     }
     const data = await response.json();
     return { id: String(data?.id ?? "") };
+  }
+
+  /**
+   * Delete a datastore row by composite (key, sortField). Mirrors the
+   * `DELETE /memory/items/:key?sortField=<x>` shape the cloud exposes
+   * for per-row deletion when you don't have the docId handy.
+   *
+   * Best-effort cleanup: tolerates 403 / 404 like the other delete
+   * helpers so test cleanup doesn't fail on permission scopes.
+   */
+  async deleteDatastoreRowByCompositeKey(
+    collectionId: string,
+    key: string,
+    sortField: string,
+  ): Promise<void> {
+    const url = new URL(
+      `/memory/items/${encodeURIComponent(key)}`,
+      this.skillsBaseUrl,
+    );
+    url.searchParams.set("collectionId", collectionId);
+    url.searchParams.set("sortField", sortField);
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: await this.authHeaders(),
+    });
+    if (response.ok || response.status === 404 || response.status === 403) return;
+    throw new Error(
+      `deleteDatastoreRowByCompositeKey failed: HTTP ${response.status}: ${await response.text()}`,
+    );
   }
 
   /**

@@ -33,6 +33,13 @@ export type DataCollection = {
 export type MemoryItem = {
   id: string;
   key: string;
+  // Second leg of the cloud's composite primary key. Required on read
+  // (firebase-helpers MemoryItem schema). When the caller omits it on
+  // POST, cloud auto-stamps `Date.now().toString()`. For
+  // `openit-conversations` we send the msgId so `(key, sortField) =
+  // (ticketId, msgId)` mirrors the on-disk
+  // `databases/conversations/<ticketId>/<msgId>.json` layout.
+  sortField: string;
   content: string | Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
