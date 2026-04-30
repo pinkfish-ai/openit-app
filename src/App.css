@@ -717,6 +717,23 @@ body::before {
   background: var(--color-hover-overlay, var(--accent-soft));
 }
 
+/* Active row — mirrors the canvas. `box-shadow inset` draws a thin
+   clay rail on the left edge without shifting row content (border-left
+   would push everything 2px right, misaligning chevrons across rows).
+   Background + accent text echo VS Code's "selected list item" look. */
+.tree-item.selected,
+.tree-item.selected:hover {
+  background: var(--color-accent-soft, var(--accent-soft));
+  color: var(--color-accent-active, var(--color-accent));
+  box-shadow: inset 2px 0 0 var(--color-accent, #c75a2c);
+}
+
+.tree-item.selected .tree-icon-folder,
+.tree-item.selected .tree-icon-file,
+.tree-item.selected .tree-chevron {
+  color: var(--color-accent-active, var(--color-accent));
+}
+
 .tree-item.dir {
   color: var(--text);
   font-weight: 500;
