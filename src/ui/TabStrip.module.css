@@ -45,7 +45,11 @@
      underline floats 1px above the parent's hairline and the
      active tab reads as "two horizontal lines stacked". */
   margin-bottom: -1px;
-  padding: 0 0 6px;
+  /* Equal vertical padding so the label centers inside the parent
+     rail. The bottom 6px reserves space for the underline indicator;
+     matching it on top keeps the label visually centered (without
+     this it sits ~3px high in a 44px rail). */
+  padding: 6px 0;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);

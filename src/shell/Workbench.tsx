@@ -224,7 +224,6 @@ export function Workbench({
         {escalatedCount > 0 && (
           <Button
             variant="subtle"
-            size="sm"
             className="workbench-today-cta"
             onClick={draftRepliesWithClaude}
             disabled={!repo || drafting}
