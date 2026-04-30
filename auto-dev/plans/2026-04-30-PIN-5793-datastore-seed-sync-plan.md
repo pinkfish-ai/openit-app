@@ -142,3 +142,19 @@ The abandoned branch was +4500 LOC. This plan deliberately ships a fraction of t
 - 1 integration test (139 LOC, cherry-picked)
 
 Anything bigger would re-create the sediment we just unwound.
+
+---
+
+## LEARNINGS & CHANGES (stage 03)
+
+Diverged from the plan in three small ways. None changed the brief contract.
+
+1. **`DataCollection` typing on integration tests.** The cherry-picked `integration_tests/datastore-sync.test.ts` calls `client.listOpenitDatastores()` and reads `c.isStructured`. The shared `DataCollection` interface in `integration_tests/utils/pinkfish-api.ts` didn't have those fields. Added `isStructured?: boolean` and `schema?: { fields?: ... }` to that interface plus the `listOpenitDatastores()` helper. Mirrors the existing `listOpenitFilestores` / `listOpenitKbs` helpers — no new ground.
+
+2. **`localSubdirFor` is duplicated in `datastoreSync.ts` and `entities/datastore.ts`.** Both files need the same mapping (`openit-tickets` → `databases/tickets`), but `datastoreSync.ts` already imports the adapter from `entities/datastore.ts`, so going the other direction would be a circular import. Two ~5-line copies is cheaper than restructuring; comment in `entities/datastore.ts` notes the duplication.
+
+3. **Conversations push reuses `entityListLocal` with a per-ticket recursive walk** instead of a new `datastoreListLocal` helper. The plan said "modify `pushAllToDatastoresImpl`" — the ticket-level walk is `fsList(colDir)` to enumerate ticket subdirs, then each row file is read by `fsRead`. No new Tauri commands; the existing `entity_write_file` (already creates intermediate dirs via `ensure_dir`) handles the nested writes on the pull/seed side.
+
+Follow-up surfaces noted for later (not blocking v1):
+- The local file isn't rewritten when push injects `ticketId` from the folder name. Cloud ends up with ticketId, local stays as-authored. No conflict (manifest reconcile after push aligns them on `updatedAt`), but the divergence is silent. If we want strict "local is the source of truth," add a local-rewrite alongside the push payload. v1 lets it slide because the only effect is the local file potentially missing a field that's present on cloud — engine + UI use folder name for ticket linkage anyway.
+- `listOpenitCollectionNames` in `seed.ts` makes one extra GET per type on every connect (datastore + KB = 2 calls). Negligible in practice; deferring optimization.
