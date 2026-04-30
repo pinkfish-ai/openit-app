@@ -2058,12 +2058,12 @@ body::before {
   font-weight: 600;
 }
 
-/* When the CTA-style link sits alone in its own paragraph, center it.
-   Reads as a discrete action rather than awkwardly inline next to body
-   text. Triggered automatically by markdown of the form `[**text**](url)`
-   on its own line. */
+/* When the CTA-style link sits alone in its own paragraph, right-align
+   it. Reads as a discrete action rather than awkwardly inline next to
+   body text. Triggered automatically by markdown of the form
+   `[**text**](url)` on its own line. */
 .viewer-md p:has(> a:only-child > strong:only-child) {
-  text-align: center;
+  text-align: right;
   margin: 1.2em 0;
 }
 
@@ -2074,17 +2074,20 @@ body::before {
    Cloud" link uses this; it's a follow-on action, not the headline.
    Targets the `data-openit-skill` attribute set by Viewer's
    ExternalAnchor when it sees an `openit://skill/<name>` href. */
-.viewer-md a[data-openit-skill]:has(> strong:only-child) {
+.viewer-md a[data-openit-skill]:has(> strong:only-child),
+.viewer-md a[data-openit-cta="create-samples"]:has(> strong:only-child) {
   background: transparent;
   color: var(--accent);
   border: 1px solid var(--accent);
   box-shadow: none;
 }
-.viewer-md a[data-openit-skill]:has(> strong:only-child):hover {
+.viewer-md a[data-openit-skill]:has(> strong:only-child):hover,
+.viewer-md a[data-openit-cta="create-samples"]:has(> strong:only-child):hover {
   background: var(--accent-soft);
   box-shadow: none;
 }
-.viewer-md a[data-openit-skill]:has(> strong:only-child):active {
+.viewer-md a[data-openit-skill]:has(> strong:only-child):active,
+.viewer-md a[data-openit-cta="create-samples"]:has(> strong:only-child):active {
   background: var(--accent-soft);
   box-shadow: none;
 }

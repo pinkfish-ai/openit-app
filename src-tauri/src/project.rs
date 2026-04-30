@@ -132,7 +132,18 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
              Open the intake page and ask a question yourself — \
              *\"I can't log in\"*, *\"how do I reset my VPN\"* — to see \
              how the agent handles it.\n\n\
-             [**Open the intake page**]({{INTAKE_URL}})\n\n\
+             [**Submit sample ticket**]({{INTAKE_URL}})\n\n\
+             ## Want some sample data to play with?\n\n\
+             Drops 5 sample tickets, 5 people, 8 conversation messages, \
+             and 2 KB articles into your workspace so you can see how \
+             everything fits together. Re-clicking is safe — it skips \
+             any folder you've already touched.\n\n\
+             [**Create sample dataset**](openit://create-samples)\n\n\
+             ## Connect to Slack\n\n\
+             Wire OpenIT into a Slack workspace so the agent can \
+             receive tickets in DMs and reply on your behalf. The \
+             walkthrough handles the bot-token paste and listener \
+             startup.\n\n\
              [**Connect Slack**](openit://skill/connect-slack)\n";
         let _ = fs::write(&getting_started_path, getting_started);
     }

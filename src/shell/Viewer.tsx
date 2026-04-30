@@ -281,6 +281,26 @@ function ExternalAnchor({
       </a>
     );
   }
+  // openit://create-samples — populates the workspace with bundled
+  // sample tickets / people / conversations / KB articles. App.tsx
+  // listens and calls into seedIfEmpty (per-target local-empty gate,
+  // so re-clicks after content exists are no-ops).
+  if (href === "openit://create-samples") {
+    return (
+      <a
+        href="#"
+        data-openit-cta="create-samples"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent("openit:create-samples"));
+        }}
+        {...rest}
+      >
+        {children}
+      </a>
+    );
+  }
   if (href && href.startsWith("openit://skill/")) {
     const skillName = href.slice("openit://skill/".length).split("?")[0];
     // Use href="#" rather than the openit:// URL — the Tauri webview

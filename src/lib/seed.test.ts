@@ -1,26 +1,17 @@
 /**
  * seedIfEmpty gate logic — Phase 3 of V2 sync (PIN-5793).
  *
- * The cloud-side check + manifest fetch + file fetch are all stubbed via
- * vi.mock so we can isolate the per-target gate logic (folder-empty AND
- * cloud-empty) without spinning up a Tauri runtime.
+ * Connected mode never seeds (see startCloudSyncs); seed is a local-only
+ * first-install affordance. These tests cover the per-target local-empty
+ * gate. Manifest fetch + file fetch are stubbed via vi.mock.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Hoisted mock factories — vitest hoists vi.mock() to the top of the file,
-// so any closed-over variable has to live inside the factory itself.
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 vi.mock("./api", () => ({
   fsList: vi.fn(),
-}));
-vi.mock("../api/fetchAdapter", () => ({
-  makeSkillsFetch: vi.fn(),
-}));
-vi.mock("./pinkfishAuth", () => ({
-  getToken: vi.fn(),
-  derivedUrls: vi.fn(),
 }));
 vi.mock("./skillsSync", () => ({
   fetchSkillsManifest: vi.fn(),
@@ -29,20 +20,13 @@ vi.mock("./skillsSync", () => ({
 
 import { invoke } from "@tauri-apps/api/core";
 import { fsList } from "./api";
-import { makeSkillsFetch } from "../api/fetchAdapter";
-import { getToken, derivedUrls } from "./pinkfishAuth";
 import { fetchSkillsManifest, fetchSkillFile } from "./skillsSync";
 import { seedIfEmpty, seedRoute } from "./seed";
 
 const mockInvoke = vi.mocked(invoke);
 const mockFsList = vi.mocked(fsList);
-const mockMakeSkillsFetch = vi.mocked(makeSkillsFetch);
-const mockGetToken = vi.mocked(getToken);
-const mockDerivedUrls = vi.mocked(derivedUrls);
 const mockFetchSkillsManifest = vi.mocked(fetchSkillsManifest);
 const mockFetchSkillFile = vi.mocked(fetchSkillFile);
-
-const FAKE_CREDS = { orgId: "org-1", tokenUrl: "https://app-api.example/oauth/token" } as any;
 
 const SAMPLE_MANIFEST = {
   version: "v1",
@@ -59,34 +43,10 @@ const SAMPLE_MANIFEST = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetToken.mockReturnValue({ accessToken: "tk-abc" } as any);
-  mockDerivedUrls.mockReturnValue({
-    skillsBaseUrl: "https://skills.example",
-    appApiBaseUrl: "https://app-api.example",
-  } as any);
   mockFetchSkillsManifest.mockResolvedValue(SAMPLE_MANIFEST as any);
   mockFetchSkillFile.mockResolvedValue("{}");
   mockInvoke.mockResolvedValue(undefined);
 });
-
-/** Convenience: stub the cloud-collection list endpoint. */
-function stubCloud(datastoreNames: string[], kbNames: string[]): void {
-  mockMakeSkillsFetch.mockReturnValue(((url: string) => {
-    if (url.includes("type=datastore")) {
-      return Promise.resolve({
-        ok: true,
-        json: async () => datastoreNames.map((name) => ({ name, id: `ds-${name}` })),
-      } as any);
-    }
-    if (url.includes("type=knowledge_base")) {
-      return Promise.resolve({
-        ok: true,
-        json: async () => kbNames.map((name) => ({ name, id: `kb-${name}` })),
-      } as any);
-    }
-    return Promise.resolve({ ok: false, json: async () => null } as any);
-  }) as any);
-}
 
 describe("seedRoute", () => {
   it("routes seed/tickets/* → databases/tickets", () => {
@@ -123,12 +83,11 @@ describe("seedRoute", () => {
   });
 });
 
-describe("seedIfEmpty — per-target gate", () => {
-  it("seeds every target when local is empty and cloud has no openit-* collections", async () => {
-    stubCloud([], []);
+describe("seedIfEmpty — per-target local-empty gate", () => {
+  it("seeds every target when local is empty", async () => {
     mockFsList.mockResolvedValue([]);
 
-    const res = await seedIfEmpty({ repo: "/repo", creds: FAKE_CREDS });
+    const res = await seedIfEmpty({ repo: "/repo" });
 
     expect(res.wrote).toBe(6); // 2 tickets + 1 person + 1 article + 2 conv messages
     const writeInvocations = mockInvoke.mock.calls.filter(([cmd]) => cmd === "entity_write_file");
@@ -136,7 +95,6 @@ describe("seedIfEmpty — per-target gate", () => {
   });
 
   it("skips a target when its local folder is non-empty", async () => {
-    stubCloud([], []);
     mockFsList.mockImplementation(async (p: string) => {
       if (p.endsWith("databases/tickets")) {
         return [{ name: "user-row.json", path: `${p}/user-row.json`, is_dir: false }];
@@ -144,22 +102,12 @@ describe("seedIfEmpty — per-target gate", () => {
       return [];
     });
 
-    const res = await seedIfEmpty({ repo: "/repo", creds: FAKE_CREDS });
+    const res = await seedIfEmpty({ repo: "/repo" });
 
     expect(res.wrote).toBe(4); // 1 person + 1 article + 2 conv messages (tickets skipped)
   });
 
-  it("skips a target when cloud already has the matching openit-* collection", async () => {
-    stubCloud(["openit-tickets"], []);
-    mockFsList.mockResolvedValue([]);
-
-    const res = await seedIfEmpty({ repo: "/repo", creds: FAKE_CREDS });
-
-    expect(res.wrote).toBe(4);
-  });
-
   it("treats `_schema.json` and dotfiles as 'empty' for gate purposes", async () => {
-    stubCloud([], []);
     mockFsList.mockImplementation(async (p: string) => {
       if (p.endsWith("databases/tickets")) {
         return [
@@ -170,13 +118,12 @@ describe("seedIfEmpty — per-target gate", () => {
       return [];
     });
 
-    const res = await seedIfEmpty({ repo: "/repo", creds: FAKE_CREDS });
+    const res = await seedIfEmpty({ repo: "/repo" });
 
     expect(res.wrote).toBe(6);
   });
 
   it("treats nested-layout content as non-empty for the conversations target", async () => {
-    stubCloud([], []);
     mockFsList.mockImplementation(async (p: string) => {
       if (p.endsWith("databases/conversations")) {
         return [{ name: "T1", path: `${p}/T1`, is_dir: true }];
@@ -187,18 +134,17 @@ describe("seedIfEmpty — per-target gate", () => {
       return [];
     });
 
-    const res = await seedIfEmpty({ repo: "/repo", creds: FAKE_CREDS });
+    const res = await seedIfEmpty({ repo: "/repo" });
 
     expect(res.wrote).toBe(4); // tickets + person + article (conversations skipped)
   });
 
-  it("skips everything when both local and cloud are populated", async () => {
-    stubCloud(["openit-tickets", "openit-people", "openit-conversations"], ["openit-default"]);
+  it("skips everything when every local target is populated", async () => {
     mockFsList.mockResolvedValue([
       { name: "anything.json", path: "/anything.json", is_dir: false },
     ]);
 
-    const res = await seedIfEmpty({ repo: "/repo", creds: FAKE_CREDS });
+    const res = await seedIfEmpty({ repo: "/repo" });
 
     expect(res.wrote).toBe(0);
   });
