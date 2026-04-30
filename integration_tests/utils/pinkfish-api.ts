@@ -230,12 +230,18 @@ export class PinkfishClient {
 
   /**
    * List items in a datastore collection. Returns parsed items array.
-   * Endpoint: GET /memory/bquery?collectionId={id}
+   *
+   * Uses GET /memory/items (Firestore-backed, strongly consistent with
+   * writes). Do NOT switch to /memory/bquery here: bquery reads from
+   * BigQuery and lags behind freshly inserted rows by seconds, which
+   * surfaces as flaky list-after-insert assertions in tests.
+   *
+   * Endpoint: GET /memory/items?collectionId={id}&limit={n}
    */
   async listDatastoreItems(collectionId: string, limit = 200): Promise<{
     items: Array<{ id?: string; key?: string; content?: unknown; updatedAt?: string }>;
   }> {
-    const url = new URL("/memory/bquery", this.skillsBaseUrl);
+    const url = new URL("/memory/items", this.skillsBaseUrl);
     url.searchParams.set("collectionId", collectionId);
     url.searchParams.set("limit", String(limit));
     const response = await fetch(url.toString(), { headers: await this.authHeaders() });
@@ -245,6 +251,9 @@ export class PinkfishClient {
       );
     }
     const data = await response.json();
+    // /memory/items returns either a raw array (structured collections,
+    // light format) or { items: [...] } (other shapes). Handle both.
+    if (Array.isArray(data)) return { items: data };
     return { items: Array.isArray(data?.items) ? data.items : [] };
   }
 
