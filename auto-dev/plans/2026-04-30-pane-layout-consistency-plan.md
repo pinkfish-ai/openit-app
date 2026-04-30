@@ -189,3 +189,9 @@ Click-through on a built dev binary (not just `vite dev` in browser) to confirm 
 | # | Finding | Severity | Disposition | Commit / Reason |
 |---|---------|----------|-------------|-----------------|
 | 1 | Flush PaneBody leaks unused scrollbar gutter space | Medium | Fixed | `Re: Flush PaneBody leaks unused scrollbar gutter space` — `.flush` now also sets `overflow: hidden` and `scrollbar-gutter: auto`, since flush hands every body concern (scroll, padding, gutter) to the child. Reserving a gutter at the flush layer was painting an empty ~15px strip between content and the pane right border on classic-scrollbar systems. |
+
+### Iteration 2 (2026-04-30)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| — | (none — clean run, "found no new issues") | — | — | — |
