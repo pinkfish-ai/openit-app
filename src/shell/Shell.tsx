@@ -50,6 +50,7 @@ import { Viewer, type ViewerSource } from "./Viewer";
 import { PaneBody, Tab, TabStrip } from "../ui";
 import type { DockKind } from "../lib/skillState";
 import { resolvePathToSource } from "./entityRouting";
+import { sourceToTreePath } from "./sourceToTreePath";
 import { SkillActionDock } from "./SkillActionDock";
 
 type LeftTab = "overview" | "files" | "source-control";
@@ -907,6 +908,8 @@ export function Shell({
                   }}
                   fsTick={fsTick}
                   onFsChange={bumpFs}
+                  selectedPath={sourceToTreePath(source, repo)}
+                  active={leftTab === "files"}
                 />
               </PaneBody>
               <PaneBody flush hidden={leftTab !== "source-control"}>

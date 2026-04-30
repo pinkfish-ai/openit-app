@@ -267,11 +267,23 @@ export function FileExplorer({
   onSelect,
   fsTick,
   onFsChange,
+  selectedPath,
+  active,
 }: {
   repo: string | null;
   onSelect: (path: string) => void;
   fsTick?: number;
   onFsChange?: () => void;
+  /** Absolute path of the row to mark as active. Derived in Shell from
+   *  `nav.source`, so every canvas-changing entry point (Workbench tile,
+   *  Inbox row, file click) keeps the tree's highlight in sync. Null when
+   *  the current ViewerSource has no tree representation (sync, diff,
+   *  agent-trace). */
+  selectedPath?: string | null;
+  /** Whether the Files tab is the visible left-pane tab. Controls
+   *  scroll-into-view: we only yank the tree when the user can actually
+   *  see it, so background canvas changes don't move scroll position. */
+  active?: boolean;
 }) {
   const [nodes, setNodes] = useState<FileNode[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -320,6 +332,16 @@ export function FileExplorer({
   useEffect(() => subscribeSync(setSync), []);
   useEffect(() => subscribeFilestoreSync(setFsSync), []);
 
+  // Ref captures the latest selectedPath without forcing reload to
+  // re-fire on every canvas change. Used by the first-load branch below
+  // so the initial collapse-all doesn't re-hide the row that's already
+  // active on the canvas (narrow but real timing bug when the user
+  // clicks an Inbox row before the initial fs scan completes).
+  const selectedPathRef = useRef(selectedPath);
+  useEffect(() => {
+    selectedPathRef.current = selectedPath;
+  }, [selectedPath]);
+
   const reload = useCallback(() => {
     if (!repo) {
       setNodes([]);
@@ -332,7 +354,20 @@ export function FileExplorer({
         // Collapse all dirs on first load only
         if (!hasCollapsedOnceRef.current && n.length > 0) {
           hasCollapsedOnceRef.current = true;
-          setCollapsed(new Set(n.filter((nd) => nd.is_dir).map((nd) => nd.path)));
+          const next = new Set(n.filter((nd) => nd.is_dir).map((nd) => nd.path));
+          // Pre-expand ancestors of the active canvas item so the
+          // highlight is visible the moment the user lands on Files.
+          const sp = selectedPathRef.current;
+          if (sp && sp.startsWith(`${repo}/`)) {
+            let cursor = sp;
+            while (true) {
+              const slash = cursor.lastIndexOf("/");
+              if (slash <= repo.length) break;
+              cursor = cursor.slice(0, slash);
+              next.delete(cursor);
+            }
+          }
+          setCollapsed(next);
         }
       })
       .catch((e) => setError(String(e)));
@@ -346,6 +381,36 @@ export function FileExplorer({
   useEffect(() => {
     if (sync?.phase === "ready") reload();
   }, [sync?.phase, sync?.lastPullAt, reload]);
+
+  // Ref + last-scrolled marker so we only yank the tree once per
+  // (path, becoming-active) transition. The matching scroll effect lives
+  // below the `visible` useMemo since it depends on it.
+  const selectedRowRef = useRef<HTMLLIElement | null>(null);
+  const lastScrolledPathRef = useRef<string | null>(null);
+
+  // Reveal the active canvas item: drop every ancestor of `selectedPath`
+  // out of the `collapsed` set so the row is rendered (the visibility
+  // filter below hides anything whose path startsWith a collapsed dir +
+  // "/"). Runs regardless of `active` — keeping the tree state synced
+  // means switching to the Files tab shows the row immediately, not
+  // after a tick of layout work.
+  useEffect(() => {
+    if (!selectedPath || !repo) return;
+    if (!selectedPath.startsWith(`${repo}/`)) return;
+    setCollapsed((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set(prev);
+      let changed = false;
+      let cursor = selectedPath;
+      while (true) {
+        const slash = cursor.lastIndexOf("/");
+        if (slash <= repo.length) break;
+        cursor = cursor.slice(0, slash);
+        if (next.delete(cursor)) changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [selectedPath, repo]);
 
   useEffect(() => {
     if (fsSync?.phase === "ready") reload();
@@ -481,6 +546,13 @@ export function FileExplorer({
     return true;
   };
 
+  // Scroll the active row into view, but only when (a) the Files tab is
+  // currently showing and (b) the active path actually changed since the
+  // last scroll. `block: "nearest"` avoids re-centering rows that are
+  // already visible. The `visible` dep handles the case where the
+  // ancestor-expand effect above hasn't rendered the row yet on the same
+  // tick that selectedPath changed.
+  // (effect is placed below the `visible` useMemo)
   const visible = useMemo(() => {
     if (!repo) return [];
     return nodes.filter((n) => {
@@ -502,6 +574,18 @@ export function FileExplorer({
       return true;
     });
   }, [nodes, collapsed, repo, showSystemFiles]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `visible`
+  // is intentionally part of the dep set so we re-attempt scroll once
+  // the ancestor-expand effect renders the row.
+  useEffect(() => {
+    if (!active || !selectedPath) return;
+    if (lastScrolledPathRef.current === selectedPath) return;
+    const el = selectedRowRef.current;
+    if (!el) return;
+    el.scrollIntoView({ block: "nearest", behavior: "auto" });
+    lastScrolledPathRef.current = selectedPath;
+  }, [selectedPath, active, visible]);
 
   const onDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -739,7 +823,8 @@ export function FileExplorer({
           return (
             <li
               key={n.path}
-              className={`tree-item ${n.is_dir ? "dir" : "file"} ${colorClass}${dropTargetPath === n.path ? " drop-target" : ""}`}
+              ref={n.path === selectedPath ? selectedRowRef : undefined}
+              className={`tree-item ${n.is_dir ? "dir" : "file"} ${colorClass}${dropTargetPath === n.path ? " drop-target" : ""}${n.path === selectedPath ? " selected" : ""}`}
               style={{ paddingLeft: 8 + depth * 12 }}
               onContextMenu={(e) => {
                 e.preventDefault();
