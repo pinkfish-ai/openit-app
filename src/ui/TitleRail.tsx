@@ -14,13 +14,20 @@ export interface TitleRailProps extends HTMLAttributes<HTMLDivElement> {
  *  with ~24px of breathing room so they don't visually coincide
  *  with the system controls.
  *  Requires `titleBarStyle: "Overlay"` + `hiddenTitle: true` in
- *  tauri.conf.json. */
+ *  tauri.conf.json.
+ *
+ *  Drag: macOS WebKit doesn't honor `-webkit-app-region: drag`, so we
+ *  use Tauri 2's `data-tauri-drag-region` attribute (the CSS rule on
+ *  `.rail` is kept for Windows/Linux where Chromium-based webviews do
+ *  honor it). Tauri's drag handler ignores native interactive
+ *  elements (button, input, …) so chips and buttons keep working
+ *  without an opt-out. */
 export function TitleRail({ left, right, className, ...rest }: TitleRailProps) {
   const cls = [styles.rail, className].filter(Boolean).join(" ");
   return (
-    <div className={cls} {...rest}>
-      <div className={styles.left}>{left}</div>
-      <div className={styles.right}>{right}</div>
+    <div className={cls} data-tauri-drag-region {...rest}>
+      <div className={styles.left} data-tauri-drag-region>{left}</div>
+      <div className={styles.right} data-tauri-drag-region>{right}</div>
     </div>
   );
 }

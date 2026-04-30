@@ -183,6 +183,8 @@ const ENTITY_FOLDER_LABELS: Record<
   | "knowledge-base"
   | "library"
   | "reports"
+  | "skills"
+  | "scripts"
   | "attachments-ticket",
   string
 > = {
@@ -191,6 +193,8 @@ const ENTITY_FOLDER_LABELS: Record<
   "knowledge-base": "Knowledge base",
   library: "Library",
   reports: "Reports",
+  skills: "Skills",
+  scripts: "Scripts",
   "attachments-ticket": "Attachments",
 };
 
@@ -203,6 +207,8 @@ const ENTITY_FOLDER_EMPTY_COPY: Record<
   | "knowledge-base"
   | "library"
   | "reports"
+  | "skills"
+  | "scripts"
   | "attachments-ticket",
   string
 > = {
@@ -216,6 +222,10 @@ const ENTITY_FOLDER_EMPTY_COPY: Record<
     "No library files yet. Drop runbook PDFs, scripts, or any reference doc you reach for repeatedly — Claude can pull from these when answering tickets or building workflows.",
   reports:
     "No reports yet. Click \"Overview\" above for an instant snapshot of ticket status, recent activity, top askers, and current escalations — or click \"Ask Claude\" to describe a custom report (\"VPN tickets last 30 days\", \"escalations by asker\").",
+  skills:
+    "No skills yet. Skills capture admin workflows — markdown prompts Claude (or you) read and follow when a similar ticket comes back around. They land here automatically when you click \"Mark as resolved\" on a ticket whose resolution had branches or judgment calls. You can also ask Claude to draft one directly.",
+  scripts:
+    "No scripts yet. Scripts capture deterministic admin workflows — runnable code (Node / shell / Python) that always does the same thing for the same inputs. They land here automatically when you click \"Mark as resolved\" on a ticket whose resolution was a fixed CLI / API sequence. You can also ask Claude to draft one directly.",
   "attachments-ticket":
     "No attachments on this ticket yet. Files dropped into the chat or admin reply will land here.",
 };
@@ -1673,7 +1683,9 @@ export function Viewer({
           (source.entity === "library" ||
             source.entity === "reports" ||
             source.entity === "attachments-ticket" ||
-            source.entity === "knowledge-base") &&
+            source.entity === "knowledge-base" ||
+            source.entity === "skills" ||
+            source.entity === "scripts") &&
           !isImageFile(f.path);
         const sizeLabel = formatBytes(f.size);
         return {
@@ -1702,7 +1714,10 @@ export function Viewer({
       // those are either system-generated, scoped to ticket context,
       // or schema-shaped and not safe to land arbitrary files into.
       const acceptsDrop =
-        source.entity === "library" || source.entity === "knowledge-base";
+        source.entity === "library" ||
+        source.entity === "knowledge-base" ||
+        source.entity === "skills" ||
+        source.entity === "scripts";
       const subdir = source.path;
       // When the folder accepts drops AND has nothing in it yet, the
       // wrapper itself becomes the visible drop zone (dashed border,

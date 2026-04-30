@@ -72,6 +72,20 @@ describe("seedRoute", () => {
     });
   });
 
+  it("routes seed/skills/* → filestores/skills (PIN-5829)", () => {
+    expect(seedRoute("seed/skills/hello-world.md")).toEqual({
+      subdir: "filestores/skills",
+      filename: "hello-world.md",
+    });
+  });
+
+  it("routes seed/scripts/* → filestores/scripts (PIN-5829)", () => {
+    expect(seedRoute("seed/scripts/hello-world.mjs")).toEqual({
+      subdir: "filestores/scripts",
+      filename: "hello-world.mjs",
+    });
+  });
+
   it("preserves the per-ticket subfolder for seed/conversations/<ticketId>/<msg>", () => {
     expect(seedRoute("seed/conversations/T1/msg-aa01.json")).toEqual({
       subdir: "databases/conversations/T1",
