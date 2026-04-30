@@ -47,11 +47,10 @@ import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
 import { Viewer, type ViewerSource } from "./Viewer";
-import { PaneBody } from "../ui";
+import { Button, PaneBody, Tab, TabStrip } from "../ui";
 import type { DockKind } from "../lib/skillState";
 import { resolvePathToSource } from "./entityRouting";
 import { SkillActionDock } from "./SkillActionDock";
-import { Button, TabStrip, Tab } from "../ui";
 
 type LeftTab = "overview" | "files" | "source-control";
 

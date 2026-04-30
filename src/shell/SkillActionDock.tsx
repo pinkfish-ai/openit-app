@@ -69,6 +69,7 @@ export function SkillActionDock({
       <div className="skill-action-dock">
         <Button
           variant="subtle"
+          size="sm"
           onClick={() => setExpanded(true)}
           title={
             isBot
