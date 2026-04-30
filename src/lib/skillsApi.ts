@@ -33,6 +33,11 @@ export type DataCollection = {
 export type MemoryItem = {
   id: string;
   key: string;
+  /// Caller-supplied secondary identifier — together with `key` forms the
+  /// row's composite identity `(collectionId, key, sortField)`. Optional in
+  /// the type because legacy rows may omit it; openit pushes always set it
+  /// (sortField=key for flat datastores; sortField=msgBase for conversations).
+  sortField?: string;
   content: string | Record<string, unknown>;
   createdAt: string;
   updatedAt: string;

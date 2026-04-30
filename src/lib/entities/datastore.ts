@@ -53,15 +53,8 @@ function rowKey(item: MemoryItem): string {
   return (item.key ?? item.id ?? "").toString();
 }
 
-/// Pull a `ticketId` string out of a row's content, defending against
-/// non-object content (raw strings, nulls) and non-string ticketId fields.
-function extractTicketId(item: MemoryItem): string | null {
-  const c = item.content;
-  if (c && typeof c === "object" && !Array.isArray(c)) {
-    const t = (c as Record<string, unknown>).ticketId;
-    if (typeof t === "string" && t.length > 0) return t;
-  }
-  return null;
+function rowSortField(item: MemoryItem): string {
+  return (item.sortField ?? "").toString();
 }
 
 // shadow naming + detection both live in syncEngine.ts; imported above.
@@ -104,34 +97,44 @@ export function datastoreAdapter(args: {
             colFailed = true;
             break;
           }
+          const isConversations = col.name === CONVERSATIONS_COLLECTION_NAME;
           for (const r of resp.items) {
             const key = rowKey(r);
             if (!key) continue;
-            const filename = `${key}.json`;
-            // openit-conversations is the one nested-layout collection:
-            // local path is `databases/conversations/<ticketId>/<msgId>.json`.
-            // We derive the per-ticket subfolder from `content.ticketId`.
-            // A row missing ticketId can't be filed (no folder anchor),
-            // so we drop it with a warning rather than dump it under a
-            // `_unrouted/` bin — that just hides the data corruption.
-            const isConversations = col.name === CONVERSATIONS_COLLECTION_NAME;
+            // openit-conversations: cloud row identity is composite
+            // `(key=ticketId, sortField=msgBase)`. On-disk layout mirrors
+            // that hierarchy: `databases/conversations/<ticketId>/<msgBase>.json`.
+            // Manifest key carries both halves so two threads sharing a
+            // msgBase don't collide.
+            //
+            // Flat collections (tickets, people, custom): one row per
+            // file, manifestKey = `<colName>/<key>` as before.
             let subdir: string;
+            let filename: string;
+            let mKey: string;
             if (isConversations) {
-              const ticketId = extractTicketId(r);
-              if (!ticketId) {
+              const sortField = rowSortField(r);
+              if (!sortField) {
+                // A conversations row without sortField can't be filed
+                // (no per-turn ordering anchor). Skipping is safer than
+                // pretending the value matches `key` — that would dump
+                // every shape-broken row into the same path.
                 console.warn(
-                  `[datastore] openit-conversations row ${key} has no ticketId in content; skipping pull`,
+                  `[datastore] openit-conversations row key=${key} missing sortField; skipping pull`,
                 );
                 continue;
               }
-              subdir = `${localSubdirFor(col.name)}/${ticketId}`;
+              subdir = `${localSubdirFor(col.name)}/${key}`;
+              filename = `${sortField}.json`;
+              mKey = `${col.name}/${key}/${sortField}`;
             } else {
               subdir = localSubdirFor(col.name);
+              filename = `${key}.json`;
+              mKey = manifestKey(col.name, key);
             }
-            const colName = col.name;
             const item = r;
             items.push({
-              manifestKey: manifestKey(colName, key),
+              manifestKey: mKey,
               workingTreePath: `${subdir}/${filename}`,
               updatedAt: item.updatedAt ?? "",
               fetchAndWrite: (repo) =>
@@ -204,9 +207,14 @@ export function datastoreAdapter(args: {
             for (const f of filtered) {
               const base = f.filename.replace(/\.json$/, "");
               const isShadowFile = classifyAsShadow(f.filename, siblings);
-              const key = isShadowFile ? base.replace(/\.server$/, "") : base;
+              const sortField = isShadowFile ? base.replace(/\.server$/, "") : base;
+              // Match listRemote's composite manifestKey:
+              // `<colName>/<ticketId>/<msgBase>`. Collision-free across
+              // threads even when two ticketIds happen to use the same
+              // sortField (e.g. an admin copy-pasting a turn between
+              // tickets).
               out.push({
-                manifestKey: manifestKey(col.name, key),
+                manifestKey: `${col.name}/${ticketId}/${sortField}`,
                 workingTreePath: `${colDir}/${ticketId}/${f.filename}`,
                 mtime_ms: f.mtime_ms,
                 isShadow: isShadowFile,
