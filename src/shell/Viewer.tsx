@@ -374,6 +374,19 @@ function isMarkdown(path: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(path);
 }
 
+/// Plain-text formats that should expose the View/Edit tabs in the file
+/// viewer. Markdown gets a rendered preview; everything else here just
+/// shows raw text in View mode. Edit mode is the same textarea editor
+/// for all of them. Conservative allowlist — binary formats, big-data
+/// JSON, and office docs are deliberately out so a 50 MB log doesn't
+/// land in a textarea. (PIN-5829 follow-up: make captured scripts
+/// editable in-place, just like KB articles + library docs.)
+function isEditableText(path: string): boolean {
+  return /\.(md|mdx|markdown|mjs|cjs|js|ts|tsx|jsx|sh|bash|zsh|py|rb|go|rs|yml|yaml|toml|txt|ini|conf|css|scss|html)$/i.test(
+    path,
+  );
+}
+
 function isImage(path: string): boolean {
   return /\.(jpg|jpeg|png|gif|webp)$/i.test(path);
 }
@@ -835,7 +848,7 @@ export function Viewer({
   const title = getTitle();
 
   // --- Tabs ---
-  const showFileTabs = source.kind === "file" && isMarkdown(source.path);
+  const showFileTabs = source.kind === "file" && isEditableText(source.path);
   const showRowTabs = source.kind === "datastore-row";
   const showPeopleTabs = source.kind === "people-list";
   const showConversationsFilter = source.kind === "conversations-list";
@@ -950,7 +963,7 @@ export function Viewer({
       if (isOfficeDoc(source.path)) {
         return <OfficeViewer filename={source.path} />;
       }
-      if (mode === "edit" && isMarkdown(source.path)) {
+      if (mode === "edit" && isEditableText(source.path)) {
         const filePath = source.path;
         const onSave = async () => {
           if (!repo || !filePath.startsWith(`${repo}/`)) {
@@ -2472,8 +2485,16 @@ export function Viewer({
         {showFileTabs && (
           <TabStrip variant="segmented">
             <Tab
-              active={mode === "rendered"}
-              onClick={() => setMode("rendered")}
+              // View covers both `rendered` (markdown preview) and
+              // `raw` (any other plain-text format). Edit is its own
+              // mode. Without this, a `.mjs` file lands in `raw` and
+              // neither tab reads as selected. (PIN-5829.)
+              active={mode !== "edit"}
+              onClick={() =>
+                // Markdown gets the rendered preview by default; every
+                // other editable text format shows raw content.
+                setMode(isMarkdown(source.path) ? "rendered" : "raw")
+              }
             >
               View
             </Tab>
