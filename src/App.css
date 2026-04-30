@@ -1,7 +1,7 @@
 /* Design system v5 tokens — see src/styles/tokens.css.
    Keep this import at the top so the new color, space, and radius
    tokens are available to every legacy class below as we migrate. */
-@import "./styles/tokens.css";
+@import './styles/tokens.css';
 
 :root {
   /* ── Surfaces (warm cream, layered) ─────────────────────── */
@@ -34,16 +34,22 @@
   --clay-soft: #f3d8d2;
 
   /* ── Typography ─────────────────────────────────────────── */
-  --font-display: "Inter", "Söhne", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-serif: "Source Serif 4 Variable", "Source Serif 4", "Charter", "Iowan Old Style", Georgia, serif;
-  --font-mono: "JetBrains Mono", "Berkeley Mono", "SF Mono", Menlo, monospace;
+  --font-display:
+    'Inter', 'Söhne', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-serif:
+    'Source Serif 4 Variable', 'Source Serif 4', 'Charter', 'Iowan Old Style',
+    Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'Berkeley Mono', 'SF Mono', Menlo, monospace;
 
   /* ── Shadows (warm-tinted, not gray) ────────────────────── */
-  --shadow-sm:   0 1px 0 rgba(60, 40, 20, 0.05);
-  --shadow-card: 0 1px 0 rgba(60, 40, 20, 0.05), 0 6px 18px -10px rgba(60, 40, 20, 0.18);
-  --shadow-lift: 0 1px 0 rgba(60, 40, 20, 0.06), 0 12px 32px -12px rgba(60, 40, 20, 0.24);
-  --shadow-pop:  0 16px 48px -14px rgba(40, 28, 14, 0.40);
+  --shadow-sm: 0 1px 0 rgba(60, 40, 20, 0.05);
+  --shadow-card:
+    0 1px 0 rgba(60, 40, 20, 0.05), 0 6px 18px -10px rgba(60, 40, 20, 0.18);
+  --shadow-lift:
+    0 1px 0 rgba(60, 40, 20, 0.06), 0 12px 32px -12px rgba(60, 40, 20, 0.24);
+  --shadow-pop: 0 16px 48px -14px rgba(40, 28, 14, 0.4);
 
   /* ── Motion ─────────────────────────────────────────────── */
   --ease: cubic-bezier(0.32, 0.72, 0.32, 1);
@@ -68,7 +74,7 @@ body,
   color: var(--text);
   font-family: var(--font-body);
   font-size: 13px;
-  font-feature-settings: "ss01", "cv11";
+  font-feature-settings: 'ss01', 'cv11';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -76,15 +82,21 @@ body,
 /* Decorative dot grid that sits behind the bg, very faintly. Adds
    tactile texture without being noisy. */
 body::before {
-  content: "";
+  content: '';
   position: fixed;
   inset: 0;
-  background-image: radial-gradient(rgba(120, 96, 60, 0.07) 1px, transparent 1px);
+  background-image: radial-gradient(
+    rgba(120, 96, 60, 0.07) 1px,
+    transparent 1px
+  );
   background-size: 22px 22px;
   pointer-events: none;
   z-index: 0;
 }
-#root { position: relative; z-index: 1; }
+#root {
+  position: relative;
+  z-index: 1;
+}
 
 .app {
   display: flex;
@@ -116,10 +128,11 @@ body::before {
   font-size: 11px;
   font-family: var(--font-body);
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
   box-shadow: var(--shadow-sm);
 }
 
@@ -202,9 +215,7 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: var(--layout-pane-gap);
-  padding:
-    var(--layout-gutter-top)
-    var(--layout-gutter)
+  padding: var(--layout-gutter-top) var(--layout-gutter)
     var(--layout-gutter-bottom);
   /* No overflow:hidden here — would clip each pane's drop-shadow at
      this row's bottom edge, hiding the visible curve we worked to
@@ -281,7 +292,7 @@ body::before {
    rounded edge; against cream outside it does the same. */
 .right-pane {
   box-shadow: var(--shadow-pane-dark);
-  border: 1.5px solid var(--color-border-strong);
+  border: 2px solid var(--color-border-strong);
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -332,8 +343,14 @@ body::before {
 }
 
 @keyframes banner-slide-in {
-  from { transform: translateY(-4px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from {
+    transform: translateY(-4px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 .conflict-banner-icon {
@@ -394,7 +411,11 @@ body::before {
   align-items: center;
   gap: 10px;
   padding: 9px 16px;
-  background: linear-gradient(90deg, var(--accent-faint) 0%, var(--surface-soft) 100%);
+  background: linear-gradient(
+    90deg,
+    var(--accent-faint) 0%,
+    var(--surface-soft) 100%
+  );
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
   font-size: 12px;
@@ -413,7 +434,7 @@ body::before {
 
 /* Soft glow that sweeps across while the agent is active. */
 .agent-activity-banner::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   background: linear-gradient(
@@ -428,12 +449,20 @@ body::before {
 }
 
 @keyframes agent-shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -100% 0; }
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }
 
 .agent-activity-banner:hover {
-  background: linear-gradient(90deg, var(--accent-soft) 0%, var(--surface-hover) 100%);
+  background: linear-gradient(
+    90deg,
+    var(--accent-soft) 0%,
+    var(--surface-hover) 100%
+  );
   color: var(--text);
 }
 
@@ -445,8 +474,12 @@ body::before {
 }
 
 @keyframes agent-activity-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .agent-activity-banner-text {
@@ -487,7 +520,7 @@ body::before {
   flex: 0 0 auto;
 }
 .resize-handle::after {
-  content: "";
+  content: '';
   width: 3px;
   height: 28px;
   border-radius: 999px;
@@ -537,9 +570,10 @@ body::before {
   text-transform: uppercase;
   cursor: pointer;
   font-family: var(--font-display);
-  transition: color var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease);
+  transition:
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
 }
 
 .left-tab:hover {
@@ -606,8 +640,12 @@ body::before {
 }
 
 @keyframes tab-pull-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .left-tab-panel {
@@ -726,7 +764,9 @@ body::before {
   /* Greyed out when system files are hidden; full accent when shown. */
   opacity: 0.4;
   filter: grayscale(100%);
-  transition: opacity 0.1s, filter 0.1s;
+  transition:
+    opacity 0.1s,
+    filter 0.1s;
 }
 
 .explorer-system-toggle.active .explorer-system-icon {
@@ -1017,9 +1057,10 @@ body::before {
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 
 .viewer-tab:hover {
@@ -1074,10 +1115,11 @@ body::before {
   text-align: left;
   font: inherit;
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    border-color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 
 .thread-card:hover {
@@ -1216,7 +1258,9 @@ body::before {
   font-weight: 400;
   font-family: -apple-system, sans-serif;
   cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease;
 }
 
 .viewer-add-btn:hover {
@@ -1642,7 +1686,9 @@ body::before {
   border-radius: 14px;
   padding: 24px 18px;
   background: var(--surface-soft, rgba(0, 0, 0, 0.015));
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .viewer-summary-dropzone.viewer-summary-drag {
@@ -1724,7 +1770,9 @@ body::before {
   cursor: pointer;
 }
 
-.thread-reply-chip-remove:hover { color: var(--text); }
+.thread-reply-chip-remove:hover {
+  color: var(--text);
+}
 
 /* Inline attachment list under each conversation bubble. */
 .attachment-list {
@@ -1893,8 +1941,12 @@ body::before {
    something. Keyed re-mount in Viewer.tsx makes the animation re-fire
    on each click. */
 @keyframes viewer-md-flash {
-  0%   { background: #fff4c2; }
-  100% { background: transparent; }
+  0% {
+    background: #fff4c2;
+  }
+  100% {
+    background: transparent;
+  }
 }
 .viewer-md-flash {
   animation: viewer-md-flash 0.6s ease-out;
@@ -1967,7 +2019,9 @@ body::before {
   font-size: 13px;
   margin: 4px 0;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-  transition: transform 0.05s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.05s ease,
+    box-shadow 0.15s ease;
 }
 .viewer-md a:has(> strong:only-child):hover {
   text-decoration: none;
@@ -2088,14 +2142,15 @@ body::before {
   --surface-hover: #2a2018;
   --bg: #1a140e;
   --bg-canvas: #1a140e;
-  --border: rgba(255, 220, 180, 0.10);
-  --border-strong: rgba(255, 220, 180, 0.20);
+  --border: rgba(255, 220, 180, 0.1);
+  --border-strong: rgba(255, 220, 180, 0.2);
   --border-faint: rgba(255, 220, 180, 0.06);
   --text: #f0e7d3;
-  --text-muted: rgba(240, 231, 211, 0.70);
+  --text-muted: rgba(240, 231, 211, 0.7);
   --text-faint: rgba(240, 231, 211, 0.45);
-  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.30);
-  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.30), 0 6px 18px -10px rgba(0, 0, 0, 0.50);
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.3);
+  --shadow-card:
+    0 1px 0 rgba(0, 0, 0, 0.3), 0 6px 18px -10px rgba(0, 0, 0, 0.5);
 
   position: relative;
   height: 100%;
@@ -2106,16 +2161,21 @@ body::before {
 }
 
 .right-pane::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse at top, rgba(199, 90, 44, 0.10) 0%, transparent 60%),
+    radial-gradient(ellipse at top, rgba(199, 90, 44, 0.1) 0%, transparent 60%),
     radial-gradient(rgba(255, 220, 180, 0.04) 1px, transparent 1px);
-  background-size: 100% 100%, 18px 18px;
+  background-size:
+    100% 100%,
+    18px 18px;
   pointer-events: none;
 }
-.right-pane > * { position: relative; z-index: 1; }
+.right-pane > * {
+  position: relative;
+  z-index: 1;
+}
 
 /* .icon-btn / .icon-btn.key-set — first of three legacy
    definitions for the header buttons. Migrated to <Button> in
@@ -2188,9 +2248,10 @@ body::before {
   font-weight: 500;
   font-family: var(--font-body);
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
 }
 
 .bubble:hover {
@@ -2202,7 +2263,7 @@ body::before {
 .bubble-conflict {
   border-color: var(--clay);
   color: var(--clay-soft);
-  background: rgba(179, 74, 58, 0.20);
+  background: rgba(179, 74, 58, 0.2);
   font-weight: 600;
 }
 
@@ -2219,7 +2280,6 @@ body::before {
   overflow-y: auto;
   background: var(--surface-soft);
 }
-
 
 .sc-panel.sc-empty {
   padding: 16px;
@@ -2293,8 +2353,11 @@ body::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.1s ease, border-color 0.1s ease,
-    box-shadow 0.1s ease, transform 0.05s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease,
+    box-shadow 0.1s ease,
+    transform 0.05s ease;
 }
 
 .sc-sparkle-btn:hover:not(:disabled) {
@@ -2921,7 +2984,9 @@ body::before {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
 }
 
 .onboard-signup-btn:hover {
@@ -3262,7 +3327,9 @@ body::before {
   font: inherit;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease;
 }
 
 .entity-folder-item:hover {
@@ -3350,7 +3417,9 @@ body::before {
   font: inherit;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease;
 }
 
 .databases-list-item:hover {
@@ -3434,7 +3503,10 @@ body::before {
   font-size: 12px;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease,
+    border-color 0.1s ease;
 }
 
 .conv-filter-btn:hover {
@@ -3802,7 +3874,6 @@ body::before {
   color: var(--accent, var(--text));
 }
 
-
 /* ─────────────────────────────────────────────────────────────────
    Studio direction — added 2026-04-27
    Chat shell header, bottom status bar, cmd-K palette.
@@ -3836,7 +3907,9 @@ body::before {
   font-size: 11px;
 }
 
-.chat-shell-spacer { flex: 1; }
+.chat-shell-spacer {
+  flex: 1;
+}
 
 /* ── Status bar removed ─────────────────────────────────────────
    The .status-bar / .status-chip / .status-led classes migrated to
@@ -3863,21 +3936,23 @@ body::before {
   overflow-x: auto;
   scrollbar-width: none;
 }
-.v5-shell-status-left::-webkit-scrollbar { display: none; }
+.v5-shell-status-left::-webkit-scrollbar {
+  display: none;
+}
 .v5-shell-status-right {
   font-family: var(--font-serif);
   font-style: italic;
   font-size: var(--fs-caption);
   color: var(--color-text-faint);
   white-space: nowrap;
-  font-feature-settings: "tnum" 1;
+  font-feature-settings: 'tnum' 1;
 }
 
 /* ── Command palette ───────────────────────────────────────────── */
 .cmdk-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(40, 28, 14, 0.30);
+  background: rgba(40, 28, 14, 0.3);
   backdrop-filter: blur(4px) saturate(110%);
   -webkit-backdrop-filter: blur(4px) saturate(110%);
   z-index: 1000;
@@ -3889,8 +3964,12 @@ body::before {
 }
 
 @keyframes cmdk-overlay-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .cmdk-panel {
@@ -3907,8 +3986,14 @@ body::before {
 }
 
 @keyframes cmdk-panel-in {
-  from { opacity: 0; transform: translateY(-8px) scale(0.985); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .cmdk-search {
@@ -4007,8 +4092,9 @@ body::before {
   padding: 9px 12px;
   text-align: left;
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
   font-family: inherit;
 }
 
@@ -4066,7 +4152,6 @@ body::before {
   color: var(--accent);
 }
 
-
 /* ─────────────────────────────────────────────────────────────────
    Workbench — left-pane front door
    ───────────────────────────────────────────────────────────────── */
@@ -4091,16 +4176,21 @@ body::before {
   flex-direction: column;
   width: 100%;
   background:
-    radial-gradient(ellipse at top right, rgba(199, 90, 44, 0.18) 0%, transparent 70%),
+    radial-gradient(
+      ellipse at top right,
+      rgba(199, 90, 44, 0.18) 0%,
+      transparent 70%
+    ),
     linear-gradient(180deg, #fff8ec 0%, var(--surface) 100%);
   border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: var(--shadow-card);
   position: relative;
   overflow: hidden;
-  transition: border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 .workbench-today.has-escalated {
   /* Subtle warm glow on the card when there are escalated tickets —
@@ -4121,10 +4211,13 @@ body::before {
 }
 
 .workbench-today::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(rgba(120, 96, 60, 0.05) 1px, transparent 1px);
+  background-image: radial-gradient(
+    rgba(120, 96, 60, 0.05) 1px,
+    transparent 1px
+  );
   background-size: 14px 14px;
   pointer-events: none;
   opacity: 0.5;
@@ -4164,10 +4257,10 @@ body::before {
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  background: rgba(245, 185, 72, 0.10);
+  background: rgba(245, 185, 72, 0.1);
   color: #5c3d00;
   border: 0;
-  border-top: 1px solid rgba(199, 154, 46, 0.30);
+  border-top: 1px solid rgba(199, 154, 46, 0.3);
   font-family: var(--font-body);
   font-size: 12.5px;
   font-weight: 500;
@@ -4175,8 +4268,9 @@ body::before {
   position: relative;
   z-index: 1;
   text-align: left;
-  transition: background var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
 }
 .workbench-today-cta:hover:not(:disabled) {
   background: rgba(245, 185, 72, 0.18);
@@ -4212,7 +4306,9 @@ body::before {
 .workbench-today-cta-arrow {
   font-size: 12px;
   opacity: 0.6;
-  transition: transform var(--t-fast) var(--ease), opacity var(--t-fast) var(--ease);
+  transition:
+    transform var(--t-fast) var(--ease),
+    opacity var(--t-fast) var(--ease);
 }
 .workbench-today-cta:hover:not(:disabled) .workbench-today-cta-arrow {
   transform: translateX(2px);
@@ -4328,10 +4424,11 @@ body::before {
   text-align: left;
   font-family: inherit;
   box-shadow: var(--shadow-sm);
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 
 .station:hover {
@@ -4429,8 +4526,9 @@ body::before {
    above it flips. Smooth height transition. */
 .left-files-region {
   overflow: hidden;
-  transition: max-height var(--t-slow) var(--ease),
-              opacity var(--t-base) var(--ease);
+  transition:
+    max-height var(--t-slow) var(--ease),
+    opacity var(--t-base) var(--ease);
 }
 
 .left-files-region.collapsed {
@@ -4447,7 +4545,6 @@ body::before {
 /* Header refinements removed — .header-cmdk-hint, .icon-btn-primary,
    .icon-btn-ghost migrated to <Button variant="cmdk"|"primary"|"ghost">
    in src/ui/Button.tsx. Consumers in src/App.tsx now use those. */
-
 
 /* ─────────────────────────────────────────────────────────────────
    Pane drag-and-drop reorder
@@ -4471,9 +4568,10 @@ body::before {
   cursor: grab;
   user-select: none;
   opacity: 0.45;
-  transition: color var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease),
-              opacity var(--t-fast) var(--ease);
+  transition:
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    opacity var(--t-fast) var(--ease);
 }
 
 .pane-drag-handle:hover {
@@ -4515,7 +4613,7 @@ body::before {
 }
 
 .pane-drop-target::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   background: var(--accent-faint);
@@ -4527,8 +4625,13 @@ body::before {
 }
 
 @keyframes pane-drop-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(199, 90, 44, 0.0); }
-  50%      { box-shadow: 0 0 0 6px rgba(199, 90, 44, 0.18); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(199, 90, 44, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(199, 90, 44, 0.18);
+  }
 }
 
 .right-pane.pane-drop-target::before {
@@ -4564,10 +4667,11 @@ body::before {
   line-height: 1;
   cursor: pointer;
   flex: 0 0 auto;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
 }
 
 .pane-icon-btn:hover:not(:disabled) {
@@ -4601,7 +4705,7 @@ body::before {
 
 /* Inside the dark theatre, the accent button needs a dark-aware tint. */
 .right-pane .pane-icon-btn-accent {
-  background: rgba(199, 90, 44, 0.20);
+  background: rgba(199, 90, 44, 0.2);
   border-color: rgba(199, 90, 44, 0.45);
   color: #f3a76a;
 }
@@ -4670,10 +4774,11 @@ body::before {
   font: inherit;
   color: var(--text);
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease);
+  transition:
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
 }
 
 .entity-card-clickable {
@@ -4909,7 +5014,7 @@ body::before {
   --tone-border: var(--ochre);
 }
 .entity-tone-link {
-  --tone-bg: rgba(74, 92, 184, 0.10);
+  --tone-bg: rgba(74, 92, 184, 0.1);
   --tone-color: var(--link);
   --tone-border: rgba(74, 92, 184, 0.32);
 }
@@ -4997,11 +5102,12 @@ body::before {
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-sm);
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
 }
 
 .btn:hover:not(:disabled),
@@ -5041,7 +5147,11 @@ body::before {
 
 .btn-primary:hover:not(:disabled),
 .deploy-btn:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
+  background: linear-gradient(
+    180deg,
+    var(--accent) 0%,
+    var(--accent-hover) 100%
+  );
   border-color: var(--accent-hover);
   transform: translateY(-1px);
   box-shadow:
@@ -5192,7 +5302,9 @@ body::before {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.1s ease, transform 0.05s ease;
+  transition:
+    background 0.1s ease,
+    transform 0.05s ease;
 }
 
 .cloud-cta-primary:hover:not(:disabled) {
@@ -5214,7 +5326,10 @@ body::before {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease, transform 0.05s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease,
+    transform 0.05s ease;
 }
 
 .cloud-cta-secondary:hover:not(:disabled) {
@@ -5235,7 +5350,5 @@ body::before {
   line-height: 1.5;
 }
 
-
 /* .status-chip-unset removed — handled by the v5 <Chip> primitive's
    built-in dashed/unset variant in src/ui/Chip.tsx. */
-
