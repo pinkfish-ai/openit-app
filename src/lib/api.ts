@@ -614,22 +614,6 @@ export async function datastoreStateSave(
   return invoke("entity_state_save", { repo, name: "datastore", state });
 }
 
-/// List local row files for one datastore collection. Filters out
-/// `_schema.json` and non-`.json` entries TS-side now that the underlying
-/// command is generic. Same shape as `kbListLocal` / `fsStoreListLocal`.
-export async function datastoreListLocal(
-  repo: string,
-  collectionName: string,
-): Promise<KbLocalFile[]> {
-  const all = await invoke<KbLocalFile[]>("entity_list_local", {
-    repo,
-    subdir: `databases/${collectionName}`,
-  });
-  return all.filter(
-    (f) => f.filename !== "_schema.json" && f.filename.endsWith(".json"),
-  );
-}
-
 export async function fsStoreDownloadToLocal(
   repo: string,
   filename: string,

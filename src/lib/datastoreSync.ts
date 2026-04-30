@@ -524,6 +524,15 @@ async function pushAllToDatastoresImpl(args: {
     try {
       const topNodes = await fsList(colDir);
       if (isConversations) {
+        // Cloud-side row key is just the msgId (no `<ticketId>__` prefix).
+        // If the user lands the same msgId in two ticket folders, the
+        // second push would silently overwrite the first cloud row. The
+        // bundled seed uses timestamp+suffix ids so this is theoretical
+        // for first-party content, but admin-authored or copy-pasted
+        // rows can collide. First-writer-wins + a loud warning is
+        // cheaper than retrofitting a composite cloud key here. (R7
+        // BugBot finding.)
+        const seenKeys = new Map<string, string>();
         for (const top of topNodes) {
           if (!top.is_dir) continue;
           const ticketId = top.name;
@@ -551,11 +560,18 @@ async function pushAllToDatastoresImpl(args: {
             if (!n.name.endsWith(".json")) continue;
             if (n.name === "_schema.json") continue;
             if (classifyAsShadow(n.name, siblings)) continue;
-            localFiles.push({
-              key: n.name.replace(/\.json$/, ""),
-              absPath: n.path,
-              ticketId,
-            });
+            const key = n.name.replace(/\.json$/, "");
+            const firstSeenIn = seenKeys.get(key);
+            if (firstSeenIn !== undefined) {
+              console.warn(
+                `[datastoreSync] duplicate conversation msgId "${key}" — already pushing from ` +
+                  `ticket "${firstSeenIn}", skipping copy in "${ticketId}". Rename one to avoid ` +
+                  `silent overwrite on cloud.`,
+              );
+              continue;
+            }
+            seenKeys.set(key, ticketId);
+            localFiles.push({ key, absPath: n.path, ticketId });
           }
         }
       } else {
