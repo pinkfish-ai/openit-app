@@ -101,29 +101,38 @@ async function isLocalTargetEmpty(repo: string, localDir: string): Promise<boole
   return true;
 }
 
+/// Returns the set of `openit-*` collection names of the given type.
+/// Throws if the cloud state can't be determined (no auth token, HTTP
+/// error, parse error). Callers MUST treat thrown as "unknown" and
+/// abort seeding rather than treating an empty set as "cloud is empty"
+/// — that would write samples on top of populated orgs whenever the
+/// token momentarily disappears (e.g. mid-refresh). (PIN-5793 BugBot R4
+/// finding.)
 async function listOpenitCollectionNames(
   creds: PinkfishCreds,
   type: "datastore" | "knowledge_base",
 ): Promise<Set<string>> {
   const token = getToken();
-  if (!token) return new Set();
+  if (!token) {
+    throw new Error("seed: cannot check cloud state — no auth token available");
+  }
   const urls = derivedUrls(creds.tokenUrl);
   const url = new URL("/datacollection/", urls.skillsBaseUrl);
   url.searchParams.set("type", type);
-  try {
-    const fetchFn = makeSkillsFetch(token.accessToken);
-    const resp = await fetchFn(url.toString());
-    if (!resp.ok) return new Set();
-    const data = (await resp.json()) as Array<{ name?: string }> | null;
-    if (!Array.isArray(data)) return new Set();
-    return new Set(
-      data
-        .map((c) => c.name)
-        .filter((n): n is string => typeof n === "string" && n.startsWith("openit-")),
-    );
-  } catch {
-    return new Set();
+  const fetchFn = makeSkillsFetch(token.accessToken);
+  const resp = await fetchFn(url.toString());
+  if (!resp.ok) {
+    throw new Error(`seed: cloud list failed (HTTP ${resp.status}) for type=${type}`);
   }
+  const data = (await resp.json()) as Array<{ name?: string }> | null;
+  if (!Array.isArray(data)) {
+    throw new Error(`seed: cloud list returned non-array for type=${type}`);
+  }
+  return new Set(
+    data
+      .map((c) => c.name)
+      .filter((n): n is string => typeof n === "string" && n.startsWith("openit-")),
+  );
 }
 
 /// Run the seed pass. Safe to call multiple times — gates re-evaluate on
@@ -136,8 +145,19 @@ export async function seedIfEmpty(args: {
   const { repo, creds, onLog } = args;
   const manifest = await fetchSkillsManifest(creds);
 
-  const cloudDatastores = await listOpenitCollectionNames(creds, "datastore");
-  const cloudKbs = await listOpenitCollectionNames(creds, "knowledge_base");
+  // If we can't determine cloud state (no token, network blip, etc.) we
+  // abort seeding entirely — the next connect will retry. Treating
+  // "unknown cloud state" as "cloud is empty" would seed samples on top
+  // of populated orgs.
+  let cloudDatastores: Set<string>;
+  let cloudKbs: Set<string>;
+  try {
+    cloudDatastores = await listOpenitCollectionNames(creds, "datastore");
+    cloudKbs = await listOpenitCollectionNames(creds, "knowledge_base");
+  } catch (err) {
+    onLog?.(`seed: skipping — cloud state unknown (${err instanceof Error ? err.message : String(err)})`);
+    return { wrote: 0 };
+  }
 
   // Map each target → which cloud-name set governs its gate.
   const cloudHas = (t: TargetConfig): boolean =>

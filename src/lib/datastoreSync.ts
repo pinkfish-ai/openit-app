@@ -502,20 +502,42 @@ async function pushAllToDatastoresImpl(args: {
     type LocalRow = { key: string; absPath: string; ticketId?: string };
     let localFiles: LocalRow[] = [];
     let localDirExists = true;
+    // Tracks whether any per-ticket subfolder listing failed during the
+    // conversations walk. We can't distinguish "user emptied this folder"
+    // from "fsList errored" from the outside, so any inner-walk error
+    // disables the remote-delete phase for this collection — better to
+    // skip a deletion than to nuke teammates' rows because of a transient
+    // read failure. (PIN-5793 BugBot R4 finding.)
+    let innerWalkFailed = false;
     try {
       const topNodes = await fsList(colDir);
       if (isConversations) {
         for (const top of topNodes) {
           if (!top.is_dir) continue;
           const ticketId = top.name;
-          const inner = await fsList(top.path).catch(() => []);
+          let inner;
+          try {
+            inner = await fsList(top.path);
+          } catch (e) {
+            console.warn(
+              `[datastoreSync] failed to list conversations subfolder ${ticketId}; ` +
+                `disabling remote-delete pass for ${col.name} this push:`,
+              e,
+            );
+            innerWalkFailed = true;
+            continue;
+          }
           const candidateNames = inner
-            .filter((n) => !n.is_dir && n.name.endsWith(".json"))
+            .filter(
+              (n) =>
+                !n.is_dir && n.name.endsWith(".json") && n.name !== "_schema.json",
+            )
             .map((n) => n.name);
           const siblings = new Set(candidateNames);
           for (const n of inner) {
             if (n.is_dir) continue;
             if (!n.name.endsWith(".json")) continue;
+            if (n.name === "_schema.json") continue;
             if (classifyAsShadow(n.name, siblings)) continue;
             localFiles.push({
               key: n.name.replace(/\.json$/, ""),
@@ -611,11 +633,13 @@ async function pushAllToDatastoresImpl(args: {
     }
 
     // SAFETY: only run the deletion phase if the local collection dir
-    // actually exists. Otherwise an empty `localKeys` would be
-    // interpreted as "user deleted everything" and we'd nuke every remote
-    // row — which would happen on the very first commit if the datastore
-    // pull hadn't completed yet.
-    if (localDirExists) {
+    // actually exists AND every per-ticket subfolder we listed succeeded.
+    // Otherwise an empty `localKeys` would be interpreted as "user
+    // deleted everything" and we'd nuke every remote row — which would
+    // happen on the very first commit if the datastore pull hadn't
+    // completed yet OR if a transient read error truncated the local
+    // walk for the conversations collection.
+    if (localDirExists && !innerWalkFailed) {
       for (const r of remote) {
         const k = (r.key ?? r.id ?? "").toString();
         if (!k || localKeys.has(k)) continue;
@@ -635,7 +659,12 @@ async function pushAllToDatastoresImpl(args: {
         }
       }
     } else {
-      onLine?.(`▸ datastore: ${col.name} has no local dir yet — skipping deletion phase`);
+      const reason = !localDirExists
+        ? "has no local dir yet"
+        : "had a partial local walk";
+      onLine?.(
+        `▸ datastore: ${col.name} ${reason} — skipping deletion phase to avoid nuking remote rows`,
+      );
     }
   }
 

@@ -194,7 +194,12 @@ export function datastoreAdapter(args: {
             } catch {
               continue;
             }
-            const filtered = inner.filter((f) => f.filename.endsWith(".json"));
+            // Skip `_schema.json` defensively — conversations is unstructured
+            // and shouldn't have one in the per-ticket folder, but a stray
+            // one shouldn't get picked up as a row and pushed to cloud.
+            const filtered = inner.filter(
+              (f) => f.filename.endsWith(".json") && f.filename !== "_schema.json",
+            );
             const siblings = new Set(filtered.map((f) => f.filename));
             for (const f of filtered) {
               const base = f.filename.replace(/\.json$/, "");

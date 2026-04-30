@@ -105,6 +105,24 @@ function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubbl
   }));
 }
 
+/// Run-token incremented on every stopAllCloudSyncs() call. startCloudSyncs
+/// captures the current value before kicking off seed; the post-seed
+/// engine-start step checks the token still matches before actually starting.
+/// Without this, a disconnect (or component unmount) that lands while
+/// `seedIfEmpty` is in-flight would call stop* on engines that haven't
+/// started yet (no-op), then `.finally()` would start them anyway against
+/// stale credentials. (PIN-5793 BugBot R4 finding.)
+let cloudSyncsRunId = 0;
+
+function stopAllCloudSyncs(): void {
+  cloudSyncsRunId += 1;
+  stopKbSync();
+  stopFilestoreSync();
+  stopDatastoreSync();
+  stopAgentSync();
+  stopWorkflowSync();
+}
+
 /// Fan out the cloud sync engines for a connected project. Centralized so
 /// the relaunch + fresh-bootstrap paths can't drift on which engines they
 /// start. Each engine swallows its own init error so one failure doesn't
@@ -115,6 +133,7 @@ function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubbl
 /// pre-auto-create state. If seed fails for any reason, engines still
 /// start — empty workspace is acceptable, mis-sequenced engines aren't.
 function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): void {
+  const myRun = ++cloudSyncsRunId;
   seedIfEmpty({
     repo,
     creds,
@@ -122,6 +141,12 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): 
   })
     .catch((e) => console.warn("seed (PIN-5793) failed; engines starting anyway:", e))
     .finally(() => {
+      if (myRun !== cloudSyncsRunId) {
+        console.log(
+          "[startCloudSyncs] disconnect arrived during seed; not starting engines for this stale session",
+        );
+        return;
+      }
       startKbSync({ creds, repo }).catch((e) =>
         console.error("kb sync init failed:", e),
       );
@@ -639,11 +664,7 @@ function App() {
     const unsub = subscribeToken((t) => setConnected(t !== null));
     return () => {
       unsub();
-      stopKbSync();
-      stopFilestoreSync();
-      stopDatastoreSync();
-      stopAgentSync();
-      stopWorkflowSync();
+      stopAllCloudSyncs();
     };
   }, []);
 
