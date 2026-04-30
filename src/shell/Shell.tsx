@@ -47,6 +47,7 @@ import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
 import { Viewer, type ViewerSource } from "./Viewer";
+import { PaneBody } from "../ui";
 import type { DockKind } from "../lib/skillState";
 import { resolvePathToSource } from "./entityRouting";
 import { SkillActionDock } from "./SkillActionDock";
@@ -893,20 +894,18 @@ export function Shell({
                   ↻
                 </Button>
               </div>
-              <div className="left-tab-panel" hidden={leftTab !== "overview"}>
-                <div className="left-pane-scroll">
-                  <Workbench
-                    repo={repo}
-                    fsTick={fsTick}
-                    onOpen={async (path) => {
-                      const resolved = await resolvePathToSource(path, repo);
-                      setSource(resolved);
-                    }}
-                    onShowFiles={() => setLeftTab("files")}
-                  />
-                </div>
-              </div>
-              <div className="left-tab-panel" hidden={leftTab !== "files"}>
+              <PaneBody hidden={leftTab !== "overview"}>
+                <Workbench
+                  repo={repo}
+                  fsTick={fsTick}
+                  onOpen={async (path) => {
+                    const resolved = await resolvePathToSource(path, repo);
+                    setSource(resolved);
+                  }}
+                  onShowFiles={() => setLeftTab("files")}
+                />
+              </PaneBody>
+              <PaneBody flush hidden={leftTab !== "files"}>
                 <FileExplorer
                   repo={repo}
                   onSelect={async (path) => {
@@ -918,8 +917,8 @@ export function Shell({
                   fsTick={fsTick}
                   onFsChange={bumpFs}
                 />
-              </div>
-              <div className="left-tab-panel" hidden={leftTab !== "source-control"}>
+              </PaneBody>
+              <PaneBody flush hidden={leftTab !== "source-control"}>
                 <SourceControl
                   repo={repo}
                   active={leftTab === "source-control"}
@@ -936,7 +935,7 @@ export function Shell({
                       .catch((e) => console.error("[shell] cloud-cta resolution failed:", e));
                   }}
                 />
-              </div>
+              </PaneBody>
             </div>
           ),
           center: (
@@ -1002,12 +1001,16 @@ export function Shell({
           ),
         };
 
-        // No autoSaveId on the PanelGroup — persisted sizes are keyed
-        // by Panel id, but when a pane swaps slots its old persisted
-        // size is briefly re-applied at the new position before the
-        // library reflows, producing a visible width jump on drop.
-        // PANE_DEFAULT covers the common case; runtime resizes during
-        // a session still work via the library's own state.
+        // autoSaveId — react-resizable-panels persists pane sizes to
+        // localStorage keyed by autoSaveId + Panel id. The id includes
+        // the current paneOrder so that each unique ordering has its
+        // own remembered layout. Without that scoping, a pane that
+        // moves to a new slot would briefly inherit the previous
+        // occupant's saved size on drop. With it, each ordering gets
+        // its own clean key and no cross-bleed. End result: once the
+        // user resizes a pane, the size sticks across page changes
+        // AND across app restarts.
+        const autoSaveId = `openit-shell-panes-${paneOrder.join("-")}`;
         return (
           // Wrapper enforces the panes-row geometry: takes all
           // available vertical space inside .shell, leaving room for
@@ -1015,7 +1018,7 @@ export function Shell({
           // flex:1 the PanelGroup collapses in some cases when the
           // shell uses padded gutters.
           <div className="shell-panes-row">
-            <PanelGroup direction="horizontal">
+            <PanelGroup direction="horizontal" autoSaveId={autoSaveId}>
               {paneOrder.map((id, idx) => (
                 <Fragment key={id}>
                   <Panel

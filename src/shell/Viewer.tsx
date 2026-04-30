@@ -22,6 +22,7 @@ import { PdfViewer } from "./viewers/PdfViewer";
 import { SpreadsheetViewer } from "./viewers/SpreadsheetViewer";
 import { OfficeViewer } from "./viewers/OfficeViewer";
 import { writeToActiveSession } from "./activeSession";
+import { PaneBody } from "../ui";
 
 /// Pasting a slash command into the active Claude PTY uses bracketed-
 /// paste sequences so the terminal treats it as a single atomic input,
@@ -921,6 +922,17 @@ export function Viewer({
       console.error("[viewer] clipboard write failed:", e);
     }
   };
+
+  // Media file viewers (image, pdf, spreadsheet, office) want the pane
+  // body to be full-bleed — they manage their own internal padding /
+  // toolbars / canvas sizing. Everything else uses the canonical pane
+  // padding so content's left edge sits in the same place across pages.
+  const flushBody =
+    source.kind === "file" &&
+    (isImage(source.path) ||
+      isPdf(source.path) ||
+      isSpreadsheet(source.path) ||
+      isOfficeDoc(source.path));
 
   // --- Render body ---
   const renderBody = () => {
@@ -2611,7 +2623,7 @@ export function Viewer({
           )}
         </div>
       )}
-      {renderBody()}
+      <PaneBody flush={flushBody}>{renderBody()}</PaneBody>
     </div>
   );
 }
