@@ -1,9 +1,14 @@
-/* TitleRail — the merged macOS titlebar + app header. The native
-   traffic lights overlay this rail at top-left (we leave 78px of
-   left padding to clear them). The whole rail is draggable except
-   for interactive children, which opt out via app-region: no-drag.
-   Replaces the old .app-header strip in App.tsx and the wasted
-   empty titlebar above it. */
+/* TitleRail — the slim macOS-overlaid titlebar. ONLY hosts:
+   - traffic-light clearance on the left (78px)
+   - global window actions on the right (⌘K, Getting Started,
+     Connect to Cloud)
+   The whole rail is draggable except the buttons (they opt out
+   via .btn's app-region: no-drag).
+
+   Live state (project, intake, slack, etc) lives in <StatusRail>
+   directly below this — see StatusRail.module.css. The split
+   keeps the macOS chrome row clean and gives the chips their
+   own breathing room. */
 
 .rail {
   flex: 0 0 auto;
@@ -18,84 +23,11 @@
   user-select: none;
   position: relative;
   z-index: var(--z-sticky);
-  /* Subtle hairline along the bottom — separates the rail from the
-     panes below without competing with the cream gutter. */
-  box-shadow: inset 0 -1px 0 var(--color-border-faint);
 }
-
-/* The two main regions. Children inside .left (status chips) opt
-   out of the drag automatically because they're <button>s; .right
-   action buttons do the same. The space between left and right
-   stays draggable so the user can grab the rail anywhere. */
-.left,
+.spacer { flex: 1; }
 .right {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.left {
-  flex: 1 1 auto;
-  /* Allow chips to wrap by hiding overflow; in narrow windows we
-     gracefully clip the rightmost ones rather than push the actions
-     out of view. */
-  overflow: hidden;
-  flex-wrap: nowrap;
-}
-.right {
+  gap: var(--space-3);
   flex: 0 0 auto;
-  justify-content: flex-end;
-  gap: var(--space-3);
-}
-
-/* Center region kept available for future use (current-view name,
-   counters, etc) but not used in this iteration. */
-.center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-  min-width: 0;
-  overflow: hidden;
-}
-
-/* Any interactive element inside the rail must opt out of the drag
-   so click events land. Apply via the .nodrag utility OR rely on
-   the consumers (Button, Chip) which are already buttons and
-   exempt from drag. Here we add a belt-and-suspenders rule for
-   non-button anchors / divs inside the rail. */
-.nodrag {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
-}
-
-/* The center "context" widget — current view name + counters.
-   Sits in the middle of the rail. */
-.context {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-family: var(--font-body);
-  font-size: var(--fs-meta);
-  color: var(--color-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.contextName {
-  font-family: var(--font-display);
-  font-weight: var(--fw-medium);
-  font-size: var(--fs-meta);
-  letter-spacing: var(--tracking-snug);
-  color: var(--color-text);
-}
-.contextSep {
-  color: var(--color-text-faint);
-  opacity: 0.5;
-}
-.contextItalic {
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: var(--fs-meta);
-  color: var(--color-text-faint);
 }

@@ -145,7 +145,6 @@ export function Shell({
   slackOrgId,
   stagedSlackBotToken,
   onStagedSlackBotTokenChange,
-  onChangeCount,
   registerManualPull,
   registerSwitchToSync,
   registerShowCloudCta,
@@ -181,10 +180,6 @@ export function Shell({
   stagedSlackBotToken: string | null;
   /** Setter for the staged bot token. */
   onStagedSlackBotTokenChange: (t: string | null) => void;
-  /** Mirror the uncommitted-change count up to App.tsx so the
-   *  TitleRail's status chips can render it. SourceControl is the
-   *  source of truth; this callback fires whenever it bumps. */
-  onChangeCount?: (n: number) => void;
   /** Register the manual-pull handler so the command palette can call it. */
   registerManualPull: (fn: () => void) => void;
   /** Register the switch-to-sync-tab handler so the command palette can call it. */
@@ -259,14 +254,7 @@ export function Shell({
   const [conflictBubbles, setConflictBubbles] = useState<Bubble[]>([]);
   const [leftTab, setLeftTab] = useState<LeftTab>("overview");
   const [fsTick, setFsTick] = useState(0);
-  const [changeCount, _setChangeCount] = useState(0);
-  // Mirror the count to App.tsx so the TitleRail's status chips can
-  // show it. The count's source of truth is still SourceControl
-  // (which calls setChangeCount via its onChangeCount prop below).
-  const setChangeCount = (n: number) => {
-    _setChangeCount(n);
-    onChangeCount?.(n);
-  };
+  const [changeCount, setChangeCount] = useState(0);
   const [pulling, setPulling] = useState(false);
   const [paneOrder, setPaneOrder] = useState<PaneId[]>(DEFAULT_PANE_ORDER);
   const [draggingPaneId, setDraggingPaneId] = useState<PaneId | null>(null);

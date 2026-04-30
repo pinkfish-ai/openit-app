@@ -1,0 +1,35 @@
+/* StatusRail — second row directly below the TitleRail, hosts the
+   live state chips (project, cloud, intake form, slack). Transparent
+   on cream so it blends with the canvas; the visual divide between
+   rails is purely the empty space, not chrome.
+
+   Sits BETWEEN the slim title rail and the panes row. Gives the
+   chips their own breathing room without competing with the macOS
+   menu bar / traffic-light strip above. */
+
+.rail {
+  flex: 0 0 auto;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) 0 var(--layout-traffic-clear);
+  background: transparent;
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+  /* Allow chips to overflow horizontally without forcing the
+     window to scroll. On narrow widths the rightmost chips clip
+     gracefully rather than push siblings out of view. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.rail::-webkit-scrollbar { display: none; }
+
+.cluster {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  white-space: nowrap;
+}

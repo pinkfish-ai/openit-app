@@ -1,22 +1,27 @@
-// Banner for tickets the agent escalated — admin must handle.
-// Renders INLINE inside the right (chat) pane, just below the chat
-// header and above the chat stream. (v5: previously rendered with
-// position: fixed at the top-right of the viewport, which clipped
-// over the chat pane's rounded corner. Re-parented in the
-// design-system-v5 PR so it composes with the pane's own chrome.)
+// Indicator for tickets the agent escalated — admin must handle.
+// Renders inside the right (chat) pane just above the chat stream
+// as a small pulsing amber pill (see src/ui/EscalationPill.tsx).
+//
+// v5 third pass: the previous full-width sage Banner read as too
+// quiet on the dark chat surface and ate too much vertical space
+// for what is fundamentally a one-line nudge. The pill is denser,
+// glows warm against dark, and click = the same /answer-ticket
+// flow.
 //
 // Click "Answer ticket" → pastes an /answer-ticket invocation
 // referencing the queued ticket files into the active Claude PTY,
-// where the admin can draft a reply with Claude's help.
+// where the admin can draft a reply with Claude's help. After the
+// paste, the dismissed-key state hides the pill until a new ticket
+// escalates.
 //
-// Driven by fs-tick: the parent Shell's fs watcher bumps `fsTick` on
-// every change under the project root, which re-scans `databases/
-// tickets/` for `status: "escalated"`. No separate event source.
+// Driven by fs-tick: the parent Shell's fs watcher bumps `fsTick`
+// on every change under the project root, which re-scans
+// `databases/tickets/` for `status: "escalated"`.
 
 import { useEffect, useState } from "react";
 import { scanEscalatedTickets, type TicketSummary } from "../lib/escalatedTickets";
 import { writeToActiveSession } from "./activeSession";
-import { Banner, Button } from "../ui";
+import { EscalationPill } from "../ui";
 
 export function EscalatedTicketBanner({
   repo,
@@ -52,7 +57,7 @@ export function EscalatedTicketBanner({
     };
   }, [repo, fsTick]);
 
-  // Stable key from the ticket set so a new ticket re-shows the banner
+  // Stable key from the ticket set so a new ticket re-shows the pill
   // even after the user dismissed a prior set.
   const ticketKey = tickets.map((t) => t.relPath).sort().join("|");
 
@@ -60,7 +65,6 @@ export function EscalatedTicketBanner({
   if (dismissedKey === ticketKey) return null;
 
   const first = tickets[0];
-  const others = tickets.length - 1;
   const subjectLabel = first.subject || first.relPath.split("/").pop() || first.relPath;
 
   const onAnswer = async () => {
@@ -96,7 +100,7 @@ export function EscalatedTicketBanner({
       }
       // Auto-dismiss after Answer — the admin acted on this batch.
       // A new ticket escalating later changes ticketKey, which clears
-      // the dismissal and re-shows the toast.
+      // the dismissal and re-shows the pill.
       setDismissedKey(ticketKey);
     } catch (e) {
       console.error("[escalated-banner] paste-to-Claude failed:", e);
@@ -106,36 +110,16 @@ export function EscalatedTicketBanner({
   };
 
   return (
-    <Banner
-      variant="success"
-      inline
-      onDark
-      icon="✎"
-      eyebrow="Needs your reply"
-      actions={
-        <>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={onAnswer}
-            disabled={sending}
-            title="Open the queued tickets with Claude to draft a response"
-          >
-            {sending ? "Sending…" : "Answer ticket"}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setDismissedKey(ticketKey)}
-            title="Hide until a new ticket escalates"
-          >
-            Dismiss
-          </Button>
-        </>
+    <EscalationPill
+      count={tickets.length}
+      subject={subjectLabel}
+      onClick={onAnswer}
+      disabled={sending}
+      title={
+        sending
+          ? "Sending…"
+          : "Open the queued tickets with Claude to draft a response"
       }
-    >
-      <strong>{subjectLabel}</strong>
-      {others > 0 ? ` and ${others} other${others === 1 ? "" : "s"}` : ""}
-    </Banner>
+    />
   );
 }

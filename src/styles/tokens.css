@@ -127,8 +127,12 @@
   --h-control-lg: 36px;
   --h-rail:       44px;     /* every section bar height */
 
-  /* Layout — equal gutter on all four sides of the shell */
+  /* Layout — cream gutters around the panes row. Bottom is slightly
+     larger so the panes' rounded bottom corners have visible breathing
+     room against the cream canvas (the panes' drop shadow falls into
+     the extra space). */
   --layout-gutter: 14px;
+  --layout-gutter-bottom: 18px;
   --layout-pane-gap: 10px;
 
   /* Traffic-light clearance (macOS) */
@@ -137,10 +141,19 @@
   /* ─── SHADOWS ───────────────────────────────────────────── */
   --shadow-sm:   0 1px 0 rgba(60, 40, 20, 0.05);
   --shadow-md:   0 1px 0 rgba(60, 40, 20, 0.05),
-                 0 6px 18px -10px rgba(60, 40, 20, 0.18);
+                 0 8px 22px -8px rgba(60, 40, 20, 0.22);
   --shadow-lg:   0 1px 0 rgba(60, 40, 20, 0.06),
                  0 12px 32px -12px rgba(60, 40, 20, 0.24);
   --shadow-pop:  0 16px 48px -14px rgba(40, 28, 14, 0.40);
+  /* Pane card shadow — separate token because dark and light panes
+     need slightly different drop-shadow geometry to make their
+     rounded bottom corners visibly pop against the cream canvas. */
+  --shadow-pane: 0 1px 0 rgba(60, 40, 20, 0.05),
+                 0 2px 0 rgba(60, 40, 20, 0.025),
+                 0 14px 28px -14px rgba(60, 40, 20, 0.28);
+  --shadow-pane-dark: 0 1px 0 rgba(0, 0, 0, 0.35),
+                     0 2px 0 rgba(0, 0, 0, 0.18),
+                     0 14px 28px -14px rgba(0, 0, 0, 0.55);
 
   /* ─── MOTION ────────────────────────────────────────────── */
   --t-fast:   120ms;

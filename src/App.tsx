@@ -27,7 +27,7 @@ import {
 } from "./lib/skillState";
 import { onFsChanged } from "./lib/fsWatcher";
 import { useToast } from "./Toast";
-import { Button, TitleRail } from "./ui";
+import { Button, StatusRail, TitleRail } from "./ui";
 import { StatusChips } from "./shell/StatusBar";
 import { clearCreds, loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { useBrowserConnect } from "./lib/useBrowserConnect";
@@ -153,10 +153,6 @@ function App() {
   // slackConnect succeeds.
   const [stagedSlackBotToken, setStagedSlackBotToken] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Mirror of Shell's uncommitted-change count so the TitleRail's
-  // status chips can show it. Source of truth lives in SourceControl
-  // (inside Shell); Shell forwards via onChangeCount.
-  const [shellChangeCount, setShellChangeCount] = useState(0);
   const manualPullRef = useRef<(() => void) | null>(null);
   const switchToSyncRef = useRef<(() => void) | null>(null);
   const showCloudCtaRef = useRef<(() => void) | null>(null);
@@ -820,20 +816,6 @@ function App() {
     <>
     <main className="app">
       <TitleRail
-        left={
-          <StatusChips
-            repo={repo}
-            cloudConnected={connected}
-            orgName={orgName}
-            intakeUrl={intakeServerUrl}
-            tunnelUrl={tunnelPublicUrl}
-            slackConfig={slackConfig}
-            slackStatus={slackStatus}
-            changeCount={shellChangeCount}
-            onOpenPalette={() => setPaletteOpen(true)}
-            onConnectSlack={triggerSlackFlow}
-          />
-        }
         right={
           <>
             <Button
@@ -879,6 +861,19 @@ function App() {
           </>
         }
       />
+      <StatusRail>
+        <StatusChips
+          repo={repo}
+          cloudConnected={connected}
+          orgName={orgName}
+          intakeUrl={intakeServerUrl}
+          tunnelUrl={tunnelPublicUrl}
+          slackConfig={slackConfig}
+          slackStatus={slackStatus}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onConnectSlack={triggerSlackFlow}
+        />
+      </StatusRail>
       <Shell
         key={repo ?? "none"}
         repo={repo}
@@ -892,7 +887,6 @@ function App() {
         slackOrgId={slackOrgId}
         stagedSlackBotToken={stagedSlackBotToken}
         onStagedSlackBotTokenChange={setStagedSlackBotToken}
-        onChangeCount={setShellChangeCount}
         registerManualPull={(fn) => { manualPullRef.current = fn; }}
         registerSwitchToSync={(fn) => { switchToSyncRef.current = fn; }}
         registerShowCloudCta={(fn) => { showCloudCtaRef.current = fn; }}

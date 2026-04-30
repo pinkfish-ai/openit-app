@@ -202,7 +202,7 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: var(--layout-pane-gap);
-  padding: var(--layout-gutter);
+  padding: var(--layout-gutter) var(--layout-gutter) var(--layout-gutter-bottom);
   overflow: hidden;
 }
 .shell-panes-row {
@@ -222,10 +222,16 @@ body::before {
   overflow: hidden;
 }
 .left-pane,
-.right-pane,
 .viewer {
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-pane);
   border: 1px solid var(--color-border);
+}
+/* Right pane is the dark Claude theatre — needs its own deeper
+   shadow to make the rounded bottom corner visibly pop against
+   the cream canvas. */
+.right-pane {
+  box-shadow: var(--shadow-pane-dark);
+  border: 1px solid var(--color-border-dark);
 }
 .viewer {
   background: var(--surface);

@@ -9,11 +9,15 @@ function basename(p: string): string {
 /**
  * StatusChips — the live "what's going on right now" cluster.
  *
- * v5 (second pass): renders as a flat group of chips with no
- * surrounding rail. Mounted INSIDE the TitleRail at the top of
- * the window — using the otherwise-empty space next to the
- * traffic lights. The previous bottom status strip is gone;
- * the bottom of the window is now pure cream gutter.
+ * v5 (third pass): renders as a flat group of chips with no
+ * surrounding rail. Mounted inside <StatusRail> directly below
+ * the title rail. The variant color of each chip carries its
+ * meaning (sage = healthy, ochre = paused, dashed = unset);
+ * decorative LEDs were dropped to keep the rail quiet.
+ *
+ * The "uncommitted changes" count is intentionally NOT shown
+ * here — the SYNC tab badge in the left pane already surfaces
+ * it next to the actionable surface (the sync panel itself).
  */
 export function StatusChips({
   repo,
@@ -23,7 +27,6 @@ export function StatusChips({
   tunnelUrl,
   slackConfig,
   slackStatus,
-  changeCount,
   onOpenPalette,
   onConnectSlack,
 }: {
@@ -34,7 +37,6 @@ export function StatusChips({
   tunnelUrl: string | null;
   slackConfig: SlackConfig | null;
   slackStatus: SlackStatus | null;
-  changeCount: number;
   onOpenPalette: () => void;
   /** Click handler for the Slack chip — kicks off the connect-slack
    *  skill-canvas flow (setup if no config, manage if configured). */
@@ -69,7 +71,6 @@ export function StatusChips({
       {!collapseProjectAndCloud && (
         <Chip
           variant={cloudConnected ? "success" : "neutral"}
-          led
           title={cloudConnected ? "Connected to Pinkfish Cloud" : "Local only"}
         >
           {cloudConnected ? `cloud ${cloudLabel}` : "local"}
@@ -78,12 +79,10 @@ export function StatusChips({
 
       <IntakeChip localUrl={intakeUrl} sharedUrl={tunnelUrl} />
 
-      {/* Slack chip — always rendered. Three visual states:
-            - configured + listener running → sage LED + "@bot · Ns"
-            - configured + listener stopped → ochre LED + "@bot"
-            - not configured                → dashed neutral, "Connect Slack"
-          Click in any state opens the /connect-slack skill canvas
-          (setup vs manage is decided by the canvas itself). */}
+      {/* Slack chip — three visual states distinguished by variant
+          color (no LED): success (running), warn (configured but
+          stopped), neutral-dashed (unset). Click in any state opens
+          the /connect-slack skill canvas. */}
       <Chip
         variant={
           slackConfig
@@ -93,7 +92,6 @@ export function StatusChips({
             : "neutral"
         }
         dashed={!slackConfig}
-        led={!!slackConfig}
         onClick={onConnectSlack}
         title={
           !slackConfig
@@ -106,21 +104,11 @@ export function StatusChips({
         }
       >
         {slackConfig ? (
-          <>
-            slack @{slackConfig.bot_name}
-            {slackRunning &&
-              ` ${slackStatus?.last_heartbeat?.sessions ?? 0}s`}
-          </>
+          <>slack @{slackConfig.bot_name}</>
         ) : (
           "Connect Slack"
         )}
       </Chip>
-
-      {changeCount > 0 && (
-        <Chip variant="warn" led title="Uncommitted changes">
-          {changeCount} change{changeCount === 1 ? "" : "s"}
-        </Chip>
-      )}
     </>
   );
 }
