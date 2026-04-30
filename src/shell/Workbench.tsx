@@ -26,6 +26,13 @@ const STATIONS: Station[] = [
   { id: "knowledge", kind: "knowledge", rel: "knowledge-bases",   countMode: "dirs" },
   { id: "files",     kind: "files",     rel: "filestores",        countMode: "dirs" },
   { id: "agents",    kind: "agents",    rel: "agents",            countMode: "json-rows" },
+  // Skills + scripts (PIN-5829) — admin-curated artifacts captured by
+  // /conversation-to-automation. Both live as filestore subdirs and
+  // mirror into .claude/ for native discovery; here we surface the
+  // filestore copy (source of truth) so admin edits land in the right
+  // place.
+  { id: "skills",    kind: "skills",    rel: "filestores/skills",  countMode: "files" },
+  { id: "scripts",   kind: "scripts",   rel: "filestores/scripts", countMode: "files" },
   // Tools is synthetic — no on-disk directory at all (so it doesn't
   // appear in the file explorer; only reachable via this station).
   // Count comes from `which`-detected tools.

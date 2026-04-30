@@ -1907,6 +1907,26 @@ export function Viewer({
             `${ticketId}.json`,
             JSON.stringify(parsed, null, 2),
           );
+          // PIN-5829: kick off /conversation-to-automation so Claude
+          // harvests the resolution into a KB article, skill, or
+          // script. The ticket is already flipped to resolved on
+          // disk, so even if the paste fails the resolve sticks; we
+          // surface a one-shot alert in the no-session case so the
+          // admin knows the capture didn't fire (matching the
+          // skill-anchor pattern around line 321).
+          const cmd = `/conversation-to-automation ${ticketId}`;
+          const wrapped = `${BRACKETED_PASTE_OPEN}${cmd}${BRACKETED_PASTE_CLOSE}`;
+          try {
+            const pasted = await writeToActiveSession(wrapped);
+            if (!pasted) {
+              alert(
+                "Ticket marked resolved, but couldn't reach Claude to capture the resolution. " +
+                  `Open Claude in the right pane and run \`${cmd}\` to capture as a KB article, skill, or script.`,
+              );
+            }
+          } catch (e) {
+            console.warn(`[viewer] /conversation-to-automation paste failed:`, e);
+          }
           if (onOpenPath) {
             void onOpenPath(`${repo}/databases/conversations`);
           }
@@ -2049,19 +2069,23 @@ export function Viewer({
               disabled={replySending}
             />
             <div className="thread-reply-footer">
+              {/* End-action lives on the left; the right side is the
+                  continue-action (Send). Asymmetry helps the role:
+                  resolve closes the conversation + harvests learnings,
+                  Send keeps it going. (PIN-5829.) */}
+              <button
+                type="button"
+                className="viewer-edit-btn thread-reply-resolve"
+                onClick={() => void markResolved()}
+                disabled={replySending}
+                title="Mark this ticket as resolved and capture the resolution as a KB article, skill, or script"
+              >
+                Mark as resolved
+              </button>
               {replyError && (
                 <span className="thread-reply-error">{replyError}</span>
               )}
               <span className="thread-reply-hint">⌘↩ to send · drop files to attach</span>
-              <button
-                type="button"
-                className="viewer-edit-btn"
-                onClick={() => void markResolved()}
-                disabled={replySending}
-                title="Mark this ticket as resolved and return to the inbox"
-              >
-                Mark as resolved
-              </button>
               <button
                 type="button"
                 className="viewer-edit-btn viewer-edit-btn-primary"

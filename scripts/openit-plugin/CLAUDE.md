@@ -94,10 +94,41 @@ Naming convention: skills prefixed with **`ai-`** are agent-facing — auto-load
 |---|---|---|
 | `ai-intake` | Agent (claude -p) | Auto-loaded per chat-intake turn. The user opens the localhost chat URL, asks a question; the server invokes this skill to KB-search and decide answer-vs-escalate. Not normally invoked by hand. |
 | `answer-ticket` | Admin (desktop) | The user (or the escalated-ticket banner) hands you tickets needing a human reply. Walks the response loop and captures the answer as a KB article — "answer once". |
+| `conversation-to-automation` | Admin (desktop) | The admin clicked "Mark as resolved" on a ticket. Reads the resolution and harvests it into a KB article (asker auto-answer), a skill (admin workflow markdown), or a script (deterministic executable). Search-first, prefer updates over duplicates. |
 | `connect-to-cloud` | Admin (desktop) | The user wants to connect this project to Pinkfish (cloud companion) — for public intake URL, channel ingest, multi-device sync, always-on agents. Conversational walkthrough: one step at a time, confirm, advance. |
 | `resolve-sync-conflict` | Admin (desktop) | The conflict banner hands you sync conflicts (cloud mode only). Per-conflict merge + resolve-script call + optional push. |
 | `deploy` | Admin (desktop) | Push current local state to Pinkfish. Cloud-connected only. |
 | `report` | Admin (desktop) | The admin wants a custom helpdesk report — by tag, time window, asker, etc. Reads tickets / conversations and writes a markdown file to `reports/<timestamp>-<slug>.md`. The canned overview is a one-click button in the explorer; this skill is for anything more specific. |
+
+## Capturing reusable workflows — proactive skill / script offer
+
+When you observe the admin walking through a multi-step process that could plausibly recur on a future ticket — provisioning access, running a CLI sequence, navigating a series of dashboards, recovering from a known failure mode — **proactively offer to capture it as a skill or script**. Don't wait for "Mark as resolved" to do this; the explicit-trigger path covers ticket-side resolutions, but a lot of valuable workflows happen mid-session.
+
+### When to offer
+
+All three must be true:
+
+1. **3+ discrete steps.** A one-liner ("how do I unzip a tar?") doesn't qualify — that's KB-shaped, and the Mark-as-resolved path catches it.
+2. **At least one admin-only action** — a CLI invocation, a dashboard mutation, a permission grant, anything outside the asker's reach.
+3. **Not already covered.** Glance at `filestores/skills/*.md` and `filestores/scripts/*` first. If a matching artifact exists, offer to *update* it instead of creating a new one (or just mention the existing one and don't write anything if it's already complete).
+
+### What to offer
+
+Pick **skill or script** based on the workflow's character:
+
+- **Skill** — there are branches, judgment calls, or per-context decisions. Output is a markdown prompt the admin (or future-you) reads and follows. Ask: *"Want me to capture this as a skill at `filestores/skills/<slug>.md`?"*
+- **Script** — the workflow is fully deterministic, same inputs always produce same outputs. Output is an executable. Ask: *"Want me to capture this as a runnable script at `filestores/scripts/<slug>.<ext>`?"*
+
+If you're unsure, default to skill — easier to refactor a skill into a script later than the other way around.
+
+### Etiquette
+
+- Ask **once** per workflow per session. If the admin says no, drop it and don't re-ask.
+- Don't write the artifact silently. Always confirm first.
+- KB-article candidates (single-line answers) **don't** get a proactive offer — they're cheap enough that Mark-as-resolved alone covers them.
+- If the admin says yes, follow the same write rules as `/conversation-to-automation` (frontmatter for skills, shebang for scripts, header comments naming the source) so the artifact is consistent with what the explicit path produces.
+
+The `filestores/skills/` and `filestores/scripts/` files are the source of truth. The mirror copies them to `.claude/skills/<name>/SKILL.md` and `.claude/scripts/<name>.<ext>` so Claude Code's slash registry and `Bash` tool can discover them — but **always edit the filestore copy**, never the `.claude/` copy. The latter is overwritten on every sync.
 
 ## Scripts
 

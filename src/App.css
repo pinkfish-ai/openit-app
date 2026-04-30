@@ -1666,8 +1666,13 @@ body::before {
   color: var(--text-muted);
 }
 
+/* Mark-as-resolved is anchored to the left edge; the trailing items
+   (error, hint, Send) stay right-aligned. (PIN-5829.) */
+.thread-reply-resolve {
+  margin-right: auto;
+}
+
 .thread-reply-error {
-  flex: 1;
   color: var(--warn-text, #a85b00);
 }
 

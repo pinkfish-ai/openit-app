@@ -50,15 +50,25 @@ export function displayFilestoreName(name: string): string {
     : name;
 }
 
-/// Defaults for OpenIT-managed filestore collections. Phase 1 created
-/// `openit-library` and `openit-attachments`; the orchestrator's
-/// auto-create loop ensures both exist on the cloud whenever a fresh
-/// connect happens with neither present.
+/// Single source of truth for the OpenIT-managed filestore collections.
+/// Both `getDefaultFilestores` (caller-facing) and the engine handle's
+/// `defaultNames` below are derived from this list — they used to drift
+/// independently, which silently broke auto-create on the cloud for any
+/// new entries. Keep this list and only this list authoritative.
+///
+///   - `openit-library`     — shared admin docs (admin-curated).
+///   - `openit-attachments` — intake-server uploads (per-ticket).
+///   - `openit-skills`      — admin-side skill markdown (PIN-5829).
+///   - `openit-scripts`     — admin-side runnable scripts (PIN-5829).
+const DEFAULT_FILESTORES: ReadonlyArray<{ name: string; description: string }> = [
+  { name: "openit-library", description: "Shared document storage for OpenIT" },
+  { name: "openit-attachments", description: "OpenIT filestore: attachments" },
+  { name: "openit-skills", description: "OpenIT filestore: admin skills" },
+  { name: "openit-scripts", description: "OpenIT filestore: admin scripts" },
+];
+
 export function getDefaultFilestores(_orgId: string) {
-  return [
-    { name: "openit-library", description: "Shared document storage for OpenIT" },
-    { name: "openit-attachments", description: "OpenIT filestore: attachments" },
-  ];
+  return DEFAULT_FILESTORES.map((d) => ({ ...d }));
 }
 
 /// Dedupe helper retained as an export so existing tests pin the
@@ -109,9 +119,15 @@ const handle = createCollectionEntitySync<FilestoreCollection>({
   entityName: "fs",
   displayName: "filestore",
   collectionType: "filestorage",
-  defaultNames: ["openit-library", "openit-attachments"],
-  describeDefault: (name) =>
-    `OpenIT filestore: ${displayFilestoreName(name)}`,
+  defaultNames: DEFAULT_FILESTORES.map((d) => d.name),
+  describeDefault: (name) => {
+    // Look up from the shared list so the description the engine
+    // POSTs at create-time matches what `getDefaultFilestores`
+    // returns. Fallback covers any future name added to
+    // `defaultNames` without an explicit description entry.
+    const entry = DEFAULT_FILESTORES.find((d) => d.name === name);
+    return entry?.description ?? `OpenIT filestore: ${displayFilestoreName(name)}`;
+  },
   localFolderRoot: "filestores",
   buildAdapter: ({ creds, collection }) => filestoreAdapter({ creds, collection }),
   fromDataCollection: (c) => ({
