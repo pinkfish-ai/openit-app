@@ -12,6 +12,7 @@
 //
 // Sibling: kbSync.ts uses the same helper with KB config.
 
+import { makeSkillsFetch } from "../api/fetchAdapter";
 import {
   entityListLocal,
   entityRenameFile,
@@ -196,6 +197,9 @@ async function pushAllToFilestoreImpl(args: {
   const persisted = await loadCollectionManifest(repo, "fs", collection.id);
 
   const siblings = new Set(local.map((f) => f.filename));
+  const localCanonicalNames = new Set(
+    local.filter((f) => !classifyAsShadow(f.filename, siblings)).map((f) => f.filename),
+  );
   const toPush = local.filter((f) => {
     if (classifyAsShadow(f.filename, siblings)) return false;
     const tracked = persisted.files[f.filename];
@@ -204,7 +208,30 @@ async function pushAllToFilestoreImpl(args: {
     return f.mtime_ms > tracked.pulled_at_mtime_ms;
   });
 
-  if (toPush.length === 0) {
+  // Files in the manifest but no longer on disk → user-deleted; push must
+  // issue a remote DELETE. Without this pass, local deletes never reach the
+  // cloud (the engine's pull leaves the manifest entry alone for push to
+  // reconcile, per syncEngine.ts case 4 / sync-engine.md §"server-delete").
+  //
+  // Safety guard: if local listing is empty but the manifest has entries,
+  // refuse to delete. This is the "wiped working tree / transient read
+  // failure" scenario datastore guards against — without the check, a
+  // single bad listLocal would nuke every remote item. Datastore uses
+  // `localDirExists && !innerWalkFailed`; we use the simpler shape because
+  // filestore is one flat dir per collection. A truly empty filestore
+  // collection is recovered on the *next* push after the user re-deletes
+  // each file — annoying but not destructive.
+  const manifestKeys = Object.keys(persisted.files);
+  let toDelete: string[] = [];
+  if (localCanonicalNames.size === 0 && manifestKeys.length > 0) {
+    onLine?.(
+      `▸ filestore push (${collection.name}): local listing empty but manifest has ${manifestKeys.length} entr${manifestKeys.length === 1 ? "y" : "ies"} — skipping deletion phase to avoid nuking remote`,
+    );
+  } else {
+    toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
+  }
+
+  if (toPush.length === 0 && toDelete.length === 0) {
     onLine?.(`▸ filestore push (${collection.name}): nothing new to upload`);
     return { pushed: 0, failed: 0 };
   }
@@ -277,6 +304,77 @@ async function pushAllToFilestoreImpl(args: {
     }
   }
 
+  // Lazy single remote-list shared by both the deletion phase (needs
+  // `id` to address each row in the DELETE URL) and the post-push
+  // remote_version reconcile below. Most pushes are pure uploads with no
+  // deletes, so `kbListRemote` only fires when something downstream
+  // actually needs it.
+  let remoteCache: Awaited<ReturnType<typeof kbListRemote>> | null = null;
+  let remoteCacheError: unknown = null;
+  async function getRemote() {
+    if (remoteCache != null) return remoteCache;
+    if (remoteCacheError != null) throw remoteCacheError;
+    try {
+      remoteCache = await kbListRemote({
+        collectionId: collection.id,
+        skillsBaseUrl: urls.skillsBaseUrl,
+        accessToken: token!.accessToken,
+      });
+      return remoteCache;
+    } catch (e) {
+      remoteCacheError = e;
+      throw e;
+    }
+  }
+
+  // Deletion phase: DELETE /filestorage/items/<id> for each manifest
+  // entry the user removed locally. Mirrors the datastore push's
+  // "remote composites not in localComposites → DELETE" pass. Failure
+  // to find the row on remote (already gone) is treated as success —
+  // we just drop the manifest entry.
+  if (toDelete.length > 0) {
+    let remote: Awaited<ReturnType<typeof kbListRemote>> = [];
+    try {
+      remote = await getRemote();
+    } catch (e) {
+      onLine?.(
+        `✗ filestore push (${collection.name}): failed to list remote for deletion phase: ${String(e)}`,
+      );
+      // Without the listing we can't address rows by id — fail closed
+      // so we don't drop manifest entries that are still on remote.
+      toDelete = [];
+    }
+    if (toDelete.length > 0) {
+      const remoteByName = new Map(remote.map((r) => [r.filename, r]));
+      const fetchFn = makeSkillsFetch(token.accessToken);
+      for (const name of toDelete) {
+        const r = remoteByName.get(name);
+        if (!r || !r.id) {
+          // Already gone from remote (or never had an id) — drop the
+          // manifest entry and move on. No error, no count.
+          delete persisted.files[name];
+          continue;
+        }
+        try {
+          const url = new URL(
+            `/filestorage/items/${encodeURIComponent(r.id)}`,
+            urls.skillsBaseUrl,
+          );
+          const resp = await fetchFn(url.toString(), { method: "DELETE" });
+          if (!resp.ok && resp.status !== 404) {
+            throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+          }
+          delete persisted.files[name];
+          onLine?.(`  − ${dir}/${name} (deleted on remote)`);
+          pushed += 1;
+        } catch (e) {
+          onLine?.(`✗ ${dir}/${name}: delete failed: ${String(e)}`);
+          failed += 1;
+        }
+      }
+    }
+  }
+
   // Reconcile remote_version against the server's authoritative
   // `updatedAt` after push. Without this, manifest holds the client
   // clock (`new Date().toISOString()` above), the engine compares
@@ -288,11 +386,7 @@ async function pushAllToFilestoreImpl(args: {
   // KB push has carried since Phase 2.
   if (pushedNames.size > 0) {
     try {
-      const remote = await kbListRemote({
-        collectionId: collection.id,
-        skillsBaseUrl: urls.skillsBaseUrl,
-        accessToken: token.accessToken,
-      });
+      const remote = await getRemote();
       for (const r of remote) {
         if (pushedNames.has(r.filename) && r.updated_at) {
           const tracked = persisted.files[r.filename];
