@@ -30,15 +30,17 @@ async function main() {
     process.exit(1);
   }
 
-  const counts = { open: 0, resolved: 0, escalated: 0, other: 0, total: 0 };
+  const VALID_STATUSES = new Set(["open", "resolved", "escalated"]);
+  const counts = { open: 0, resolved: 0, escalated: 0, other: 0 };
+  let total = 0;
   for (const name of entries) {
     if (!name.endsWith(".json") || name === "_schema.json") continue;
-    counts.total += 1;
+    total += 1;
     try {
       const raw = await readFile(join(TICKETS_DIR, name), "utf8");
       const t = JSON.parse(raw);
       const status = typeof t?.status === "string" ? t.status : "other";
-      if (status in counts) counts[status] += 1;
+      if (VALID_STATUSES.has(status)) counts[status] += 1;
       else counts.other += 1;
     } catch {
       counts.other += 1;
@@ -46,7 +48,7 @@ async function main() {
   }
 
   console.log(
-    `Hello! Project has ${counts.total} ticket(s): ${counts.open} open, ` +
+    `Hello! Project has ${total} ticket(s): ${counts.open} open, ` +
       `${counts.resolved} resolved, ${counts.escalated} escalated, ${counts.other} other.`,
   );
 }
