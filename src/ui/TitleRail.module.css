@@ -1,14 +1,14 @@
-/* TitleRail — the slim macOS-overlaid titlebar. ONLY hosts:
-   - traffic-light clearance on the left (78px)
-   - global window actions on the right (⌘K, Getting Started,
-     Connect to Cloud)
-   The whole rail is draggable except the buttons (they opt out
-   via .btn's app-region: no-drag).
+/* TitleRail — the merged macOS-overlaid titlebar.
+   Hosts the live status chips on the left (offset well past the
+   traffic lights so they don't compete) and the global actions on
+   the right. The whole rail is draggable except the buttons.
 
-   Live state (project, intake, slack, etc) lives in <StatusRail>
-   directly below this — see StatusRail.module.css. The split
-   keeps the macOS chrome row clean and gives the chips their
-   own breathing room. */
+   Why the offset: macOS shows the user's window-controls (red /
+   yellow / green) in the top-left corner. Chips placed too close to
+   them feel cramped — the user reads "control + control + control +
+   chip + chip + chip" as one cluster. We give the chips ~24px of
+   breathing room past the traffic clearance so they read as their
+   own group on the left side of the rail. */
 
 .rail {
   flex: 0 0 auto;
@@ -16,7 +16,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: 0 var(--space-4) 0 var(--layout-traffic-clear);
+  /* 78px traffic-light clearance + 24px breathing room before chips */
+  padding: 0 var(--space-4) 0 calc(var(--layout-traffic-clear) + var(--space-6));
   background: var(--color-bg);
   -webkit-app-region: drag;
   app-region: drag;
@@ -24,7 +25,21 @@
   position: relative;
   z-index: var(--z-sticky);
 }
-.spacer { flex: 1; }
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Allow chips to clip rather than push actions out of view on
+     narrow widths. */
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+.left::-webkit-scrollbar { display: none; }
+
 .right {
   display: flex;
   align-items: center;

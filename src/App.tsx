@@ -27,7 +27,7 @@ import {
 } from "./lib/skillState";
 import { onFsChanged } from "./lib/fsWatcher";
 import { useToast } from "./Toast";
-import { Button, StatusRail, TitleRail } from "./ui";
+import { Button, TitleRail } from "./ui";
 import { StatusChips } from "./shell/StatusBar";
 import { clearCreds, loadCreds, startAuth, subscribeToken, type PinkfishCreds } from "./lib/pinkfishAuth";
 import { useBrowserConnect } from "./lib/useBrowserConnect";
@@ -816,6 +816,19 @@ function App() {
     <>
     <main className="app">
       <TitleRail
+        left={
+          <StatusChips
+            repo={repo}
+            cloudConnected={connected}
+            orgName={orgName}
+            intakeUrl={intakeServerUrl}
+            tunnelUrl={tunnelPublicUrl}
+            slackConfig={slackConfig}
+            slackStatus={slackStatus}
+            onOpenPalette={() => setPaletteOpen(true)}
+            onConnectSlack={triggerSlackFlow}
+          />
+        }
         right={
           <>
             <Button
@@ -861,19 +874,6 @@ function App() {
           </>
         }
       />
-      <StatusRail>
-        <StatusChips
-          repo={repo}
-          cloudConnected={connected}
-          orgName={orgName}
-          intakeUrl={intakeServerUrl}
-          tunnelUrl={tunnelPublicUrl}
-          slackConfig={slackConfig}
-          slackStatus={slackStatus}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onConnectSlack={triggerSlackFlow}
-        />
-      </StatusRail>
       <Shell
         key={repo ?? "none"}
         repo={repo}

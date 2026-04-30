@@ -21,9 +21,6 @@ export type { BadgeProps, BadgeTone } from "./Badge";
 export { Banner } from "./Banner";
 export type { BannerProps, BannerVariant } from "./Banner";
 
-export { EscalationPill } from "./EscalationPill";
-export type { EscalationPillProps } from "./EscalationPill";
-
 export { ToastProvider, useToast } from "./Toast";
 export type { ToastInput, ToastTone } from "./Toast";
 
@@ -41,6 +38,3 @@ export type { WordmarkProps } from "./Wordmark";
 
 export { TitleRail } from "./TitleRail";
 export type { TitleRailProps } from "./TitleRail";
-
-export { StatusRail } from "./StatusRail";
-export type { StatusRailProps } from "./StatusRail";

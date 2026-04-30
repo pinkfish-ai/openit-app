@@ -203,13 +203,19 @@ body::before {
   flex-direction: column;
   gap: var(--layout-pane-gap);
   padding: var(--layout-gutter) var(--layout-gutter) var(--layout-gutter-bottom);
-  overflow: hidden;
+  /* No overflow:hidden here — would clip each pane's drop-shadow at
+     this row's bottom edge, hiding the visible curve we worked to
+     get. The .app parent has overflow:hidden so the page can't
+     scroll; min-height:0 + child internal scrollers handle the
+     rest. */
 }
 .shell-panes-row {
   flex: 1 1 0;
   min-height: 0;
   display: flex;
-  overflow: hidden;
+  /* Same: no overflow here. Pane shadows extend below into the
+     shell's padding-bottom area, where the .app parent then clips
+     anything that would escape the window. */
 }
 
 /* Float each pane as a card on the cream canvas. */
@@ -4010,19 +4016,18 @@ body::before {
   gap: 14px;
 }
 
+/* TODAY card — was a single <button>; v5 splits it into two click
+   zones (open Inbox vs. draft replies with Claude) so it's now a
+   <div> wrapper with two <button> children. */
 .workbench-today {
-  display: block;
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
   background:
     radial-gradient(ellipse at top right, rgba(199, 90, 44, 0.18) 0%, transparent 70%),
     linear-gradient(180deg, #fff8ec 0%, var(--surface) 100%);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 14px 16px 12px;
   box-shadow: var(--shadow-card);
   position: relative;
   overflow: hidden;
@@ -4030,16 +4035,22 @@ body::before {
               transform var(--t-fast) var(--ease),
               box-shadow var(--t-fast) var(--ease);
 }
-
-.workbench-today:hover:not(:disabled) {
+.workbench-today.has-escalated {
+  /* Subtle warm glow on the card when there are escalated tickets —
+     enough to signal "something here needs you" without being a
+     loud notification. */
+  border-color: rgba(199, 154, 46, 0.35);
+  box-shadow:
+    var(--shadow-card),
+    0 0 0 3px rgba(245, 185, 72, 0.06);
+}
+.workbench-today:hover:not(.has-disabled) {
   border-color: var(--accent-soft);
   transform: translateY(-1px);
   box-shadow: var(--shadow-lift);
 }
-
-.workbench-today:disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
+.workbench-today.has-escalated:hover {
+  border-color: rgba(199, 154, 46, 0.5);
 }
 
 .workbench-today::after {
@@ -4050,6 +4061,95 @@ body::before {
   background-size: 14px 14px;
   pointer-events: none;
   opacity: 0.5;
+}
+
+/* Main click zone — open the Tickets Inbox. Reset button chrome
+   so it inherits the card's surface; the visual treatment lives on
+   the wrapping .workbench-today div. */
+.workbench-today-main {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+.workbench-today-main:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Secondary CTA — appears below the main count when escalations
+   are pending. Compact pill that's clearly a separate action.
+   Sits inside the same card so the relationship to the count is
+   visually obvious. */
+.workbench-today-cta {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(245, 185, 72, 0.10);
+  color: #5c3d00;
+  border: 0;
+  border-top: 1px solid rgba(199, 154, 46, 0.30);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  text-align: left;
+  transition: background var(--t-fast) var(--ease),
+              color var(--t-fast) var(--ease);
+}
+.workbench-today-cta:hover:not(:disabled) {
+  background: rgba(245, 185, 72, 0.18);
+  color: var(--text);
+}
+.workbench-today-cta:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.workbench-today-cta:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+.workbench-today-cta-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: rgba(199, 154, 46, 0.25);
+  color: #6b4e10;
+  border-radius: 5px;
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.workbench-today-cta-text {
+  flex: 1;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+.workbench-today-cta-arrow {
+  font-size: 12px;
+  opacity: 0.6;
+  transition: transform var(--t-fast) var(--ease), opacity var(--t-fast) var(--ease);
+}
+.workbench-today-cta:hover:not(:disabled) .workbench-today-cta-arrow {
+  transform: translateX(2px);
+  opacity: 1;
 }
 
 .workbench-today-eyebrow {
