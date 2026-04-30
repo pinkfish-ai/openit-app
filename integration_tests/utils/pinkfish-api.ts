@@ -9,6 +9,8 @@ export interface DataCollection {
   created_by?: string;
   created_at?: string;
   updated_at?: string;
+  isStructured?: boolean;
+  schema?: { fields?: Array<{ id: string; label?: string; type?: string }> };
 }
 
 export interface RemoteFile {
@@ -132,6 +134,16 @@ export class PinkfishClient {
    */
   async listOpenitFilestores(): Promise<DataCollection[]> {
     const all = await this.listCollections("filestorage");
+    return all.filter((c) => c.name.startsWith("openit-"));
+  }
+
+  /**
+   * Get all openit-* datastore collections.
+   * Phase 3 of V2 sync (PIN-5793): mirrors listOpenitFilestores /
+   * listOpenitKbs for the datastore type.
+   */
+  async listOpenitDatastores(): Promise<DataCollection[]> {
+    const all = await this.listCollections("datastore");
     return all.filter((c) => c.name.startsWith("openit-"));
   }
 

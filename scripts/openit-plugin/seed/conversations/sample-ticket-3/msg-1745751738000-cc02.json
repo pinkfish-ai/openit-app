@@ -1,0 +1,8 @@
+{
+  "id": "msg-1745751738000-cc02",
+  "ticketId": "sample-ticket-3",
+  "role": "agent",
+  "sender": "Triage agent",
+  "timestamp": "2026-04-27T10:42:18Z",
+  "body": "Found a runbook: see knowledge-bases/default/sample-article-2.md. Default to Viewer access; use Editor only when explicitly approved. I added you to the design Figma workspace as Viewer — you'll get a confirmation email from Figma. Accept it within 7 days. Let me know if Editor access is required."
+}

@@ -103,6 +103,11 @@ export async function fetchSkillFile(
 ///   - `schemas/<col>._schema.json`         → `databases/<col>/_schema.json`
 ///   - `agents/<name>.template.json`        → `agents/<name>.json`
 ///   - `scripts/<file>`                     → `.claude/scripts/<file>`
+///   - `seed/<target>/...`                  → null (handled by seedIfEmpty;
+///                                              writing seed during the main
+///                                              plugin sync would clobber
+///                                              user-touched rows on every
+///                                              bundle bump)
 ///   - anything else                        → preserve original layout
 ///
 /// `substituteSlug` is no longer set by any current rule (the slug
@@ -146,6 +151,13 @@ export function routeFile(
   if (filePath.startsWith("scripts/")) {
     const filename = filePath.replace("scripts/", "");
     return { subdir: ".claude/scripts", filename, substituteSlug: false };
+  }
+  // Seed files are not written by the plugin-sync pass. `seedIfEmpty`
+  // (src/lib/seed.ts) gates them on per-target empty-folder + cloud-empty
+  // and writes once on first connect. Returning null here keeps
+  // `syncSkillsToDisk` from re-writing samples on every plugin bump.
+  if (filePath.startsWith("seed/")) {
+    return null;
   }
   // Default: preserve manifest layout under repo root.
   const parts = filePath.split("/");

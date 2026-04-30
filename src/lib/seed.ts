@@ -1,0 +1,182 @@
+// Bundled-seed first-run helper. Writes sample tickets/people/conversations/
+// KB articles to disk if BOTH gates pass per-target:
+//   1. Local folder for the target is empty (no user content yet).
+//   2. Cloud has no `openit-<X>` collection (org hasn't been used yet).
+//
+// Engine push uploads the seeds to cloud on the next commit / auto-push so
+// the user lands on a populated workspace whether they're online or offline.
+//
+// No idempotency sentinel needed — the disk + cloud state ARE the gate. A
+// user who deletes a sample doesn't get it back (folder no longer empty).
+// A user reconnecting against a populated org doesn't get samples (cloud
+// already has the collection).
+
+import { invoke } from "@tauri-apps/api/core";
+import { fsList } from "./api";
+import { makeSkillsFetch } from "../api/fetchAdapter";
+import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
+import { fetchSkillFile, fetchSkillsManifest } from "./skillsSync";
+
+type SeedTarget = "tickets" | "people" | "conversations" | "knowledge";
+
+type TargetConfig = {
+  target: SeedTarget;
+  /** REST collection type (`datastore` | `knowledge_base`). */
+  cloudType: "datastore" | "knowledge_base";
+  /** Exact name on cloud — gate fails if this collection already exists. */
+  cloudName: string;
+  /** Workspace path under `<repo>/`. */
+  localDir: string;
+};
+
+const TARGETS: TargetConfig[] = [
+  { target: "tickets",       cloudType: "datastore",      cloudName: "openit-tickets",       localDir: "databases/tickets" },
+  { target: "people",        cloudType: "datastore",      cloudName: "openit-people",        localDir: "databases/people" },
+  { target: "conversations", cloudType: "datastore",      cloudName: "openit-conversations", localDir: "databases/conversations" },
+  { target: "knowledge",     cloudType: "knowledge_base", cloudName: "openit-default",       localDir: "knowledge-bases/default" },
+];
+
+/// Map a `seed/<target>/<...>` manifest path to its workspace destination.
+/// Returns null if the path doesn't match a known seed pattern.
+export function seedRoute(
+  manifestPath: string,
+): { subdir: string; filename: string } | null {
+  if (manifestPath.startsWith("seed/tickets/")) {
+    return { subdir: "databases/tickets", filename: manifestPath.replace("seed/tickets/", "") };
+  }
+  if (manifestPath.startsWith("seed/people/")) {
+    return { subdir: "databases/people", filename: manifestPath.replace("seed/people/", "") };
+  }
+  if (manifestPath.startsWith("seed/knowledge/")) {
+    return { subdir: "knowledge-bases/default", filename: manifestPath.replace("seed/knowledge/", "") };
+  }
+  if (manifestPath.startsWith("seed/conversations/")) {
+    // Preserve the per-ticket subfolder: seed/conversations/<ticketId>/<file>
+    // → databases/conversations/<ticketId>/<file>.
+    const rel = manifestPath.replace("seed/conversations/", "");
+    const lastSlash = rel.lastIndexOf("/");
+    if (lastSlash < 0) return null;
+    return {
+      subdir: `databases/conversations/${rel.slice(0, lastSlash)}`,
+      filename: rel.slice(lastSlash + 1),
+    };
+  }
+  return null;
+}
+
+function manifestPathToTarget(manifestPath: string): SeedTarget | null {
+  if (manifestPath.startsWith("seed/tickets/")) return "tickets";
+  if (manifestPath.startsWith("seed/people/")) return "people";
+  if (manifestPath.startsWith("seed/conversations/")) return "conversations";
+  if (manifestPath.startsWith("seed/knowledge/")) return "knowledge";
+  return null;
+}
+
+/// Whether a local folder is "empty" for seed purposes — i.e. has no
+/// user-authored rows yet. `_schema.json` (plugin contract) and dotfiles
+/// don't count; for nested layouts (conversations) any leaf file counts.
+async function isLocalTargetEmpty(repo: string, localDir: string): Promise<boolean> {
+  const root = `${repo}/${localDir}`;
+  let nodes;
+  try {
+    nodes = await fsList(root);
+  } catch {
+    // Directory doesn't exist yet → treat as empty.
+    return true;
+  }
+  for (const n of nodes) {
+    if (n.is_dir) {
+      // Recurse one level for nested layouts (conversations).
+      const sub = await fsList(n.path).catch(() => []);
+      for (const f of sub) {
+        if (!f.is_dir && !f.name.startsWith(".") && f.name !== "_schema.json") {
+          return false;
+        }
+      }
+      continue;
+    }
+    if (n.name.startsWith(".") || n.name === "_schema.json") continue;
+    return false;
+  }
+  return true;
+}
+
+async function listOpenitCollectionNames(
+  creds: PinkfishCreds,
+  type: "datastore" | "knowledge_base",
+): Promise<Set<string>> {
+  const token = getToken();
+  if (!token) return new Set();
+  const urls = derivedUrls(creds.tokenUrl);
+  const url = new URL("/datacollection/", urls.skillsBaseUrl);
+  url.searchParams.set("type", type);
+  try {
+    const fetchFn = makeSkillsFetch(token.accessToken);
+    const resp = await fetchFn(url.toString());
+    if (!resp.ok) return new Set();
+    const data = (await resp.json()) as Array<{ name?: string }> | null;
+    if (!Array.isArray(data)) return new Set();
+    return new Set(
+      data
+        .map((c) => c.name)
+        .filter((n): n is string => typeof n === "string" && n.startsWith("openit-")),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+/// Run the seed pass. Safe to call multiple times — gates re-evaluate on
+/// every call and short-circuit when either gate fails for a target.
+export async function seedIfEmpty(args: {
+  repo: string;
+  creds: PinkfishCreds;
+  onLog?: (msg: string) => void;
+}): Promise<{ wrote: number }> {
+  const { repo, creds, onLog } = args;
+  const manifest = await fetchSkillsManifest(creds);
+
+  const cloudDatastores = await listOpenitCollectionNames(creds, "datastore");
+  const cloudKbs = await listOpenitCollectionNames(creds, "knowledge_base");
+
+  // Map each target → which cloud-name set governs its gate.
+  const cloudHas = (t: TargetConfig): boolean =>
+    t.cloudType === "datastore" ? cloudDatastores.has(t.cloudName) : cloudKbs.has(t.cloudName);
+
+  // Per-target gate: local-empty AND cloud-empty.
+  const eligible = new Set<SeedTarget>();
+  for (const t of TARGETS) {
+    if (cloudHas(t)) continue;
+    const empty = await isLocalTargetEmpty(repo, t.localDir);
+    if (!empty) continue;
+    eligible.add(t.target);
+  }
+
+  if (eligible.size === 0) {
+    onLog?.("seed: every target is already populated locally or remotely — skipping");
+    return { wrote: 0 };
+  }
+
+  let wrote = 0;
+  for (const file of manifest.files) {
+    const target = manifestPathToTarget(file.path);
+    if (!target || !eligible.has(target)) continue;
+    const route = seedRoute(file.path);
+    if (!route) continue;
+    try {
+      const content = await fetchSkillFile(file.path, creds);
+      await invoke("entity_write_file", {
+        repo,
+        subdir: route.subdir,
+        filename: route.filename,
+        content,
+      });
+      wrote += 1;
+    } catch (err) {
+      console.warn(`[seed] failed to write ${file.path}:`, err);
+    }
+  }
+
+  onLog?.(`seed: wrote ${wrote} sample file(s) across ${eligible.size} target(s)`);
+  return { wrote };
+}

@@ -1,0 +1,14 @@
+{
+  "subject": "Sample — Cannot access email after password change",
+  "description": "I changed my password yesterday and now Outlook keeps prompting me. Tried restarting twice. Can someone help?",
+  "asker": "alice.sample@example.com",
+  "askerChannel": "email",
+  "status": "open",
+  "priority": "normal",
+  "assignee": null,
+  "tags": ["sample", "email", "auth"],
+  "createdAt": "2026-04-28T14:22:11Z",
+  "updatedAt": "2026-04-28T14:22:11Z",
+  "kbArticleRefs": [],
+  "notes": "Sample seed record — safe to delete."
+}

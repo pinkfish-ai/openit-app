@@ -1,0 +1,8 @@
+{
+  "id": "msg-1745669100000-ee02",
+  "ticketId": "sample-ticket-5",
+  "role": "agent",
+  "sender": "Triage agent",
+  "timestamp": "2026-04-26T12:05:00Z",
+  "body": "Found the answer in the KB (knowledge-bases/default/sample-article-1.md). If your org uses SSO, you sign in via the identity provider, not via a Slack password reset. Try the SSO portal first; if you still need a Slack password reset, ask the admin to invalidate your active sessions and you'll get a fresh sign-in flow."
+}

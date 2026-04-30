@@ -1,0 +1,11 @@
+{
+  "firstName": "Sample — Carol",
+  "lastName": "Sample",
+  "email": "carol.sample@example.com",
+  "role": "Product Designer",
+  "department": "Design",
+  "channels": ["email:carol.sample@example.com"],
+  "notes": "Sample seed record — joined April 2026.",
+  "createdAt": "2026-04-22T08:00:00Z",
+  "updatedAt": "2026-04-27T10:42:18Z"
+}

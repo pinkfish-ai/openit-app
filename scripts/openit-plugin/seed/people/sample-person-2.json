@@ -1,0 +1,11 @@
+{
+  "firstName": "Sample — Bob",
+  "lastName": "Sample",
+  "email": "bob.sample@example.com",
+  "role": "Senior Engineer",
+  "department": "Engineering",
+  "channels": ["email:bob.sample@example.com", "slack:U01SAMPLE2"],
+  "notes": "Sample seed record — safe to delete.",
+  "createdAt": "2026-04-25T15:30:00Z",
+  "updatedAt": "2026-04-28T16:55:02Z"
+}

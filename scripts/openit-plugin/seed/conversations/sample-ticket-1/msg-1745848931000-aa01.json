@@ -1,0 +1,8 @@
+{
+  "id": "msg-1745848931000-aa01",
+  "ticketId": "sample-ticket-1",
+  "role": "asker",
+  "sender": "alice.sample@example.com",
+  "timestamp": "2026-04-28T14:22:11Z",
+  "body": "I changed my password yesterday and now Outlook keeps prompting me. Tried restarting twice. Can someone help?"
+}

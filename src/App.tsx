@@ -35,6 +35,7 @@ import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
 import { startAgentSync, stopAgentSync } from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
 import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
+import { seedIfEmpty } from "./lib/seed";
 import { invoke } from "@tauri-apps/api/core";
 import { type Bubble as PromptBubble } from "./shell/PromptBubbles";
 import "./App.css";
@@ -108,22 +109,35 @@ function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubbl
 /// the relaunch + fresh-bootstrap paths can't drift on which engines they
 /// start. Each engine swallows its own init error so one failure doesn't
 /// take down the others.
+///
+/// Seeds bundled samples (PIN-5793) BEFORE engines start, so the
+/// per-target gate (local-empty + cloud-empty) sees the cloud in its
+/// pre-auto-create state. If seed fails for any reason, engines still
+/// start — empty workspace is acceptable, mis-sequenced engines aren't.
 function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): void {
-  startKbSync({ creds, repo }).catch((e) =>
-    console.error("kb sync init failed:", e),
-  );
-  startFilestoreSync({ creds, repo }).catch((e) =>
-    console.error("filestore sync init failed:", e),
-  );
-  startDatastoreSync({ creds, repo }).catch((e) =>
-    console.error("datastore sync init failed:", e),
-  );
-  startAgentSync({ creds, repo }).catch((e) =>
-    console.error("agent sync init failed:", e),
-  );
-  startWorkflowSync({ creds, repo }).catch((e) =>
-    console.error("workflow sync init failed:", e),
-  );
+  seedIfEmpty({
+    repo,
+    creds,
+    onLog: (msg) => console.log(`[seed] ${msg}`),
+  })
+    .catch((e) => console.warn("seed (PIN-5793) failed; engines starting anyway:", e))
+    .finally(() => {
+      startKbSync({ creds, repo }).catch((e) =>
+        console.error("kb sync init failed:", e),
+      );
+      startFilestoreSync({ creds, repo }).catch((e) =>
+        console.error("filestore sync init failed:", e),
+      );
+      startDatastoreSync({ creds, repo }).catch((e) =>
+        console.error("datastore sync init failed:", e),
+      );
+      startAgentSync({ creds, repo }).catch((e) =>
+        console.error("agent sync init failed:", e),
+      );
+      startWorkflowSync({ creds, repo }).catch((e) =>
+        console.error("workflow sync init failed:", e),
+      );
+    });
 }
 
 function App() {
