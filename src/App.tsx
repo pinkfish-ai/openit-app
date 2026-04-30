@@ -154,6 +154,10 @@ function App() {
   const manualPullRef = useRef<(() => void) | null>(null);
   const switchToSyncRef = useRef<(() => void) | null>(null);
   const showCloudCtaRef = useRef<(() => void) | null>(null);
+  // Latest browserConnect.start, captured by a ref so the
+  // openit:start-cloud-onboarding listener doesn't need to re-bind on
+  // every browserConnect identity change.
+  const browserConnectRef = useRef<(() => void) | null>(null);
 
   // Single-source-of-truth handler for "kick off the Slack flow":
   //   1. scaffold the connect-slack skill canvas state (setup or
@@ -415,6 +419,20 @@ function App() {
     };
     window.addEventListener("openit:show-cloud-cta", onShowCta);
     return () => window.removeEventListener("openit:show-cloud-cta", onShowCta);
+  }, [connected]);
+
+  // connect-to-cloud.md's primary CTA dispatches this event
+  // (Viewer.tsx::ExternalAnchor catches `openit://connect-cloud`). Kicks
+  // off the same OAuth handoff the header/Sync-panel buttons use. We
+  // capture the start fn through a ref so this effect doesn't need to
+  // re-bind every render of browserConnect.
+  useEffect(() => {
+    const onStartOnboarding = () => {
+      if (connected) setBypassOnboarding(false);
+      else browserConnectRef.current?.();
+    };
+    window.addEventListener("openit:start-cloud-onboarding", onStartOnboarding);
+    return () => window.removeEventListener("openit:start-cloud-onboarding", onStartOnboarding);
   }, [connected]);
 
   useEffect(() => {
@@ -757,6 +775,7 @@ function App() {
     [onPinkfishConnected],
   );
   const browserConnect = useBrowserConnect({ onConnected: onBrowserConnected });
+  browserConnectRef.current = () => browserConnect.start();
 
   const showOnboarding = loaded && !bypassOnboarding;
 
@@ -855,7 +874,6 @@ function App() {
           onSyncLine={onSyncLine}
           bubbles={bubbles}
           cloudConnected={connected}
-          onConnectRequest={() => browserConnect.start()}
           intakeUrl={intakeServerUrl}
           tunnelUrl={tunnelPublicUrl}
           dock={dock}

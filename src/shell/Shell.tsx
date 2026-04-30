@@ -118,8 +118,6 @@ function sourceKey(s: ViewerSource): string {
       return "attachments-folder";
     case "knowledge-bases-list":
       return "knowledge-bases-list";
-    case "cloud-cta":
-      return "cloud-cta";
     case "tools":
       return "tools";
   }
@@ -137,7 +135,6 @@ export function Shell({
   onSyncLine,
   bubbles,
   cloudConnected,
-  onConnectRequest,
   intakeUrl,
   tunnelUrl,
   dock,
@@ -160,9 +157,6 @@ export function Shell({
   /** Whether Pinkfish creds are loaded. Drives the Sync-to-Cloud button:
    *  push when true, CTA-to-connect when false. */
   cloudConnected: boolean;
-  /** Called when the user wants to start the Pinkfish OAuth flow from
-   *  inside the Sync tab (no creds + clicked Sync to Cloud). */
-  onConnectRequest: () => void;
   /** Current intake server URL (or null if not yet started). Substituted
    *  into `{{INTAKE_URL}}` placeholders in markdown content (e.g. the
    *  welcome doc). */
@@ -464,7 +458,13 @@ export function Shell({
     registerSwitchToSync(() => setLeftTab("source-control"));
   }, [registerSwitchToSync]);
   useEffect(() => {
-    registerShowCloudCta(() => setSource({ kind: "cloud-cta" }));
+    registerShowCloudCta(() => {
+      if (!repo) return;
+      const path = `${repo}/connect-to-cloud.md`;
+      resolvePathToSource(path, repo)
+        .then(setSource)
+        .catch((e) => console.error("[shell] cloud-cta resolution failed:", e));
+    });
   }, [registerShowCloudCta]);
 
   // Auto-open getting-started.md on first load — and re-open on demand
@@ -949,7 +949,13 @@ export function Shell({
                   onFsChange={bumpFs}
                   onChangeCount={setChangeCount}
                   cloudConnected={cloudConnected}
-                  onConnectRequest={() => setSource({ kind: "cloud-cta" })}
+                  onConnectRequest={() => {
+                    if (!repo) return;
+                    const path = `${repo}/connect-to-cloud.md`;
+                    resolvePathToSource(path, repo)
+                      .then(setSource)
+                      .catch((e) => console.error("[shell] cloud-cta resolution failed:", e));
+                  }}
                 />
               </div>
             </div>
@@ -976,7 +982,6 @@ export function Shell({
                   const resolved = await resolvePathToSource(path, repo);
                   setSource(resolved);
                 }}
-                onConnectCloud={onConnectRequest}
                 onGoBack={goBack}
                 onGoForward={goForward}
                 canGoBack={canGoBack}
