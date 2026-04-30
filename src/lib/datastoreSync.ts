@@ -124,10 +124,22 @@ async function loadBundledSchema(
   if (!def.schemaPath) return null;
   try {
     const raw = await fetchSkillFile(def.schemaPath, creds);
-    const parsed = JSON.parse(raw) as { fields?: Array<Record<string, unknown>> };
+    const parsed = JSON.parse(raw) as {
+      fields?: Array<Record<string, unknown>>;
+      nextFieldId?: number;
+    };
     const fields = Array.isArray(parsed.fields) ? parsed.fields : [];
     if (fields.length === 0) return null;
-    return { fields, nextFieldId: fields.length + 1 };
+    // Honor an explicit `nextFieldId` from the schema file (cloud uses it
+    // to allocate the next `f_N`-style id when admins add fields). If the
+    // file omits it (current bundled schemas do — all ids are semantic),
+    // fall back to a count-based default so the first cloud-generated
+    // field doesn't collide with anything we shipped.
+    const nextFieldId =
+      typeof parsed.nextFieldId === "number" && Number.isFinite(parsed.nextFieldId)
+        ? parsed.nextFieldId
+        : fields.length + 1;
+    return { fields, nextFieldId };
   } catch (err) {
     console.warn(`[datastoreSync] failed to load bundled schema ${def.schemaPath}:`, err);
     return null;

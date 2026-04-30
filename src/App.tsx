@@ -128,39 +128,43 @@ function stopAllCloudSyncs(): void {
 /// start. Each engine swallows its own init error so one failure doesn't
 /// take down the others.
 ///
-/// Seeds bundled samples (PIN-5793) BEFORE engines start, so the
-/// per-target gate (local-empty + cloud-empty) sees the cloud in its
-/// pre-auto-create state. If seed fails for any reason, engines still
-/// start — empty workspace is acceptable, mis-sequenced engines aren't.
+/// Only the **datastore** engine waits for seed (PIN-5793). Its cloud-empty
+/// gate must see the pre-auto-create state so the per-target seed decision
+/// is honest. KB / filestore / agent / workflow engines have no such
+/// dependency and start immediately — delaying them would add seed's
+/// network round-trips to every launch's cold-start latency, including
+/// for returning users whose seed gates short-circuit anyway.
 function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): void {
   const myRun = ++cloudSyncsRunId;
+
+  startKbSync({ creds, repo }).catch((e) =>
+    console.error("kb sync init failed:", e),
+  );
+  startFilestoreSync({ creds, repo }).catch((e) =>
+    console.error("filestore sync init failed:", e),
+  );
+  startAgentSync({ creds, repo }).catch((e) =>
+    console.error("agent sync init failed:", e),
+  );
+  startWorkflowSync({ creds, repo }).catch((e) =>
+    console.error("workflow sync init failed:", e),
+  );
+
   seedIfEmpty({
     repo,
     creds,
     onLog: (msg) => console.log(`[seed] ${msg}`),
   })
-    .catch((e) => console.warn("seed (PIN-5793) failed; engines starting anyway:", e))
+    .catch((e) => console.warn("seed (PIN-5793) failed; datastore starting anyway:", e))
     .finally(() => {
       if (myRun !== cloudSyncsRunId) {
         console.log(
-          "[startCloudSyncs] disconnect arrived during seed; not starting engines for this stale session",
+          "[startCloudSyncs] disconnect arrived during seed; not starting datastore for this stale session",
         );
         return;
       }
-      startKbSync({ creds, repo }).catch((e) =>
-        console.error("kb sync init failed:", e),
-      );
-      startFilestoreSync({ creds, repo }).catch((e) =>
-        console.error("filestore sync init failed:", e),
-      );
       startDatastoreSync({ creds, repo }).catch((e) =>
         console.error("datastore sync init failed:", e),
-      );
-      startAgentSync({ creds, repo }).catch((e) =>
-        console.error("agent sync init failed:", e),
-      );
-      startWorkflowSync({ creds, repo }).catch((e) =>
-        console.error("workflow sync init failed:", e),
       );
     });
 }
