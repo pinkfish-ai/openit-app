@@ -32,6 +32,7 @@ import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
 import { datastoreAdapter } from "./entities/datastore";
 import { fetchDatastoreItems } from "./entities/datastoreApi";
+import { fetchSkillFile } from "./skillsSync";
 import {
   classifyAsShadow,
   clearConflictsForPrefix,
@@ -61,48 +62,77 @@ type ListCollectionsResponse = DataCollection[] | null;
 
 type DefaultDatastore = {
   name: string;
-  /** Cloud template — only set for structured collections. */
+  /** Cloud template — only set for structured collections that want
+   *  template data populated. Left null for the OpenIT defaults: we
+   *  ship our own bundled schema and don't want sample rows. */
   templateId: string | null;
   description: string;
   isStructured: boolean;
+  /** Plugin-manifest path (under `scripts/openit-plugin/`) of the
+   *  bundled `_schema.json`. Loaded at create-time via `fetchSkillFile`
+   *  so the cloud collection lands structured against the same fields
+   *  the disk-side `databases/<col>/_schema.json` describes. Null for
+   *  unstructured collections. */
+  schemaPath: string | null;
 };
 
-// All three defaults are created **unstructured** on the cloud. Reason:
-// the cloud's `POST /memory/items` row-insert path doesn't honor caller-
-// supplied schema field IDs — it accepts the create-time schema then
-// rejects every row with `Unknown column: '<id>'`. Until that bug is
-// fixed cloud-side, structured collections aren't writable from OpenIT.
+// `openit-tickets` and `openit-people` are **structured**: each ships a
+// bundled `_schema.json` (under `scripts/openit-plugin/schemas/`) that
+// the resolver loads and includes in the create-collection POST body.
+// Cloud fix #1 (firebase-helpers PR #462) makes the cloud honor that
+// schema and skip the auto-template injection.
 //
-// We still ship `databases/{tickets,people}/_schema.json` to disk via
-// the plugin overlay (`routeFile: schemas/<col>._schema.json` →
-// `databases/<col>/_schema.json`), so the local UI's schema-aware
-// rendering / Cards view continues to work. The split is:
-//   - cloud = dumb bucket, accepts any JSON row;
-//   - disk  = bundled schema, used by the local UI for structure.
-//
-// When the cloud row-insert path is fixed, flip `isStructured: true` for
-// `openit-tickets` and `openit-people` (and add `templateId` if needed)
-// — no schema or local-layout changes required.
+// `openit-conversations` is **unstructured**: per-message rows are
+// freeform JSON keyed by msgId, with the parent `ticketId` carried in
+// `content.ticketId`. The local layout is nested
+// (`databases/conversations/<ticketId>/<msgId>.json`); the engine
+// adapter explodes by `content.ticketId` on pull and composes back on
+// push.
 const DEFAULT_DATASTORES: DefaultDatastore[] = [
   {
     name: "openit-tickets",
     templateId: null,
     description: "IT ticket tracking",
-    isStructured: false,
+    isStructured: true,
+    schemaPath: "schemas/tickets._schema.json",
   },
   {
     name: "openit-people",
     templateId: null,
     description: "Contact/people directory",
-    isStructured: false,
+    isStructured: true,
+    schemaPath: "schemas/people._schema.json",
   },
   {
     name: "openit-conversations",
     templateId: null,
     description: "Per-message conversation turns",
     isStructured: false,
+    schemaPath: null,
   },
 ];
+
+/// Load a default's bundled `_schema.json` and shape it for the cloud
+/// `POST /datacollection/` body. Returns `null` if the schema isn't
+/// applicable (unstructured) or fails to load (caller continues without
+/// — auto-template behavior on the cloud already short-circuits because
+/// `templateId` is null).
+async function loadBundledSchema(
+  def: DefaultDatastore,
+  creds: PinkfishCreds,
+): Promise<{ fields: Array<Record<string, unknown>>; nextFieldId: number } | null> {
+  if (!def.schemaPath) return null;
+  try {
+    const raw = await fetchSkillFile(def.schemaPath, creds);
+    const parsed = JSON.parse(raw) as { fields?: Array<Record<string, unknown>> };
+    const fields = Array.isArray(parsed.fields) ? parsed.fields : [];
+    if (fields.length === 0) return null;
+    return { fields, nextFieldId: fields.length + 1 };
+  } catch (err) {
+    console.warn(`[datastoreSync] failed to load bundled schema ${def.schemaPath}:`, err);
+    return null;
+  }
+}
 
 // `localSubdirFor` and `CONVERSATIONS_COLLECTION_NAME` live in
 // `./datastorePaths` so the adapter (`entities/datastore.ts`) can share
@@ -232,6 +262,13 @@ async function resolveProjectDatastoresImpl(
         };
         if (def.templateId) {
           body.templateId = def.templateId;
+        }
+        // Load the bundled schema for structured defaults so the cloud
+        // collection lands with the right fields. Cloud fix #1 (PR #462)
+        // makes the server honor this and skip the auto-template path.
+        const schema = await loadBundledSchema(def, creds);
+        if (schema) {
+          body.schema = schema;
         }
         const createResponse = await fetchFn(createUrl.toString(), {
           method: "POST",
