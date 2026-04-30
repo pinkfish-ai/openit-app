@@ -15,6 +15,7 @@
     "tauri:build": "tauri build",
     "build:slack-listener": "node scripts/build-slack-listener.mjs",
     "cleanslate": "node scripts/cleanslate.mjs",
+    "clear-cloud-slate": "node scripts/clear-cloud-slate.mjs",
     "devmode": "node scripts/devmode.mjs"
   },
   "dependencies": {

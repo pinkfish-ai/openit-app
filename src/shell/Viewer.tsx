@@ -407,6 +407,7 @@ export function Viewer({
   repo,
   fsTick,
   intakeUrl,
+  tunnelUrl,
   welcomeFlashKey,
   onOpenPath,
   onGoBack,
@@ -417,11 +418,13 @@ export function Viewer({
   source: ViewerSource;
   repo: string;
   fsTick?: number;
-  /** Current intake server URL — substituted into `{{INTAKE_URL}}` placeholders
-   *  in markdown content (the welcome doc uses this to surface a clickable
-   *  link to the live intake page despite the URL being a dynamic OS-assigned
-   *  port that changes per app launch). */
+  /** Local intake server URL — fallback for `{{INTAKE_URL}}` substitution
+   *  when the public tunnel isn't up yet. */
   intakeUrl?: string | null;
+  /** Public tunnel URL (e.g. `https://xxx.lhr.life`). Preferred over
+   *  `intakeUrl` for `{{INTAKE_URL}}` substitution so CTA links in the
+   *  welcome doc point at the shareable URL instead of localhost. */
+  tunnelUrl?: string | null;
   /** Bumped by the parent when the user clicks "Getting Started" while the
    *  welcome doc is already the active source. Triggers a one-shot flash
    *  animation so the click doesn't look like a no-op. */
@@ -1024,8 +1027,11 @@ export function Viewer({
         // the dynamic intake URL that changes per app launch. If the
         // server isn't running yet (intakeUrl is null), strip the link
         // gracefully so we don't render a broken `[text](null)`.
-        const rendered = intakeUrl
-          ? content.split("{{INTAKE_URL}}").join(intakeUrl)
+        // Prefer the public tunnel URL so the CTA is shareable; fall back
+        // to the local intake URL while the tunnel is still coming up.
+        const ctaUrl = tunnelUrl ?? intakeUrl;
+        const rendered = ctaUrl
+          ? content.split("{{INTAKE_URL}}").join(ctaUrl)
           : content.replace(/\[([^\]]+)\]\(\{\{INTAKE_URL\}\}\)/g, "$1");
         // Re-mount the markdown subtree on flashKey change so the CSS
         // animation re-fires. Combining with a class is enough — no
