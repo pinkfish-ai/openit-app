@@ -600,20 +600,20 @@ async function pushAllToDatastoresImpl(args: {
     );
 
     for (const { key, sortField, absPath } of localFiles) {
+      const logPath = isConversations
+        ? `${col.name}/${key}/${sortField}.json`
+        : `${col.name}/${key}.json`;
+      const composite = `${key}::${sortField}`;
+
       let parsed: unknown;
       try {
         const raw = await fsRead(absPath);
         parsed = JSON.parse(raw);
       } catch (e) {
-        onLine?.(`✗ datastore: ${col.name}/${key}/${sortField}.json — invalid JSON: ${String(e)}`);
+        onLine?.(`✗ datastore: ${logPath} — invalid JSON: ${String(e)}`);
         totalFailed += 1;
         continue;
       }
-
-      const logPath = isConversations
-        ? `${col.name}/${key}/${sortField}.json`
-        : `${col.name}/${key}.json`;
-      const composite = `${key}::${sortField}`;
 
       const existing = remoteByComposite.get(composite);
       try {
@@ -680,7 +680,8 @@ async function pushAllToDatastoresImpl(args: {
           onLine?.(`  − ${col.name}/${logTail} (deleted on remote)`);
           totalPushed += 1;
         } catch (e) {
-          onLine?.(`✗ datastore: delete ${col.name}/${k}/${s} — ${String(e)}`);
+          const logTail = isConversations ? `${k}/${s}` : k;
+          onLine?.(`✗ datastore: delete ${col.name}/${logTail} — ${String(e)}`);
           totalFailed += 1;
         }
       }
