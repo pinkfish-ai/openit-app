@@ -51,5 +51,15 @@
   padding: var(--pane-body-pad-y) var(--pane-body-pad-x);
 }
 .body.flush {
+  /* Flush hands every body concern to the child: no padding, no
+     scroll, no gutter. The child (e.g. .sc-panel, .explorer) sets
+     its own height: 100% and overflow-y: auto, so reserving a
+     scrollbar gutter at this level would only paint an empty
+     ~15px strip on the right (visible as a gap between content
+     and the pane's right border on macOS classic / Windows /
+     Linux). overflow: hidden also matches the original
+     .left-tab-panel behavior the v5 migration replaced. */
   padding: 0;
+  overflow: hidden;
+  scrollbar-gutter: auto;
 }
