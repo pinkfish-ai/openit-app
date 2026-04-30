@@ -102,22 +102,27 @@ describe.skipIf(skip)("Datastore sync — real integration", () => {
     });
   });
 
-  describe("flavor inspection — structured vs unstructured", () => {
-    it("openit-tickets default is structured (has a schema)", async () => {
+  describe("flavor inspection — defaults are unstructured for v1", () => {
+    it("openit-tickets default is created unstructured (cloud row-insert workaround)", async () => {
       if (!client) return;
       if (openitDatastores.length === 0) {
         openitDatastores = await client.listOpenitDatastores();
       }
       const tickets = openitDatastores.find((c) => c.name === "openit-tickets");
-      // Tickets is one of the hardcoded auto-create defaults
-      // (`isStructured: true`, `templateId: "case-management"`). If the
-      // org hasn't been bootstrapped yet, the test is informational.
+      // PIN-5793: all three defaults (`openit-{tickets,people,conversations}`)
+      // are unstructured on the cloud — a cloud-side bug rejects rows on
+      // structured collections (`POST /memory/items` → `Unknown column`)
+      // even when the schema POST honored the field IDs. The bundled
+      // `_schema.json` files still write to disk via the plugin overlay
+      // so the local UI's structured rendering keeps working. When the
+      // cloud row-insert path is fixed and `DEFAULT_DATASTORES` flips
+      // tickets/people back to structured, update this assertion to
+      // `toBe(true)` and add the schema check.
       if (!tickets) {
         console.log("  openit-tickets not yet auto-created; skipping flavor check");
         return;
       }
-      expect(tickets.isStructured).toBe(true);
-      expect(tickets.schema).toBeDefined();
+      expect(tickets.isStructured).toBe(false);
     });
   });
 
