@@ -596,17 +596,31 @@ body::before {
   font-size: 12px;
 }
 
+/* Toolbar floats over the top-right of the tree so we don't waste
+   a full row of vertical space on two icon buttons. The tree starts
+   at the very top of the pane; the toolbar overlays the corner with
+   a subtle backdrop so file rows that scroll behind it stay legible. */
 .explorer-toolbar {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 2;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 2px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border);
+  padding: 2px;
+  border-radius: var(--r-sm, 6px);
+  background: color-mix(in srgb, var(--bg-canvas) 85%, transparent);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
 }
 
-/* .explorer-icon-btn (and :hover, .active) removed — migrated to
-   <Button variant="ghost" iconOnly>. */
+.explorer:hover .explorer-toolbar,
+.explorer-toolbar:focus-within {
+  opacity: 1;
+}
 
 .explorer-system-icon {
   width: 14px;
@@ -681,42 +695,72 @@ body::before {
   list-style: none;
   margin: 0;
   padding: 4px 0;
+  font-family: var(--font-body, 'Inter', -apple-system, sans-serif);
 }
 
 .tree-item {
-  padding: 4px 10px;
-  cursor: default;
-  white-space: nowrap;
-  font-size: 14px;
-  color: var(--text);
-}
-
-.tree-item.file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px 0 6px;
   cursor: pointer;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--text);
+  border-radius: 3px;
+  user-select: none;
 }
 
-.tree-item.file:hover {
-  background: var(--accent-soft);
+.tree-item:hover {
+  background: var(--color-hover-overlay, var(--accent-soft));
 }
 
 .tree-item.dir {
-  color: var(--link);
+  color: var(--text);
   font-weight: 500;
-  cursor: pointer;
 }
 
-/* VS Code-style filename coloring */
+.tree-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--color-text-faint, var(--text-faint));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tree-chevron-spacer {
+  /* Reserve chevron width on file rows so file names align under
+     their parent folder's name (chevron column stays consistent). */
+  width: 12px;
+  height: 12px;
+}
+
+.tree-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tree-icon-folder {
+  color: var(--color-accent, #c75a2c);
+}
+
+.tree-icon-file {
+  color: var(--color-text-faint, #978d76);
+}
+
 .tree-item-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.tree-item.file {
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 .file-color-modified .tree-item-name {
@@ -793,9 +837,7 @@ body::before {
   background: var(--accent-soft);
 }
 
-.tree-item.dir:hover {
-  background: var(--surface);
-}
+/* (folder hover handled by base .tree-item:hover above) */
 
 /* KB conflict banner */
 .kb-conflicts {

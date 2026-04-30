@@ -1,4 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  File as FileIcon,
+  Folder as FolderIcon,
+  FolderOpen as FolderOpenIcon,
+} from "lucide-react";
 import sunburstIcon from "../assets/sunburst.svg";
 import { Button } from "../ui";
 import {
@@ -676,11 +685,9 @@ export function FileExplorer({
     : topLevelOnly
       ? "Expand all"
       : "Collapse all";
-  const toggleGlyph = allCollapsed
-    ? "⊞"  // empty box → next click adds visible content
-    : allExpanded
-      ? "⊟"  // filled box → next click clears
-      : "⊡"; // half-state → next click pushes deeper or collapses
+  // Icon mirrors the cycle state: collapse-all when fully expanded,
+  // expand-all otherwise. Half-state leans toward "expand more".
+  const ToggleIconCmp = allExpanded ? ChevronsDownUp : ChevronsUpDown;
 
   return (
     <div
@@ -703,7 +710,7 @@ export function FileExplorer({
           onClick={toggleAll}
           title={toggleTitle}
         >
-          {toggleGlyph}
+          <ToggleIconCmp size={14} strokeWidth={2} aria-hidden />
         </Button>
         <Button
           variant={showSystemFiles ? "subtle" : "ghost"}
@@ -821,7 +828,24 @@ export function FileExplorer({
                 e.dataTransfer.effectAllowed = "copy";
               }}
             >
-              {n.is_dir ? (isCollapsedRow ? "▸ " : "▾ ") : ""}
+              {n.is_dir ? (
+                isCollapsedRow ? (
+                  <ChevronRight size={12} strokeWidth={2} className="tree-chevron" aria-hidden />
+                ) : (
+                  <ChevronDown size={12} strokeWidth={2} className="tree-chevron" aria-hidden />
+                )
+              ) : (
+                <span className="tree-chevron tree-chevron-spacer" aria-hidden />
+              )}
+              {n.is_dir ? (
+                isCollapsedRow ? (
+                  <FolderIcon size={14} strokeWidth={1.75} className="tree-icon tree-icon-folder" aria-hidden />
+                ) : (
+                  <FolderOpenIcon size={14} strokeWidth={1.75} className="tree-icon tree-icon-folder" aria-hidden />
+                )
+              ) : (
+                <FileIcon size={14} strokeWidth={1.75} className="tree-icon tree-icon-file" aria-hidden />
+              )}
               <span className="tree-item-name">{prettyName(n.name, rel, datastores, datastoreItems)}</span>
               {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
               {isDeletable(n) && (
