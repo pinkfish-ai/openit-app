@@ -134,7 +134,18 @@ export async function resolvePathToSource(
       return {
         kind: "datastore-row",
         collection: { id: "", name: rowMatch[1], type: "datastore", numItems: 0, schema },
-        item: { id: rowMatch[2], key: rowMatch[2], content, createdAt: "", updatedAt: "" },
+        item: {
+          id: rowMatch[2],
+          key: rowMatch[2],
+          // sortField is meaningless for a single-row file read off
+          // disk (no cloud roundtrip happens here). Mirror the key to
+          // satisfy the required field — matches the wire convention
+          // we use for non-conversations openit-* push.
+          sortField: rowMatch[2],
+          content,
+          createdAt: "",
+          updatedAt: "",
+        },
       };
     } catch {
       return { kind: "file", path };
@@ -377,7 +388,7 @@ export async function resolvePathToSource(
           const raw = await fsRead(node.path);
           const content = JSON.parse(raw);
           const key = node.name.replace(/\.json$/, "");
-          items.push({ id: key, key, content, createdAt: "", updatedAt: "" });
+          items.push({ id: key, key, sortField: key, content, createdAt: "", updatedAt: "" });
         } catch { /* skip unparseable */ }
       }
 

@@ -45,23 +45,21 @@ const PAGE = 1000;
 /// flag pagination as failed so the engine skips its server-delete pass.
 const PAGINATION_SAFETY_CAP = 100_000;
 
-function manifestKey(colName: string, key: string): string {
+/// Manifest key for a row. Flat collections use `<colName>/<key>`.
+/// Conversations pass a sortField so two tickets that share a msgId
+/// stay distinct in the manifest, mirroring the on-disk path
+/// `databases/conversations/<key>/<sortField>.json`.
+function manifestKey(colName: string, key: string, sortField?: string): string {
+  if (sortField !== undefined) return `${colName}/${key}/${sortField}`;
   return `${colName}/${key}`;
 }
 
 function rowKey(item: MemoryItem): string {
-  return (item.key ?? item.id ?? "").toString();
+  return (item.key ?? "").toString();
 }
 
-/// Pull a `ticketId` string out of a row's content, defending against
-/// non-object content (raw strings, nulls) and non-string ticketId fields.
-function extractTicketId(item: MemoryItem): string | null {
-  const c = item.content;
-  if (c && typeof c === "object" && !Array.isArray(c)) {
-    const t = (c as Record<string, unknown>).ticketId;
-    if (typeof t === "string" && t.length > 0) return t;
-  }
-  return null;
+function rowSortField(item: MemoryItem): string {
+  return (item.sortField ?? "").toString();
 }
 
 // shadow naming + detection both live in syncEngine.ts; imported above.
@@ -107,31 +105,36 @@ export function datastoreAdapter(args: {
           for (const r of resp.items) {
             const key = rowKey(r);
             if (!key) continue;
-            const filename = `${key}.json`;
-            // openit-conversations is the one nested-layout collection:
-            // local path is `databases/conversations/<ticketId>/<msgId>.json`.
-            // We derive the per-ticket subfolder from `content.ticketId`.
-            // A row missing ticketId can't be filed (no folder anchor),
-            // so we drop it with a warning rather than dump it under a
-            // `_unrouted/` bin — that just hides the data corruption.
             const isConversations = col.name === CONVERSATIONS_COLLECTION_NAME;
+            // Conversations: cloud row's (key, sortField) maps directly
+            // onto the on-disk (folder, file) — `key=ticketId,
+            // sortField=msgId`. Flat collections: file is keyed by `key`.
             let subdir: string;
+            let filename: string;
+            let mKey: string;
             if (isConversations) {
-              const ticketId = extractTicketId(r);
-              if (!ticketId) {
+              const sortField = rowSortField(r);
+              if (!sortField) {
+                // sortField is required on the read model
+                // (firebase-helpers MemoryItem.sortField). Missing means
+                // the cloud returned a malformed row — log and skip
+                // rather than file under a nonsense path.
                 console.warn(
-                  `[datastore] openit-conversations row ${key} has no ticketId in content; skipping pull`,
+                  `[datastore] openit-conversations row key=${key} has no sortField; skipping pull`,
                 );
                 continue;
               }
-              subdir = `${localSubdirFor(col.name)}/${ticketId}`;
+              subdir = `${localSubdirFor(col.name)}/${key}`;
+              filename = `${sortField}.json`;
+              mKey = manifestKey(col.name, key, sortField);
             } else {
               subdir = localSubdirFor(col.name);
+              filename = `${key}.json`;
+              mKey = manifestKey(col.name, key);
             }
-            const colName = col.name;
             const item = r;
             items.push({
-              manifestKey: manifestKey(colName, key),
+              manifestKey: mKey,
               workingTreePath: `${subdir}/${filename}`,
               updatedAt: item.updatedAt ?? "",
               fetchAndWrite: (repo) =>
@@ -204,9 +207,12 @@ export function datastoreAdapter(args: {
             for (const f of filtered) {
               const base = f.filename.replace(/\.json$/, "");
               const isShadowFile = classifyAsShadow(f.filename, siblings);
-              const key = isShadowFile ? base.replace(/\.server$/, "") : base;
+              const msgId = isShadowFile ? base.replace(/\.server$/, "") : base;
+              // ticketId = parent folder, msgId = filename stem.
+              // Composite manifest key matches the cloud row's
+              // (key, sortField), so cross-ticket msgId reuse is fine.
               out.push({
-                manifestKey: manifestKey(col.name, key),
+                manifestKey: manifestKey(col.name, ticketId, msgId),
                 workingTreePath: `${colDir}/${ticketId}/${f.filename}`,
                 mtime_ms: f.mtime_ms,
                 isShadow: isShadowFile,

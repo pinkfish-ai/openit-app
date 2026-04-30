@@ -771,7 +771,7 @@ export function Viewer({
             const raw = await fsRead(node.path);
             const content = JSON.parse(raw);
             const key = node.name.replace(/\.json$/, "");
-            items.push({ id: key, key, content, createdAt: "", updatedAt: "" });
+            items.push({ id: key, key, sortField: key, content, createdAt: "", updatedAt: "" });
           } catch { /* skip unparseable */ }
         }
         if (!cancelled) setTableItems(items);

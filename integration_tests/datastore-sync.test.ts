@@ -347,24 +347,41 @@ describe.skipIf(skip)("Datastore sync — real integration", () => {
 
       // 3. Unstructured rows (conversations + custom) push regardless
       //    of cloud-fix-#6 deploy — they have no schema so no resolver
-      //    issue.
-      await client.postDatastoreRow(conversations.id, "msg-aa01", {
-        ticketId: "sample-ticket-1", role: "asker", body: "Help!", timestamp: "2026-04-28T14:22:11Z",
-      });
-      await client.postDatastoreRow(conversations.id, "msg-bb01", {
-        ticketId: "sample-ticket-2", role: "asker", body: "VPN broken", timestamp: "2026-04-28T16:10:00Z",
-      });
-      await client.postDatastoreRow(projects.id, "proj-alpha", {
-        name: "Alpha", lead: "alice@example.com",
-      });
+      //    issue. Conversations use composite (key=ticketId,
+      //    sortField=msgId); custom collections mirror sortField=key.
+      await client.postDatastoreRow(
+        conversations.id,
+        "sample-ticket-1",
+        { role: "asker", body: "Help!", timestamp: "2026-04-28T14:22:11Z" },
+        "msg-aa01",
+      );
+      await client.postDatastoreRow(
+        conversations.id,
+        "sample-ticket-2",
+        { role: "asker", body: "VPN broken", timestamp: "2026-04-28T16:10:00Z" },
+        "msg-bb01",
+      );
+      await client.postDatastoreRow(
+        projects.id,
+        "proj-alpha",
+        { name: "Alpha", lead: "alice@example.com" },
+        "proj-alpha",
+      );
 
       const convAfter = await client.listDatastoreItems(conversations.id);
       const projAfter = await client.listDatastoreItems(projects.id);
       expect(convAfter.items.length).toBe(2);
       expect(projAfter.items.length).toBe(1);
-      for (const r of convAfter.items) {
-        expect((r.content as any)?.ticketId).toMatch(/^sample-ticket-/);
-      }
+      // Composite round-trip: cloud carries both legs, ticketId is the
+      // key (NOT a content field anymore — though content can still
+      // hold it; the routing is independent).
+      const convKeys = convAfter.items.map((r) => r.key).sort();
+      expect(convKeys).toEqual(["sample-ticket-1", "sample-ticket-2"]);
+      const convSorts = convAfter.items.map((r) => r.sortField).sort();
+      expect(convSorts).toEqual(["msg-aa01", "msg-bb01"]);
+      // Custom collection: sortField mirrors key.
+      expect(projAfter.items[0].key).toBe("proj-alpha");
+      expect(projAfter.items[0].sortField).toBe("proj-alpha");
 
       // 4. Structured rows (tickets + people, semantic-id keyed
       //    content) — the production push shape. Soft-skip when the
@@ -377,24 +394,46 @@ describe.skipIf(skip)("Datastore sync — real integration", () => {
         return;
       }
 
-      await client.postDatastoreRow(tickets.id, "sample-ticket-1", {
-        subject: "Sample — Cannot access email",
-        description: "Cannot log in to email after password change.",
-        asker: "alice@example.com", status: "open",
-      });
-      await client.postDatastoreRow(tickets.id, "sample-ticket-2", {
-        subject: "Sample — VPN drops",
-        description: "VPN keeps disconnecting in coffee shop wifi.",
-        asker: "bob@example.com", status: "escalated",
-      });
-      await client.postDatastoreRow(people.id, "alice", {
-        firstName: "Alice", lastName: "Sample", email: "alice@example.com",
-        createdAt: "2026-04-26T09:00:00Z", updatedAt: "2026-04-28T14:22:11Z",
-      });
-      await client.postDatastoreRow(people.id, "bob", {
-        firstName: "Bob", lastName: "Sample", email: "bob@example.com",
-        createdAt: "2026-04-25T15:30:00Z", updatedAt: "2026-04-28T16:55:02Z",
-      });
+      // Structured collections (tickets, people): mirror sortField=key.
+      // Stops the cloud's auto-stamp path for fields we never query by.
+      await client.postDatastoreRow(
+        tickets.id,
+        "sample-ticket-1",
+        {
+          subject: "Sample — Cannot access email",
+          description: "Cannot log in to email after password change.",
+          asker: "alice@example.com", status: "open",
+        },
+        "sample-ticket-1",
+      );
+      await client.postDatastoreRow(
+        tickets.id,
+        "sample-ticket-2",
+        {
+          subject: "Sample — VPN drops",
+          description: "VPN keeps disconnecting in coffee shop wifi.",
+          asker: "bob@example.com", status: "escalated",
+        },
+        "sample-ticket-2",
+      );
+      await client.postDatastoreRow(
+        people.id,
+        "alice",
+        {
+          firstName: "Alice", lastName: "Sample", email: "alice@example.com",
+          createdAt: "2026-04-26T09:00:00Z", updatedAt: "2026-04-28T14:22:11Z",
+        },
+        "alice",
+      );
+      await client.postDatastoreRow(
+        people.id,
+        "bob",
+        {
+          firstName: "Bob", lastName: "Sample", email: "bob@example.com",
+          createdAt: "2026-04-25T15:30:00Z", updatedAt: "2026-04-28T16:55:02Z",
+        },
+        "bob",
+      );
 
       const ticketsAfter = await client.listDatastoreItems(tickets.id);
       const peopleAfter = await client.listDatastoreItems(people.id);
@@ -404,6 +443,14 @@ describe.skipIf(skip)("Datastore sync — real integration", () => {
       expect(subjects).toEqual(
         expect.arrayContaining(["Sample — Cannot access email", "Sample — VPN drops"]),
       );
+      // Mirror sortField=key for structured collections — confirm the
+      // wire shape lands in storage as authored, not auto-stamped.
+      for (const r of ticketsAfter.items) {
+        expect(r.sortField).toBe(r.key);
+      }
+      for (const r of peopleAfter.items) {
+        expect(r.sortField).toBe(r.key);
+      }
     }, 180_000);
   });
 
@@ -422,7 +469,7 @@ describe.skipIf(skip)("Datastore sync — real integration", () => {
     // assertion runs regardless of firebase-helpers#462 deploy state.
     // The merge invariant ("local rows added without clobbering remote
     // rows") is engine-level, not flavor-specific.
-    it("pushes 3 new rows on top of 2 pre-existing and lands 5 total", async () => {
+    it("pushes new composite-keyed rows on top of pre-existing and keeps cross-ticket dup-msgIds distinct", async () => {
       if (!client) return;
 
       const conversations = await client.createCollection({
@@ -430,35 +477,80 @@ describe.skipIf(skip)("Datastore sync — real integration", () => {
         createdBy: config!.orgId, createdByName: "OpenIT (itest)", triggerUrls: [],
         isStructured: false,
       });
-      // Cloud-side state: 2 remote-only conversation rows (simulating a
-      // sibling device that pushed first).
-      await client.postDatastoreRow(conversations.id, "remote-only-msg-1", {
-        ticketId: "remote-thread-A", role: "asker", body: "remote A", timestamp: "2026-04-28T14:00:00Z",
-      });
-      await client.postDatastoreRow(conversations.id, "remote-only-msg-2", {
-        ticketId: "remote-thread-B", role: "asker", body: "remote B", timestamp: "2026-04-28T15:00:00Z",
-      });
 
-      // Local-side push: 3 new rows. None overlap by key.
-      await client.postDatastoreRow(conversations.id, "local-msg-1", {
-        ticketId: "local-thread-X", role: "asker", body: "local 1", timestamp: "2026-04-28T16:00:00Z",
-      });
-      await client.postDatastoreRow(conversations.id, "local-msg-2", {
-        ticketId: "local-thread-X", role: "agent", body: "local 2", timestamp: "2026-04-28T16:01:00Z",
-      });
-      await client.postDatastoreRow(conversations.id, "local-msg-3", {
-        ticketId: "local-thread-Y", role: "asker", body: "local 3", timestamp: "2026-04-28T17:00:00Z",
-      });
+      // Cloud-side state: 2 remote-only conversation rows under
+      // distinct tickets (simulating a sibling device that pushed
+      // first). Composite shape: key=ticketId, sortField=msgId.
+      await client.postDatastoreRow(
+        conversations.id,
+        "remote-thread-A",
+        { role: "asker", body: "remote A", timestamp: "2026-04-28T14:00:00Z" },
+        "msg-r-1",
+      );
+      await client.postDatastoreRow(
+        conversations.id,
+        "remote-thread-B",
+        { role: "asker", body: "remote B", timestamp: "2026-04-28T15:00:00Z" },
+        "msg-r-2",
+      );
+
+      // Local-side push: 3 rows under two distinct local tickets.
+      await client.postDatastoreRow(
+        conversations.id,
+        "local-thread-X",
+        { role: "asker", body: "local 1", timestamp: "2026-04-28T16:00:00Z" },
+        "msg-l-1",
+      );
+      await client.postDatastoreRow(
+        conversations.id,
+        "local-thread-X",
+        { role: "agent", body: "local 2", timestamp: "2026-04-28T16:01:00Z" },
+        "msg-l-2",
+      );
+      await client.postDatastoreRow(
+        conversations.id,
+        "local-thread-Y",
+        { role: "asker", body: "local 3", timestamp: "2026-04-28T17:00:00Z" },
+        "msg-l-3",
+      );
+
+      // Cross-ticket dup-msgId case — the property the composite key
+      // exists to enable. Two folders push a row with the same
+      // sortField. Pre-PIN-#### code dropped the second with
+      // first-writer-wins; under composite-keyed addressing both land.
+      await client.postDatastoreRow(
+        conversations.id,
+        "local-thread-X",
+        { role: "asker", body: "shared msgId in X", timestamp: "2026-04-28T18:00:00Z" },
+        "msg-shared",
+      );
+      await client.postDatastoreRow(
+        conversations.id,
+        "local-thread-Y",
+        { role: "asker", body: "shared msgId in Y", timestamp: "2026-04-28T18:01:00Z" },
+        "msg-shared",
+      );
 
       const after = await client.listDatastoreItems(conversations.id);
-      const keys = (after.items.map((r) => r.key).filter(Boolean) as string[]).sort();
-      expect(keys).toEqual([
-        "local-msg-1", "local-msg-2", "local-msg-3",
-        "remote-only-msg-1", "remote-only-msg-2",
-      ]);
-      // Remote-only rows weren't modified by the local push.
-      const remoteA = after.items.find((r) => r.key === "remote-only-msg-1");
+      // 2 remote-only + 3 distinct local + 2 cross-ticket dup = 7 rows.
+      expect(after.items.length).toBe(7);
+
+      // Remote rows weren't touched by the local pushes.
+      const remoteA = after.items.find(
+        (r) => r.key === "remote-thread-A" && r.sortField === "msg-r-1",
+      );
       expect((remoteA!.content as any)?.body).toBe("remote A");
+
+      // Both dup-msgId rows survived as distinct cloud rows, with their
+      // own bodies — no aliasing.
+      const sharedRows = after.items.filter((r) => r.sortField === "msg-shared");
+      expect(sharedRows.length).toBe(2);
+      const sharedKeys = sharedRows.map((r) => r.key).sort();
+      expect(sharedKeys).toEqual(["local-thread-X", "local-thread-Y"]);
+      const xRow = sharedRows.find((r) => r.key === "local-thread-X");
+      const yRow = sharedRows.find((r) => r.key === "local-thread-Y");
+      expect((xRow!.content as any)?.body).toBe("shared msgId in X");
+      expect((yRow!.content as any)?.body).toBe("shared msgId in Y");
     }, 180_000);
   });
 });
