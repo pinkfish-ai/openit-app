@@ -1,12 +1,16 @@
 /**
- * datastoreAdapter — Phase 3 of V2 sync (PIN-5793).
+ * datastoreAdapter — Phase 3 of V2 sync (PIN-5793) + PIN-5861 contract
+ * alignment.
  *
- * Focused on the only datastore-side wrinkle introduced by Phase 3:
+ * Focused on the datastore-side wrinkles:
  *   1. local-folder-name routing strips the `openit-` prefix
  *      (`openit-tickets` → `databases/tickets/`).
  *   2. `openit-conversations` writes to a nested per-ticket layout
- *      (`databases/conversations/<ticketId>/<msgId>.json`) using the
- *      `content.ticketId` field as the folder anchor.
+ *      (`databases/conversations/<ticketId>/<msgBase>.json`).
+ *      Cloud row identity is composite `(key=ticketId, sortField=msgBase)`,
+ *      mirrored on disk so two threads sharing a msgBase are still
+ *      distinct rows. ManifestKey for conversations is
+ *      `<colName>/<ticketId>/<sortField>` — collision-free across threads.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -41,8 +45,18 @@ function conversationsCol(): DataCollection {
   } as DataCollection;
 }
 
-function row(key: string, content: unknown, updatedAt = "2026-04-30T00:00:00Z"): MemoryItem {
-  return { id: `id-${key}`, key, content, updatedAt } as MemoryItem;
+function row(
+  key: string,
+  content: unknown,
+  opts: { sortField?: string; updatedAt?: string } = {},
+): MemoryItem {
+  return {
+    id: `id-${key}-${opts.sortField ?? ""}`,
+    key,
+    sortField: opts.sortField,
+    content,
+    updatedAt: opts.updatedAt ?? "2026-04-30T00:00:00Z",
+  } as MemoryItem;
 }
 
 beforeEach(() => {
@@ -66,11 +80,11 @@ describe("datastoreAdapter — local routing strips openit- prefix", () => {
 });
 
 describe("datastoreAdapter — openit-conversations nested layout", () => {
-  it("routes a row by content.ticketId into databases/conversations/<ticketId>/", async () => {
+  it("routes a row by (key=ticketId, sortField=msgBase) into databases/conversations/<ticketId>/<msgBase>.json", async () => {
     mockFetchItems.mockResolvedValueOnce({
       items: [
-        row("msg-aa01", { ticketId: "T1", body: "hello" }),
-        row("msg-bb01", { ticketId: "T2", body: "world" }),
+        row("T1", { body: "hello" }, { sortField: "msg-aa01" }),
+        row("T2", { body: "world" }, { sortField: "msg-bb01" }),
       ],
       pagination: { hasNextPage: false },
     } as any);
@@ -85,20 +99,19 @@ describe("datastoreAdapter — openit-conversations nested layout", () => {
       "databases/conversations/T1/msg-aa01.json",
       "databases/conversations/T2/msg-bb01.json",
     ]);
-    // Manifest key stays globally unique on `<col>/<msgId>` — no ticket
-    // folder in the key, since msgIds are globally unique.
+    // Manifest key carries both halves of the composite — collision-free
+    // even when two threads share a msgBase.
     expect(result.items.map((r) => r.manifestKey)).toEqual([
-      "openit-conversations/msg-aa01",
-      "openit-conversations/msg-bb01",
+      "openit-conversations/T1/msg-aa01",
+      "openit-conversations/T2/msg-bb01",
     ]);
   });
 
-  it("drops a conversation row that has no ticketId in content", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("two threads sharing a sortField produce distinct manifest keys", async () => {
     mockFetchItems.mockResolvedValueOnce({
       items: [
-        row("msg-aa01", { ticketId: "T1", body: "ok" }),
-        row("msg-bad", { body: "missing ticketId" }),
+        row("T1", { body: "A" }, { sortField: "msg-shared" }),
+        row("T2", { body: "B" }, { sortField: "msg-shared" }),
       ],
       pagination: { hasNextPage: false },
     } as any);
@@ -109,9 +122,32 @@ describe("datastoreAdapter — openit-conversations nested layout", () => {
     });
     const result = await adapter.listRemote("/repo", { collection_id: null, collection_name: null, files: {} });
 
-    // Only the well-formed row survives; the malformed one was warn-and-skipped.
+    const mKeys = result.items.map((r) => r.manifestKey);
+    expect(mKeys).toEqual([
+      "openit-conversations/T1/msg-shared",
+      "openit-conversations/T2/msg-shared",
+    ]);
+    expect(new Set(mKeys).size).toBe(2);
+  });
+
+  it("drops a conversation row that has no sortField (no per-turn anchor)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockFetchItems.mockResolvedValueOnce({
+      items: [
+        row("T1", { body: "ok" }, { sortField: "msg-aa01" }),
+        row("T2", { body: "missing sortField" }),
+      ],
+      pagination: { hasNextPage: false },
+    } as any);
+
+    const adapter = datastoreAdapter({
+      creds: FAKE_CREDS,
+      collections: [conversationsCol()],
+    });
+    const result = await adapter.listRemote("/repo", { collection_id: null, collection_name: null, files: {} });
+
     expect(result.items).toHaveLength(1);
-    expect(result.items[0].manifestKey).toBe("openit-conversations/msg-aa01");
+    expect(result.items[0].manifestKey).toBe("openit-conversations/T1/msg-aa01");
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });

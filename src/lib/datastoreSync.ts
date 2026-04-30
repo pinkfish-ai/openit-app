@@ -369,10 +369,15 @@ async function pushAllToDatastoresImpl(args: {
       totalFailed += 1;
       continue;
     }
-    const remoteByKey = new Map<string, MemoryItem>();
+    // Composite (key, sortField) is the cloud's row identity. For flat
+    // collections we set sortField = key on push, so composite degenerates
+    // back to key. For conversations, key = ticketId and sortField =
+    // msgBase, so two threads sharing a msgBase are still distinct rows.
+    const remoteByComposite = new Map<string, MemoryItem>();
     for (const r of remote) {
       const k = (r.key ?? r.id ?? "").toString();
-      if (k) remoteByKey.set(k, r);
+      const sf = (r.sortField ?? "").toString();
+      if (k) remoteByComposite.set(`${k}#${sf}`, r);
     }
 
     // Track whether the directory actually exists. If `fsList` throws
@@ -380,11 +385,20 @@ async function pushAllToDatastoresImpl(args: {
     // NOT mean "user deleted everything" — skip the deletion phase
     // entirely so we don't nuke remote rows.
     //
-    // For openit-conversations the on-disk layout is one extra level
-    // deep (`databases/conversations/<ticketId>/<msgId>.json`); we walk
-    // each per-ticket subfolder and remember the parent so push can
-    // inject `ticketId` into content if missing.
-    type LocalRow = { key: string; absPath: string; ticketId?: string };
+    // For openit-conversations the on-disk layout is one level deeper
+    // (`databases/conversations/<ticketId>/<msgBase>.json`). The on-disk
+    // hierarchy mirrors the cloud's composite (key=ticketId,
+    // sortField=msgBase) — folder is the thread, filename the ordered turn.
+    type LocalRow = {
+      /// Cloud row `key`. ticketId for conversations; filename-base for flat.
+      key: string;
+      /// Cloud row `sortField`. msgBase for conversations; equal to `key`
+      /// for flat (sortField=key turns POST into composite-key upsert).
+      sortField: string;
+      absPath: string;
+      /// Pretty path for `onLine` log lines.
+      logPath: string;
+    };
     let localFiles: LocalRow[] = [];
     let localDirExists = true;
     // Tracks whether any per-ticket subfolder listing failed during the
@@ -397,15 +411,6 @@ async function pushAllToDatastoresImpl(args: {
     try {
       const topNodes = await fsList(colDir);
       if (isConversations) {
-        // Cloud-side row key is just the msgId (no `<ticketId>__` prefix).
-        // If the user lands the same msgId in two ticket folders, the
-        // second push would silently overwrite the first cloud row. The
-        // bundled seed uses timestamp+suffix ids so this is theoretical
-        // for first-party content, but admin-authored or copy-pasted
-        // rows can collide. First-writer-wins + a loud warning is
-        // cheaper than retrofitting a composite cloud key here. (R7
-        // BugBot finding.)
-        const seenKeys = new Map<string, string>();
         for (const top of topNodes) {
           if (!top.is_dir) continue;
           const ticketId = top.name;
@@ -433,25 +438,24 @@ async function pushAllToDatastoresImpl(args: {
             if (!n.name.endsWith(".json")) continue;
             if (n.name === "_schema.json") continue;
             if (classifyAsShadow(n.name, siblings)) continue;
-            const key = n.name.replace(/\.json$/, "");
-            const firstSeenIn = seenKeys.get(key);
-            if (firstSeenIn !== undefined) {
-              console.warn(
-                `[datastoreSync] duplicate conversation msgId "${key}" — already pushing from ` +
-                  `ticket "${firstSeenIn}", skipping copy in "${ticketId}". Rename one to avoid ` +
-                  `silent overwrite on cloud.`,
-              );
-              continue;
-            }
-            seenKeys.set(key, ticketId);
-            localFiles.push({ key, absPath: n.path, ticketId });
+            const msgBase = n.name.replace(/\.json$/, "");
+            // Composite identity (ticketId, msgBase) is collision-free
+            // across threads — the duplicate-msgId warning we used to need
+            // (when cloud key was just msgBase) is gone with the upgrade.
+            localFiles.push({
+              key: ticketId,
+              sortField: msgBase,
+              absPath: n.path,
+              logPath: `${col.name}/${ticketId}/${n.name}`,
+            });
           }
         }
       } else {
+        // Flat (tickets, people, custom): one row per file. sortField=key
+        // makes POST `(key, sortField=key)` a true upsert — repeated
+        // pushes update in place rather than accumulating rows.
         // Build canonical-sibling set (per-collection) so we exclude shadow
-        // rows but not legitimate filenames containing `.server.`. A row
-        // keyed `nginx.server` produces filename `nginx.server.json`; with
-        // no sibling `nginx.json` it should still push.
+        // rows but not legitimate filenames containing `.server.`.
         const candidateNames = topNodes
           .filter(
             (n) =>
@@ -467,75 +471,68 @@ async function pushAllToDatastoresImpl(args: {
               n.name !== "_schema.json" &&
               !classifyAsShadow(n.name, siblings),
           )
-          .map((n) => ({ key: n.name.replace(/\.json$/, ""), absPath: n.path }));
+          .map((n) => {
+            const base = n.name.replace(/\.json$/, "");
+            return {
+              key: base,
+              sortField: base,
+              absPath: n.path,
+              logPath: `${col.name}/${n.name}`,
+            };
+          });
       }
     } catch {
       localDirExists = false;
     }
-    const localKeys = new Set(localFiles.map((f) => f.key));
+    const localComposites = new Set(
+      localFiles.map((f) => `${f.key}#${f.sortField}`),
+    );
 
-    for (const { key, absPath, ticketId } of localFiles) {
+    for (const f of localFiles) {
       let parsed: unknown;
       try {
-        const raw = await fsRead(absPath);
+        const raw = await fsRead(f.absPath);
         parsed = JSON.parse(raw);
       } catch (e) {
-        onLine?.(`✗ datastore: ${col.name}/${key}.json — invalid JSON: ${String(e)}`);
+        onLine?.(`✗ datastore: ${f.logPath} — invalid JSON: ${String(e)}`);
         totalFailed += 1;
         continue;
       }
 
-      // Conversations: ensure `content.ticketId` matches the parent
-      // folder name. Folder is the source-of-truth linkage on disk; if
-      // the user authored a row without it (or copied across folders),
-      // fix it before pushing so cloud-side filtering by ticketId works.
-      if (isConversations && ticketId && parsed && typeof parsed === "object") {
-        const obj = parsed as Record<string, unknown>;
-        if (obj.ticketId !== ticketId) obj.ticketId = ticketId;
-      }
+      const composite = `${f.key}#${f.sortField}`;
+      const existing = remoteByComposite.get(composite);
+      // Skip when remote already has identical content — saves a
+      // round-trip and avoids bumping the server's `updatedAt` for
+      // unchanged rows (which the engine's pull-side conflict detector
+      // would then mistake for a remote change next tick).
+      if (existing && jsonEqual(parsed, existing.content)) continue;
 
-      const logPath = isConversations && ticketId
-        ? `${col.name}/${ticketId}/${key}.json`
-        : `${col.name}/${key}.json`;
-
-      const existing = remoteByKey.get(key);
       try {
-        if (!existing) {
-          const url = new URL("/memory/items", urls.skillsBaseUrl);
-          url.searchParams.set("collectionId", col.id);
-          const resp = await fetchFn(url.toString(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ key, content: parsed }),
-          });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-          onLine?.(`  + ${logPath} (created)`);
-          totalPushed += 1;
-          if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
-          pushedKeysByCol.get(col.id)!.add(key);
-        } else if (!jsonEqual(parsed, existing.content)) {
-          const url = new URL(`/memory/items/${encodeURIComponent(existing.id)}`, urls.skillsBaseUrl);
-          url.searchParams.set("collectionId", col.id);
-          const resp = await fetchFn(url.toString(), {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ content: parsed }),
-          });
-          if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-          onLine?.(`  ✓ ${logPath} (updated)`);
-          totalPushed += 1;
-          if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
-          pushedKeysByCol.get(col.id)!.add(key);
-        }
+        const url = new URL("/memory/items", urls.skillsBaseUrl);
+        url.searchParams.set("collectionId", col.id);
+        const resp = await fetchFn(url.toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: f.key,
+            sortField: f.sortField,
+            content: parsed,
+          }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+        onLine?.(`  ${existing ? "✓" : "+"} ${f.logPath} ${existing ? "(updated)" : "(created)"}`);
+        totalPushed += 1;
+        if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
+        pushedKeysByCol.get(col.id)!.add(composite);
       } catch (e) {
-        onLine?.(`✗ datastore: ${col.name}/${key}.json — ${String(e)}`);
+        onLine?.(`✗ datastore: ${f.logPath} — ${String(e)}`);
         totalFailed += 1;
       }
     }
 
     // SAFETY: only run the deletion phase if the local collection dir
     // actually exists AND every per-ticket subfolder we listed succeeded.
-    // Otherwise an empty `localKeys` would be interpreted as "user
+    // Otherwise an empty `localComposites` would be interpreted as "user
     // deleted everything" and we'd nuke every remote row — which would
     // happen on the very first commit if the datastore pull hadn't
     // completed yet OR if a transient read error truncated the local
@@ -543,7 +540,9 @@ async function pushAllToDatastoresImpl(args: {
     if (localDirExists && !innerWalkFailed) {
       for (const r of remote) {
         const k = (r.key ?? r.id ?? "").toString();
-        if (!k || localKeys.has(k)) continue;
+        const sf = (r.sortField ?? "").toString();
+        if (!k) continue;
+        if (localComposites.has(`${k}#${sf}`)) continue;
         try {
           const url = new URL(
             `/memory/items/id/${encodeURIComponent(r.id)}`,
@@ -552,7 +551,7 @@ async function pushAllToDatastoresImpl(args: {
           url.searchParams.set("collectionId", col.id);
           const resp = await fetchFn(url.toString(), { method: "DELETE" });
           if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-          onLine?.(`  − ${col.name}/${k}.json (deleted on remote)`);
+          onLine?.(`  − ${col.name}/${k} (deleted on remote)`);
           totalPushed += 1;
         } catch (e) {
           onLine?.(`✗ datastore: delete ${col.name}/${k} — ${String(e)}`);
@@ -573,13 +572,17 @@ async function pushAllToDatastoresImpl(args: {
   // grab the post-push `updatedAt` for items we just touched. Paginate
   // because a collection > 1000 items might have the pushed key past the
   // first page; partial fetch would silently leave its manifest entry stale.
+  // Lookup keyed by composite `${key}#${sortField}` so the conversations
+  // case (many rows per `key`) reconciles each turn back to the correct
+  // manifest entry.
   const RECONCILE_PAGE = 1000;
   const RECONCILE_MAX = 100_000;
-  for (const [colId, keys] of pushedKeysByCol) {
-    if (keys.size === 0) continue;
+  for (const [colId, composites] of pushedKeysByCol) {
+    if (composites.size === 0) continue;
     const col = collections.find((c) => c.id === colId);
     if (!col) continue;
-    const remaining = new Set(keys);
+    const isConversations = col.name === CONVERSATIONS_COLLECTION_NAME;
+    const remaining = new Set(composites);
     try {
       let offset = 0;
       let seen = 0;
@@ -587,13 +590,18 @@ async function pushAllToDatastoresImpl(args: {
         const resp: MemoryBqueryResponse = await fetchDatastoreItems(creds, colId, RECONCILE_PAGE, offset);
         for (const item of resp.items) {
           const k = (item.key ?? item.id ?? "").toString();
-          if (!remaining.has(k)) continue;
-          const mKey = `${col.name}/${k}`;
+          const sf = (item.sortField ?? "").toString();
+          const composite = `${k}#${sf}`;
+          if (!remaining.has(composite)) continue;
+          // Manifest key shape must match `entities/datastore.ts`:
+          //   conversations → `<colName>/<ticketId>/<msgBase>`
+          //   flat          → `<colName>/<key>`
+          const mKey = isConversations ? `${col.name}/${k}/${sf}` : `${col.name}/${k}`;
           persisted.files[mKey] = {
             remote_version: item.updatedAt ?? "",
             pulled_at_mtime_ms: Date.now(),
           };
-          remaining.delete(k);
+          remaining.delete(composite);
         }
         const hasMore = resp.pagination?.hasNextPage === true;
         if (!hasMore || resp.items.length === 0) break;
@@ -601,7 +609,7 @@ async function pushAllToDatastoresImpl(args: {
         seen += resp.items.length;
         if (seen >= RECONCILE_MAX) {
           console.warn(
-            `[datastoreSync] post-push reconcile for ${col.name}: hit ${RECONCILE_MAX}-item safety cap; ${remaining.size} key(s) left unreconciled`,
+            `[datastoreSync] post-push reconcile for ${col.name}: hit ${RECONCILE_MAX}-item safety cap; ${remaining.size} composite(s) left unreconciled`,
           );
           break;
         }
