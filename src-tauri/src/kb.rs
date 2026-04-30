@@ -746,8 +746,14 @@ pub async fn kb_upload_via_signed_url(
         return Err(format!("file not found: {}", path.display()));
     }
     let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-    upload_via_signed_url_inner(filename, collection_id, skills_base_url, access_token, bytes)
-        .await
+    upload_via_signed_url_inner(
+        filename,
+        collection_id,
+        skills_base_url,
+        access_token,
+        bytes,
+    )
+    .await
 }
 
 /// Filestore equivalent of `kb_upload_via_signed_url`. Same body, only
@@ -767,8 +773,14 @@ pub async fn fs_store_upload_via_signed_url(
         return Err(format!("file not found: {}", path.display()));
     }
     let bytes = fs::read(&path).map_err(|e| e.to_string())?;
-    upload_via_signed_url_inner(filename, collection_id, skills_base_url, access_token, bytes)
-        .await
+    upload_via_signed_url_inner(
+        filename,
+        collection_id,
+        skills_base_url,
+        access_token,
+        bytes,
+    )
+    .await
 }
 
 async fn upload_via_signed_url_inner(

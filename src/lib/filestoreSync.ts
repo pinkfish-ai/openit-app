@@ -16,6 +16,7 @@ import {
   entityListLocal,
   fsStoreInit,
   fsStoreUploadFileSigned,
+  kbListRemote,
 } from "./api";
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
@@ -231,6 +232,33 @@ async function pushAllToFilestoreImpl(args: {
     } catch (e) {
       failed += 1;
       onLine?.(`✗ ${dir}/${f.filename}: ${String(e)}`);
+    }
+  }
+
+  // Reconcile remote_version against the server's authoritative
+  // `updatedAt` after push. Without this, manifest holds the client
+  // clock (`new Date().toISOString()` above), the engine compares
+  // `r.updatedAt !== tracked.remote_version` on the next pull, the
+  // strings never match, and every poll false-flags a fast-forward
+  // (or — within a 60s window of a local edit — a phantom conflict
+  // with a shadow file). PIN-5847 collapsed the cloud_filename
+  // bridge but kept the version-sync need; this is the same reconcile
+  // KB push has carried since Phase 2.
+  if (pushedNames.size > 0) {
+    try {
+      const remote = await kbListRemote({
+        collectionId: collection.id,
+        skillsBaseUrl: urls.skillsBaseUrl,
+        accessToken: token.accessToken,
+      });
+      for (const r of remote) {
+        if (pushedNames.has(r.filename) && r.updated_at) {
+          const tracked = persisted.files[r.filename];
+          if (tracked) tracked.remote_version = r.updated_at;
+        }
+      }
+    } catch (e) {
+      console.warn(`[filestore:${collection.id}] post-push remote-version sync failed:`, e);
     }
   }
 
