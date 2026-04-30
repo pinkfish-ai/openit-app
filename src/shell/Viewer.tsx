@@ -1909,13 +1909,24 @@ export function Viewer({
           );
           // PIN-5829: kick off /conversation-to-automation so Claude
           // harvests the resolution into a KB article, skill, or
-          // script before we navigate away. Fire-and-forget — the skill
-          // owns its own progress reporting in the right pane.
+          // script. The ticket is already flipped to resolved on
+          // disk, so even if the paste fails the resolve sticks; we
+          // surface a one-shot alert in the no-session case so the
+          // admin knows the capture didn't fire (matching the
+          // skill-anchor pattern around line 321).
           const cmd = `/conversation-to-automation ${ticketId}`;
           const wrapped = `${BRACKETED_PASTE_OPEN}${cmd}${BRACKETED_PASTE_CLOSE}`;
-          writeToActiveSession(wrapped).catch((e) =>
-            console.warn(`[viewer] /conversation-to-automation paste failed:`, e),
-          );
+          try {
+            const pasted = await writeToActiveSession(wrapped);
+            if (!pasted) {
+              alert(
+                "Ticket marked resolved, but couldn't reach Claude to capture the resolution. " +
+                  `Open Claude in the right pane and run \`${cmd}\` to capture as a KB article, skill, or script.`,
+              );
+            }
+          } catch (e) {
+            console.warn(`[viewer] /conversation-to-automation paste failed:`, e);
+          }
           if (onOpenPath) {
             void onOpenPath(`${repo}/databases/conversations`);
           }
