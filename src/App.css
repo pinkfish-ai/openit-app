@@ -488,12 +488,22 @@ body::before {
    status: "escalated". Green palette to read as "ready for you to
    handle" rather than "something's wrong". */
 /* Escalated tickets — floating notification, not a full-width stripe.
-   Slides in top-right of the viewport so it reads as a notification
-   the admin opts into, not a wall they have to walk past. */
-/* .escalated-ticket-banner* — migrated to <Banner variant="success">
-   in src/ui/Banner.tsx; the EscalatedTicketBanner component now
-   renders inline INSIDE the chat pane (not position: fixed) so it
-   clips to the pane's rounded corner. */
+   Pinned top-right of the app shell so it reads as a macOS-style
+   notification the admin opts into, not a wall they have to walk
+   past. The notification surface itself is the v5 <Banner variant=
+   "warn">; this anchor only handles fixed positioning + width. */
+.escalated-toast-anchor {
+  position: fixed;
+  /* TitleRail (44px) + 12px gutter so the toast clears the rail
+     without sticking to it. Matches the layout-pane-gap rhythm. */
+  top: 56px;
+  right: 14px;
+  z-index: 100;
+  width: min(380px, calc(100vw - 28px));
+  /* The Banner inside ships with its own slide-in animation; this
+     wrapper just hosts the position. Pointer-events left on so the
+     embedded buttons remain clickable. */
+}
 
 /* Cards float with gaps; handle is a transparent gutter. A subtle
    accent dot appears on hover to telegraph "draggable here". */
@@ -1063,7 +1073,14 @@ body::before {
 .viewer-thread-wrapper {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  /* height: 100% (rather than flex: 1) so the wrapper is bounded
+     even when its parent isn't a flex column. The conversation-
+     thread view sits inside a flush PaneBody (overflow: hidden,
+     block layout). With a bounded wrapper, .viewer-thread can
+     scroll on its own and the reply composer sits firmly as the
+     bottom flex sibling — fixes the regression where the composer
+     drifted upward as messages scrolled past it. */
+  height: 100%;
   min-height: 0;
 }
 
@@ -1316,12 +1333,15 @@ body::before {
   color: var(--warn-text, #a85b00);
 }
 
-/* Reply composer at the bottom of the conversation-thread view —
-   sticky to the bottom of the scroll area so the input stays in
-   view as the thread grows. */
+/* Reply composer at the bottom of the conversation-thread view.
+   Sits as the bottom flex sibling of the scrolling message list
+   (.viewer-thread) inside a height-bounded .viewer-thread-wrapper,
+   so it stays firmly pinned to the bottom of the pane while the
+   thread scrolls above it. flex-shrink: 0 guards against any
+   future content (e.g. attachment chips) being squeezed by a
+   long thread. */
 .thread-reply-composer {
-  position: sticky;
-  bottom: 0;
+  flex-shrink: 0;
   background: var(--surface, #fff);
   border-top: 1px solid var(--border-subtle, #eee);
   padding: 10px 16px 12px;
