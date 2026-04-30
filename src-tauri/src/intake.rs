@@ -2154,7 +2154,7 @@ async fn ensure_people_row(repo: &std::path::Path, email: &str, now: &str) -> Re
         return Ok(());
     }
     let row = serde_json::json!({
-        "displayName": email,
+        "firstName": "Anon",
         "email": email,
         "channels": [format!("chat:{}", email)],
         "createdAt": now,
