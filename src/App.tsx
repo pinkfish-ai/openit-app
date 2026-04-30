@@ -105,17 +105,7 @@ function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubbl
   }));
 }
 
-/// Run-token incremented on every stopAllCloudSyncs() call. startCloudSyncs
-/// captures the current value before kicking off seed; the post-seed
-/// engine-start step checks the token still matches before actually starting.
-/// Without this, a disconnect (or component unmount) that lands while
-/// `seedIfEmpty` is in-flight would call stop* on engines that haven't
-/// started yet (no-op), then `.finally()` would start them anyway against
-/// stale credentials. (PIN-5793 BugBot R4 finding.)
-let cloudSyncsRunId = 0;
-
 function stopAllCloudSyncs(): void {
-  cloudSyncsRunId += 1;
   stopKbSync();
   stopFilestoreSync();
   stopDatastoreSync();
@@ -128,15 +118,10 @@ function stopAllCloudSyncs(): void {
 /// start. Each engine swallows its own init error so one failure doesn't
 /// take down the others.
 ///
-/// Only the **datastore** engine waits for seed (PIN-5793). Its cloud-empty
-/// gate must see the pre-auto-create state so the per-target seed decision
-/// is honest. KB / filestore / agent / workflow engines have no such
-/// dependency and start immediately — delaying them would add seed's
-/// network round-trips to every launch's cold-start latency, including
-/// for returning users whose seed gates short-circuit anyway.
+/// Seed is NOT called here — it's a first-install affordance that runs
+/// only in the local-only bootstrap path. Once an account is in the loop,
+/// we trust cloud state and never re-seed.
 function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): void {
-  const myRun = ++cloudSyncsRunId;
-
   startKbSync({ creds, repo }).catch((e) =>
     console.error("kb sync init failed:", e),
   );
@@ -149,24 +134,9 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): 
   startWorkflowSync({ creds, repo }).catch((e) =>
     console.error("workflow sync init failed:", e),
   );
-
-  seedIfEmpty({
-    repo,
-    creds,
-    onLog: (msg) => console.log(`[seed] ${msg}`),
-  })
-    .catch((e) => console.warn("seed (PIN-5793) failed; datastore starting anyway:", e))
-    .finally(() => {
-      if (myRun !== cloudSyncsRunId) {
-        console.log(
-          "[startCloudSyncs] disconnect arrived during seed; not starting datastore for this stale session",
-        );
-        return;
-      }
-      startDatastoreSync({ creds, repo }).catch((e) =>
-        console.error("datastore sync init failed:", e),
-      );
-    });
+  startDatastoreSync({ creds, repo }).catch((e) =>
+    console.error("datastore sync init failed:", e),
+  );
 }
 
 function App() {
@@ -478,6 +448,25 @@ function App() {
     return () => window.removeEventListener("openit:start-cloud-onboarding", onStartOnboarding);
   }, [connected]);
 
+  // getting-started.md's "Create sample dataset" CTA dispatches this
+  // event (Viewer.tsx::ExternalAnchor catches `openit://create-samples`).
+  // Writes the bundled sample tickets/people/conversations/KB articles
+  // to disk. Per-target gate is just "is the local folder empty?" so
+  // re-clicks after content exists are no-ops, not clobber.
+  useEffect(() => {
+    const onCreateSamples = () => {
+      if (!repo) {
+        console.warn("[app] create-samples clicked before repo is ready");
+        return;
+      }
+      seedIfEmpty({ repo, onLog: (msg) => console.log(`[seed] ${msg}`) })
+        .then((res) => console.log(`[app] create-samples wrote ${res.wrote} file(s)`))
+        .catch((e) => console.error("[app] create-samples failed:", e));
+    };
+    window.addEventListener("openit:create-samples", onCreateSamples);
+    return () => window.removeEventListener("openit:create-samples", onCreateSamples);
+  }, [repo]);
+
   useEffect(() => {
     Promise.all([stateLoad(), startAuth(), loadCreds()])
       .then(async ([s, _token, creds]) => {
@@ -659,17 +648,6 @@ function App() {
               })
               .catch((e) => console.error("bundled skill sync failed:", e));
           }
-          // Seed sample tickets/people/conversations/KB articles on local-
-          // only bootstrap too. Without this, a fresh `cleanslate` +
-          // `devmode -- off` user lands on an empty workspace and has
-          // nothing to interact with until they connect. The cloud-empty
-          // gate is moot here (there's no cloud) so seed runs purely on
-          // local-empty per target.
-          seedIfEmpty({
-            repo: projectPath,
-            creds: null,
-            onLog: (msg) => console.log(`[seed] ${msg}`),
-          }).catch((e) => console.warn("[app] local-only seed failed:", e));
         } catch (e) {
           console.error("[app] local-only bootstrap failed:", e);
         }
