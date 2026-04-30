@@ -1140,15 +1140,27 @@ body::before {
 .viewer-edit {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  /* height: 100% (rather than flex: 1) so the wrapper is bounded
+     even when its parent isn't a flex column. Edit mode renders
+     inside a flush PaneBody (overflow: hidden, block layout); with
+     a bounded wrapper, the textarea scrolls and the Cancel/Save
+     footer sits firmly as the bottom flex sibling — fixes the
+     regression where the footer floated mid-pane below the cursor
+     instead of locking to the pane's bottom edge. */
+  height: 100%;
   min-height: 0;
 }
 
 .viewer-edit-textarea {
   flex: 1;
+  /* min-height: 0 lets the textarea shrink inside the bounded
+     .viewer-edit wrapper so the footer's height is honored. */
+  min-height: 0;
   width: 100%;
   border: 0;
-  border-bottom: 1px solid var(--border-subtle, #eee);
+  /* The divider between the textarea and the footer is owned by
+     .viewer-edit-footer's border-top — keeps it as a single 1px
+     line regardless of which pane the editor sits in. */
   padding: 16px 20px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
@@ -1165,12 +1177,16 @@ body::before {
 }
 
 .viewer-edit-footer {
+  /* flex-shrink: 0 keeps Cancel/Save firmly at the pane's bottom
+     edge even when the textarea content tries to claim every pixel. */
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   padding: 8px 12px;
   background: var(--surface-soft, #f7f7f7);
+  border-top: 1px solid var(--border-subtle, #eee);
 }
 
 .viewer-edit-error {
@@ -1266,7 +1282,12 @@ body::before {
 .row-edit {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  /* height: 100% (rather than flex: 1) so the wrapper is bounded
+     even when its parent isn't a flex column. Edit mode renders
+     inside a flush PaneBody (overflow: hidden, block layout); with
+     a bounded wrapper, the form scrolls and the Cancel/Save footer
+     sits firmly as the bottom flex sibling. */
+  height: 100%;
   min-height: 0;
 }
 
@@ -1335,6 +1356,9 @@ body::before {
 }
 
 .row-edit-footer {
+  /* flex-shrink: 0 keeps Cancel/Save firmly at the pane's bottom
+     edge even when the form content tries to claim every pixel. */
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;

@@ -932,16 +932,21 @@ export function Viewer({
   // so the pane has a single scroll container (the messages list) with
   // the reply composer pinned as a non-scrolling flex sibling at the
   // bottom — without this, PaneBody became a second scroll container
-  // and the composer drifted upward past later turns. Everything else
-  // uses the canonical pane padding so content's left edge sits in the
-  // same place across pages.
+  // and the composer drifted upward past later turns. Markdown EDIT
+  // mode and datastore-row EDIT mode go flush for the same reason —
+  // the editable area scrolls and the Cancel/Save footer pins to the
+  // bottom of the pane (otherwise the buttons floated mid-pane below
+  // the content). Everything else uses the canonical pane padding so
+  // content's left edge sits in the same place across pages.
   const flushBody =
     source.kind === "conversation-thread" ||
+    (source.kind === "datastore-row" && mode === "edit") ||
     (source.kind === "file" &&
       (isImage(source.path) ||
         isPdf(source.path) ||
         isSpreadsheet(source.path) ||
-        isOfficeDoc(source.path)));
+        isOfficeDoc(source.path) ||
+        (mode === "edit" && isMarkdown(source.path))));
 
   // --- Render body ---
   const renderBody = () => {
