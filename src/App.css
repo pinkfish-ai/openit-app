@@ -237,6 +237,12 @@ body::before {
      etc). inset(0 round X) is identical to border-radius X for
      visual purposes but enforces clipping at a higher level. */
   clip-path: inset(0 round var(--r-pane));
+  /* Critical: include the border in the element's width/height so
+     it doesn't poke outside the Panel wrapper. Without this, the
+     leftmost and rightmost panes' OUTER side borders extend past
+     the PanelGroup's bounds and get clipped by its overflow:hidden,
+     producing visibly chopped sides on the outer panes only. */
+  box-sizing: border-box;
 }
 /* ════════════════════════════════════════════════════════════
    ▼▼▼ PANE BORDER + SHADOW — TWEAK ME ▼▼▼            (line 241)

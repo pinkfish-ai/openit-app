@@ -125,7 +125,7 @@
   --r-pill: 999px;
   /* TWEAK PANE RADIUS — how rounded the pane corners are.
      Try: 12 (subtle) · 14 · 16 (current) · 20 · 24 (pillow) */
-  --r-pane: 16px;
+  --r-pane: 10px;
 
   /* ─── SIZES ─────────────────────────────────────────────── */
   --h-control-sm: 24px;
@@ -141,10 +141,10 @@
        - bottom: 18px — extra room for each pane's drop shadow to
                        fall and the rounded bottom corner to read */
   /* TWEAK GUTTERS — cream space around the panes. */
-  --layout-gutter-top: 4px;       /* gap between pills row & panes */
-  --layout-gutter: 14px;          /* gap on left/right edges */
-  --layout-gutter-bottom: 10px;   /* gap below panes */
-  --layout-pane-gap: 10px;        /* gap between adjacent panes */
+  --layout-gutter-top: 4px; /* gap between pills row & panes */
+  --layout-gutter: 14px; /* gap on left/right edges */
+  --layout-gutter-bottom: 10px; /* gap below panes */
+  --layout-pane-gap: 10px; /* gap between adjacent panes */
 
   /* Traffic-light clearance (macOS) */
   --layout-traffic-clear: 64px;
