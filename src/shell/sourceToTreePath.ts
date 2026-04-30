@@ -52,16 +52,18 @@ export function sourceToTreePath(
     //   - sync / diff: transient overlays
     //   - agent / workflow / datastore-row / datastore-schema: row-level
     //     detail views; the underlying file path isn't carried on the
-    //     source. Could be added later if AgentRow/WorkflowRow grow a
-    //     `path` field.
     //   - agent-trace / agent-trace-list: live under the hidden
     //     `.openit/agent-traces/` directory which the explorer never
     //     surfaces.
+    //   - datastore-row / datastore-schema: row-level detail views; the
+    //     underlying file path isn't carried on the source.
     //   - tools: synthetic panel, no on-disk folder.
-    case "sync":
-    case "diff":
     case "agent":
     case "workflow":
+      return source.path;
+
+    case "sync":
+    case "diff":
     case "datastore-row":
     case "datastore-schema":
     case "agent-trace":
