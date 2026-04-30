@@ -6,6 +6,7 @@ import {
   loadCreds,
   type PinkfishCreds,
 } from "./lib/pinkfishAuth";
+import { Button } from "./ui";
 
 const SIGNUP_URL = "https://app.pinkfish.ai/coworker/public";
 
@@ -116,16 +117,17 @@ export function PinkfishOauthModal({
         {error && <div className="key-error">{error}</div>}
 
         <div className="key-actions">
-          <button onClick={onClose} disabled={busy}>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="primary"
             onClick={submit}
             disabled={busy || !clientId || !clientSecret || !orgId}
-            className="key-save"
+            loading={busy}
           >
             {busy ? "Connecting…" : "Connect"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -13,6 +13,7 @@ import { EntityBadge, type EntityKind } from "./entityIcons";
 import { ToolsPanel } from "./ToolsPanel";
 import { TrashIcon } from "./TrashIcon";
 import { useToast } from "../Toast";
+import { Button, TabStrip, Tab } from "../ui";
 import { FileTypeBadge, formatBytes } from "./FileTypeBadge";
 import { RowEditForm } from "./RowEditForm";
 import { AttachmentList } from "./AttachmentList";
@@ -990,22 +991,23 @@ export function Viewer({
             />
             <div className="viewer-edit-footer">
               {editError && <span className="viewer-edit-error">{editError}</span>}
-              <button
-                type="button"
-                className="viewer-edit-btn viewer-edit-btn-secondary"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={onCancel}
                 disabled={editSaving}
               >
                 Cancel
-              </button>
-              <button
-                type="button"
-                className="viewer-edit-btn viewer-edit-btn-primary"
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
                 onClick={onSave}
                 disabled={editSaving || !isDirty}
+                loading={editSaving}
               >
                 {editSaving ? "Saving…" : "Save"}
-              </button>
+              </Button>
             </div>
           </div>
         );
@@ -1475,8 +1477,11 @@ export function Viewer({
                   </div>
                 </button>
                 {repo && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    tone="destructive"
+                    size="sm"
+                    iconOnly
                     className="entity-card-delete thread-card-delete"
                     title={`Delete ${p.name || p.email || p.key}`}
                     aria-label={`Delete ${p.name || p.email || p.key}`}
@@ -1492,7 +1497,7 @@ export function Viewer({
                     }}
                   >
                     <TrashIcon />
-                  </button>
+                  </Button>
                 )}
               </div>
             ))}
@@ -1782,9 +1787,9 @@ export function Viewer({
           )}
           {cards.length > 1 && (
             <div className="viewer-folder-toolbar">
-              <button
-                type="button"
-                className="viewer-folder-sort"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() =>
                   setSortReversed((prev) => ({
                     ...prev,
@@ -1800,7 +1805,7 @@ export function Viewer({
                   : reversed
                     ? "Z → A"
                     : "A → Z"}
-              </button>
+              </Button>
             </div>
           )}
           <EntityCardGrid
@@ -2065,8 +2070,10 @@ export function Viewer({
                 {replyAttachments.map((att) => (
                   <span key={att.path} className="thread-reply-chip">
                     <span className="thread-reply-chip-name">{att.filename}</span>
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
                       className="thread-reply-chip-remove"
                       onClick={() =>
                         setReplyAttachments((prev) =>
@@ -2076,7 +2083,7 @@ export function Viewer({
                       title="Remove"
                     >
                       ×
-                    </button>
+                    </Button>
                   </span>
                 ))}
               </div>
@@ -2103,30 +2110,31 @@ export function Viewer({
                   continue-action (Send). Asymmetry helps the role:
                   resolve closes the conversation + harvests learnings,
                   Send keeps it going. (PIN-5829.) */}
-              <button
-                type="button"
-                className="viewer-edit-btn thread-reply-resolve"
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => void markResolved()}
                 disabled={replySending}
                 title="Mark this ticket as resolved and capture the resolution as a KB article, skill, or script"
               >
                 Mark as resolved
-              </button>
+              </Button>
               {replyError && (
                 <span className="thread-reply-error">{replyError}</span>
               )}
               <span className="thread-reply-hint">⌘↩ to send · drop files to attach</span>
-              <button
-                type="button"
-                className="viewer-edit-btn viewer-edit-btn-primary"
+              <Button
+                variant="primary"
+                size="sm"
                 onClick={() => void sendReply()}
                 disabled={
                   replySending ||
                   (!replyText.trim() && replyAttachments.length === 0)
                 }
+                loading={replySending}
               >
                 {replySending ? "Sending…" : "Send"}
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -2381,56 +2389,48 @@ export function Viewer({
             back buttons that only existed for a few views. Disabled
             when the corresponding history stack is empty. */}
         <div className="viewer-nav" role="group" aria-label="Viewer navigation">
-          <button
-            type="button"
-            className="viewer-back-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             onClick={() => onGoBack?.()}
             disabled={!canGoBack}
             title="Back"
             aria-label="Back"
           >
             ←
-          </button>
-          <button
-            type="button"
-            className="viewer-back-btn"
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             onClick={() => onGoForward?.()}
             disabled={!canGoForward}
             title="Forward"
             aria-label="Forward"
           >
             →
-          </button>
+          </Button>
         </div>
         {headerKind && <EntityBadge kind={headerKind} showLabel={false} />}
         <span className="viewer-title">{title}</span>
         {source && source.kind === "conversation-thread" && onOpenPath && (
-          <div className="viewer-tabs" role="tablist">
-            <button
-              role="tab"
-              aria-selected={true}
-              className="viewer-tab active"
-            >
-              Conversation
-            </button>
-            <button
-              role="tab"
-              aria-selected={false}
-              className="viewer-tab"
+          <TabStrip>
+            <Tab active>Conversation</Tab>
+            <Tab
               onClick={() => {
                 void onOpenPath(`${repo}/databases/tickets/${source.ticketId}.json`);
               }}
               title="Open the ticket record (status, tags, notes, asker info)"
             >
               Ticket
-            </button>
-          </div>
+            </Tab>
+          </TabStrip>
         )}
         {source && source.kind === "entity-folder" && source.entity === "reports" && (
           <>
-            <button
-              type="button"
-              className="viewer-add-link"
+            <Button
+              variant="linkMuted"
               onClick={async () => {
                 if (!repo || reportRunning) return;
                 setReportRunning(true);
@@ -2445,13 +2445,13 @@ export function Viewer({
                 }
               }}
               disabled={reportRunning || !repo}
+              loading={reportRunning}
               title="Generate an instant helpdesk overview report"
             >
               {reportRunning ? "generating…" : "generate overview"}
-            </button>
-            <button
-              type="button"
-              className="viewer-add-link"
+            </Button>
+            <Button
+              variant="linkMuted"
               onClick={() => {
                 // Paste `/report ` into the Claude pane so the admin
                 // can type their custom prompt immediately. Distinct
@@ -2465,24 +2465,20 @@ export function Viewer({
               title="Kick off /report in chat for a custom report"
             >
               ask for custom report
-              <span className="viewer-add-link-arrow" aria-hidden="true">→</span>
-            </button>
+              <span className="arrow" aria-hidden="true">→</span>
+            </Button>
           </>
         )}
         {showFileTabs && (
-          <div className="viewer-tabs" role="tablist">
-            <button
-              role="tab"
-              aria-selected={mode === "rendered"}
-              className={`viewer-tab ${mode === "rendered" ? "active" : ""}`}
+          <TabStrip variant="segmented">
+            <Tab
+              active={mode === "rendered"}
               onClick={() => setMode("rendered")}
             >
               View
-            </button>
-            <button
-              role="tab"
-              aria-selected={mode === "edit"}
-              className={`viewer-tab ${mode === "edit" ? "active" : ""}`}
+            </Tab>
+            <Tab
+              active={mode === "edit"}
               onClick={() => {
                 // Seed the draft with the current content the first
                 // time edit mode is entered, but don't clobber an
@@ -2493,18 +2489,15 @@ export function Viewer({
               }}
             >
               Edit
-            </button>
-          </div>
+            </Tab>
+          </TabStrip>
         )}
         {showRowTabs && (
-          <div className="viewer-tabs" role="tablist">
+          <TabStrip variant="segmented">
             {source.kind === "datastore-row" &&
               source.collection.name === "tickets" &&
               onOpenPath && (
-                <button
-                  role="tab"
-                  aria-selected={false}
-                  className="viewer-tab"
+                <Tab
                   onClick={() => {
                     void onOpenPath(
                       `${repo}/databases/conversations/${source.item.key || source.item.id}`,
@@ -2513,23 +2506,19 @@ export function Viewer({
                   title="Open the conversation thread for this ticket"
                 >
                   Conversation
-                </button>
+                </Tab>
               )}
-            <button
-              role="tab"
-              aria-selected={mode === "table"}
-              className={`viewer-tab ${mode === "table" ? "active" : ""}`}
+            <Tab
+              active={mode === "table"}
               onClick={() => setMode("table")}
             >
               {source.kind === "datastore-row" &&
               source.collection.name === "tickets"
                 ? "Ticket"
                 : "View"}
-            </button>
-            <button
-              role="tab"
-              aria-selected={mode === "edit"}
-              className={`viewer-tab ${mode === "edit" ? "active" : ""}`}
+            </Tab>
+            <Tab
+              active={mode === "edit"}
               onClick={() => {
                 // Seed the form with the current row content the
                 // first time edit mode is entered. Re-clicking Edit
@@ -2554,83 +2543,73 @@ export function Viewer({
               }}
             >
               Edit
-            </button>
-            <button
-              role="tab"
-              aria-selected={mode === "raw"}
-              className={`viewer-tab ${mode === "raw" ? "active" : ""}`}
+            </Tab>
+            <Tab
+              active={mode === "raw"}
               onClick={() => setMode("raw")}
             >
               Raw
-            </button>
-          </div>
+            </Tab>
+          </TabStrip>
         )}
         {showPeopleTabs && (
-          <div className="viewer-tabs" role="tablist">
-            <button
-              role="tab"
-              aria-selected={peopleView === "cards"}
-              className={`viewer-tab ${peopleView === "cards" ? "active" : ""}`}
+          <TabStrip variant="segmented">
+            <Tab
+              active={peopleView === "cards"}
               onClick={() => setPeopleView("cards")}
             >
               Cards
-            </button>
-            <button
-              role="tab"
-              aria-selected={peopleView === "table"}
-              className={`viewer-tab ${peopleView === "table" ? "active" : ""}`}
+            </Tab>
+            <Tab
+              active={peopleView === "table"}
               onClick={() => setPeopleView("table")}
             >
               Table
-            </button>
-          </div>
+            </Tab>
+          </TabStrip>
         )}
         {showConversationsFilter && (
-          <div className="viewer-tabs" role="tablist">
+          <TabStrip>
             {(["all", "open", "resolved", "escalated"] as const).map((key) => (
-              <button
+              <Tab
                 key={key}
-                role="tab"
-                aria-selected={conversationsFilter === key}
-                className={`viewer-tab ${conversationsFilter === key ? "active" : ""}`}
+                active={conversationsFilter === key}
+                count={conversationCounts[key]}
                 onClick={() => setConversationsFilter(key)}
               >
                 {key === "all" ? "All" : key[0].toUpperCase() + key.slice(1)}
-                <span className="viewer-tab-count">{conversationCounts[key]}</span>
-              </button>
+              </Tab>
             ))}
-          </div>
+          </TabStrip>
         )}
         {showCopy && (
-          <button
-            type="button"
-            className="viewer-copy-btn"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleCopy}
             title="Copy contents to clipboard"
           >
             {copyState === "copied" ? "Copied!" : "Copy"}
-          </button>
+          </Button>
         )}
       </div>
       {(chatAddPath || attachmentsTicketId) && (
         <div className="viewer-subheader">
           {attachmentsTicketId && onOpenPath && (
-            <button
-              type="button"
-              className="viewer-add-link"
+            <Button
+              variant="linkMuted"
               onClick={() => {
                 void onOpenPath(`${repo}/databases/conversations/${attachmentsTicketId}`);
               }}
               title="Open the related conversation thread"
             >
               conversation
-              <span className="viewer-add-link-arrow" aria-hidden="true">→</span>
-            </button>
+              <span className="arrow" aria-hidden="true">→</span>
+            </Button>
           )}
           {chatAddPath && (
-            <button
-              type="button"
-              className="viewer-add-link"
+            <Button
+              variant="linkMuted"
               onClick={() => {
                 writeToActiveSession(chatAddPath + " ").catch((e) =>
                   console.warn("[viewer] add-to-chat failed:", e),
@@ -2639,8 +2618,8 @@ export function Viewer({
               title="Reference this in Claude"
             >
               add to chat
-              <span className="viewer-add-link-arrow" aria-hidden="true">→</span>
-            </button>
+              <span className="arrow" aria-hidden="true">→</span>
+            </Button>
           )}
         </div>
       )}

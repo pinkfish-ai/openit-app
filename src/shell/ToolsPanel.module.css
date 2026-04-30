@@ -108,61 +108,8 @@
   align-items: center;
 }
 
-.btn {
-  padding: 7px 14px;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: transform 0.05s ease, box-shadow 0.15s ease, background 0.15s ease;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btnPrimary {
-  background: var(--accent);
-  color: white;
-  border: 1px solid var(--accent);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.btnPrimary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-}
-
-.btnPrimary:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
-}
-
-.btnSecondary {
-  background: transparent;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-  box-shadow: none;
-}
-
-.btnSecondary:hover:not(:disabled) {
-  background: var(--accent-soft);
-}
-
-.btnDanger {
-  background: transparent;
-  color: #b04028;
-  border: 1px solid #d4a08a;
-  box-shadow: none;
-}
-
-.btnDanger:hover:not(:disabled) {
-  background: #f9e0d4;
-  border-color: #b04028;
-}
+/* .btn / .btnPrimary / .btnSecondary / .btnDanger removed —
+   ToolsPanel now uses the v5 <Button> primitive. */
 
 .docsLink {
   font-size: 12px;
@@ -221,34 +168,5 @@
   flex-wrap: wrap;
 }
 
-.errorRecovery {
-  background: transparent;
-  border: 1px solid #b04028;
-  color: #b04028;
-  font-family: inherit;
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.errorRecovery:hover {
-  background: #f9e0d4;
-}
-
-.errorDismiss {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  margin-left: auto;
-}
-
-.errorDismiss:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
+/* .errorRecovery / .errorDismiss removed — replaced by <Button>
+   variant=secondary / variant=ghost. */

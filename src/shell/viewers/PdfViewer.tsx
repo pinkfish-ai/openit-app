@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
+import { Button } from "../../ui";
 
 // Bundle the worker locally via Vite — avoids CDN fetch that Tauri blocks
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -40,21 +41,25 @@ export function PdfViewer({ data }: Props) {
   return (
     <div className="pdf-viewer">
       <div className="pdf-viewer-controls">
-        <button
+        <Button
+          variant="secondary"
+          size="sm"
           disabled={pageNumber <= 1}
           onClick={() => setPageNumber((p) => p - 1)}
         >
           Prev
-        </button>
+        </Button>
         <span>
           Page {pageNumber} of {numPages}
         </span>
-        <button
+        <Button
+          variant="secondary"
+          size="sm"
           disabled={pageNumber >= numPages}
           onClick={() => setPageNumber((p) => p + 1)}
         >
           Next
-        </button>
+        </Button>
       </div>
       <div className="pdf-viewer-page">
         <Document

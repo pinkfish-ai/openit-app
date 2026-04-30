@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import sunburstIcon from "../assets/sunburst.svg";
+import { Button } from "../ui";
 import {
   fsDelete,
   fsList,
@@ -695,12 +696,19 @@ export function FileExplorer({
       onDrop={onDrop}
     >
       <div className="explorer-toolbar">
-        <button type="button" className="explorer-icon-btn" onClick={toggleAll} title={toggleTitle}>
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          onClick={toggleAll}
+          title={toggleTitle}
+        >
           {toggleGlyph}
-        </button>
-        <button
-          type="button"
-          className={`explorer-icon-btn explorer-system-toggle ${showSystemFiles ? "active" : ""}`}
+        </Button>
+        <Button
+          variant={showSystemFiles ? "subtle" : "ghost"}
+          size="sm"
+          iconOnly
           onClick={() => setShowSystemFiles((v) => !v)}
           title={
             showSystemFiles
@@ -710,7 +718,7 @@ export function FileExplorer({
           aria-pressed={showSystemFiles}
         >
           <img src={sunburstIcon} alt="" className="explorer-system-icon" />
-        </button>
+        </Button>
       </div>
 
       <ul className="tree">
@@ -817,8 +825,11 @@ export function FileExplorer({
               <span className="tree-item-name">{prettyName(n.name, rel, datastores, datastoreItems)}</span>
               {badge && <span className={`tree-badge ${colorClass}`}>{badge}</span>}
               {isDeletable(n) && (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  tone="destructive"
+                  size="sm"
+                  iconOnly
                   className="tree-delete-btn"
                   title={`Delete ${n.name}`}
                   onClick={(e) => {
@@ -827,7 +838,7 @@ export function FileExplorer({
                   }}
                 >
                   ✕
-                </button>
+                </Button>
               )}
             </li>
           );
@@ -898,7 +909,8 @@ export function FileExplorer({
             className="context-menu"
             style={{ top: contextMenu.y, left: contextMenu.x }}
           >
-            <button
+            <Button
+              variant="ghost"
               className="context-menu-item"
               onClick={() => {
                 fsReveal(contextMenu.path).catch(console.error);
@@ -907,10 +919,12 @@ export function FileExplorer({
               }}
             >
               Reveal in Finder
-            </button>
+            </Button>
             {!contextMenu.isDir && (
-              <button
-                className="context-menu-item context-menu-item-danger"
+              <Button
+                variant="ghost"
+                tone="destructive"
+                className="context-menu-item"
                 onClick={() => {
                   if (!deleteArmed) {
                     setDeleteArmed(true);
@@ -927,7 +941,7 @@ export function FileExplorer({
                 }}
               >
                 {deleteArmed ? "Click again to confirm" : "Delete"}
-              </button>
+              </Button>
             )}
           </div>
         </>

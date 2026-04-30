@@ -1,19 +1,50 @@
-/* Button — one base, five variants, three sizes, four states.
-   Replaces 20+ classes in App.css (.icon-btn, .btn, .deploy-btn,
-   .sc-commit-btn, .viewer-edit-btn-*, .skill-action-dock-button,
-   .cloud-cta-primary, .onboard-signup-btn, .btn-ghost, etc.). */
+/* ════════════════════════════════════════════════════════════
+   BUTTON — one primitive, every clickable thing in OpenIT
+   ════════════════════════════════════════════════════════════
+   Visual variants (all share the same radius, font, transition,
+   press depth, focus ring, cursor — the "same universe" feel):
+
+     primary    — filled accent, high emphasis (Connect to Cloud)
+     secondary  — outlined surface (Getting Started, Cancel, Save)
+     ghost      — transparent, hover overlay (icon buttons, Dismiss)
+     subtle     — quiet filled pill that looks at home on any
+                  surface; uses currentColor so it adapts to its
+                  parent (Answer ticket on dark, prompt bubbles,
+                  paste-token CTAs)
+     link       — accent text, underline on hover (inline actions)
+     linkMuted  — faded text + arrow that nudges on hover
+                  (add to chat →, view all →, etc)
+     cmdk       — dashed pill with kbd children (⌘K hint)
+
+   Orthogonal:
+     tone       — "default" | "destructive" (red intent)
+     size       — sm | md | lg
+     iconOnly   — square width = height
+     loading    — replaces children with a spinner; cursor:progress
+
+   Press depth: every variant gets translateY(1px) on :active so
+   the click feels physical regardless of variant. Disabled gets
+   opacity:0.5 + cursor:not-allowed. Loading gets cursor:progress
+   and aria-busy.
+
+   ──────────────────────────────────────────────────────────── */
 
 .btn {
   --_h: var(--h-control);
-  --_pad: 0 var(--space-4);
+  --_pad-x: var(--space-4);
   --_fs: var(--fs-meta);
   --_fw: var(--fw-medium);
   --_bg: transparent;
+  --_bg-hover: transparent;
+  --_bg-active: transparent;
   --_fg: var(--color-text);
+  --_fg-hover: var(--color-text);
   --_border: var(--color-border-strong);
+  --_border-hover: var(--color-border-strong);
   --_radius: var(--r-sm);
+  --_shadow: none;
 
-  /* Opt out of the Tauri/macOS titlebar drag region so clicks land
+  /* Opt out of Tauri/macOS titlebar drag region so clicks land
      when the button sits inside a draggable rail. */
   -webkit-app-region: no-drag;
   app-region: no-drag;
@@ -24,7 +55,7 @@
   justify-content: center;
   gap: var(--space-2);
   height: var(--_h);
-  padding: var(--_pad);
+  padding: 0 var(--_pad-x);
   background: var(--_bg);
   color: var(--_fg);
   border: 1px solid var(--_border);
@@ -37,81 +68,120 @@
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
+  position: relative;
+  box-shadow: var(--_shadow);
   transition:
     background var(--t-fast) var(--ease),
     border-color var(--t-fast) var(--ease),
     color var(--t-fast) var(--ease),
-    box-shadow var(--t-fast) var(--ease);
+    box-shadow var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
 }
+
+/* ─── Universal hover/active ──────────────────────────────── */
+.btn:hover:not(:disabled):not([aria-busy="true"]) {
+  background: var(--_bg-hover);
+  border-color: var(--_border-hover);
+  color: var(--_fg-hover);
+}
+
+/* Press depth — every button feels physical on click. */
+.btn:active:not(:disabled):not([aria-busy="true"]) {
+  background: var(--_bg-active);
+  transform: translateY(1px);
+}
+
 .btn:focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
+
 .btn:disabled,
 .btn[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-/* Sizes */
-.sm  { --_h: var(--h-control-sm); --_pad: 0 var(--space-3); --_fs: var(--fs-caption); }
+.btn[aria-busy="true"] {
+  cursor: progress;
+}
+
+/* ─── Sizes ───────────────────────────────────────────────── */
+.sm  { --_h: var(--h-control-sm); --_pad-x: var(--space-3); --_fs: var(--fs-caption); }
 .md  { /* default */ }
 .lg  {
   --_h: var(--h-control-lg);
-  --_pad: 0 var(--space-5);
+  --_pad-x: var(--space-5);
   --_fs: var(--fs-body);
   --_fw: var(--fw-semibold);
 }
 
-/* Variants */
+/* ─── Icon-only ───────────────────────────────────────────── */
+.icon { width: var(--_h); padding: 0; }
+
+/* ─── Variants ────────────────────────────────────────────── */
+
+/* primary — filled accent, high emphasis. */
 .primary {
   --_bg: var(--color-accent);
+  --_bg-hover: var(--color-accent-hover);
+  --_bg-active: var(--color-accent-active);
   --_fg: var(--color-on-accent);
+  --_fg-hover: var(--color-on-accent);
   --_border: var(--color-accent-hover);
+  --_border-hover: var(--color-accent-active);
   --_fw: var(--fw-semibold);
 }
-.primary:hover:not(:disabled) {
-  --_bg: var(--color-accent-hover);
-  --_border: var(--color-accent-active);
-}
-.primary:active:not(:disabled) { --_bg: var(--color-accent-active); }
 
+/* secondary — outlined surface, default button. */
 .secondary {
   --_bg: var(--color-surface);
+  --_bg-hover: color-mix(in srgb, var(--color-text) 5%, var(--color-surface));
+  --_bg-active: color-mix(in srgb, var(--color-text) 8%, var(--color-surface));
   --_fg: var(--color-text);
+  --_fg-hover: var(--color-text);
   --_border: var(--color-border-strong);
-  box-shadow: var(--shadow-sm);
-}
-.secondary:hover:not(:disabled) {
-  background:
-    linear-gradient(var(--color-hover-overlay), var(--color-hover-overlay)),
-    var(--color-surface);
-}
-.secondary:active:not(:disabled) {
-  background:
-    linear-gradient(var(--color-active-overlay), var(--color-active-overlay)),
-    var(--color-surface);
+  --_border-hover: var(--color-text-faint);
+  --_shadow: var(--shadow-sm);
 }
 
+/* ghost — transparent, hover overlay. */
 .ghost {
   --_bg: transparent;
+  --_bg-hover: var(--color-hover-overlay);
+  --_bg-active: var(--color-active-overlay);
   --_fg: var(--color-text-muted);
+  --_fg-hover: var(--color-text);
   --_border: transparent;
+  --_border-hover: transparent;
 }
-.ghost:hover:not(:disabled) {
-  --_bg: var(--color-hover-overlay);
-  --_fg: var(--color-text);
-}
-.ghost:active:not(:disabled) { --_bg: var(--color-active-overlay); }
 
+/* subtle — quiet filled pill, low emphasis but still button-shaped.
+   Uses currentColor so it adapts to its parent's text color (works
+   on dark and light surfaces alike — Answer ticket on dark chat,
+   paste-token CTAs in skill dock, prompt bubbles, etc). */
+.subtle {
+  --_bg: color-mix(in srgb, currentColor 6%, transparent);
+  --_bg-hover: color-mix(in srgb, currentColor 12%, transparent);
+  --_bg-active: color-mix(in srgb, currentColor 18%, transparent);
+  --_fg: currentColor;
+  --_fg-hover: currentColor;
+  --_border: color-mix(in srgb, currentColor 18%, transparent);
+  --_border-hover: color-mix(in srgb, currentColor 32%, transparent);
+}
+
+/* link — accent text with underline on hover. */
 .link {
   --_h: auto;
-  --_pad: 0;
+  --_pad-x: 0;
   --_bg: transparent;
+  --_bg-hover: transparent;
+  --_bg-active: transparent;
   --_fg: var(--color-accent);
+  --_fg-hover: var(--color-accent-hover);
   --_border: transparent;
+  --_border-hover: transparent;
   --_radius: 0;
-  position: relative;
   padding-bottom: 1px;
 }
 .link::after {
@@ -126,33 +196,118 @@
   transition: opacity var(--t-fast) var(--ease);
 }
 .link:hover:not(:disabled)::after { opacity: 1; }
+.link:active:not(:disabled) { transform: translateY(1px); }
 
-.destructive {
-  --_bg: var(--color-critical);
-  --_fg: var(--color-on-accent);
-  --_border: var(--color-critical-deep);
-  --_fw: var(--fw-semibold);
+/* linkMuted — faded text inline action with arrow that nudges on
+   hover. Used for "add to chat →", "view all →", etc. */
+.linkMuted {
+  --_h: auto;
+  --_pad-x: 0;
+  --_bg: transparent;
+  --_bg-hover: transparent;
+  --_bg-active: transparent;
+  --_fg: var(--color-text-faint);
+  --_fg-hover: var(--color-accent);
+  --_border: transparent;
+  --_border-hover: transparent;
+  --_radius: 0;
 }
-.destructive:hover:not(:disabled) { --_bg: var(--color-critical-deep); }
+/* Arrow nudge — uses :global so consumers can pass `<span className="arrow">→</span>`
+   as a child without having to import the CSS module class. */
+.linkMuted :global(.arrow) {
+  display: inline-block;
+  transition: transform var(--t-fast) var(--ease);
+}
+.linkMuted:hover:not(:disabled) :global(.arrow) {
+  transform: translateX(3px);
+}
+.linkMuted:active:not(:disabled) { transform: translateY(1px); }
 
-/* Icon-only modifier — square width matching height */
-.icon { width: var(--_h); padding: 0; }
-.icon.sm { width: var(--h-control-sm); }
-.icon.lg { width: var(--h-control-lg); }
-
-/* Cmdk-hint variant — dashed border, kbd children */
+/* cmdk — dashed pill with kbd children. */
 .cmdk {
-  --_border: var(--color-border-strong);
-  border-style: dashed;
+  --_bg: transparent;
+  --_bg-hover: var(--color-accent-faint);
+  --_bg-active: var(--color-accent-faint);
   --_fg: var(--color-text-muted);
+  --_fg-hover: var(--color-text);
+  --_border: var(--color-border-strong);
+  --_border-hover: var(--color-accent-soft);
   --_fs: var(--fs-caption);
+  border-style: dashed;
 }
 .cmdk:hover:not(:disabled) {
-  --_border: var(--color-accent-soft);
   border-style: solid;
-  background: var(--color-accent-faint);
-  --_fg: var(--color-text);
 }
+
+/* ─── Tone overrides — destructive (red intent) ──────────────
+   Layers ON TOP of the variant. Most useful with ghost (delete
+   icon buttons) and secondary (outline-danger). With primary it
+   produces a filled red CTA. */
+.destructive.primary {
+  --_bg: var(--color-critical);
+  --_bg-hover: var(--color-critical-deep);
+  --_bg-active: var(--color-critical-deep);
+  --_border: var(--color-critical-deep);
+  --_border-hover: var(--color-critical-deep);
+}
+.destructive.secondary {
+  --_fg: var(--color-critical-deep);
+  --_fg-hover: var(--color-critical-deep);
+  --_border: var(--color-critical);
+  --_border-hover: var(--color-critical-deep);
+  --_bg-hover: color-mix(in srgb, var(--color-critical) 10%, var(--color-surface));
+  --_bg-active: color-mix(in srgb, var(--color-critical) 16%, var(--color-surface));
+}
+.destructive.ghost {
+  --_fg: var(--color-text-muted);
+  --_fg-hover: var(--color-critical);
+  --_bg-hover: color-mix(in srgb, var(--color-critical) 10%, transparent);
+  --_bg-active: color-mix(in srgb, var(--color-critical) 16%, transparent);
+}
+.destructive.subtle {
+  --_fg: var(--color-critical);
+  --_fg-hover: var(--color-critical-deep);
+  --_bg: color-mix(in srgb, var(--color-critical) 8%, transparent);
+  --_bg-hover: color-mix(in srgb, var(--color-critical) 16%, transparent);
+  --_bg-active: color-mix(in srgb, var(--color-critical) 24%, transparent);
+  --_border: color-mix(in srgb, var(--color-critical) 24%, transparent);
+  --_border-hover: color-mix(in srgb, var(--color-critical) 40%, transparent);
+}
+.destructive.link {
+  --_fg: var(--color-critical);
+  --_fg-hover: var(--color-critical-deep);
+}
+.destructive.linkMuted {
+  --_fg-hover: var(--color-critical);
+}
+
+/* ─── Loading state — spinner replaces children ──────────────
+   Children get hidden (opacity:0) so layout stays stable; the
+   spinner is centered absolutely. aria-busy on the button signals
+   the state to assistive tech. */
+.loading .content { opacity: 0; }
+.spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-top-color: transparent;
+  animation: btn-spin 0.65s linear infinite;
+  opacity: 0.85;
+}
+.sm .spinner { width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border-width: 1.5px; }
+.lg .spinner { width: 16px; height: 16px; margin: -8px 0 0 -8px; }
+
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── kbd elements inside buttons (cmdk hint, etc) ──────────── */
 .btn kbd {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -163,4 +318,12 @@
   color: var(--color-text);
   line-height: 1.1;
   font-feature-settings: "tnum" 1;
+  /* On dark surfaces, kbd inherits via currentColor adaptation. */
+}
+
+/* ─── Wrapper for content so we can hide it when loading. ──── */
+.content {
+  display: inline-flex;
+  align-items: center;
+  gap: inherit;
 }

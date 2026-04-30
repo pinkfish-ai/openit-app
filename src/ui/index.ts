@@ -7,7 +7,15 @@
  */
 
 export { Button } from "./Button";
-export type { ButtonProps, ButtonVariant, ButtonSize } from "./Button";
+export type {
+  ButtonProps,
+  ButtonVariant,
+  ButtonSize,
+  ButtonTone,
+} from "./Button";
+
+export { TabStrip, Tab } from "./TabStrip";
+export type { TabStripProps, TabStripVariant, TabProps } from "./TabStrip";
 
 export { Chip } from "./Chip";
 export type { ChipProps, ChipVariant } from "./Chip";

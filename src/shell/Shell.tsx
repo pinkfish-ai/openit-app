@@ -47,7 +47,7 @@ import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
 import { Viewer, type ViewerSource } from "./Viewer";
-import { PaneBody } from "../ui";
+import { PaneBody, Tab, TabStrip } from "../ui";
 import type { DockKind } from "../lib/skillState";
 import { resolvePathToSource } from "./entityRouting";
 import { SkillActionDock } from "./SkillActionDock";
@@ -864,38 +864,21 @@ export function Shell({
                * up with two competing entry points.
                */}
               <div className="left-tabs">
-                <button
-                  type="button"
-                  className={`left-tab ${leftTab === "overview" || leftTab === "files" ? "active" : ""}`}
-                  onClick={() => setLeftTab("overview")}
-                >
-                  Overview
-                </button>
-                <button
-                  type="button"
-                  className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
-                  onClick={() => setLeftTab("source-control")}
-                >
-                  Sync
-                  {changeCount > 0 && (
-                    <span
-                      className="left-tab-badge"
-                      aria-label={`${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`}
-                    >
-                      {changeCount}
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  className="left-tab-pull-btn"
-                  onClick={handleManualPull}
-                  disabled={!repo || pulling}
-                  aria-label="Pull from Pinkfish now"
-                  title={pulling ? "Pulling…" : "Pull from Pinkfish"}
-                >
-                  <span className={`left-tab-pull-glyph${pulling ? " is-pulling" : ""}`}>↻</span>
-                </button>
+                <TabStrip fill className="left-tabs-strip">
+                  <Tab
+                    active={leftTab === "overview" || leftTab === "files"}
+                    onClick={() => setLeftTab("overview")}
+                  >
+                    Overview
+                  </Tab>
+                  <Tab
+                    active={leftTab === "source-control"}
+                    count={changeCount}
+                    onClick={() => setLeftTab("source-control")}
+                  >
+                    Sync
+                  </Tab>
+                </TabStrip>
               </div>
               <PaneBody hidden={leftTab !== "overview"}>
                 <Workbench

@@ -31,6 +31,7 @@ import {
   injectIntoChat,
 } from "../lib/skillState";
 import { useToast } from "../Toast";
+import { Button } from "../ui";
 import "./SkillActionDock.css";
 
 type Props = {
@@ -66,9 +67,9 @@ export function SkillActionDock({
   if (!expanded) {
     return (
       <div className="skill-action-dock">
-        <button
-          type="button"
-          className="skill-action-dock-button"
+        <Button
+          variant="subtle"
+          size="sm"
           onClick={() => setExpanded(true)}
           title={
             isBot
@@ -76,11 +77,9 @@ export function SkillActionDock({
               : "Paste your Slack app-level token (xapp-…)"
           }
         >
-          <span className="skill-action-dock-icon" aria-hidden>
-            🔒
-          </span>
+          <span aria-hidden>🔒</span>
           <span>{isBot ? "Paste bot token" : "Paste app token"}</span>
-        </button>
+        </Button>
         {stagedBotToken && isBot && (
           <span className="skill-action-dock-hint">
             bot token staged · waiting for app token
@@ -168,23 +167,24 @@ function BotTokenInline({
         }}
         disabled={busy}
       />
-      <button
-        type="button"
-        className="skill-action-dock-button"
+      <Button
+        variant="primary"
         onClick={submit}
         disabled={busy}
+        loading={busy}
       >
         {busy ? "Validating…" : "Save"}
-      </button>
-      <button
-        type="button"
-        className="skill-action-dock-cancel"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        iconOnly
         onClick={onCancel}
         disabled={busy}
         aria-label="Cancel"
       >
         ×
-      </button>
+      </Button>
       {error && <span className="skill-action-dock-error">{error}</span>}
     </div>
   );
@@ -301,27 +301,28 @@ function AppTokenInline({
         }}
         disabled={busy !== null || !stagedBotToken}
       />
-      <button
-        type="button"
-        className="skill-action-dock-button"
+      <Button
+        variant="primary"
         onClick={submit}
         disabled={busy !== null || !stagedBotToken}
+        loading={busy !== null}
       >
         {busy === "connecting"
           ? "Validating…"
           : busy === "starting"
             ? "Starting listener…"
             : "Connect"}
-      </button>
-      <button
-        type="button"
-        className="skill-action-dock-cancel"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        iconOnly
         onClick={onCancel}
         disabled={busy !== null}
         aria-label="Cancel"
       >
         ×
-      </button>
+      </Button>
       {error && <span className="skill-action-dock-error">{error}</span>}
       {!error && listenerDown && status?.last_error && (
         <span className="skill-action-dock-hint">

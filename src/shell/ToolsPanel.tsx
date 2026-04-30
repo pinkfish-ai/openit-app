@@ -11,6 +11,7 @@ import {
   UninstallError,
   type TargetOs,
 } from "../lib/toolsInstall";
+import { Button } from "../ui";
 import styles from "./ToolsPanel.module.css";
 
 /// Tools catalog rendered into the center pane via the `tools` entity
@@ -305,14 +306,15 @@ function ToolCard({
       </div>
       <p className={styles.cardDesc}>{entry.description}</p>
       <div className={styles.cardActions}>
-        <button
-          type="button"
-          className={`${styles.btn} ${primaryDanger ? styles.btnDanger : styles.btnPrimary}`}
+        <Button
+          variant="primary"
+          tone={primaryDanger ? "destructive" : "default"}
           onClick={primaryHandler}
           disabled={busy || handedOff || targetOs === null}
+          loading={busy}
         >
           {primaryLabel}
-        </button>
+        </Button>
         <a
           className={styles.docsLink}
           href={entry.docsUrl}
@@ -341,29 +343,25 @@ function ToolCard({
             </span>
           )}
           <div className={styles.errorActions}>
-            <button
-              type="button"
-              className={styles.errorRecovery}
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => onAskClaude(status)}
             >
               Ask Claude to debug ↗
-            </button>
+            </Button>
             {status.verb === "uninstall" && isMac && (
-              <button
-                type="button"
-                className={styles.errorRecovery}
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={onRemoveHintOnly}
               >
                 Just dismiss the hint
-              </button>
+              </Button>
             )}
-            <button
-              type="button"
-              className={styles.errorDismiss}
-              onClick={onDismiss}
-            >
+            <Button variant="ghost" size="sm" onClick={onDismiss}>
               Dismiss
-            </button>
+            </Button>
           </div>
         </div>
       )}

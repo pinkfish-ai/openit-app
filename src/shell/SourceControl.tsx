@@ -13,6 +13,7 @@ import {
   type GitFileStatus,
 } from "../lib/api";
 import { pushAllEntities } from "../lib/pushAll";
+import { Button } from "../ui";
 
 type Props = {
   repo: string | null;
@@ -283,29 +284,31 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
           disabled={committing || generating}
         />
         {claudeAvailable && (
-          <button
-            type="button"
-            className={`sc-sparkle-btn${generating ? " is-generating" : ""}`}
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             onClick={handleGenerate}
             disabled={generating || committing || files.length === 0}
-            aria-busy={generating}
+            loading={generating}
             aria-label="Generate commit message with Claude"
             title={
               files.length === 0
                 ? "No changes"
                 : generating
-                ? "Asking Claude…"
-                : "Generate commit message with Claude"
+                  ? "Asking Claude…"
+                  : "Generate commit message with Claude"
             }
           >
-            {generating ? <span className="sc-spinner" aria-hidden="true" /> : "✨"}
-          </button>
+            ✨
+          </Button>
         )}
-        <button
-          type="button"
-          className="sc-commit-btn"
+        <Button
+          variant="primary"
+          size="sm"
           onClick={handleCommit}
           disabled={committing || generating}
+          loading={committing}
           title={
             files.length > 0
               ? cloudConnected
@@ -319,9 +322,9 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
           {committing
             ? "…"
             : files.length > 0
-            ? "Commit"
-            : "Sync to Cloud"}
-        </button>
+              ? "Commit"
+              : "Sync to Cloud"}
+        </Button>
       </div>
       {error && <div className="sc-error">{error}</div>}
 
@@ -332,33 +335,42 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
             <div className="sc-group-header">
               <span className="sc-group-label">Changes</span>
               <span className="sc-count">{files.length}</span>
-              <button
-                type="button"
-                className="sc-hdr-action sc-hdr-discard"
+              <Button
+                variant="ghost"
+                tone="destructive"
+                size="sm"
+                iconOnly
                 onClick={() => handleDiscard(files.map((f) => f.path))}
                 title="Discard all changes"
               >
                 ↺
-              </button>
+              </Button>
             </div>
             <ul className="sc-file-list">
               {files.map((f) => (
                 <li key={f.path} className="sc-file-row">
-                  <button type="button" className="sc-file-name" onClick={() => handleFileDiff(f.path)} title={f.path}>
+                  <Button
+                    variant="link"
+                    className="sc-file-name"
+                    onClick={() => handleFileDiff(f.path)}
+                    title={f.path}
+                  >
                     {f.path.split("/").pop()}
-                  </button>
+                  </Button>
                   <span className="sc-file-dir">{f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ""}</span>
                   <span className={`sc-badge ${statusColorClass(f.status)}`} title={statusTitle(f.status)}>
                     {statusLabel(f.status)}
                   </span>
-                  <button
-                    type="button"
-                    className="sc-row-action sc-row-discard"
+                  <Button
+                    variant="ghost"
+                    tone="destructive"
+                    size="sm"
+                    iconOnly
                     onClick={() => handleDiscard([f.path])}
                     title="Discard changes"
                   >
                     ↺
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -373,7 +385,15 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
         <div className="sc-group-header">
           <span className="sc-group-label">Commits</span>
           <span className="sc-count">{commits.length}</span>
-          <button type="button" className="sc-hdr-action" onClick={refresh} title="Refresh commits">↻</button>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            onClick={refresh}
+            title="Refresh commits"
+          >
+            ↻
+          </Button>
         </div>
         <ul className="sc-commit-list">
           {commits.map((c, i) => (
