@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { fsOpen, fsReadBytes } from "../lib/api";
+import { Button } from "../ui";
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg)$/i;
 
@@ -62,8 +63,8 @@ function AttachmentImage({ absPath, label }: { absPath: string; label: string })
     return <span className="attach-chip">Loading {label}…</span>;
   }
   return (
-    <button
-      type="button"
+    <Button
+      variant="ghost"
       className="attach-image-btn"
       onClick={() => {
         // Open in the OS handler via openUrl — the in-app webview
@@ -76,15 +77,15 @@ function AttachmentImage({ absPath, label }: { absPath: string; label: string })
       title={label}
     >
       <img className="attach-image" src={url} alt={label} />
-    </button>
+    </Button>
   );
 }
 
 function AttachmentLink({ absPath, label }: { absPath: string; label: string }) {
   return (
-    <button
-      type="button"
-      className="attach-chip"
+    <Button
+      variant="subtle"
+      size="sm"
       onClick={() => {
         void fsOpen(absPath).catch((err) =>
           console.warn("[attachment] fs_open failed:", err),
@@ -92,9 +93,9 @@ function AttachmentLink({ absPath, label }: { absPath: string; label: string }) 
       }}
       title={`Open ${label}`}
     >
-      <span className="attach-chip-icon">📎</span>
-      <span className="attach-chip-name">{label}</span>
-    </button>
+      <span aria-hidden>📎</span>
+      <span>{label}</span>
+    </Button>
   );
 }
 

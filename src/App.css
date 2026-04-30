@@ -370,37 +370,8 @@ body::before {
   font-weight: 600;
 }
 
-.conflict-banner-resolve,
-.conflict-banner-dismiss {
-  flex: 0 0 auto;
-  padding: 3px 10px;
-  border: 1px solid #d4a82c;
-  background: transparent;
-  color: inherit;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.conflict-banner-resolve {
-  background: #5c3d00;
-  color: #fff8e1;
-  border-color: #5c3d00;
-  font-weight: 500;
-}
-
-.conflict-banner-resolve:hover:not(:disabled) {
-  background: #3d2900;
-}
-
-.conflict-banner-resolve:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.conflict-banner-dismiss:hover {
-  background: rgba(0, 0, 0, 0.05);
-}
+/* .conflict-banner-resolve / .conflict-banner-dismiss removed —
+   migrated to <Button variant="primary"|"ghost"> in the v5 button PR. */
 
 /* Agent activity banner — info palette. Shows live when any ticket
    has status: "agent-responding" (a chat-intake claude -p subprocess
@@ -553,99 +524,16 @@ body::before {
   flex-shrink: 0;
 }
 
-.left-tab {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  color: var(--text-muted);
-  padding: 0 6px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: pointer;
-  font-family: var(--font-display);
-  transition:
-    color var(--t-fast) var(--ease),
-    border-color var(--t-fast) var(--ease),
-    background var(--t-fast) var(--ease);
-}
+/* .left-tab / .left-tab.active / .left-tab:hover / .left-tab-badge /
+   .left-tab-pull-glyph (incl. .is-pulling) and the tab-pull-spin keyframes
+   removed — left-tabs migrated to <TabStrip> in src/ui/TabStrip.tsx. */
 
-.left-tab:hover {
-  color: var(--text);
-}
-
-.left-tab.active {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
-.left-tab-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  margin-left: 6px;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: 0;
-  text-transform: none;
-  vertical-align: 1px;
-}
-
+/* Layout-only: Shell still passes .left-tab-pull-btn on a <Button> so the
+   pull-icon button shrinks-to-content within the left-tabs flex row.
+   Button chrome (background, border, color, padding, transition) is
+   handled by <Button variant="ghost" iconOnly>. */
 .left-tab-pull-btn {
   flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  padding: 0 var(--space-3);
-  cursor: pointer;
-  transition: color 0.1s;
-}
-
-.left-tab-pull-btn:hover:not(:disabled) {
-  color: var(--text);
-}
-
-.left-tab-pull-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* Rotate the glyph itself, not the button — keeps the spin centered on the
-   icon's own bounding box rather than the (wider-than-tall) button box. */
-.left-tab-pull-glyph {
-  display: inline-block;
-  font-size: 14px;
-  line-height: 1;
-  transform-origin: 50% 50%;
-}
-
-.left-tab-pull-glyph.is-pulling {
-  animation: tab-pull-spin 0.9s linear infinite;
-}
-
-@keyframes tab-pull-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .left-tab-panel {
@@ -690,29 +578,16 @@ body::before {
   padding: 4px 0;
 }
 
+/* .context-menu-item — layout-only override on the v5 <Button>
+   (variant=ghost, tone=destructive for the danger item). The
+   button styling lives in Button.module.css; this rule just makes
+   the menu items full-width with left-aligned text. */
 .context-menu-item {
   display: block;
   width: 100%;
-  padding: 8px 12px;
-  background: none;
-  border: none;
-  color: var(--text);
+  justify-content: flex-start;
   text-align: left;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.1s;
-}
-
-.context-menu-item:hover {
-  background: var(--accent-soft);
-}
-
-.context-menu-item-danger {
-  color: #c0392b;
-}
-
-.context-menu-item-danger:hover {
-  background: rgba(192, 57, 43, 0.08);
+  border-radius: 0;
 }
 
 .explorer.empty,
@@ -731,31 +606,8 @@ body::before {
   border-bottom: 1px solid var(--border);
 }
 
-.explorer-icon-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-faint);
-  border-radius: 4px;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.explorer-icon-btn:hover {
-  background: var(--accent-soft);
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-.explorer-icon-btn.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
-}
+/* .explorer-icon-btn (and :hover, .active) removed — migrated to
+   <Button variant="ghost" iconOnly>. */
 
 .explorer-system-icon {
   width: 14px;
@@ -923,25 +775,17 @@ body::before {
   color: #c0392b;
 }
 
+/* Layout-only: FileExplorer passes .tree-delete-btn on a <Button> so the
+   icon stays hidden until the tree row is hovered. Button chrome lives in
+   <Button variant="ghost" tone="destructive" size="sm" iconOnly>. */
 .tree-delete-btn {
   display: none;
-  background: none;
-  border: none;
-  color: var(--text-faint);
-  font-size: 10px;
-  cursor: pointer;
-  padding: 0 2px;
   margin-left: 2px;
-  line-height: 1;
   flex-shrink: 0;
 }
 
 .tree-item:hover .tree-delete-btn {
-  display: inline;
-}
-
-.tree-delete-btn:hover {
-  color: #c74e4e;
+  display: inline-flex;
 }
 
 .explorer.drag-over {
@@ -1029,65 +873,9 @@ body::before {
   color: var(--text);
 }
 
-/* Segmented control — used for view-mode toggles (View/Edit/Raw),
-   people-list Cards/Table, conversation filter pills, etc. One visual
-   for every "switch within this surface" control. Container has the
-   recessed look; the active item lifts with surface bg + shadow. */
-.viewer-tabs {
-  display: inline-flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 3px;
-  background: var(--bg-canvas);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-family: var(--font-body);
-}
-
-.viewer-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-muted);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-family: var(--font-body);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    background var(--t-fast) var(--ease),
-    color var(--t-fast) var(--ease),
-    box-shadow var(--t-fast) var(--ease);
-}
-
-.viewer-tab:hover {
-  color: var(--text);
-}
-
-.viewer-tab.active {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-}
-
-/* Count badges next to a viewer-tab label (filter pills). */
-.viewer-tab-count {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--surface-soft);
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.viewer-tab.active .viewer-tab-count {
-  background: var(--accent-faint);
-  color: var(--accent);
-}
+/* .viewer-tabs / .viewer-tab (incl. :hover, .active) / .viewer-tab-count
+   removed — segmented controls migrated to <TabStrip> in
+   src/ui/TabStrip.tsx. */
 
 /* Conversation thread list — one clickable card per ticket. Shown
    when the conversations/ folder itself is selected. Cards click
@@ -1240,37 +1028,8 @@ body::before {
   min-height: 0;
 }
 
-/* Small Add-to-Claude button rendered inline in the viewer header
-   for the conversation-thread source. Sized to match the View / Raw
-   tabs so it visually belongs in that row. */
-.viewer-add-btn {
-  /* Sized to match `.viewer-tab` so action buttons (Overview / Ask
-     Claude / Add to Claude) read as part of the same top-right
-     control row as the tab toggles (Cards / Table, View / Edit).
-     Subtle persistent border keeps them visually distinct from
-     a toggle's "off" state — they're verbs, not modes. */
-  background: transparent;
-  border: 1px solid var(--border, #ddd);
-  color: var(--text);
-  border-radius: 5px;
-  padding: 3px 10px;
-  font-size: 11px;
-  font-weight: 400;
-  font-family: -apple-system, sans-serif;
-  cursor: pointer;
-  transition:
-    background 0.1s ease,
-    border-color 0.1s ease;
-}
-
-.viewer-add-btn:hover {
-  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
-  border-color: var(--text-muted);
-}
-
-.viewer-add-btn:active {
-  background: var(--surface-soft, #f0f0f0);
-}
+/* .viewer-add-btn (and :hover, :active) removed — migrated to
+   <Button variant="secondary" size="sm">. */
 
 /* Sub-header strip — sits directly under .viewer-header and hosts
    the "add to chat →" / "conversation →" right-aligned action links.
@@ -1286,46 +1045,8 @@ body::before {
   background: var(--surface);
 }
 
-/* Subtle text-link variant of viewer-add-btn. Used on the
-   conversation-thread header for "add to chat →" — an action that
-   shouldn't compete visually with the Conversation/Ticket nav tabs.
-   No border, no background, just muted text + arrow that nudges on
-   hover. */
-.viewer-add-link {
-  white-space: nowrap;
-  background: transparent;
-  border: none;
-  padding: 4px 6px;
-  margin-left: 2px;
-  color: var(--text-faint);
-  font-family: -apple-system, sans-serif;
-  font-size: 11px;
-  font-weight: 400;
-  text-transform: lowercase;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: color 0.1s ease;
-}
-
-.viewer-add-link:hover:not(:disabled) {
-  color: var(--text);
-}
-
-.viewer-add-link:disabled {
-  cursor: default;
-  opacity: 0.7;
-}
-
-.viewer-add-link-arrow {
-  display: inline-block;
-  transition: transform 0.12s ease;
-}
-
-.viewer-add-link:hover .viewer-add-link-arrow {
-  transform: translateX(2px);
-}
+/* .viewer-add-link (incl. :hover, :disabled) and .viewer-add-link-arrow
+   removed — migrated to <Button variant="link">. */
 
 /* Back/forward pair in the viewer header — permanent on every page
    so navigation is consistent regardless of which view is open. The
@@ -1337,28 +1058,8 @@ body::before {
   margin-right: 4px;
 }
 
-.viewer-back-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-muted);
-  border-radius: 5px;
-  padding: 2px 8px;
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.viewer-back-btn:hover:not(:disabled) {
-  background: var(--surface-soft);
-  color: var(--text);
-  border-color: var(--border);
-}
-
-.viewer-back-btn:disabled {
-  color: var(--text-faint);
-  cursor: default;
-  opacity: 0.5;
-}
+/* .viewer-back-btn (and :hover, :disabled) removed — migrated to
+   <Button variant="ghost" size="sm" iconOnly>. */
 
 /* Markdown edit mode — full-pane textarea with a footer of action
    buttons. Monospace font + tab-friendly so it reads as "edit raw
@@ -1405,38 +1106,8 @@ body::before {
   color: var(--warn-text, #a85b00);
 }
 
-.viewer-edit-btn {
-  border-radius: 5px;
-  padding: 5px 12px;
-  font-size: 12px;
-  font-family: -apple-system, sans-serif;
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-.viewer-edit-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.viewer-edit-btn-secondary {
-  background: transparent;
-  color: var(--text-muted);
-}
-
-.viewer-edit-btn-secondary:hover:not(:disabled) {
-  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
-  color: var(--text);
-}
-
-.viewer-edit-btn-primary {
-  background: var(--accent, #c43e3e);
-  color: white;
-}
-
-.viewer-edit-btn-primary:hover:not(:disabled) {
-  filter: brightness(0.92);
-}
+/* .viewer-edit-btn / .viewer-edit-btn-primary / .viewer-edit-btn-secondary
+   (and pseudo-states) removed — migrated to <Button variant="primary"|"ghost">. */
 
 /* Row view — read-only vertical key/value summary. Replaces the
    single-row table, which forced horizontal scroll for any schema
@@ -1652,11 +1323,9 @@ body::before {
   color: var(--text-muted);
 }
 
-/* Mark-as-resolved is anchored to the left edge; the trailing items
-   (error, hint, Send) stay right-aligned. (PIN-5829.) */
-.thread-reply-resolve {
-  margin-right: auto;
-}
+/* .thread-reply-resolve removed — Mark-as-resolved migrated to
+   <Button variant="ghost" tone="success"> with margin-right via
+   the parent flex layout. */
 
 .thread-reply-error {
   color: var(--warn-text, #a85b00);
@@ -1718,22 +1387,8 @@ body::before {
   padding: 0 0 8px 0;
 }
 
-.viewer-folder-sort {
-  background: none;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  padding: 4px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  letter-spacing: 0.02em;
-}
-
-.viewer-folder-sort:hover {
-  background: var(--surface-soft, rgba(0, 0, 0, 0.03));
-  color: var(--text);
-}
+/* .viewer-folder-sort (and :hover) removed — migrated to
+   <Button variant="ghost" size="sm">. */
 
 /* .toast-notice removed — the second Toast implementation
    (src/shell/Toast.tsx) is folded into the unified
@@ -1765,18 +1420,11 @@ body::before {
   text-overflow: ellipsis;
 }
 
+/* Layout-only: Viewer passes .thread-reply-chip-remove on a <Button>
+   so the close glyph hugs the chip's right edge. Button chrome
+   handled by <Button variant="ghost" size="sm" iconOnly>. */
 .thread-reply-chip-remove {
-  background: transparent;
-  border: 0;
   padding: 0 0 0 2px;
-  font-size: 14px;
-  line-height: 1;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.thread-reply-chip-remove:hover {
-  color: var(--text);
 }
 
 /* Inline attachment list under each conversation bubble. */
@@ -1787,12 +1435,13 @@ body::before {
   margin-top: 8px;
 }
 
+/* Image-specific: AttachmentList passes .attach-image-btn on a <Button>
+   so the click target zero-pads around the image and uses the zoom-in
+   cursor. Button chrome (background, border) is handled by
+   <Button variant="ghost">. */
 .attach-image-btn {
-  background: transparent;
-  border: 0;
   padding: 0;
   cursor: zoom-in;
-  display: inline-flex;
 }
 
 .attach-image {
@@ -1916,21 +1565,8 @@ body::before {
   border-top-right-radius: 2px;
 }
 
-.viewer-copy-btn {
-  margin-left: auto;
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  border-radius: 5px;
-  padding: 3px 10px;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.viewer-copy-btn:hover {
-  background: var(--surface-soft);
-  color: var(--text);
-}
+/* .viewer-copy-btn (and :hover) removed — migrated to
+   <Button variant="ghost" size="sm">. */
 
 .viewer-md {
   flex: 1;
@@ -2190,29 +1826,8 @@ body::before {
    src/ui/Button.tsx; consumers in src/App.tsx now use that.
    Removed in the v5-foundation PR. */
 
-.deploy-btn {
-  margin-left: auto;
-  background: var(--accent);
-  color: white;
-  border: 0;
-  border-radius: 6px;
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.deploy-btn:hover:not(:disabled) {
-  background: #c45a2c;
-}
-
-.deploy-btn:disabled {
-  background: var(--surface-soft);
-  color: var(--text-faint);
-  border: 1px solid var(--border);
-  cursor: not-allowed;
-  opacity: 0.5;
-}
+/* .deploy-btn (and :hover, :disabled) removed — migrated to
+   <Button variant="primary">. */
 
 .chat-area {
   flex: 1;
@@ -2246,39 +1861,9 @@ body::before {
   flex-wrap: wrap;
 }
 
-.bubble {
-  background: var(--surface-soft);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 999px;
-  padding: 5px 14px;
-  font-size: 11px;
-  font-weight: 500;
-  font-family: var(--font-body);
-  cursor: pointer;
-  transition:
-    background var(--t-fast) var(--ease),
-    border-color var(--t-fast) var(--ease),
-    transform var(--t-fast) var(--ease);
-}
-
-.bubble:hover {
-  background: var(--surface-hover);
-  border-color: var(--accent-soft);
-  transform: translateY(-1px);
-}
-
-.bubble-conflict {
-  border-color: var(--clay);
-  color: var(--clay-soft);
-  background: rgba(179, 74, 58, 0.2);
-  font-weight: 600;
-}
-
-.bubble-conflict:hover {
-  background: rgba(179, 74, 58, 0.32);
-  border-color: var(--clay);
-}
+/* .bubble / .bubble-conflict (and pseudo-states) removed —
+   prompt-bubble pills migrated to <Button variant="ghost"|"warn"
+   shape="pill"> in src/shell/PromptBubbles.tsx. */
 
 /* Source Control panel */
 .sc-panel {
@@ -2324,77 +1909,12 @@ body::before {
   color: var(--text-faint);
 }
 
-.sc-commit-btn {
-  background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: 5px;
-  padding: 5px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
+/* .sc-commit-btn (and :hover, :disabled) removed — migrated to
+   <Button variant="primary" size="sm">. */
 
-.sc-commit-btn:hover:not(:disabled) {
-  background: #c45a2c;
-}
-
-.sc-commit-btn:disabled {
-  background: var(--surface-soft);
-  color: var(--text-faint);
-  border: 1px solid var(--border);
-  cursor: not-allowed;
-}
-
-.sc-sparkle-btn {
-  background: var(--surface-soft);
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  padding: 4px 8px;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  min-width: 28px;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition:
-    background 0.1s ease,
-    border-color 0.1s ease,
-    box-shadow 0.1s ease,
-    transform 0.05s ease;
-}
-
-.sc-sparkle-btn:hover:not(:disabled) {
-  background: var(--surface);
-  border-color: var(--accent);
-}
-
-.sc-sparkle-btn:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.sc-sparkle-btn:disabled {
-  color: var(--text-faint);
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-/* Generating state: visually depressed + active accent, NOT dimmed.
-   Wins over the :disabled opacity so the user sees it as "working". */
-.sc-sparkle-btn.is-generating,
-.sc-sparkle-btn.is-generating:disabled {
-  opacity: 1;
-  color: var(--accent);
-  background: var(--surface);
-  border-color: var(--accent);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
-  transform: translateY(1px);
-  cursor: progress;
-}
+/* .sc-sparkle-btn (incl. :hover, :active, :disabled, .is-generating)
+   removed — sparkle/generate trigger migrated to <Button variant="ghost"
+   size="sm" iconOnly loading={isGenerating}>. */
 
 /* 12px ring spinner that picks up currentColor (= --accent in the
    .is-generating state). Pure CSS, no extra deps. */
@@ -2414,15 +1934,9 @@ body::before {
   }
 }
 
-.sc-deploy-row {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.sc-deploy-row .deploy-btn {
-  width: 100%;
-}
+/* .sc-deploy-row (and the .sc-deploy-row .deploy-btn nested rule)
+   removed — deploy row is no longer rendered as a wrapper class;
+   layout lives in SourceControl.tsx with <Button>. */
 
 .sc-error {
   padding: 6px 12px;
@@ -2463,32 +1977,8 @@ body::before {
   margin-right: auto;
 }
 
-.sc-hdr-action {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-muted);
-  border-radius: 4px;
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.1s;
-}
-
-.sc-group-header:hover .sc-hdr-action {
-  opacity: 1;
-}
-
-.sc-hdr-action:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--text);
-}
+/* .sc-hdr-action (and group-header hover-reveal, :hover) removed —
+   migrated to <Button variant="ghost" size="sm" iconOnly>. */
 
 .sc-empty-hint {
   padding: 12px;
@@ -2514,21 +2004,14 @@ body::before {
   background: var(--surface);
 }
 
+/* Layout-only: SourceControl passes .sc-file-name on a <Button variant="link">
+   so the file label truncates with ellipsis inside the row's flex slot.
+   Button chrome is handled by <Button>. */
 .sc-file-name {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: left;
-}
-
-.sc-file-name:hover {
-  color: var(--accent);
 }
 
 .sc-file-dir {
@@ -2549,40 +2032,9 @@ body::before {
   text-align: center;
 }
 
-.sc-row-action {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--text-muted);
-  border-radius: 4px;
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  opacity: 0;
-  flex-shrink: 0;
-  transition: opacity 0.1s;
-}
-
-.sc-file-row:hover .sc-row-action {
-  opacity: 1;
-}
-
-.sc-row-action:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--text);
-}
-
-.sc-row-discard:hover,
-.sc-hdr-discard:hover {
-  background: #fdecea;
-  border-color: #c74e4e;
-  color: #c74e4e;
-}
+/* .sc-row-action / .sc-row-discard / .sc-hdr-discard (and the
+   row-hover reveal, :hover variants) removed — migrated to
+   <Button variant="ghost" tone="destructive" size="sm" iconOnly>. */
 
 .sc-badge-modified {
   color: #c4a33a;
@@ -2764,20 +2216,8 @@ body::before {
   font-size: 12px;
 }
 
-.confirm-input button {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 5px 12px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.confirm-input button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+/* .confirm-input button rules removed — confirm dialogs now use
+   the <Button> primitive directly. */
 
 /* Onboarding */
 .onboard {
@@ -2941,24 +2381,8 @@ body::before {
   background: transparent;
 }
 
-.chat-pill-btn {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text-muted);
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  margin-left: 4px;
-}
-
-.chat-pill-btn:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--text);
-}
+/* .chat-pill-btn (and :hover) removed — migrated to
+   <Button variant="ghost" shape="pill" size="sm">. */
 
 .chat-hint {
   color: var(--text-faint);
@@ -2983,24 +2407,8 @@ body::before {
   gap: 10px;
 }
 
-.onboard-signup-btn {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background 0.1s,
-    border-color 0.1s;
-}
-
-.onboard-signup-btn:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-}
+/* .onboard-signup-btn (and :hover) removed — migrated to
+   <Button variant="ghost">. */
 
 .onboard-continue {
   margin-left: 0;
@@ -3140,30 +2548,10 @@ body::before {
   justify-content: flex-end;
 }
 
-.key-actions button {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 5px 14px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.key-actions button.key-save {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-
-.key-actions button.key-save:hover:not(:disabled) {
-  background: #c45a2c;
-}
-
-.key-actions button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+/* .key-actions button rules removed — PinkfishOauthModal now uses
+   the v5 <Button> primitive (variant=secondary / variant=primary)
+   which carries the correct styling without raw-selector overrides
+   that would fight Button's own CSS. */
 
 /* --------------------------------------------------------
    DataTable
@@ -3499,69 +2887,9 @@ body::before {
   margin-bottom: 4px;
 }
 
-.conv-filter-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 3px 10px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition:
-    background 0.1s ease,
-    color 0.1s ease,
-    border-color 0.1s ease;
-}
-
-.conv-filter-btn:hover {
-  color: var(--text);
-  background: var(--hover-bg, rgba(0, 0, 0, 0.04));
-}
-
-.conv-filter-btn-active {
-  color: var(--text);
-  background: var(--card-bg, #fafafa);
-  border-color: var(--border, #ddd);
-}
-
-/* Count badge inside a viewer-tab — used by the conversations
-   status filter to show the per-bucket count without breaking the
-   uniform tab silhouette. Placed inline with the tab label. */
-.viewer-tab-count {
-  margin-left: 6px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--text-muted);
-  background: var(--tag-bg, rgba(0, 0, 0, 0.05));
-  padding: 0 6px;
-  border-radius: 999px;
-  line-height: 14px;
-}
-
-.viewer-tab.active .viewer-tab-count {
-  color: var(--text);
-  background: var(--tag-bg, rgba(0, 0, 0, 0.08));
-}
-
-.conv-filter-count {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-  background: var(--tag-bg, rgba(0, 0, 0, 0.05));
-  border-radius: 999px;
-  padding: 0 6px;
-  min-width: 16px;
-  text-align: center;
-}
-
-.conv-filter-btn-active .conv-filter-count {
-  background: var(--tag-bg-active, rgba(0, 0, 0, 0.08));
-  color: var(--text);
-}
+/* .conv-filter-btn / .conv-filter-btn-active / .conv-filter-count (and
+   the duplicate .viewer-tab-count override block) removed — conversation
+   filter pills migrated to <TabStrip> in src/ui/TabStrip.tsx. */
 
 .summary-table th,
 .summary-table td {
@@ -3624,19 +2952,8 @@ body::before {
   font-size: 12px;
 }
 
-.pdf-viewer-controls button {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 8px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.pdf-viewer-controls button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+/* .pdf-viewer-controls button rules removed — PdfViewer now uses
+   the <Button> primitive (variant=secondary size=sm). */
 
 .pdf-viewer-page {
   flex: 1;
@@ -3653,27 +2970,12 @@ body::before {
   overflow: hidden;
 }
 
-.spreadsheet-tabs {
-  display: flex;
-  gap: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-soft);
-}
-
-.spreadsheet-tabs button {
-  padding: 4px 12px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  font-size: 12px;
-  cursor: pointer;
-  color: var(--text-muted);
-}
-
-.spreadsheet-tabs button.active {
-  border-bottom-color: var(--accent);
-  color: var(--text);
-  font-weight: 600;
+/* .spreadsheet-tabs button rules removed — SpreadsheetViewer now
+   uses the <TabStrip> primitive. */
+.spreadsheet-viewer-tabs {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
+  padding: 0 12px;
 }
 
 .spreadsheet-table-wrap {
@@ -4683,75 +3985,9 @@ body::before {
   position: relative;
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Pane icon button — small icon-only button used in pane headers
-   (e.g. the new-session "+" in the chat shell header).
-   ───────────────────────────────────────────────────────────────── */
-.pane-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  margin-left: 2px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1;
-  cursor: pointer;
-  flex: 0 0 auto;
-  transition:
-    background var(--t-fast) var(--ease),
-    border-color var(--t-fast) var(--ease),
-    color var(--t-fast) var(--ease),
-    transform var(--t-fast) var(--ease);
-}
-
-.pane-icon-btn:hover:not(:disabled) {
-  background: var(--surface-hover);
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-
-.pane-icon-btn:active:not(:disabled) {
-  transform: scale(0.94);
-}
-
-.pane-icon-btn:disabled {
-  opacity: 0.32;
-  cursor: not-allowed;
-}
-
-.pane-icon-btn-accent {
-  color: var(--accent);
-  border-color: var(--accent-soft);
-  background: var(--accent-faint);
-  font-weight: 600;
-  margin-left: 6px;
-}
-
-.pane-icon-btn-accent:hover:not(:disabled) {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent-hover);
-}
-
-/* Inside the dark theatre, the accent button needs a dark-aware tint. */
-.right-pane .pane-icon-btn-accent {
-  background: rgba(199, 90, 44, 0.2);
-  border-color: rgba(199, 90, 44, 0.45);
-  color: #f3a76a;
-}
-
-.right-pane .pane-icon-btn-accent:hover:not(:disabled) {
-  background: rgba(199, 90, 44, 0.32);
-  border-color: rgba(199, 90, 44, 0.65);
-  color: #fff8ec;
-}
+/* .pane-icon-btn / .pane-icon-btn-accent (and pseudo-states, plus the
+   .right-pane dark-theatre overrides) removed — pane icon buttons
+   migrated to <Button variant="ghost"|"primary" size="sm" iconOnly>. */
 
 /* Status chip refinements removed — folded into <Chip> primitive. */
 
@@ -4850,33 +4086,21 @@ body::before {
   flex: 1;
 }
 
+/* Layout-only: EntityCardGrid / Viewer pass .entity-card-delete on a
+   <Button> so the delete icon is absolutely-positioned at the card's
+   right edge and only revealed on wrapper hover. Button chrome lives
+   in <Button variant="ghost" tone="destructive" size="sm" iconOnly>. */
 .entity-card-delete {
   position: absolute;
   top: 50%;
   right: 10px;
   transform: translateY(-50%);
   display: none;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text-faint);
-  line-height: 1;
-  cursor: pointer;
-  padding: 6px 8px;
-  border-radius: 6px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
   z-index: 1;
 }
 
 .entity-card-wrapper:hover .entity-card-delete {
   display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.entity-card-delete:hover {
-  color: #c74e4e;
-  border-color: rgba(199, 78, 78, 0.4);
-  background: var(--surface);
 }
 
 /* People-list cards (and other thread-card surfaces) reuse the same
@@ -5110,133 +4334,10 @@ body::before {
   color: var(--tone-color, var(--text));
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Unified button family — coerce existing class names into one set
-   of tokens so the visual rhythm is consistent everywhere.
-   ───────────────────────────────────────────────────────────────── */
-/* .icon-btn / .icon-btn-primary / .icon-btn-ghost / .icon-btn.key-set
-   are gone — the App.tsx header now uses the v5 <Button> primitive.
-   .deploy-btn / .viewer-* / .onboard-signup-btn still exist; this
-   consolidator continues to coerce them into a shared rhythm until
-   they migrate in subsequent PRs. */
-.btn,
-.deploy-btn,
-.viewer-add-btn,
-.viewer-back-btn,
-.onboard-signup-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 6px 14px;
-  border-radius: var(--r-md);
-  font-family: var(--font-body);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-sm);
-  transition:
-    background var(--t-fast) var(--ease),
-    border-color var(--t-fast) var(--ease),
-    transform var(--t-fast) var(--ease),
-    box-shadow var(--t-fast) var(--ease),
-    color var(--t-fast) var(--ease);
-}
-
-.btn:hover:not(:disabled),
-.viewer-add-btn:hover:not(:disabled),
-.viewer-back-btn:hover:not(:disabled),
-.onboard-signup-btn:hover:not(:disabled) {
-  background: var(--accent-faint);
-  border-color: var(--accent-soft);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-card);
-}
-
-.btn:active:not(:disabled),
-.deploy-btn:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-.btn:disabled,
-.deploy-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: none;
-}
-
-/* Primary — gradient orange CTA. */
-.btn-primary,
-.deploy-btn {
-  background: linear-gradient(180deg, #db6b39 0%, var(--accent) 100%);
-  color: #fff8ec;
-  border-color: rgba(120, 50, 20, 0.5);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.22) inset,
-    var(--shadow-sm);
-  font-weight: 600;
-}
-
-.btn-primary:hover:not(:disabled),
-.deploy-btn:hover:not(:disabled) {
-  background: linear-gradient(
-    180deg,
-    var(--accent) 0%,
-    var(--accent-hover) 100%
-  );
-  border-color: var(--accent-hover);
-  transform: translateY(-1px);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.22) inset,
-    var(--shadow-card);
-}
-
-/* Ghost — for secondary / dismiss actions. */
-.btn-ghost,
-.onboard-signup-btn {
-  background: transparent;
-  border-color: var(--border);
-  box-shadow: none;
-  color: var(--text-muted);
-}
-
-.btn-ghost:hover:not(:disabled),
-.onboard-signup-btn:hover:not(:disabled) {
-  background: var(--surface-hover);
-  border-color: var(--border-strong);
-  color: var(--text);
-  transform: none;
-}
-
-/* Success — sage palette. */
-.btn-success {
-  background: var(--sage-soft);
-  border-color: var(--sage);
-  color: #2c4d27;
-  box-shadow: var(--shadow-sm);
-}
-
-.btn-success:hover:not(:disabled) {
-  background: #cfdfc6;
-  border-color: var(--sage);
-  color: #2c4d27;
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-card);
-}
-
-/* Small variant — tighter padding for inline contexts. */
-.btn-sm,
-.viewer-add-btn,
-.viewer-back-btn {
-  padding: 3px 12px;
-  font-size: 11px;
-  border-radius: var(--r-sm);
-}
+/* Unified button family removed — the .btn / .btn-primary / .btn-secondary /
+   .btn-ghost / .btn-success / .btn-sm consolidator (and its .deploy-btn /
+   .viewer-add-btn / .viewer-back-btn / .onboard-signup-btn coercions) is
+   superseded by the v5 <Button> primitive in src/ui/Button.tsx. */
 
 /* Cloud CTA — pitch page rendered when an admin clicks "Connect to
    Cloud" while still local-only. Inherits the UI font (no serif
@@ -5330,61 +4431,75 @@ body::before {
   flex-basis: 100%;
 }
 
-.cloud-cta-primary {
-  background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: var(--r-sm, 5px);
-  padding: 9px 18px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background 0.1s ease,
-    transform 0.05s ease;
-}
-
-.cloud-cta-primary:hover:not(:disabled) {
-  background: #c45a2c;
-  transform: translateY(-1px);
-}
-
-.cloud-cta-primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.cloud-cta-secondary {
-  background: transparent;
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm, 5px);
-  padding: 8px 17px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background 0.1s ease,
-    border-color 0.1s ease,
-    transform 0.05s ease;
-}
-
-.cloud-cta-secondary:hover:not(:disabled) {
-  background: var(--surface-2, rgba(0, 0, 0, 0.04));
-  border-color: var(--text-faint);
-  transform: translateY(-1px);
-}
-
-.cloud-cta-secondary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+/* .cloud-cta-primary / .cloud-cta-secondary (and pseudo-states) removed —
+   migrated to <Button variant="primary"|"secondary">. */
 
 .cloud-cta-fineprint {
   font-size: 10px;
   color: var(--text-faint);
   margin: 0;
   line-height: 1.5;
+}
+
+/* ════════════════════════════════════════════════════════════
+   CARD-AS-BUTTON shared affordances
+   ════════════════════════════════════════════════════════════
+   Some clickable surfaces are too card-shaped to fit a Button
+   variant — the TODAY hero, station tiles, thread cards, agent
+   activity banner. They keep their bespoke layout but inherit
+   the Button universe's cursor + press-depth + focus-ring so
+   every clickable thing in the app feels physical the same way.
+   ──────────────────────────────────────────────────────────── */
+.workbench-today-main,
+.station,
+.thread-card,
+.entity-card-clickable,
+.workbench-files-toggle,
+.agent-activity-banner {
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+.workbench-today-main:active:not(:disabled),
+.station:active:not(:disabled),
+.thread-card:active:not(:disabled),
+.entity-card-clickable:active:not(:disabled),
+.workbench-files-toggle:active:not(:disabled),
+.agent-activity-banner:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.workbench-today-main:focus-visible,
+.station:focus-visible,
+.thread-card:focus-visible,
+.entity-card-clickable:focus-visible,
+.workbench-files-toggle:focus-visible,
+.agent-activity-banner:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+.workbench-today-main:disabled,
+.station:disabled,
+.thread-card:disabled,
+.entity-card-clickable:disabled,
+.workbench-files-toggle:disabled,
+.agent-activity-banner:disabled {
+  cursor: not-allowed;
+}
+
+/* Universal radius normalization for card-as-buttons — they all use
+   the same medium radius so curves are consistent with Button. */
+.workbench-today-main,
+.station,
+.thread-card,
+.entity-card-clickable,
+.workbench-files-toggle {
+  border-radius: var(--r-md);
 }
 
 /* .status-chip-unset removed — handled by the v5 <Chip> primitive's

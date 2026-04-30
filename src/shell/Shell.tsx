@@ -50,6 +50,7 @@ import { Viewer, type ViewerSource } from "./Viewer";
 import type { DockKind } from "../lib/skillState";
 import { resolvePathToSource } from "./entityRouting";
 import { SkillActionDock } from "./SkillActionDock";
+import { Button, TabStrip, Tab } from "../ui";
 
 type LeftTab = "overview" | "files" | "source-control";
 
@@ -863,38 +864,34 @@ export function Shell({
                * up with two competing entry points.
                */}
               <div className="left-tabs">
-                <button
-                  type="button"
-                  className={`left-tab ${leftTab === "overview" || leftTab === "files" ? "active" : ""}`}
-                  onClick={() => setLeftTab("overview")}
-                >
-                  Overview
-                </button>
-                <button
-                  type="button"
-                  className={`left-tab ${leftTab === "source-control" ? "active" : ""}`}
-                  onClick={() => setLeftTab("source-control")}
-                >
-                  Sync
-                  {changeCount > 0 && (
-                    <span
-                      className="left-tab-badge"
-                      aria-label={`${changeCount} uncommitted change${changeCount === 1 ? "" : "s"}`}
-                    >
-                      {changeCount}
-                    </span>
-                  )}
-                </button>
-                <button
-                  type="button"
+                <TabStrip className="left-tabs-strip">
+                  <Tab
+                    active={leftTab === "overview" || leftTab === "files"}
+                    onClick={() => setLeftTab("overview")}
+                  >
+                    Overview
+                  </Tab>
+                  <Tab
+                    active={leftTab === "source-control"}
+                    count={changeCount}
+                    onClick={() => setLeftTab("source-control")}
+                  >
+                    Sync
+                  </Tab>
+                </TabStrip>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
                   className="left-tab-pull-btn"
                   onClick={handleManualPull}
                   disabled={!repo || pulling}
+                  loading={pulling}
                   aria-label="Pull from Pinkfish now"
                   title={pulling ? "Pulling…" : "Pull from Pinkfish"}
                 >
-                  <span className={`left-tab-pull-glyph${pulling ? " is-pulling" : ""}`}>↻</span>
-                </button>
+                  ↻
+                </Button>
               </div>
               <div className="left-tab-panel" hidden={leftTab !== "overview"}>
                 <div className="left-pane-scroll">

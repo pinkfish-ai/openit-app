@@ -16,6 +16,7 @@
 // and downstream consumers already tolerate sparse rows.
 
 import type { DataCollection } from "../lib/skillsApi";
+import { Button } from "../ui";
 
 type SchemaFieldShape = {
   id: string;
@@ -194,22 +195,23 @@ export function RowEditForm({
       </div>
       <div className="row-edit-footer">
         {error && <span className="row-edit-error">{error}</span>}
-        <button
-          type="button"
-          className="viewer-edit-btn viewer-edit-btn-secondary"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={onCancel}
           disabled={saving}
         >
           Cancel
-        </button>
-        <button
-          type="button"
-          className="viewer-edit-btn viewer-edit-btn-primary"
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
           onClick={onSave}
           disabled={saving}
+          loading={saving}
         >
           {saving ? "Saving…" : "Save"}
-        </button>
+        </Button>
       </div>
     </div>
   );

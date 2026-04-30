@@ -13,6 +13,7 @@ import {
   subscribeConflicts,
   type AggregatedConflict,
 } from "../lib/syncEngine";
+import { Button } from "../ui";
 import { writeToActiveSession } from "./activeSession";
 
 export function ConflictBanner() {
@@ -69,23 +70,24 @@ export function ConflictBanner() {
           : ""}
         .
       </span>
-      <button
-        type="button"
-        className="conflict-banner-resolve"
+      <Button
+        variant="primary"
+        size="sm"
         onClick={onResolveInClaude}
         disabled={resolving}
+        loading={resolving}
         title="Send the conflict list to Claude for guided merge"
       >
         {resolving ? "Sending…" : "Resolve in Claude"}
-      </button>
-      <button
-        type="button"
-        className="conflict-banner-dismiss"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => setDismissedKey(conflictKey)}
         title="Hide until the conflict set changes"
       >
         Dismiss
-      </button>
+      </Button>
     </div>
   );
 }

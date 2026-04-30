@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ENTITY_META, type EntityKind } from "./entityIcons";
 import { TrashIcon } from "./TrashIcon";
+import { Button } from "../ui";
 
 export type { EntityKind };
 
@@ -111,8 +112,8 @@ export function EntityCardGrid({
             role="menu"
           >
             {activeCard.onReveal && (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
                 className="context-menu-item"
                 onClick={() => {
                   void activeCard.onReveal?.();
@@ -120,12 +121,13 @@ export function EntityCardGrid({
                 }}
               >
                 Reveal in Finder
-              </button>
+              </Button>
             )}
             {activeCard.onDelete && (
-              <button
-                type="button"
-                className="context-menu-item context-menu-item-danger"
+              <Button
+                variant="ghost"
+                tone="destructive"
+                className="context-menu-item"
                 onClick={() => {
                   // The onDelete handler runs its own window.confirm()
                   // — duplicating it here with an arm-twice click
@@ -136,7 +138,7 @@ export function EntityCardGrid({
                 }}
               >
                 Delete
-              </button>
+              </Button>
             )}
           </div>
         </>
@@ -242,8 +244,11 @@ function EntityCardItem({
   return (
     <div className="entity-card-wrapper">
       {card}
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        tone="destructive"
+        size="sm"
+        iconOnly
         className="entity-card-delete"
         title={`Delete ${c.title}`}
         aria-label={`Delete ${c.title}`}
@@ -253,7 +258,7 @@ function EntityCardItem({
         }}
       >
         <TrashIcon />
-      </button>
+      </Button>
     </div>
   );
 }

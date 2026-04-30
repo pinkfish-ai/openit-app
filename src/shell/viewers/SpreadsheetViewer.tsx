@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import ExcelJS from "exceljs";
+import { TabStrip, Tab } from "../../ui";
 
 type Props = {
   data: Uint8Array;
@@ -94,17 +95,17 @@ export function SpreadsheetViewer({ data, filename }: Props) {
   return (
     <div className="spreadsheet-viewer">
       {sheets.length > 1 && (
-        <div className="spreadsheet-viewer-tabs">
+        <TabStrip className="spreadsheet-viewer-tabs">
           {sheets.map((s, i) => (
-            <button
+            <Tab
               key={s.name}
-              className={i === activeSheet ? "active" : ""}
+              active={i === activeSheet}
               onClick={() => setActiveSheet(i)}
             >
               {s.name}
-            </button>
+            </Tab>
           ))}
-        </div>
+        </TabStrip>
       )}
       <table>
         <thead>

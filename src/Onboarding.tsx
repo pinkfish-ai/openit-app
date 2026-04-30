@@ -6,6 +6,7 @@ import {
   pinkfishListConnections,
   type UserConnection,
 } from "./lib/api";
+import { Button } from "./ui";
 import { PinkfishOauthModal } from "./PinkfishOauthModal";
 import { stopFilestoreSync } from "./lib/filestoreSync";
 import { stopKbSync } from "./lib/kbSync";
@@ -70,9 +71,9 @@ function ChannelPill({
     <span className={`chat-pill ${connected ? "" : "faint"}`}>
       <img src={icon} alt={label} />
       {label}
-      <button type="button" className="chat-pill-btn" onClick={onClick}>
+      <Button variant="subtle" size="sm" onClick={onClick}>
         {connected ? "manage" : "connect"}
-      </button>
+      </Button>
     </span>
   );
 }
@@ -278,14 +279,12 @@ export function Onboarding({
           action={
             pinkfishConnected ? (
               <span style={{ display: "inline-flex", gap: 6 }}>
-                <button
-                  className="icon-btn key-set"
-                  onClick={() => setAuthOpen(true)}
-                >
+                <Button variant="secondary" onClick={() => setAuthOpen(true)}>
                   Update
-                </button>
-                <button
-                  className="icon-btn"
+                </Button>
+                <Button
+                  variant="secondary"
+                  tone="destructive"
                   onClick={() => {
                     if (
                       window.confirm(
@@ -298,23 +297,25 @@ export function Onboarding({
                   title="Remove the Pinkfish credential from this machine"
                 >
                   Disconnect
-                </button>
+                </Button>
               </span>
             ) : browserConnect.kind === "waiting" ||
               browserConnect.kind === "starting" ||
               browserConnect.kind === "validating" ? (
-              <button className="icon-btn" onClick={cancelBrowserConnect}>
+              <Button variant="secondary" onClick={cancelBrowserConnect}>
                 Cancel
-              </button>
+              </Button>
             ) : (
-              <button
-                className="deploy-btn"
+              <Button
+                variant="primary"
                 onClick={startBrowserConnect}
-                disabled={browserConnect.kind !== "idle" &&
-                  browserConnect.kind !== "error"}
+                disabled={
+                  browserConnect.kind !== "idle" &&
+                  browserConnect.kind !== "error"
+                }
               >
                 Connect
-              </button>
+              </Button>
             )
           }
         />
@@ -375,9 +376,9 @@ export function Onboarding({
             !claudeReady &&
             claudePath !== "loading" &&
             claudePath !== "installing" ? (
-              <button className="icon-btn" onClick={retryInstall}>
+              <Button variant="secondary" onClick={retryInstall}>
                 Retry
-              </button>
+              </Button>
             ) : null
           }
         />
@@ -418,8 +419,9 @@ export function Onboarding({
         />
 
         <div className="onboard-actions">
-          <button
-            className="deploy-btn"
+          <Button
+            variant="primary"
+            size="lg"
             onClick={onContinue}
             disabled={!canContinue}
             title={
@@ -429,14 +431,17 @@ export function Onboarding({
             }
           >
             {pinkfishConnected ? "Continue" : "Continue without Pinkfish"}
-          </button>
+          </Button>
           {!pinkfishConnected && (
-            <button
-              className="onboard-signup-btn"
-              onClick={() => openUrl("https://app.pinkfish.ai/signup").catch(console.error)}
+            <Button
+              variant="secondary"
+              size="lg"
+              onClick={() =>
+                openUrl("https://app.pinkfish.ai/signup").catch(console.error)
+              }
             >
               Sign Up
-            </button>
+            </Button>
           )}
         </div>
       </div>

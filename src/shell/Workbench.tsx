@@ -4,6 +4,7 @@ import { scanEscalatedTickets, type TicketSummary } from "../lib/escalatedTicket
 import { listInstalled as listInstalledTools } from "../lib/toolsInstall";
 import { writeToActiveSession } from "./activeSession";
 import { ENTITY_META, type EntityKind } from "./entityIcons";
+import { Button } from "../ui";
 
 type Station = {
   id: string;
@@ -221,11 +222,12 @@ export function Workbench({
           )}
         </button>
         {escalatedCount > 0 && (
-          <button
-            type="button"
+          <Button
+            variant="subtle"
             className="workbench-today-cta"
             onClick={draftRepliesWithClaude}
             disabled={!repo || drafting}
+            loading={drafting}
             title="Paste an /answer-ticket prompt into Claude so you can draft a reply with its help"
           >
             <span className="workbench-today-cta-glyph" aria-hidden>
@@ -238,10 +240,10 @@ export function Workbench({
                   ? "Draft reply with Claude"
                   : `Draft ${escalatedCount} replies with Claude`}
             </span>
-            <span className="workbench-today-cta-arrow" aria-hidden>
+            <span className="arrow" aria-hidden>
               →
             </span>
-          </button>
+          </Button>
         )}
       </div>
 

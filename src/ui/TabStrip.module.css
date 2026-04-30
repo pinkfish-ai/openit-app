@@ -1,0 +1,155 @@
+/* TabStrip — segmented row of tabs with one active.
+   Replaces 8+ hand-rolled implementations: viewer-tab, left-tab,
+   spreadsheet-tabs, pdf-viewer-controls, conv-filter-btn, etc.
+   Visual semantic: row of buttons, one active, underline indicator,
+   optional count badge. NOT a Button variant — different
+   active-state behavior and layout. */
+
+.strip {
+  display: inline-flex;
+  align-items: stretch;
+  gap: var(--space-5);
+  /* The strip itself doesn't paint chrome; it sits on whatever
+     surface its parent provides (light pane, dark chat, modal). */
+}
+.compact { gap: var(--space-3); }
+
+.tab {
+  --_fg: var(--color-text-faint);
+  --_fg-hover: var(--color-text-muted);
+  --_fg-active: var(--color-text);
+  --_indicator: var(--color-accent);
+
+  appearance: none;
+  background: transparent;
+  border: 0;
+  margin: 0;
+  padding: 0 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 100%;
+  font-family: var(--font-body);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--_fg);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  position: relative;
+  transition:
+    color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* Active-state underline indicator. Uses ::after so the active
+   line can be the bottom border of a flex parent without the tab
+   itself owning a border. */
+.tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--_indicator);
+  border-radius: 2px 2px 0 0;
+  opacity: 0;
+  transform: scaleX(0.6);
+  transform-origin: center;
+  transition:
+    opacity var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--_fg-hover);
+}
+.tab:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--_fg-active);
+}
+.tab[aria-selected="true"]::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+.tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Count badge inside a tab — pairs with the SYNC tab and any
+   tab showing a number. Uses the design-system Badge styling
+   inline (not the React component) so the tab is self-contained. */
+.tab .count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+  font-weight: var(--fw-semibold);
+  font-size: 9px;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: none;
+}
+.tab[aria-selected="true"] .count {
+  background: var(--color-accent);
+}
+
+/* Variant: segmented control (filled background per option, no
+   underline indicator). Used for View/Edit toggles in viewer
+   header, Cards/Table toggle, etc — visually closer to a
+   button-group than a tab strip. */
+.segmented {
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--color-surface);
+  padding: 0;
+  gap: 0;
+  height: var(--h-control);
+  box-shadow: var(--shadow-sm);
+}
+.segmented .tab {
+  padding: 0 var(--space-4);
+  border-right: 1px solid var(--color-border-faint);
+  font-size: var(--fs-meta);
+  letter-spacing: var(--tracking-normal);
+  text-transform: none;
+  color: var(--color-text-muted);
+}
+.segmented .tab:last-child {
+  border-right: 0;
+}
+.segmented .tab::after {
+  display: none;
+}
+.segmented .tab[aria-selected="true"] {
+  background: color-mix(in srgb, var(--color-text) 6%, var(--color-surface));
+  color: var(--color-text);
+  font-weight: var(--fw-medium);
+}
+.segmented .tab:hover:not(:disabled):not([aria-selected="true"]) {
+  background: var(--color-hover-overlay);
+  color: var(--color-text);
+}
