@@ -705,9 +705,8 @@ function App() {
         console.log("[app] intake server up at", url);
         setIntakeServerUrl(url);
 
-        // Chain the public tunnel onto the local server. Failure here
-        // is non-fatal — the local URL still works, we just don't get
-        // a shareable link this session.
+        // The intake form pill surfaces the public tunnel URL — chain
+        // tunnelStart onto the local server so coworkers can reach it.
         try {
           const publicUrl = await tunnelStart(url);
           if (intakeGenRef.current !== myGen) return;
@@ -865,14 +864,9 @@ function App() {
       <TitleRail
         left={
           <StatusChips
-            repo={repo}
-            cloudConnected={connected}
-            orgName={orgName}
-            intakeUrl={intakeServerUrl}
             tunnelUrl={tunnelPublicUrl}
             slackConfig={slackConfig}
             slackStatus={slackStatus}
-            onOpenPalette={() => setPaletteOpen(true)}
             onConnectSlack={triggerSlackFlow}
           />
         }

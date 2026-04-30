@@ -143,10 +143,10 @@ button.dashed:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.06);
 }
 
-/* Segmented chip pair — two related endpoints rendered as one
-   visual entity. Used for the intake form (local + shared URL).
-   Children are .chip elements; the group wrapper paints the
-   shared background and joins them with a thin divider. */
+/* Segmented chip — a `[label] [value]` pair rendered as one visual
+   entity. Used by IntakeChip and SlackChip. The wrapper paints the
+   shared background; the label is italic-serif and divided from the
+   button(s) by a thin border. */
 .segment {
   display: inline-flex;
   align-items: stretch;
@@ -190,10 +190,4 @@ button.dashed:hover:not(:disabled) {
 }
 .segment button:hover {
   background: rgba(199, 90, 44, 0.08);
-}
-.segment .scope {
-  font-family: var(--font-serif);
-  font-style: italic;
-  color: #a85d3a;
-  margin-right: 4px;
 }

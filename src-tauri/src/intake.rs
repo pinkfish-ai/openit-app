@@ -8,8 +8,10 @@
 // the admin (KB miss → status flips to `escalated`, admin sees the
 // banner).
 //
-// Bind: 127.0.0.1 with an OS-assigned port (port 0). New port per
-// launch. Default off LAN — the toggle is Phase 3b territory.
+// Bind: 127.0.0.1. Release builds use an OS-assigned port (new port
+// per launch); debug builds pin DEV_INTAKE_PORT so a browser tab
+// opened against the intake server survives a `bun tauri dev`
+// restart. Default off LAN — the toggle is Phase 3b territory.
 //
 // Lifecycle: started on project open, stopped on project switch /
 // app close. `intake_start` swaps the previous instance under a
@@ -152,9 +154,22 @@ struct ServerState {
 // Tauri commands — start / stop / read URL.
 // ---------------------------------------------------------------------------
 
-/// Start the intake server bound to a fresh OS-assigned localhost
-/// port, scoped to `repo`. Returns the base URL (e.g.
-/// `http://127.0.0.1:54123`).
+/// Fixed localhost port used in debug builds so a browser tab opened
+/// against the intake server survives a Tauri dev-server restart.
+/// Release builds always use an OS-assigned port — there's no reason
+/// to pin one in production, and pinning would risk a collision with
+/// whatever else the user is running.
+#[cfg(debug_assertions)]
+const DEV_INTAKE_PORT: u16 = 54321;
+
+/// Start the intake server, scoped to `repo`. Returns the base URL
+/// (e.g. `http://127.0.0.1:54123`).
+///
+/// Port selection:
+/// - Release: always `127.0.0.1:0` (OS picks a free ephemeral port).
+/// - Debug: try `127.0.0.1:DEV_INTAKE_PORT` first, falling back to
+///   `:0` if that port is taken. Stable port across `bun tauri dev`
+///   restarts means an open browser tab keeps working after a rebuild.
 #[tauri::command]
 pub async fn intake_start(
     state: tauri::State<'_, IntakeState>,
@@ -168,7 +183,7 @@ pub async fn intake_start(
     let _cmd_guard = state.cmd_lock.lock().await;
     stop_inner(&state).await;
 
-    let listener = TcpListener::bind("127.0.0.1:0")
+    let listener = bind_intake_listener()
         .await
         .map_err(|e| format!("bind failed: {}", e))?;
     let addr = listener
@@ -210,6 +225,26 @@ pub async fn intake_start(
     }
 
     Ok(url)
+}
+
+/// Bind the intake server's TCP listener. In debug builds, prefer the
+/// pinned `DEV_INTAKE_PORT` so the URL stays stable across dev-server
+/// restarts; if it's already taken (e.g. another OpenIT instance, or
+/// a stale process), fall back to an OS-assigned port. Release builds
+/// always use `:0`.
+async fn bind_intake_listener() -> std::io::Result<TcpListener> {
+    #[cfg(debug_assertions)]
+    {
+        let pinned = format!("127.0.0.1:{}", DEV_INTAKE_PORT);
+        match TcpListener::bind(&pinned).await {
+            Ok(listener) => return Ok(listener),
+            Err(e) => eprintln!(
+                "[intake] dev port {} unavailable ({}), falling back to OS-assigned",
+                DEV_INTAKE_PORT, e
+            ),
+        }
+    }
+    TcpListener::bind("127.0.0.1:0").await
 }
 
 async fn persist_intake_url(repo: &Path, url: &str) -> std::io::Result<()> {
