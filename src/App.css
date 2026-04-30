@@ -551,6 +551,12 @@ body::before {
    handled by <Button variant="ghost" iconOnly>. */
 .left-tab-pull-btn {
   flex: 0 0 auto;
+  /* The TabStrip stretches to fill .left-tabs' 44px rail (its
+     underline math depends on it). The pull button is a short
+     sm-icon button next to the strip, so without align-self it
+     pins to the top of the rail and reads as misaligned with the
+     viewer header's arrow buttons. */
+  align-self: center;
 }
 
 /* File explorer — sits inside PaneBody flush. height:100% lets it
