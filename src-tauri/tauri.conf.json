@@ -35,7 +35,15 @@
       "../scripts/openit-plugin/agents/*.json": "openit-plugin/agents/",
       "../scripts/openit-plugin/scripts/*.mjs": "openit-plugin/scripts/",
       "../scripts/openit-plugin/scripts/*.yml": "openit-plugin/scripts/",
-      "../scripts/openit-plugin/scripts/slack-listen.bundle.cjs": "openit-plugin/scripts/slack-listen.bundle.cjs"
+      "../scripts/openit-plugin/scripts/slack-listen.bundle.cjs": "openit-plugin/scripts/slack-listen.bundle.cjs",
+      "../scripts/openit-plugin/seed/tickets/*.json": "openit-plugin/seed/tickets/",
+      "../scripts/openit-plugin/seed/people/*.json": "openit-plugin/seed/people/",
+      "../scripts/openit-plugin/seed/knowledge/*.md": "openit-plugin/seed/knowledge/",
+      "../scripts/openit-plugin/seed/conversations/sample-ticket-1/*.json": "openit-plugin/seed/conversations/sample-ticket-1/",
+      "../scripts/openit-plugin/seed/conversations/sample-ticket-2/*.json": "openit-plugin/seed/conversations/sample-ticket-2/",
+      "../scripts/openit-plugin/seed/conversations/sample-ticket-3/*.json": "openit-plugin/seed/conversations/sample-ticket-3/",
+      "../scripts/openit-plugin/seed/conversations/sample-ticket-4/*.json": "openit-plugin/seed/conversations/sample-ticket-4/",
+      "../scripts/openit-plugin/seed/conversations/sample-ticket-5/*.json": "openit-plugin/seed/conversations/sample-ticket-5/"
     },
     "icon": [
       "icons/32x32.png",
