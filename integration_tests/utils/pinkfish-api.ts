@@ -327,6 +327,72 @@ export class PinkfishClient {
   }
 
   /**
+   * Two-step upload via the signed-URL flow (PIN-5847). POSTs JSON to
+   * `/filestorage/items/upload-request`, then PUTs the bytes to the
+   * returned signed GCS URL. This is the contract the Tauri backend
+   * uses for filestore push — same name in, same name out, same
+   * Firestore row on re-upload.
+   */
+  async uploadFilestoreFileSigned(args: {
+    collectionId: string;
+    filename: string;
+    bytes: Uint8Array | ArrayBuffer;
+    mime?: string;
+  }): Promise<{ id: string; filename: string }> {
+    const requestUrl = new URL(
+      "/filestorage/items/upload-request",
+      this.skillsBaseUrl,
+    );
+    requestUrl.searchParams.set("collectionId", args.collectionId);
+
+    const bytes =
+      args.bytes instanceof Uint8Array ? args.bytes : new Uint8Array(args.bytes);
+    const mime = args.mime ?? "application/octet-stream";
+
+    const requestResponse = await fetch(requestUrl.toString(), {
+      method: "POST",
+      headers: {
+        ...(await this.authHeaders()),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        filename: args.filename,
+        content_type: mime,
+        size_prelim: bytes.byteLength,
+        metadata: {},
+      }),
+    });
+    if (!requestResponse.ok) {
+      throw new Error(
+        `upload-request failed: HTTP ${requestResponse.status}: ${await requestResponse.text()}`,
+      );
+    }
+    const ticket = (await requestResponse.json()) as {
+      id?: string;
+      filename?: string;
+      uploadUrl?: string;
+    };
+    if (!ticket.uploadUrl || !ticket.filename || !ticket.id) {
+      throw new Error(
+        `upload-request response missing fields: ${JSON.stringify(ticket)}`,
+      );
+    }
+
+    const putResponse = await fetch(ticket.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": mime },
+      body: bytes,
+    });
+    if (!putResponse.ok) {
+      throw new Error(
+        `signed PUT failed: HTTP ${putResponse.status}: ${await putResponse.text()}`,
+      );
+    }
+
+    return { id: ticket.id, filename: ticket.filename };
+  }
+
+  /**
    * Delete an item from a filestorage collection by its server id.
    * Endpoint: DELETE /filestorage/items/{itemId}
    *

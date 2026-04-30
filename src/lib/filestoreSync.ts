@@ -15,8 +15,7 @@
 import {
   entityListLocal,
   fsStoreInit,
-  fsStoreUploadFile,
-  kbListRemote,
+  fsStoreUploadFileSigned,
 } from "./api";
 import { type DataCollection } from "./skillsApi";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
@@ -30,6 +29,7 @@ import {
 } from "./nestedManifest";
 import {
   classifyAsShadow,
+  commitTouched,
   createCollectionEntitySync,
   type CollectionSyncStatus,
 } from "./syncEngine";
@@ -164,8 +164,14 @@ export function resolveProjectFilestores(
 export const pushAllToFilestore = handle.pushOne;
 
 // ---------------------------------------------------------------------------
-// Push implementation — engine-specific upload + sanitised-filename
-// reconciliation + post-push remote_version refresh.
+// Push implementation — signed-URL upload (PIN-5847). The pre-PIN-5847
+// multipart `/upload` endpoint added a UUID prefix on every call and
+// created a fresh Firestore doc each time, so this file used to carry a
+// `cloud_filename` indirection (PIN-5827) plus a post-push
+// `kbListRemote` reconcile to bridge local→remote name mismatch.
+// `/upload-request` returns the verbatim sanitized filename and dedupes
+// the row by filename, so all of that machinery is gone — manifest keys
+// by exact filename, both directions.
 // ---------------------------------------------------------------------------
 
 async function pushAllToFilestoreImpl(args: {
@@ -208,7 +214,7 @@ async function pushAllToFilestoreImpl(args: {
   for (const f of toPush) {
     try {
       onLine?.(`▸ uploading ${dir}/${f.filename}`);
-      const result = await fsStoreUploadFile({
+      await fsStoreUploadFileSigned({
         repo,
         filename: f.filename,
         collectionId: collection.id,
@@ -216,59 +222,15 @@ async function pushAllToFilestoreImpl(args: {
         accessToken: token.accessToken,
         subdir: dir,
       });
-      // The skills API may rewrite filenames on upload — most commonly
-      // by prefixing a UUID (e.g. `chart.json` → `<uuid>-chart.json`).
-      // Pre-PIN-5827 we renamed the local file to match; that doubled
-      // the change set on every first push and broke any external
-      // reference to the original path. Now we keep the local file at
-      // the user's name and stash the server's canonical name as
-      // `cloud_filename` in the manifest. listRemote uses that bridge
-      // to recognize the round-trip without a duplicate download.
-      const cloudFilename =
-        result?.filename &&
-        result.filename !== f.filename &&
-        !result.filename.includes("/") &&
-        !result.filename.includes("\\")
-          ? result.filename
-          : undefined;
       persisted.files[f.filename] = {
         remote_version: new Date().toISOString(),
         pulled_at_mtime_ms: f.mtime_ms ?? Date.now(),
-        ...(cloudFilename ? { cloud_filename: cloudFilename } : {}),
       };
-      pushedNames.add(cloudFilename ?? f.filename);
+      pushedNames.add(f.filename);
       pushed += 1;
     } catch (e) {
       failed += 1;
       onLine?.(`✗ ${dir}/${f.filename}: ${String(e)}`);
-    }
-  }
-
-  // Reconcile remote_version after push: refresh from server's authoritative
-  // updatedAt so the next pull doesn't false-flag a conflict.
-  // The manifest is keyed by *local* filename now (PIN-5827), so look up
-  // the tracked entry via cloud_filename when the server's name differs
-  // from the local one.
-  if (pushedNames.size > 0) {
-    try {
-      const remote = await kbListRemote({
-        collectionId: collection.id,
-        skillsBaseUrl: urls.skillsBaseUrl,
-        accessToken: token.accessToken,
-      });
-      const cloudToLocal = new Map<string, string>();
-      for (const [localName, state] of Object.entries(persisted.files)) {
-        cloudToLocal.set(state.cloud_filename ?? localName, localName);
-      }
-      for (const r of remote) {
-        if (pushedNames.has(r.filename) && r.updated_at) {
-          const localName = cloudToLocal.get(r.filename);
-          const tracked = localName ? persisted.files[localName] : undefined;
-          if (tracked) tracked.remote_version = r.updated_at;
-        }
-      }
-    } catch (e) {
-      console.warn("[filestore] post-push remote-version sync failed:", e);
     }
   }
 
@@ -279,5 +241,16 @@ async function pushAllToFilestoreImpl(args: {
     collection.name,
     persisted,
   );
+
+  // Commit just-pushed files so they don't show as untracked on the next
+  // Sync's `git status` check, which would mark them dirty and re-push
+  // (creating duplicates on every Sync click pre-PIN-5847). Mirrors the
+  // post-push commit kbSync.ts has had since Phase 2.
+  if (pushedNames.size > 0) {
+    const ts = new Date().toISOString();
+    const paths = Array.from(pushedNames).map((n) => `${dir}/${n}`);
+    await commitTouched(repo, paths, `sync: deployed @ ${ts}`);
+  }
+
   return { pushed, failed };
 }

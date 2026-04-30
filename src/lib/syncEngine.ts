@@ -199,10 +199,11 @@ export type EntityAdapter = {
   /// server-delete pass — collections that listed successfully still
   /// have their server-deleted rows reconciled.
   ///
-  /// `manifest` is the just-loaded manifest. Filestore uses it to map
-  /// the server's UUID-prefixed filenames back to the local filenames
-  /// stored under `cloud_filename` (PIN-5827). Other adapters can
-  /// ignore it.
+  /// `manifest` is the just-loaded manifest. Pre-PIN-5847 the filestore
+  /// adapter used it to map UUID-prefixed remote names back to local
+  /// names via `cloud_filename`. The signed-URL upload path now returns
+  /// the verbatim filename, so adapters can ignore the manifest here —
+  /// it's still threaded through in case a future entity needs it.
   listRemote(repo: string, manifest: Manifest): Promise<{
     items: RemoteItem[];
     paginationFailed: boolean;
@@ -571,12 +572,6 @@ async function pullEntityImpl(
         manifest.files[r.manifestKey] = {
           remote_version: r.updatedAt,
           pulled_at_mtime_ms: Date.now(),
-          // Preserve cloud_filename across re-fetches (PIN-5827). The
-          // cloud↔local mapping doesn't change just because we
-          // re-downloaded the same file.
-          ...(tracked.cloud_filename
-            ? { cloud_filename: tracked.cloud_filename }
-            : {}),
         };
         touched.push(r.workingTreePath);
         pulled += 1;
@@ -739,9 +734,6 @@ async function pullEntityImpl(
         manifest.files[r.manifestKey] = {
           remote_version: tracked.remote_version,
           pulled_at_mtime_ms: tracked.pulled_at_mtime_ms,
-          ...(tracked.cloud_filename
-            ? { cloud_filename: tracked.cloud_filename }
-            : {}),
         };
       }
 
@@ -752,12 +744,6 @@ async function pullEntityImpl(
           manifest.files[r.manifestKey] = {
             remote_version: r.updatedAt,
             pulled_at_mtime_ms: Date.now(),
-            // Preserve cloud_filename through the fast-forward
-            // (PIN-5827). Server has new content but the same
-            // cloud↔local identity.
-            ...(tracked.cloud_filename
-              ? { cloud_filename: tracked.cloud_filename }
-              : {}),
           };
           touched.push(r.workingTreePath);
           pulled += 1;

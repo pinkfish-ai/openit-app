@@ -713,6 +713,163 @@ pub async fn fs_store_upload_file(
     })
 }
 
+/// Two-step upload via the signed-URL endpoint (PIN-5847). Replaces the
+/// multipart `kb_upload_file` / `fs_store_upload_file` path for sync
+/// pushes. The multipart `/upload` endpoint adds a UUID prefix on every
+/// call and creates a fresh Firestore doc each time, so re-pushing the
+/// same file accumulates duplicates server- and client-side. The
+/// `/upload-request` endpoint:
+///   1. POST JSON `{ filename, content_type, size_prelim, metadata }`.
+///   2. Server sanitizes the filename via `formatFileName` (no UUID),
+///      dedupes the Firestore record by `filename + collectionId`, and
+///      returns `{ id, filename, uploadUrl }` — `filename` is the
+///      verbatim sanitized name we just sent (sans the special-char
+///      transform), `uploadUrl` is a signed GCS PUT URL.
+///   3. PUT the file bytes at the signed URL with the right content-type.
+///      GCS overwrites the same object key.
+///
+/// Net effect: same name → same GCS path → same Firestore row, every
+/// time. The three-rule contract (upload-by-local-name,
+/// download-by-remote-name, overwrite-on-same-name) is enforced
+/// server-side.
+#[tauri::command]
+pub async fn kb_upload_via_signed_url(
+    repo: String,
+    filename: String,
+    collection_id: String,
+    skills_base_url: String,
+    access_token: String,
+    subdir: Option<String>,
+) -> Result<KbUploadResult, String> {
+    let path = kb_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
+    if !path.exists() {
+        return Err(format!("file not found: {}", path.display()));
+    }
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+    upload_via_signed_url_inner(filename, collection_id, skills_base_url, access_token, bytes)
+        .await
+}
+
+/// Filestore equivalent of `kb_upload_via_signed_url`. Same body, only
+/// the path resolver differs (filestore uses `fs_path_with_optional_subdir`
+/// which permits the `attachments/` placeholder dir, etc.).
+#[tauri::command]
+pub async fn fs_store_upload_via_signed_url(
+    repo: String,
+    filename: String,
+    collection_id: String,
+    skills_base_url: String,
+    access_token: String,
+    subdir: Option<String>,
+) -> Result<KbUploadResult, String> {
+    let path = fs_path_with_optional_subdir(&repo, &filename, subdir.as_deref())?;
+    if !path.exists() {
+        return Err(format!("file not found: {}", path.display()));
+    }
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+    upload_via_signed_url_inner(filename, collection_id, skills_base_url, access_token, bytes)
+        .await
+}
+
+async fn upload_via_signed_url_inner(
+    filename: String,
+    collection_id: String,
+    skills_base_url: String,
+    access_token: String,
+    bytes: Vec<u8>,
+) -> Result<KbUploadResult, String> {
+    let mime = mime_for(&filename);
+    let size = bytes.len() as u64;
+
+    let request_url = format!(
+        "{}/filestorage/items/upload-request?collectionId={}",
+        skills_base_url.trim_end_matches('/'),
+        urlencode(&collection_id)
+    );
+    let request_body = serde_json::json!({
+        "filename": filename,
+        "content_type": mime,
+        "size_prelim": size,
+        "metadata": {},
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let request_resp = client
+        .post(&request_url)
+        .header("Auth-Token", format!("Bearer {}", access_token))
+        .header("Content-Type", "application/json")
+        .header("Accept", "*/*")
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| format!("upload-request network error: {}", e))?;
+
+    let request_status = request_resp.status();
+    let request_text = request_resp.text().await.unwrap_or_default();
+    if !request_status.is_success() {
+        return Err(format!(
+            "upload-request HTTP {}: {}",
+            request_status, request_text
+        ));
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&request_text).map_err(|e| {
+        format!(
+            "could not parse upload-request response: {} — body: {}",
+            e, request_text
+        )
+    })?;
+
+    let upload_url = parsed
+        .get("uploadUrl")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            format!(
+                "upload-request response missing uploadUrl: {}",
+                request_text
+            )
+        })?;
+    let server_filename = parsed
+        .get("filename")
+        .and_then(|v| v.as_str())
+        .unwrap_or(filename.as_str())
+        .to_string();
+    let server_id = parsed
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // PUT the bytes to GCS. The signed URL's signature was computed
+    // against `Content-Type: <mime>` — sending a different value (or
+    // omitting the header) yields HTTP 403 SignatureDoesNotMatch. The
+    // mime we computed locally must match what we sent in step 1.
+    let put_resp = client
+        .put(upload_url)
+        .header("Content-Type", &mime)
+        .body(bytes)
+        .send()
+        .await
+        .map_err(|e| format!("signed PUT network error: {}", e))?;
+
+    let put_status = put_resp.status();
+    if !put_status.is_success() {
+        let body = put_resp.text().await.unwrap_or_default();
+        return Err(format!("signed PUT HTTP {}: {}", put_status, body));
+    }
+
+    Ok(KbUploadResult {
+        id: server_id,
+        filename: server_filename,
+        file_url: None,
+        file_size: Some(size),
+        mime_type: Some(mime),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Generic entity file writer — writes JSON files to arbitrary subdirectories
 // within the repo (e.g. databases/openit-tickets/CS0001237.json).

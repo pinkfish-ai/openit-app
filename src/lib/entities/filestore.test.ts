@@ -190,20 +190,21 @@ describe("filestoreAdapter", () => {
     );
   });
 
-  it("maps cloud_filename → local filename via the manifest (PIN-5827)", async () => {
-    // Filestore push leaves the local file at its original name and
-    // stashes the server's UUID-prefixed name as `cloud_filename` in
-    // the manifest. listRemote must use that bridge so the next pull
-    // doesn't see the cloud row as a new file.
+  it("uses verbatim remote filename as manifestKey (PIN-5847 supersedes 5827)", async () => {
+    // PIN-5847 swapped filestore push from multipart `/upload` (which
+    // mutated filenames with a UUID prefix) to `/upload-request` +
+    // signed PUT (which preserves the verbatim filename). The
+    // pre-PIN-5847 cloud_filename → local_filename reverse map is
+    // gone — the manifestKey, workingTreePath, and remote filename
+    // are now the same string. Legacy `cloud_filename` values on
+    // existing manifests are ignored.
     const adapter = filestoreAdapter({
       creds: TEST_CREDS,
       collection: { id: "lib-id", name: "openit-library" },
     });
 
     vi.mocked(api.kbListRemote).mockResolvedValue([
-      makeRemoteFile({
-        filename: "a5b91194-a595-4ea4-ab6e-20d5c1512693-chart_data.json",
-      }),
+      makeRemoteFile({ filename: "chart_data.json" }),
     ]);
 
     const manifest = {
@@ -213,6 +214,8 @@ describe("filestoreAdapter", () => {
         "chart_data.json": {
           remote_version: "2026-04-30T00:00:00Z",
           pulled_at_mtime_ms: 1745848931000,
+          // Legacy field present on disk pre-upgrade; the adapter
+          // ignores it now.
           cloud_filename: "a5b91194-a595-4ea4-ab6e-20d5c1512693-chart_data.json",
         },
       },
@@ -227,10 +230,12 @@ describe("filestoreAdapter", () => {
     );
   });
 
-  it("falls back to cloud filename when no manifest entry exists (PIN-5827)", async () => {
-    // First pull, or a file uploaded from another device — no
-    // cloud_filename mapping yet. The cloud filename becomes both the
-    // manifest key and the working-tree path. Same behavior as before.
+  it("uses remote filename verbatim when no manifest entry exists", async () => {
+    // First pull, or a file uploaded from another device. Post-PIN-5847
+    // there's no cloud_filename indirection at all — the remote
+    // filename is always the manifest key and the working-tree path.
+    // The UUID-prefixed name here just demonstrates the engine doesn't
+    // rewrite whatever the server returns.
     const adapter = filestoreAdapter({
       creds: TEST_CREDS,
       collection: { id: "lib-id", name: "openit-library" },

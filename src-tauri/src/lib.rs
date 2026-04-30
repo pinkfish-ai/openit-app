@@ -108,6 +108,8 @@ pub fn run() {
             kb::fs_store_write_file_bytes,
             kb::fs_store_download_to_local,
             kb::fs_store_upload_file,
+            kb::kb_upload_via_signed_url,
+            kb::fs_store_upload_via_signed_url,
             kb::entity_state_load,
             kb::entity_state_save,
             kb::entity_list_local,

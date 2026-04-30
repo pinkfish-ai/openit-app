@@ -436,11 +436,12 @@ export type KbFileState = {
   /// signal "user has reconciled against this remote version" without
   /// re-fetching.
   conflict_remote_version?: string;
-  /// Server's canonical filename when it differs from the manifest key
-  /// (the local filename). Filestore uploads return UUID-prefixed names;
-  /// keeping the local file at the user's original name and stashing the
-  /// cloud-side name here lets reconciliation match without renaming.
-  /// (PIN-5827.)
+  /// Legacy (PIN-5827) — pre-PIN-5847 the multipart `/upload` endpoint
+  /// returned UUID-prefixed filenames; this field bridged remote→local
+  /// naming. PIN-5847 switched to `/upload-request` which returns the
+  /// verbatim filename, so this field is no longer set or read. Kept on
+  /// the type only so legacy on-disk manifests deserialize without
+  /// errors — drops out the next time a manifest is rewritten.
   cloud_filename?: string;
 };
 export type KbStatePersisted = {
@@ -551,6 +552,29 @@ export async function kbUploadFile(args: {
   });
 }
 
+/// Two-step upload via `/filestorage/items/upload-request` + signed GCS
+/// PUT (PIN-5847). Replaces `kbUploadFile` for sync push: same name in →
+/// same name out → same Firestore row, every time. The multipart `/upload`
+/// path adds a UUID prefix on each call and creates a fresh doc, which is
+/// why repeat-pushes accumulated `<uuid>-<name>` duplicates pre-PIN-5847.
+export async function kbUploadFileSigned(args: {
+  repo: string;
+  filename: string;
+  collectionId: string;
+  skillsBaseUrl: string;
+  accessToken: string;
+  subdir?: string;
+}): Promise<KbUploadResult> {
+  return invoke("kb_upload_via_signed_url", {
+    repo: args.repo,
+    filename: args.filename,
+    collectionId: args.collectionId,
+    skillsBaseUrl: args.skillsBaseUrl,
+    accessToken: args.accessToken,
+    subdir: args.subdir ?? null,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Filestore local commands (mirrors kb_* but for filestore/ directory)
 // ---------------------------------------------------------------------------
@@ -638,6 +662,27 @@ export async function fsStoreUploadFile(args: {
   subdir?: string;
 }): Promise<KbUploadResult> {
   return invoke("fs_store_upload_file", {
+    repo: args.repo,
+    filename: args.filename,
+    collectionId: args.collectionId,
+    skillsBaseUrl: args.skillsBaseUrl,
+    accessToken: args.accessToken,
+    subdir: args.subdir ?? null,
+  });
+}
+
+/// Filestore counterpart of `kbUploadFileSigned`. See PIN-5847 / the JSDoc
+/// on `kbUploadFileSigned` for the rationale — same contract, different
+/// path resolver on the Rust side.
+export async function fsStoreUploadFileSigned(args: {
+  repo: string;
+  filename: string;
+  collectionId: string;
+  skillsBaseUrl: string;
+  accessToken: string;
+  subdir?: string;
+}): Promise<KbUploadResult> {
+  return invoke("fs_store_upload_via_signed_url", {
     repo: args.repo,
     filename: args.filename,
     collectionId: args.collectionId,
