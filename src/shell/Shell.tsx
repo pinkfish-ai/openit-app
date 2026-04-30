@@ -141,6 +141,7 @@ export function Shell({
   bubbles,
   cloudConnected,
   intakeUrl,
+  tunnelUrl,
   dock,
   slackOrgId,
   stagedSlackBotToken,
@@ -158,8 +159,12 @@ export function Shell({
   cloudConnected: boolean;
   /** Current intake server URL (or null if not yet started). Substituted
    *  into `{{INTAKE_URL}}` placeholders in markdown content (e.g. the
-   *  welcome doc). */
+   *  welcome doc) only when the public tunnel URL isn't available. */
   intakeUrl: string | null;
+  /** Public tunnel URL for the intake server (e.g. `https://xxx.lhr.life`).
+   *  Preferred over `intakeUrl` for `{{INTAKE_URL}}` substitution so the
+   *  welcome doc's CTA link is shareable instead of pointing at localhost. */
+  tunnelUrl: string | null;
   /** Which secret-paste affordance the chat-anchored
    *  SkillActionDock should surface, if any. Driven by the
    *  `.openit/skill-state/connect-slack.json` side channel (read in
@@ -941,6 +946,7 @@ export function Shell({
                 repo={repo ?? ""}
                 fsTick={fsTick}
                 intakeUrl={intakeUrl}
+                tunnelUrl={tunnelUrl}
                 welcomeFlashKey={welcomeFlashKey}
                 onOpenPath={async (path) => {
                   const resolved = await resolvePathToSource(path, repo);
