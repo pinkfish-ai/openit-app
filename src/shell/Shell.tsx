@@ -31,6 +31,7 @@ import { pullDatastoresOnce } from "../lib/datastoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
 import { startAutoCommitDriver, stopAutoCommitDriver } from "../lib/autoCommitDriver";
+import { startSkillMirrorDriver, stopSkillMirrorDriver } from "../lib/skillMirror";
 import { ChatPane } from "./ChatPane";
 import { ChatShellHeader } from "./ChatShellHeader";
 import { PaneDragHandle } from "./PaneDragHandle";
@@ -803,6 +804,10 @@ export function Shell({
         // admin Claude via /answer-ticket, manual edits). See the
         // module header for scope rationale.
         await startAutoCommitDriver(repo);
+        // Mirror filestore-side skills + scripts into `.claude/` so
+        // Claude Code's slash registry and Bash tool find them
+        // natively. Source of truth stays in `filestores/`. (PIN-5829.)
+        await startSkillMirrorDriver(repo);
       } catch (e) {
         console.warn("[shell] fs watcher failed to start:", e);
       }
@@ -811,6 +816,7 @@ export function Shell({
     return () => {
       unlisten?.();
       void stopAutoCommitDriver();
+      void stopSkillMirrorDriver();
       fsWatchStop().catch(() => {});
     };
   }, [repo, bumpFs, onSyncLine]);

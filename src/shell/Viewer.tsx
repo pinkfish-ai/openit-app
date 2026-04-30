@@ -1907,6 +1907,15 @@ export function Viewer({
             `${ticketId}.json`,
             JSON.stringify(parsed, null, 2),
           );
+          // PIN-5829: kick off /conversation-to-automation so Claude
+          // harvests the resolution into a KB article, skill, or
+          // script before we navigate away. Fire-and-forget — the skill
+          // owns its own progress reporting in the right pane.
+          const cmd = `/conversation-to-automation ${ticketId}`;
+          const wrapped = `${BRACKETED_PASTE_OPEN}${cmd}${BRACKETED_PASTE_CLOSE}`;
+          writeToActiveSession(wrapped).catch((e) =>
+            console.warn(`[viewer] /conversation-to-automation paste failed:`, e),
+          );
           if (onOpenPath) {
             void onOpenPath(`${repo}/databases/conversations`);
           }
@@ -2049,19 +2058,23 @@ export function Viewer({
               disabled={replySending}
             />
             <div className="thread-reply-footer">
+              {/* End-action lives on the left; the right side is the
+                  continue-action (Send). Asymmetry helps the role:
+                  resolve closes the conversation + harvests learnings,
+                  Send keeps it going. (PIN-5829.) */}
+              <button
+                type="button"
+                className="viewer-edit-btn thread-reply-resolve"
+                onClick={() => void markResolved()}
+                disabled={replySending}
+                title="Mark this ticket as resolved and capture the resolution as a KB article, skill, or script"
+              >
+                Mark as resolved
+              </button>
               {replyError && (
                 <span className="thread-reply-error">{replyError}</span>
               )}
               <span className="thread-reply-hint">⌘↩ to send · drop files to attach</span>
-              <button
-                type="button"
-                className="viewer-edit-btn"
-                onClick={() => void markResolved()}
-                disabled={replySending}
-                title="Mark this ticket as resolved and return to the inbox"
-              >
-                Mark as resolved
-              </button>
               <button
                 type="button"
                 className="viewer-edit-btn viewer-edit-btn-primary"

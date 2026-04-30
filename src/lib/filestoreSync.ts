@@ -50,14 +50,20 @@ export function displayFilestoreName(name: string): string {
     : name;
 }
 
-/// Defaults for OpenIT-managed filestore collections. Phase 1 created
-/// `openit-library` and `openit-attachments`; the orchestrator's
-/// auto-create loop ensures both exist on the cloud whenever a fresh
-/// connect happens with neither present.
+/// Defaults for OpenIT-managed filestore collections. The orchestrator's
+/// auto-create loop ensures all four exist on the cloud whenever a
+/// fresh connect happens with any missing.
+///
+///   - `openit-library`     — shared admin docs (admin-curated).
+///   - `openit-attachments` — intake-server uploads (per-ticket).
+///   - `openit-skills`      — admin-side skill markdown (PIN-5829).
+///   - `openit-scripts`     — admin-side runnable scripts (PIN-5829).
 export function getDefaultFilestores(_orgId: string) {
   return [
     { name: "openit-library", description: "Shared document storage for OpenIT" },
     { name: "openit-attachments", description: "OpenIT filestore: attachments" },
+    { name: "openit-skills", description: "OpenIT filestore: admin skills" },
+    { name: "openit-scripts", description: "OpenIT filestore: admin scripts" },
   ];
 }
 

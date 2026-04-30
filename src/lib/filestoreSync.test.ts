@@ -24,11 +24,14 @@ function row(overrides: Partial<DataCollection> & { id: string; name: string }):
 }
 
 describe("getDefaultFilestores", () => {
-  it("returns the two Phase 1 defaults: openit-library and openit-attachments", () => {
+  it("returns the four defaults: openit-library, openit-attachments, openit-skills, openit-scripts", () => {
     const defaults = getDefaultFilestores("any-org");
-    expect(defaults).toHaveLength(2);
-    expect(defaults.map((d) => d.name)).toContain("openit-library");
-    expect(defaults.map((d) => d.name)).toContain("openit-attachments");
+    expect(defaults).toHaveLength(4);
+    const names = defaults.map((d) => d.name);
+    expect(names).toContain("openit-library");
+    expect(names).toContain("openit-attachments");
+    expect(names).toContain("openit-skills");
+    expect(names).toContain("openit-scripts");
   });
 
   it("default name carries the openit- prefix", () => {

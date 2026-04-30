@@ -24,7 +24,9 @@ export type EntityKind =
   | "agents"
   | "databases"
   | "workflows"
-  | "tools";
+  | "tools"
+  | "skills"
+  | "scripts";
 
 export type ToneKey = "accent" | "sage" | "ochre" | "link" | "clay" | "neutral";
 
@@ -106,6 +108,25 @@ const ToolsIcon: ReactNode = (
   </svg>
 );
 
+// Sparkle on a page — admin-side skill prompts (PIN-5829).
+const SkillsIcon: ReactNode = (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M5 4a2 2 0 0 1 2-2h8l4 4v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z" />
+    <path d="M14 2v5h5" />
+    <path d="M11 12l1 2.5L14.5 15.5l-2.5 1L11 19l-1-2.5L7.5 15.5l2.5-1z" />
+  </svg>
+);
+
+// Code-bracket angle on a page — admin-side runnable scripts (PIN-5829).
+const ScriptsIcon: ReactNode = (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M5 4a2 2 0 0 1 2-2h8l4 4v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z" />
+    <path d="M14 2v5h5" />
+    <polyline points="10 12 8 14 10 16" />
+    <polyline points="14 12 16 14 14 16" />
+  </svg>
+);
+
 // ── Per-kind metadata (icon + tone + label) ───────────────────────
 
 type EntityMetaEntry = {
@@ -129,6 +150,8 @@ export const ENTITY_META: Record<EntityKind, EntityMetaEntry> = {
   databases:         { icon: DatabasesIcon,   tone: "link",    label: "Databases" },
   workflows:         { icon: WorkflowsIcon,   tone: "sage",    label: "Workflows" },
   tools:             { icon: ToolsIcon,       tone: "accent",  label: "Tools" },
+  skills:            { icon: SkillsIcon,      tone: "ochre",   label: "Skills" },
+  scripts:           { icon: ScriptsIcon,     tone: "link",    label: "Scripts" },
 };
 
 // ── Convenience accessors used by call sites ──────────────────────
@@ -150,6 +173,8 @@ export const EntityIcons = {
   databases: DatabasesIcon,
   workflows: WorkflowsIcon,
   tools: ToolsIcon,
+  skills: SkillsIcon,
+  scripts: ScriptsIcon,
 };
 
 // ── EntityBadge component (used in viewer headers) ────────────────
