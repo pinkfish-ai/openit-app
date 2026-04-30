@@ -263,6 +263,26 @@ body::before {
 [data-panel] {
   overflow: visible !important;
 }
+
+/* ─── DEBUG OUTLINES — diagnostic only, remove after fix ───────
+   Outlines (not borders) so they don't affect layout. Bright
+   colors so the user can see the exact bounds of each container
+   and identify which one is "the big bottom bar" cutting off the
+   pane corners. Each container gets a distinct color:
+     - red    = .shell           (the outer shell)
+     - blue   = .shell-panes-row (the row that holds the panes)
+     - green  = [data-panel]     (react-resizable-panels wrapper)
+     - purple = .left/.right-pane/.viewer (the actual pane card)
+*/
+.shell { outline: 4px solid red !important; outline-offset: -2px; }
+.shell-panes-row { outline: 4px solid blue !important; outline-offset: -2px; }
+[data-panel] { outline: 4px solid green !important; outline-offset: -2px; }
+.left-pane,
+.right-pane,
+.viewer {
+  outline: 4px solid magenta !important;
+  outline-offset: -2px;
+}
 .viewer {
   background: var(--surface);
   position: relative;
