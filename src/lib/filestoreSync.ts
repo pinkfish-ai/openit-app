@@ -120,8 +120,14 @@ const handle = createCollectionEntitySync<FilestoreCollection>({
   displayName: "filestore",
   collectionType: "filestorage",
   defaultNames: DEFAULT_FILESTORES.map((d) => d.name),
-  describeDefault: (name) =>
-    `OpenIT filestore: ${displayFilestoreName(name)}`,
+  describeDefault: (name) => {
+    // Look up from the shared list so the description the engine
+    // POSTs at create-time matches what `getDefaultFilestores`
+    // returns. Fallback covers any future name added to
+    // `defaultNames` without an explicit description entry.
+    const entry = DEFAULT_FILESTORES.find((d) => d.name === name);
+    return entry?.description ?? `OpenIT filestore: ${displayFilestoreName(name)}`;
+  },
   localFolderRoot: "filestores",
   buildAdapter: ({ creds, collection }) => filestoreAdapter({ creds, collection }),
   fromDataCollection: (c) => ({
