@@ -194,7 +194,12 @@ export function Workbench({
               : "Open the Tickets Inbox (nothing waiting)"
           }
         >
-          <span className="workbench-today-eyebrow">TODAY</span>
+          <span className="workbench-today-topline">
+            <span className="workbench-today-eyebrow">TODAY</span>
+            <span className="workbench-today-brand" aria-hidden>
+              Open<em>IT</em>
+            </span>
+          </span>
           {escalatedCount === 0 ? (
             <span className="workbench-today-hero workbench-today-hero-clean">
               <span className="workbench-today-clean">Clean inbox. Congrats!</span>

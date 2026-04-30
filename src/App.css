@@ -4315,13 +4315,42 @@ body::before {
   opacity: 1;
 }
 
+/* Top row of the TODAY card — TODAY eyebrow on the left, OpenIT
+   brand mark on the right. Both render in the same row so they
+   share a baseline. */
+.workbench-today-topline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
 .workbench-today-eyebrow {
   font-family: var(--font-display);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.14em;
   color: var(--accent);
-  margin-bottom: 4px;
+}
+/* Subtle brand mark on the right of the eyebrow row. Same italic
+   Fraunces "IT" treatment as the title rail's wordmark, but
+   muted (text-faint) so it reads as a quiet signature on the
+   card rather than competing with the count below. */
+.workbench-today-brand {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: -0.01em;
+  color: var(--text-faint);
+  line-height: 1;
+  user-select: none;
+}
+.workbench-today-brand em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--accent);
+  margin: 0 -1px;
 }
 
 .workbench-today-hero {
