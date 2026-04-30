@@ -280,7 +280,7 @@ body::before {
                   var(--color-text-faint)    #978d76  ← current
                   var(--color-text-muted)    #67604f  deep brown
        (Or any custom hex like #8a7a5e if you want a specific tone.) */
-  border: 1.5px solid var(--color-text-faint);
+  border: 1px solid var(--color-text-faint);
 }
 
 /* TWEAK PANE BORDER — dark Claude theatre (right pane).
@@ -292,7 +292,7 @@ body::before {
    rounded edge; against cream outside it does the same. */
 .right-pane {
   box-shadow: var(--shadow-pane-dark);
-  border: 2px solid var(--color-border-strong);
+  border: 1px solid var(--color-border-strong);
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -2057,19 +2057,19 @@ body::before {
    Targets the `data-openit-skill` attribute set by Viewer's
    ExternalAnchor when it sees an `openit://skill/<name>` href. */
 .viewer-md a[data-openit-skill]:has(> strong:only-child),
-.viewer-md a[data-openit-cta="create-samples"]:has(> strong:only-child) {
+.viewer-md a[data-openit-cta='create-samples']:has(> strong:only-child) {
   background: transparent;
   color: var(--accent);
   border: 1px solid var(--accent);
   box-shadow: none;
 }
 .viewer-md a[data-openit-skill]:has(> strong:only-child):hover,
-.viewer-md a[data-openit-cta="create-samples"]:has(> strong:only-child):hover {
+.viewer-md a[data-openit-cta='create-samples']:has(> strong:only-child):hover {
   background: var(--accent-soft);
   box-shadow: none;
 }
 .viewer-md a[data-openit-skill]:has(> strong:only-child):active,
-.viewer-md a[data-openit-cta="create-samples"]:has(> strong:only-child):active {
+.viewer-md a[data-openit-cta='create-samples']:has(> strong:only-child):active {
   background: var(--accent-soft);
   box-shadow: none;
 }
