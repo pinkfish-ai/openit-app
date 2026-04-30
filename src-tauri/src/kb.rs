@@ -1055,6 +1055,15 @@ pub fn entity_rename_file(
     if !from_path.exists() {
         return Ok(());
     }
+    // Refuse to overwrite an existing destination. `fs::rename` on
+    // Unix/macOS atomically replaces the target without error, which
+    // is silent data loss if two source files would land on the same
+    // destination name (e.g. distinct local files that sanitize to the
+    // same server-canonical filename during PIN-5847 rename-after-push).
+    // Make the caller handle the collision explicitly.
+    if to_path.exists() {
+        return Err(format!("rename target already exists: {}/{}", subdir, to));
+    }
     let repo_canon = fs::canonicalize(&repo).map_err(|e| e.to_string())?;
     if let Ok(parent_canon) = fs::canonicalize(&dir) {
         if !parent_canon.starts_with(&repo_canon) {

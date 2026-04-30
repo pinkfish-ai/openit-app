@@ -249,15 +249,21 @@ async function pushAllToFilestoreImpl(args: {
             `  ↳ server sanitized name: ${f.filename} → ${cloudName} (renamed local)`,
           );
         } catch (e) {
-          // If the rename fails (e.g. a file with the cloud name
-          // already exists on disk), skip the manifest update for
-          // this row — better to surface as an upload that didn't
-          // commit than to lie about state. Pull will pick the
-          // sanitized name up on the next poll.
+          // If the rename fails (e.g. cloud-name collision with an
+          // existing local file — kb.rs::entity_rename_file refuses
+          // to overwrite to avoid silent data loss), skip the manifest
+          // update for this row. Pull will surface the sanitized name
+          // on the next poll for the user to resolve manually.
           onLine?.(`✗ ${dir}/${f.filename}: rename to ${cloudName} failed: ${String(e)}`);
           failed += 1;
           continue;
         }
+        // Drop the stale manifest entry under the old (local) name.
+        // Without this, the next pull sees a tracked entry with no
+        // remote counterpart and fires `onServerDelete` for the
+        // pre-rename key — self-heals but adds churn and noise, and
+        // means the manifest briefly disagrees with disk.
+        delete persisted.files[f.filename];
       }
       persisted.files[cloudName] = {
         remote_version: new Date().toISOString(),
