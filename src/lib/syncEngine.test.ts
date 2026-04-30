@@ -258,12 +258,14 @@ describe("syncEngine.pullEntity", () => {
     expect(paths).toEqual(["knowledge-bases/default/intro.md"]);
   });
 
-  it("preserves cloud_filename across fast-forward pulls (PIN-5827)", async () => {
-    // PIN-5827: filestore push leaves the local file at its original
-    // name and stashes the server's UUID-prefixed name as
-    // `cloud_filename` in the manifest. A fast-forward pull (server
-    // updates content) MUST preserve that mapping; otherwise the next
-    // listRemote sees the cloud row as unmapped and lands a duplicate.
+  it("drops legacy cloud_filename across fast-forward pulls (PIN-5847 supersedes 5827)", async () => {
+    // Pre-PIN-5847 the engine carried `cloud_filename` through every
+    // manifest update (PIN-5827) so the filestore adapter could map a
+    // UUID-prefixed remote name back to the clean local name. PIN-5847
+    // moves filestore push to `/upload-request`, which returns the
+    // verbatim filename — the indirection is dead. Legacy on-disk
+    // manifests with `cloud_filename` still load (the field is left on
+    // the type), but we no longer carry it through subsequent writes.
     const TRACKED_VERSION = "2026-04-30T10:00:00Z";
     const REMOTE_NEW_VERSION = "2026-04-30T11:00:00Z";
 
@@ -301,14 +303,13 @@ describe("syncEngine.pullEntity", () => {
 
     const entry = h.savedManifest?.files["chart.json"];
     expect(entry?.remote_version).toBe(REMOTE_NEW_VERSION);
-    expect(entry?.cloud_filename).toBe("uuid-abc-chart.json");
+    expect(entry?.cloud_filename).toBeUndefined();
   });
 
-  it("preserves cloud_filename across re-fetch (tracked but missing from disk)", async () => {
-    // Same invariant as the fast-forward test, but for the re-fetch
-    // path: manifest claims the file is synced but the local copy
-    // disappeared. We re-download → the cloud↔local mapping must
-    // survive the re-fetch.
+  it("drops legacy cloud_filename across re-fetch (tracked but missing from disk)", async () => {
+    // Re-fetch path counterpart to the fast-forward test above. PIN-5847
+    // makes the field obsolete; legacy values fall away the next time
+    // the engine writes the manifest entry.
     const h = buildHarness({
       prefix: "fs",
       initialManifest: {
@@ -334,9 +335,7 @@ describe("syncEngine.pullEntity", () => {
 
     await pullEntity(h.adapter, "/repo");
 
-    expect(h.savedManifest?.files["report.pdf"].cloud_filename).toBe(
-      "uuid-xyz-report.pdf",
-    );
+    expect(h.savedManifest?.files["report.pdf"].cloud_filename).toBeUndefined();
   });
 
   it("bootstrap-adoption: file on disk, not in manifest → seed manifest, do NOT rewrite or commit", async () => {

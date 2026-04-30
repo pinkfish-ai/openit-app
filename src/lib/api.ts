@@ -436,11 +436,12 @@ export type KbFileState = {
   /// signal "user has reconciled against this remote version" without
   /// re-fetching.
   conflict_remote_version?: string;
-  /// Server's canonical filename when it differs from the manifest key
-  /// (the local filename). Filestore uploads return UUID-prefixed names;
-  /// keeping the local file at the user's original name and stashing the
-  /// cloud-side name here lets reconciliation match without renaming.
-  /// (PIN-5827.)
+  /// Legacy (PIN-5827) — pre-PIN-5847 the multipart `/upload` endpoint
+  /// returned UUID-prefixed filenames; this field bridged remote→local
+  /// naming. PIN-5847 switched to `/upload-request` which returns the
+  /// verbatim filename, so this field is no longer set or read. Kept on
+  /// the type only so legacy on-disk manifests deserialize without
+  /// errors — drops out the next time a manifest is rewritten.
   cloud_filename?: string;
 };
 export type KbStatePersisted = {
@@ -551,6 +552,7 @@ export async function kbUploadFile(args: {
   });
 }
 
+
 // ---------------------------------------------------------------------------
 // Filestore local commands (mirrors kb_* but for filestore/ directory)
 // ---------------------------------------------------------------------------
@@ -638,6 +640,32 @@ export async function fsStoreUploadFile(args: {
   subdir?: string;
 }): Promise<KbUploadResult> {
   return invoke("fs_store_upload_file", {
+    repo: args.repo,
+    filename: args.filename,
+    collectionId: args.collectionId,
+    skillsBaseUrl: args.skillsBaseUrl,
+    accessToken: args.accessToken,
+    subdir: args.subdir ?? null,
+  });
+}
+
+/// PIN-5847: filestore push uses the signed-URL flow
+/// (`/filestorage/items/upload-request` + signed GCS PUT). Server
+/// sanitizes filename via `formatFileName` and dedupes the Firestore
+/// row by `filename + collectionId`, so same-name re-pushes overwrite
+/// in place — no UUID prefix, no duplicate accumulation. KB push
+/// stays on multipart `kbUploadFile` because the vector-store
+/// indexing pipeline only runs there; a KB twin will follow once
+/// indexing is decoupled server-side.
+export async function fsStoreUploadFileSigned(args: {
+  repo: string;
+  filename: string;
+  collectionId: string;
+  skillsBaseUrl: string;
+  accessToken: string;
+  subdir?: string;
+}): Promise<KbUploadResult> {
+  return invoke("fs_store_upload_via_signed_url", {
     repo: args.repo,
     filename: args.filename,
     collectionId: args.collectionId,

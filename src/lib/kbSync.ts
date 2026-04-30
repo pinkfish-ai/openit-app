@@ -220,6 +220,14 @@ async function pushAllToKbImpl(args: {
   for (const f of toPush) {
     try {
       onLine?.(`▸ uploading ${dir}/${f.filename}`);
+      // KB stays on the multipart `/upload` endpoint because the
+      // server's vector-store indexing pipeline runs in that path —
+      // signed-URL `/upload-request` stores the file in GCS but
+      // doesn't trigger indexing, so KB content wouldn't be
+      // searchable. Tracked separately: the multipart endpoint
+      // currently rewrites filenames with a UUID prefix and creates
+      // a new doc on each call, which lets KB push accumulate
+      // duplicates. Server-side fix is out of scope for PIN-5847.
       await kbUploadFile({
         repo,
         filename: f.filename,

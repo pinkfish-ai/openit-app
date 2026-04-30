@@ -14,8 +14,9 @@
 
 import {
   entityListLocal,
+  entityRenameFile,
   fsStoreInit,
-  fsStoreUploadFile,
+  fsStoreUploadFileSigned,
   kbListRemote,
 } from "./api";
 import { type DataCollection } from "./skillsApi";
@@ -30,6 +31,7 @@ import {
 } from "./nestedManifest";
 import {
   classifyAsShadow,
+  commitTouched,
   createCollectionEntitySync,
   type CollectionSyncStatus,
 } from "./syncEngine";
@@ -164,8 +166,14 @@ export function resolveProjectFilestores(
 export const pushAllToFilestore = handle.pushOne;
 
 // ---------------------------------------------------------------------------
-// Push implementation — engine-specific upload + sanitised-filename
-// reconciliation + post-push remote_version refresh.
+// Push implementation — signed-URL upload (PIN-5847). The pre-PIN-5847
+// multipart `/upload` endpoint added a UUID prefix on every call and
+// created a fresh Firestore doc each time, so this file used to carry a
+// `cloud_filename` indirection (PIN-5827) plus a post-push
+// `kbListRemote` reconcile to bridge local→remote name mismatch.
+// `/upload-request` returns the verbatim sanitized filename and dedupes
+// the row by filename, so all of that machinery is gone — manifest keys
+// by exact filename, both directions.
 // ---------------------------------------------------------------------------
 
 async function pushAllToFilestoreImpl(args: {
@@ -208,7 +216,7 @@ async function pushAllToFilestoreImpl(args: {
   for (const f of toPush) {
     try {
       onLine?.(`▸ uploading ${dir}/${f.filename}`);
-      const result = await fsStoreUploadFile({
+      const result = await fsStoreUploadFileSigned({
         repo,
         filename: f.filename,
         collectionId: collection.id,
@@ -216,27 +224,52 @@ async function pushAllToFilestoreImpl(args: {
         accessToken: token.accessToken,
         subdir: dir,
       });
-      // The skills API may rewrite filenames on upload — most commonly
-      // by prefixing a UUID (e.g. `chart.json` → `<uuid>-chart.json`).
-      // Pre-PIN-5827 we renamed the local file to match; that doubled
-      // the change set on every first push and broke any external
-      // reference to the original path. Now we keep the local file at
-      // the user's name and stash the server's canonical name as
-      // `cloud_filename` in the manifest. listRemote uses that bridge
-      // to recognize the round-trip without a duplicate download.
-      const cloudFilename =
-        result?.filename &&
+      // Server's `formatFileName` may sanitize the filename (spaces →
+      // hyphens, special chars dropped). Most local filenames pass
+      // through unchanged, but if the server returned something
+      // different, rename local to match — that's the only way to
+      // preserve the post-PIN-5847 invariant that
+      // `manifestKey === local filename === remote filename`. Without
+      // this, `pushedNames.has(r.filename)` in the reconcile below
+      // misses (we'd have added the local name, server reports the
+      // sanitized one), the manifest never gets the server's
+      // `updatedAt`, and the sanitized-name file looks brand-new on
+      // the next pull → duplicate.
+      const cloudName =
+        result.filename &&
         result.filename !== f.filename &&
         !result.filename.includes("/") &&
         !result.filename.includes("\\")
           ? result.filename
-          : undefined;
-      persisted.files[f.filename] = {
+          : f.filename;
+      if (cloudName !== f.filename) {
+        try {
+          await entityRenameFile(repo, dir, f.filename, cloudName);
+          onLine?.(
+            `  ↳ server sanitized name: ${f.filename} → ${cloudName} (renamed local)`,
+          );
+        } catch (e) {
+          // If the rename fails (e.g. cloud-name collision with an
+          // existing local file — kb.rs::entity_rename_file refuses
+          // to overwrite to avoid silent data loss), skip the manifest
+          // update for this row. Pull will surface the sanitized name
+          // on the next poll for the user to resolve manually.
+          onLine?.(`✗ ${dir}/${f.filename}: rename to ${cloudName} failed: ${String(e)}`);
+          failed += 1;
+          continue;
+        }
+        // Drop the stale manifest entry under the old (local) name.
+        // Without this, the next pull sees a tracked entry with no
+        // remote counterpart and fires `onServerDelete` for the
+        // pre-rename key — self-heals but adds churn and noise, and
+        // means the manifest briefly disagrees with disk.
+        delete persisted.files[f.filename];
+      }
+      persisted.files[cloudName] = {
         remote_version: new Date().toISOString(),
         pulled_at_mtime_ms: f.mtime_ms ?? Date.now(),
-        ...(cloudFilename ? { cloud_filename: cloudFilename } : {}),
       };
-      pushedNames.add(cloudFilename ?? f.filename);
+      pushedNames.add(cloudName);
       pushed += 1;
     } catch (e) {
       failed += 1;
@@ -244,11 +277,15 @@ async function pushAllToFilestoreImpl(args: {
     }
   }
 
-  // Reconcile remote_version after push: refresh from server's authoritative
-  // updatedAt so the next pull doesn't false-flag a conflict.
-  // The manifest is keyed by *local* filename now (PIN-5827), so look up
-  // the tracked entry via cloud_filename when the server's name differs
-  // from the local one.
+  // Reconcile remote_version against the server's authoritative
+  // `updatedAt` after push. Without this, manifest holds the client
+  // clock (`new Date().toISOString()` above), the engine compares
+  // `r.updatedAt !== tracked.remote_version` on the next pull, the
+  // strings never match, and every poll false-flags a fast-forward
+  // (or — within a 60s window of a local edit — a phantom conflict
+  // with a shadow file). PIN-5847 collapsed the cloud_filename
+  // bridge but kept the version-sync need; this is the same reconcile
+  // KB push has carried since Phase 2.
   if (pushedNames.size > 0) {
     try {
       const remote = await kbListRemote({
@@ -256,19 +293,14 @@ async function pushAllToFilestoreImpl(args: {
         skillsBaseUrl: urls.skillsBaseUrl,
         accessToken: token.accessToken,
       });
-      const cloudToLocal = new Map<string, string>();
-      for (const [localName, state] of Object.entries(persisted.files)) {
-        cloudToLocal.set(state.cloud_filename ?? localName, localName);
-      }
       for (const r of remote) {
         if (pushedNames.has(r.filename) && r.updated_at) {
-          const localName = cloudToLocal.get(r.filename);
-          const tracked = localName ? persisted.files[localName] : undefined;
+          const tracked = persisted.files[r.filename];
           if (tracked) tracked.remote_version = r.updated_at;
         }
       }
     } catch (e) {
-      console.warn("[filestore] post-push remote-version sync failed:", e);
+      console.warn(`[filestore:${collection.id}] post-push remote-version sync failed:`, e);
     }
   }
 
@@ -279,5 +311,16 @@ async function pushAllToFilestoreImpl(args: {
     collection.name,
     persisted,
   );
+
+  // Commit just-pushed files so they don't show as untracked on the next
+  // Sync's `git status` check, which would mark them dirty and re-push
+  // (creating duplicates on every Sync click pre-PIN-5847). Mirrors the
+  // post-push commit kbSync.ts has had since Phase 2.
+  if (pushedNames.size > 0) {
+    const ts = new Date().toISOString();
+    const paths = Array.from(pushedNames).map((n) => `${dir}/${n}`);
+    await commitTouched(repo, paths, `sync: deployed @ ${ts}`);
+  }
+
   return { pushed, failed };
 }
