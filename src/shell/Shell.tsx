@@ -10,8 +10,6 @@ import {
   gitStatusShort,
   stateLoad,
   type AppPersistedState,
-  type SlackConfig,
-  type SlackStatus,
 } from "../lib/api";
 import { pushAllEntities } from "../lib/pushAll";
 import { clearConflictsForPrefix } from "../lib/syncEngine";
@@ -35,11 +33,16 @@ import { startSkillMirrorDriver, stopSkillMirrorDriver } from "../lib/skillMirro
 import { ChatPane } from "./ChatPane";
 import { ChatShellHeader } from "./ChatShellHeader";
 import { PaneDragHandle } from "./PaneDragHandle";
-import { StatusBar } from "./StatusBar";
+// StatusBar is no longer rendered at the bottom of the shell. The
+// status chips (project, cloud, intake, slack, changes) now live in
+// the TitleRail at the top — see src/App.tsx. The bottom of the
+// window is pure cream gutter, fixing the "panes look chipped off"
+// feedback. The StatusChips export is consumed there.
 import { Workbench } from "./Workbench";
 import { ConflictBanner } from "./ConflictBanner";
 import { FileExplorer } from "./FileExplorer";
-import { EscalatedTicketBanner } from "./EscalatedTicketBanner";
+// EscalatedTicketBanner is gone — the escalation indicator now lives
+// on the left pane's TODAY card (see Workbench.tsx).
 import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
@@ -137,16 +140,10 @@ export function Shell({
   bubbles,
   cloudConnected,
   intakeUrl,
-  tunnelUrl,
   dock,
   slackOrgId,
   stagedSlackBotToken,
   onStagedSlackBotTokenChange,
-  slackConfig,
-  slackStatus,
-  orgName,
-  onOpenPalette,
-  onConnectSlack,
   registerManualPull,
   registerSwitchToSync,
   registerShowCloudCta,
@@ -162,10 +159,6 @@ export function Shell({
    *  into `{{INTAKE_URL}}` placeholders in markdown content (e.g. the
    *  welcome doc). */
   intakeUrl: string | null;
-  /** Public HTTPS URL pointing at the local intake server, when an
-   *  outbound tunnel is up. Null when the tunnel hasn't connected
-   *  (yet) or has disconnected (e.g. laptop sleep). */
-  tunnelUrl: string | null;
   /** Which secret-paste affordance the chat-anchored
    *  SkillActionDock should surface, if any. Driven by the
    *  `.openit/skill-state/connect-slack.json` side channel (read in
@@ -183,17 +176,6 @@ export function Shell({
   stagedSlackBotToken: string | null;
   /** Setter for the staged bot token. */
   onStagedSlackBotTokenChange: (t: string | null) => void;
-  /** Slack config + status — surfaced in the bottom status bar. */
-  slackConfig: SlackConfig | null;
-  slackStatus: SlackStatus | null;
-  /** Cloud org name — surfaced in the bottom status bar. */
-  orgName: string | null;
-  /** Open the cmd-K command palette. */
-  onOpenPalette: () => void;
-  /** Kick off the /connect-slack skill-canvas flow. App owns the
-   *  scaffold-and-inject logic so the cmd-K palette and the bottom-
-   *  bar Slack pill share one entry point. */
-  onConnectSlack: () => void;
   /** Register the manual-pull handler so the command palette can call it. */
   registerManualPull: (fn: () => void) => void;
   /** Register the switch-to-sync-tab handler so the command palette can call it. */
@@ -845,14 +827,8 @@ export function Shell({
           }
         }}
       />
-      <EscalatedTicketBanner
-        repo={repo}
-        fsTick={fsTick}
-        onOpenPath={async (path) => {
-          const resolved = await resolvePathToSource(path, repo);
-          setSource(resolved);
-        }}
-      />
+      {/* The escalated-tickets indicator now lives on the TODAY card
+          in the left pane (Workbench), not as a separate banner. */}
       {(() => {
         const paneClass = (id: PaneId) =>
           `${id === "left" ? "left-pane" : id === "center" ? "center-pane" : "right-pane"} ${
@@ -1036,37 +1012,32 @@ export function Shell({
         // PANE_DEFAULT covers the common case; runtime resizes during
         // a session still work via the library's own state.
         return (
-          <PanelGroup direction="horizontal">
-            {paneOrder.map((id, idx) => (
-              <Fragment key={id}>
-                <Panel
-                  id={id}
-                  order={idx}
-                  defaultSize={PANE_DEFAULT[id]}
-                  minSize={PANE_MIN[id]}
-                >
-                  {paneContent[id]}
-                </Panel>
-                {idx < paneOrder.length - 1 && (
-                  <PanelResizeHandle className="resize-handle" />
-                )}
-              </Fragment>
-            ))}
-          </PanelGroup>
+          // Wrapper enforces the panes-row geometry: takes all
+          // available vertical space inside .shell, leaving room for
+          // any banners above and the StatusBar below. Without
+          // flex:1 the PanelGroup collapses in some cases when the
+          // shell uses padded gutters.
+          <div className="shell-panes-row">
+            <PanelGroup direction="horizontal">
+              {paneOrder.map((id, idx) => (
+                <Fragment key={id}>
+                  <Panel
+                    id={id}
+                    order={idx}
+                    defaultSize={PANE_DEFAULT[id]}
+                    minSize={PANE_MIN[id]}
+                  >
+                    {paneContent[id]}
+                  </Panel>
+                  {idx < paneOrder.length - 1 && (
+                    <PanelResizeHandle className="resize-handle" />
+                  )}
+                </Fragment>
+              ))}
+            </PanelGroup>
+          </div>
         );
       })()}
-      <StatusBar
-        repo={repo}
-        cloudConnected={cloudConnected}
-        orgName={orgName}
-        intakeUrl={intakeUrl}
-        tunnelUrl={tunnelUrl}
-        slackConfig={slackConfig}
-        slackStatus={slackStatus}
-        changeCount={changeCount}
-        onOpenPalette={onOpenPalette}
-        onConnectSlack={onConnectSlack}
-      />
     </div>
   );
 }

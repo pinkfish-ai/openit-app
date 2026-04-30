@@ -1,3 +1,8 @@
+/* Design system v5 tokens — see src/styles/tokens.css.
+   Keep this import at the top so the new color, space, and radius
+   tokens are available to every legacy class below as we migrate. */
+@import './styles/tokens.css';
+
 :root {
   /* ── Surfaces (warm cream, layered) ─────────────────────── */
   --bg: #fbf7ec;
@@ -29,16 +34,22 @@
   --clay-soft: #f3d8d2;
 
   /* ── Typography ─────────────────────────────────────────── */
-  --font-display: "Inter", "Söhne", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-serif: "Source Serif 4 Variable", "Source Serif 4", "Charter", "Iowan Old Style", Georgia, serif;
-  --font-mono: "JetBrains Mono", "Berkeley Mono", "SF Mono", Menlo, monospace;
+  --font-display:
+    'Inter', 'Söhne', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-serif:
+    'Source Serif 4 Variable', 'Source Serif 4', 'Charter', 'Iowan Old Style',
+    Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'Berkeley Mono', 'SF Mono', Menlo, monospace;
 
   /* ── Shadows (warm-tinted, not gray) ────────────────────── */
-  --shadow-sm:   0 1px 0 rgba(60, 40, 20, 0.05);
-  --shadow-card: 0 1px 0 rgba(60, 40, 20, 0.05), 0 6px 18px -10px rgba(60, 40, 20, 0.18);
-  --shadow-lift: 0 1px 0 rgba(60, 40, 20, 0.06), 0 12px 32px -12px rgba(60, 40, 20, 0.24);
-  --shadow-pop:  0 16px 48px -14px rgba(40, 28, 14, 0.40);
+  --shadow-sm: 0 1px 0 rgba(60, 40, 20, 0.05);
+  --shadow-card:
+    0 1px 0 rgba(60, 40, 20, 0.05), 0 6px 18px -10px rgba(60, 40, 20, 0.18);
+  --shadow-lift:
+    0 1px 0 rgba(60, 40, 20, 0.06), 0 12px 32px -12px rgba(60, 40, 20, 0.24);
+  --shadow-pop: 0 16px 48px -14px rgba(40, 28, 14, 0.4);
 
   /* ── Motion ─────────────────────────────────────────────── */
   --ease: cubic-bezier(0.32, 0.72, 0.32, 1);
@@ -63,7 +74,7 @@ body,
   color: var(--text);
   font-family: var(--font-body);
   font-size: 13px;
-  font-feature-settings: "ss01", "cv11";
+  font-feature-settings: 'ss01', 'cv11';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -71,77 +82,36 @@ body,
 /* Decorative dot grid that sits behind the bg, very faintly. Adds
    tactile texture without being noisy. */
 body::before {
-  content: "";
+  content: '';
   position: fixed;
   inset: 0;
-  background-image: radial-gradient(rgba(120, 96, 60, 0.07) 1px, transparent 1px);
+  background-image: radial-gradient(
+    rgba(120, 96, 60, 0.07) 1px,
+    transparent 1px
+  );
   background-size: 22px 22px;
   pointer-events: none;
   z-index: 0;
 }
-#root { position: relative; z-index: 1; }
+#root {
+  position: relative;
+  z-index: 1;
+}
 
 .app {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  /* Prevent the document from scrolling when individual panes have
+     intrinsically tall content. Each pane is responsible for its
+     own internal scroll. */
+  overflow: hidden;
 }
 
-.app-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 16px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-muted);
-  position: relative;
-  z-index: 5;
-}
-
-.app-header-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Wordmark — typography-only lockup. No glyph, no badge — just the
-   product name and a serif-italic tagline separated by a hairline dot. */
-.wordmark {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 0;
-}
-
-.app-title {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: -0.015em;
-  color: var(--text);
-  line-height: 1;
-}
-
-.app-title::after { content: none; }
-
-.app-title-sep {
-  color: var(--text-faint);
-  font-size: 12px;
-  line-height: 1;
-}
-
-.app-tagline {
-  color: var(--text-faint);
-  font-size: 12px;
-  font-style: italic;
-  letter-spacing: 0.01em;
-  font-family: var(--font-serif);
-  line-height: 1;
-}
+/* .app-header / .app-header-actions / .wordmark / .app-title /
+   .app-title-sep / .app-tagline — migrated to src/ui/Wordmark and
+   the v5 shell layout in src/App.tsx + src/shell/Shell.tsx.
+   Removed in the v5-foundation PR. */
 
 /* Localhost ticket-intake URL pill. Click opens the form in the
    user's default browser. Temporary home in the header until Phase
@@ -158,10 +128,11 @@ body::before {
   font-size: 11px;
   font-family: var(--font-body);
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
   box-shadow: var(--shadow-sm);
 }
 
@@ -228,37 +199,124 @@ body::before {
   text-overflow: ellipsis;
 }
 
-.app-pane {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 14px 14px 0 14px;
-  background: var(--bg);
-}
+/* .app-pane removed — the v5 shell uses equal cream gutters on
+   all four sides via tokens (--layout-gutter, --layout-pane-gap)
+   applied inline by the Shell. */
 
-/* Shell layout — three floating cards on the cream canvas. */
+/* Shell layout — v5: equal cream gutter on all four sides; the
+   bottom status rail is gone (chips moved into the TitleRail). The
+   three pane cards float on cream with a 10px gap between them.
+   flex:1 + min-height:0 so the panes' internal scroll containers
+   handle overflow instead of the whole document scrolling. */
 .shell {
-  height: 100%;
+  flex: 1 1 0;
+  min-height: 0;
   background: transparent;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--layout-pane-gap);
+  padding: var(--layout-gutter-top) var(--layout-gutter)
+    var(--layout-gutter-bottom);
+  /* No overflow:hidden here — would clip each pane's drop-shadow at
+     this row's bottom edge, hiding the visible curve we worked to
+     get. The .app parent has overflow:hidden so the page can't
+     scroll; min-height:0 + child internal scrollers handle the
+     rest. */
+}
+.shell-panes-row {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  /* Same: no overflow here. Pane shadows extend below into the
+     shell's padding-bottom area, where the .app parent then clips
+     anything that would escape the window. */
 }
 
-/* Float each pane as a card on the cream canvas. */
+/* Float each pane as a card on the cream canvas. v5: uses
+   --r-pane (18px) — large enough that the rounded corners are
+   unambiguously visible against the cream, including the bottom. */
 .left-pane,
 .right-pane,
 .viewer,
 .sc-panel,
 .explorer {
-  border-radius: 14px;
+  border-radius: var(--r-pane);
   overflow: hidden;
+  /* Defensive clip-path so rounded corners are guaranteed by mask
+     even if some internal element somehow paints past the
+     border-radius (xterm canvas, react-resizable-panels wrapper,
+     etc). inset(0 round X) is identical to border-radius X for
+     visual purposes but enforces clipping at a higher level. */
+  clip-path: inset(0 round var(--r-pane));
+  /* Critical: include the border in the element's width/height so
+     it doesn't poke outside the Panel wrapper. Without this, the
+     leftmost and rightmost panes' OUTER side borders extend past
+     the PanelGroup's bounds and get clipped by its overflow:hidden,
+     producing visibly chopped sides on the outer panes only. */
+  box-sizing: border-box;
 }
+/* ════════════════════════════════════════════════════════════
+   ▼▼▼ PANE BORDER + SHADOW — TWEAK ME ▼▼▼            (line 241)
+   Search for "TWEAK PANE BORDER" to find this block fast.
+   Light panes (.left-pane + .viewer) and the dark .right-pane
+   each have their own border + shadow rule. Change values here.
+   ════════════════════════════════════════════════════════════ */
+
+/* TWEAK PANE BORDER — light panes (left + viewer). */
 .left-pane,
-.right-pane,
 .viewer {
-  box-shadow: var(--shadow-card);
-  border: 1px solid var(--border);
+  /* DROP SHADOW — token defined in src/styles/tokens.css line 161
+     as --shadow-pane. Bigger y-offset = more lifted feel. */
+  box-shadow: var(--shadow-pane);
+
+  /* BORDER — change THIS line to tune visibility of the rounded
+     edge against the cream gutter. Two knobs:
+       • Width:   1px       — subtle
+                  1.5px     — current default
+                  2px       — heavy (bottom curve becomes very
+                                     unmistakable)
+       • Color:   var(--color-border)        #e7decb  subtlest
+                  var(--color-border-strong) #cfc3a3  beige
+                  var(--color-text-faint)    #978d76  ← current
+                  var(--color-text-muted)    #67604f  deep brown
+       (Or any custom hex like #8a7a5e if you want a specific tone.) */
+  border: 1px solid var(--color-text-faint);
 }
+
+/* TWEAK PANE BORDER — dark Claude theatre (right pane).
+   Darker drop shadow to make the rounded bottom corner pop
+   against cream. Border uses --color-border-strong (warm beige)
+   to match the light panes — same width, same tone, so all
+   three panes read as a unified set ringed by the same beige.
+   Against the dark interior the beige line clearly traces the
+   rounded edge; against cream outside it does the same. */
+.right-pane {
+  box-shadow: var(--shadow-pane-dark);
+  border: 1px solid var(--color-border-strong);
+}
+
+/* ════════════════════════════════════════════════════════════
+   ▲▲▲ END PANE BORDER + SHADOW ▲▲▲
+   ════════════════════════════════════════════════════════════ */
+
+/* react-resizable-panels wraps each <Panel> in a div with
+   data-panel attributes and applies overflow:hidden by default to
+   support its resize math. That wrapper sits between
+   .shell-panes-row and our .left-pane/.right-pane/.viewer — its
+   overflow:hidden was clipping each pane's drop-shadow at the
+   wrapper's bottom edge, which is why the rounded bottom corners
+   read as "chipped" no matter how we styled the pane itself.
+   Override here. The library's resize behavior depends on the
+   ResizeHandle elements, not on the Panel wrapper's overflow. */
+[data-panel] {
+  overflow: visible !important;
+}
+
+/* (debug outlines removed — diagnostic confirmed the structure was
+   correct; the perceived "bottom bar" was the panes' own
+   low-contrast cream background blending into the gutter cream,
+   not a phantom element. Fix: stronger border so the rounded edge
+   reads regardless of fill contrast.) */
 .viewer {
   background: var(--surface);
   position: relative;
@@ -285,8 +343,14 @@ body::before {
 }
 
 @keyframes banner-slide-in {
-  from { transform: translateY(-4px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from {
+    transform: translateY(-4px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 .conflict-banner-icon {
@@ -347,7 +411,11 @@ body::before {
   align-items: center;
   gap: 10px;
   padding: 9px 16px;
-  background: linear-gradient(90deg, var(--accent-faint) 0%, var(--surface-soft) 100%);
+  background: linear-gradient(
+    90deg,
+    var(--accent-faint) 0%,
+    var(--surface-soft) 100%
+  );
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
   font-size: 12px;
@@ -366,7 +434,7 @@ body::before {
 
 /* Soft glow that sweeps across while the agent is active. */
 .agent-activity-banner::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   background: linear-gradient(
@@ -381,12 +449,20 @@ body::before {
 }
 
 @keyframes agent-shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -100% 0; }
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }
 
 .agent-activity-banner:hover {
-  background: linear-gradient(90deg, var(--accent-soft) 0%, var(--surface-hover) 100%);
+  background: linear-gradient(
+    90deg,
+    var(--accent-soft) 0%,
+    var(--surface-hover) 100%
+  );
   color: var(--text);
 }
 
@@ -398,8 +474,12 @@ body::before {
 }
 
 @keyframes agent-activity-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .agent-activity-banner-text {
@@ -422,127 +502,10 @@ body::before {
 /* Escalated tickets — floating notification, not a full-width stripe.
    Slides in top-right of the viewport so it reads as a notification
    the admin opts into, not a wall they have to walk past. */
-.escalated-ticket-banner {
-  position: fixed;
-  top: 70px;
-  right: 22px;
-  z-index: 50;
-  width: min(420px, calc(100vw - 44px));
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 16px;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--sage);
-  border-radius: 12px;
-  font-size: 12px;
-  font-family: var(--font-body);
-  box-shadow: var(--shadow-lift);
-  animation: toast-slide-in var(--t-slow) var(--ease);
-}
-
-@keyframes toast-slide-in {
-  from { transform: translateX(20px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
-}
-
-.escalated-ticket-banner-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  font-size: 13px;
-  background: var(--sage-soft);
-  color: #2c4d27;
-  border-radius: 8px;
-  margin-top: 1px;
-}
-
-.escalated-ticket-banner-body {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.escalated-ticket-banner-eyebrow {
-  font-family: var(--font-display);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.10em;
-  text-transform: uppercase;
-  color: var(--sage);
-}
-
-.escalated-ticket-banner-text {
-  font-family: var(--font-body);
-  font-size: 13px;
-  color: var(--text);
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.escalated-ticket-banner-text strong {
-  font-weight: 600;
-  color: var(--text);
-}
-
-.escalated-ticket-banner-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.escalated-ticket-banner-action,
-.escalated-ticket-banner-dismiss {
-  flex: 0 0 auto;
-  padding: 4px 12px;
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  font-family: var(--font-body);
-  font-size: 11px;
-  font-weight: 500;
-  border: 1px solid transparent;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease);
-}
-
-.escalated-ticket-banner-action {
-  background: var(--sage);
-  color: #fff8ec;
-  border-color: var(--sage);
-  font-weight: 600;
-}
-
-.escalated-ticket-banner-action:hover:not(:disabled) {
-  background: #5a7a55;
-  border-color: #5a7a55;
-}
-
-.escalated-ticket-banner-action:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.escalated-ticket-banner-dismiss {
-  background: transparent;
-  border-color: var(--border-strong);
-  color: var(--text-muted);
-}
-
-.escalated-ticket-banner-dismiss:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
+/* .escalated-ticket-banner* — migrated to <Banner variant="success">
+   in src/ui/Banner.tsx; the EscalatedTicketBanner component now
+   renders inline INSIDE the chat pane (not position: fixed) so it
+   clips to the pane's rounded corner. */
 
 /* Cards float with gaps; handle is a transparent gutter. A subtle
    accent dot appears on hover to telegraph "draggable here". */
@@ -557,7 +520,7 @@ body::before {
   flex: 0 0 auto;
 }
 .resize-handle::after {
-  content: "";
+  content: '';
   width: 3px;
   height: 28px;
   border-radius: 999px;
@@ -577,29 +540,40 @@ body::before {
   background: var(--bg-canvas);
 }
 
+/* v5: every pane top rail is exactly --h-rail (44px) with one shared
+   bottom-border baseline so the three panes' headers align. The
+   .left-tabs / .viewer-header / .chat-shell-header rules below all
+   honor this height. */
 .left-tabs {
   display: flex;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  align-items: stretch;
+  height: var(--h-rail);
+  border-bottom: 1px solid var(--color-border-faint);
+  background: var(--color-surface);
   flex-shrink: 0;
 }
 
 .left-tab {
   flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
   color: var(--text-muted);
-  padding: 9px 6px;
+  padding: 0 6px;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
   font-family: var(--font-display);
-  transition: color var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease);
+  transition:
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
 }
 
 .left-tab:hover {
@@ -638,7 +612,7 @@ body::before {
   background: transparent;
   border: none;
   color: var(--text-muted);
-  padding: 6px 10px;
+  padding: 0 var(--space-3);
   cursor: pointer;
   transition: color 0.1s;
 }
@@ -666,8 +640,12 @@ body::before {
 }
 
 @keyframes tab-pull-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .left-tab-panel {
@@ -786,7 +764,9 @@ body::before {
   /* Greyed out when system files are hidden; full accent when shown. */
   opacity: 0.4;
   filter: grayscale(100%);
-  transition: opacity 0.1s, filter 0.1s;
+  transition:
+    opacity 0.1s,
+    filter 0.1s;
 }
 
 .explorer-system-toggle.active .explorer-system-icon {
@@ -1021,18 +1001,20 @@ body::before {
 }
 
 .viewer-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: var(--space-3);
+  height: var(--h-rail);
+  padding: 0 var(--space-4);
   font-size: 13px;
   /* Display (Inter) — was mono. Page titles aren't terminal output;
      they're UI titles. Aligns with the left-pane tabs and the
      workbench, so the whole shell reads as one app. */
   font-family: var(--font-display);
   color: var(--text);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  border-bottom: 1px solid var(--color-border-faint);
+  background: var(--color-surface);
 }
 
 .viewer-title {
@@ -1075,9 +1057,10 @@ body::before {
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 
 .viewer-tab:hover {
@@ -1132,10 +1115,11 @@ body::before {
   text-align: left;
   font: inherit;
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    border-color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 
 .thread-card:hover {
@@ -1274,7 +1258,9 @@ body::before {
   font-weight: 400;
   font-family: -apple-system, sans-serif;
   cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease;
 }
 
 .viewer-add-btn:hover {
@@ -1705,7 +1691,9 @@ body::before {
   border-radius: 14px;
   padding: 24px 18px;
   background: var(--surface-soft, rgba(0, 0, 0, 0.015));
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 
 .viewer-summary-dropzone.viewer-summary-drag {
@@ -1747,29 +1735,10 @@ body::before {
   color: var(--text);
 }
 
-/* Ephemeral confirmation toast. Floats top-center of the viewer; the
-   useToast hook auto-dismisses after 2.5s. Stays visually quiet —
-   the goal is "yes, your action took" not "look at me". */
-.toast-notice {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  background: var(--accent, #2c2c2c);
-  color: #fff;
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-  animation: toast-fade-in 0.15s ease;
-  pointer-events: none;
-}
-
-@keyframes toast-fade-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
-  to { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
+/* .toast-notice removed — the second Toast implementation
+   (src/shell/Toast.tsx) is folded into the unified
+   src/ui/Toast.tsx, which renders one bottom-right floating
+   toast for both flows. */
 
 .thread-reply-chips {
   display: flex;
@@ -1806,7 +1775,9 @@ body::before {
   cursor: pointer;
 }
 
-.thread-reply-chip-remove:hover { color: var(--text); }
+.thread-reply-chip-remove:hover {
+  color: var(--text);
+}
 
 /* Inline attachment list under each conversation bubble. */
 .attachment-list {
@@ -1975,8 +1946,12 @@ body::before {
    something. Keyed re-mount in Viewer.tsx makes the animation re-fire
    on each click. */
 @keyframes viewer-md-flash {
-  0%   { background: #fff4c2; }
-  100% { background: transparent; }
+  0% {
+    background: #fff4c2;
+  }
+  100% {
+    background: transparent;
+  }
 }
 .viewer-md-flash {
   animation: viewer-md-flash 0.6s ease-out;
@@ -2049,7 +2024,9 @@ body::before {
   font-size: 13px;
   margin: 4px 0;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-  transition: transform 0.05s ease, box-shadow 0.15s ease;
+  transition:
+    transform 0.05s ease,
+    box-shadow 0.15s ease;
 }
 .viewer-md a:has(> strong:only-child):hover {
   text-decoration: none;
@@ -2080,19 +2057,19 @@ body::before {
    Targets the `data-openit-skill` attribute set by Viewer's
    ExternalAnchor when it sees an `openit://skill/<name>` href. */
 .viewer-md a[data-openit-skill]:has(> strong:only-child),
-.viewer-md a[data-openit-cta="create-samples"]:has(> strong:only-child) {
+.viewer-md a[data-openit-cta='create-samples']:has(> strong:only-child) {
   background: transparent;
   color: var(--accent);
   border: 1px solid var(--accent);
   box-shadow: none;
 }
 .viewer-md a[data-openit-skill]:has(> strong:only-child):hover,
-.viewer-md a[data-openit-cta="create-samples"]:has(> strong:only-child):hover {
+.viewer-md a[data-openit-cta='create-samples']:has(> strong:only-child):hover {
   background: var(--accent-soft);
   box-shadow: none;
 }
 .viewer-md a[data-openit-skill]:has(> strong:only-child):active,
-.viewer-md a[data-openit-cta="create-samples"]:has(> strong:only-child):active {
+.viewer-md a[data-openit-cta='create-samples']:has(> strong:only-child):active {
   background: var(--accent-soft);
   box-shadow: none;
 }
@@ -2173,14 +2150,15 @@ body::before {
   --surface-hover: #2a2018;
   --bg: #1a140e;
   --bg-canvas: #1a140e;
-  --border: rgba(255, 220, 180, 0.10);
-  --border-strong: rgba(255, 220, 180, 0.20);
+  --border: rgba(255, 220, 180, 0.1);
+  --border-strong: rgba(255, 220, 180, 0.2);
   --border-faint: rgba(255, 220, 180, 0.06);
   --text: #f0e7d3;
-  --text-muted: rgba(240, 231, 211, 0.70);
+  --text-muted: rgba(240, 231, 211, 0.7);
   --text-faint: rgba(240, 231, 211, 0.45);
-  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.30);
-  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.30), 0 6px 18px -10px rgba(0, 0, 0, 0.50);
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.3);
+  --shadow-card:
+    0 1px 0 rgba(0, 0, 0, 0.3), 0 6px 18px -10px rgba(0, 0, 0, 0.5);
 
   position: relative;
   height: 100%;
@@ -2191,50 +2169,26 @@ body::before {
 }
 
 .right-pane::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(ellipse at top, rgba(199, 90, 44, 0.10) 0%, transparent 60%),
+    radial-gradient(ellipse at top, rgba(199, 90, 44, 0.1) 0%, transparent 60%),
     radial-gradient(rgba(255, 220, 180, 0.04) 1px, transparent 1px);
-  background-size: 100% 100%, 18px 18px;
+  background-size:
+    100% 100%,
+    18px 18px;
   pointer-events: none;
 }
-.right-pane > * { position: relative; z-index: 1; }
-
-.icon-btn {
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  border-radius: var(--r-md);
-  padding: 5px 12px;
-  font-size: 11px;
-  font-family: var(--font-body);
-  font-weight: 500;
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+.right-pane > * {
+  position: relative;
+  z-index: 1;
 }
 
-.icon-btn:hover {
-  background: var(--accent-faint);
-  border-color: var(--accent-soft);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-card);
-}
-
-.icon-btn.key-set {
-  border-color: var(--sage);
-  background: var(--sage-soft);
-  color: #2c4d27;
-}
-.icon-btn.key-set:hover {
-  background: #cfdfc6;
-  border-color: var(--sage);
-}
+/* .icon-btn / .icon-btn.key-set — first of three legacy
+   definitions for the header buttons. Migrated to <Button> in
+   src/ui/Button.tsx; consumers in src/App.tsx now use that.
+   Removed in the v5-foundation PR. */
 
 .deploy-btn {
   margin-left: auto;
@@ -2302,9 +2256,10 @@ body::before {
   font-weight: 500;
   font-family: var(--font-body);
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
 }
 
 .bubble:hover {
@@ -2316,7 +2271,7 @@ body::before {
 .bubble-conflict {
   border-color: var(--clay);
   color: var(--clay-soft);
-  background: rgba(179, 74, 58, 0.20);
+  background: rgba(179, 74, 58, 0.2);
   font-weight: 600;
 }
 
@@ -2333,7 +2288,6 @@ body::before {
   overflow-y: auto;
   background: var(--surface-soft);
 }
-
 
 .sc-panel.sc-empty {
   padding: 16px;
@@ -2407,8 +2361,11 @@ body::before {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.1s ease, border-color 0.1s ease,
-    box-shadow 0.1s ease, transform 0.05s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease,
+    box-shadow 0.1s ease,
+    transform 0.05s ease;
 }
 
 .sc-sparkle-btn:hover:not(:disabled) {
@@ -3035,7 +2992,9 @@ body::before {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.1s, border-color 0.1s;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
 }
 
 .onboard-signup-btn:hover {
@@ -3147,15 +3106,9 @@ body::before {
   letter-spacing: 0.06em;
 }
 
-.icon-btn.key-set {
-  color: #2c8a4f;
-  border-color: #2c8a4f;
-  background: #e3f5ea;
-}
-
-.icon-btn.key-set:hover {
-  background: #d2efdc;
-}
+/* .icon-btn.key-set — second legacy redefinition (the "wrong"
+   green for the connected state). Migrated to <Button variant=
+   "secondary"> with semantic copy in src/App.tsx. */
 
 .key-input {
   width: 100%;
@@ -3382,7 +3335,9 @@ body::before {
   font: inherit;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease;
 }
 
 .entity-folder-item:hover {
@@ -3470,7 +3425,9 @@ body::before {
   font: inherit;
   color: var(--text);
   cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease;
 }
 
 .databases-list-item:hover {
@@ -3554,7 +3511,10 @@ body::before {
   font-size: 12px;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease,
+    border-color 0.1s ease;
 }
 
 .conv-filter-btn:hover {
@@ -3922,7 +3882,6 @@ body::before {
   color: var(--accent, var(--text));
 }
 
-
 /* ─────────────────────────────────────────────────────────────────
    Studio direction — added 2026-04-27
    Chat shell header, bottom status bar, cmd-K palette.
@@ -3931,15 +3890,16 @@ body::before {
 /* Chat shell header — small strip above the xterm. Picks up dark
    surface tokens from .right-pane scope so it stays cohesive. */
 .chat-shell-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 14px;
-  background: linear-gradient(180deg, var(--surface) 0%, transparent 100%);
-  border-bottom: 1px solid var(--border-faint);
+  gap: var(--space-3);
+  height: var(--h-rail);
+  padding: 0 var(--space-4);
+  background: var(--color-surface-dark-2);
+  border-bottom: 1px solid var(--color-border-dark);
   font-family: var(--font-display);
   font-size: 12px;
-  flex: 0 0 auto;
 }
 
 .chat-shell-title {
@@ -3955,153 +3915,52 @@ body::before {
   font-size: 11px;
 }
 
-.chat-shell-spacer { flex: 1; }
+.chat-shell-spacer {
+  flex: 1;
+}
 
-/* ── Status bar (bottom rail) ──────────────────────────────────── */
-.status-bar {
+/* ── Status bar removed ─────────────────────────────────────────
+   The .status-bar / .status-chip / .status-led classes migrated to
+   src/ui/Chip.tsx. The StatusBar component now uses <Chip> and the
+   status rail dissolves into the cream canvas (Quieter B). The
+   v5-shell-status class below provides the rail layout. */
+.v5-shell-status {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  height: 30px;
   font-family: var(--font-body);
-  font-size: 11px;
-  color: var(--text-muted);
-  position: relative;
-  z-index: 4;
+  font-size: var(--fs-caption);
+  color: var(--color-text-muted);
 }
-
-.status-bar-left {
+.v5-shell-status-left {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
+  flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-
-.status-bar-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.v5-shell-status-left::-webkit-scrollbar {
+  display: none;
 }
-
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg-canvas);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-family: var(--font-body);
+.v5-shell-status-right {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--fs-caption);
+  color: var(--color-text-faint);
   white-space: nowrap;
-  cursor: default;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease);
-}
-
-button.status-chip {
-  cursor: pointer;
-}
-
-button.status-chip:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.status-chip-glyph {
-  font-size: 10px;
-  color: var(--text-faint);
-}
-
-.status-chip-label {
-  font-variant-numeric: tabular-nums;
-}
-
-.status-chip-project {
-  background: var(--surface);
-  border-color: var(--border-strong);
-  color: var(--text);
-  font-weight: 500;
-}
-
-.status-chip-project .status-chip-glyph {
-  color: var(--accent);
-  font-size: 9px;
-}
-
-.status-led {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--text-faint);
-}
-
-.status-chip-ok .status-led {
-  background: var(--sage);
-  box-shadow: 0 0 6px rgba(111, 143, 106, 0.55);
-}
-.status-chip-ok {
-  color: #2c4d27;
-  background: var(--sage-soft);
-  border-color: rgba(111, 143, 106, 0.4);
-}
-
-.status-chip-warn .status-led {
-  background: var(--ochre);
-  box-shadow: 0 0 6px rgba(199, 154, 46, 0.55);
-}
-.status-chip-warn {
-  color: #5c3d00;
-  background: var(--ochre-soft);
-  border-color: rgba(199, 154, 46, 0.4);
-}
-
-.status-chip-info {
-  background: var(--accent-faint);
-  border-color: var(--accent-soft);
-  color: #6a3115;
-}
-
-.status-chip-muted {
-  background: var(--bg-canvas);
-  color: var(--text-faint);
-}
-
-.status-chip-cmdk kbd {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  color: var(--text);
-  line-height: 1.1;
-}
-
-button.status-chip-cmdk {
-  background: var(--surface);
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-
-button.status-chip-cmdk:hover {
-  background: var(--accent-faint);
-  border-color: var(--accent-soft);
+  font-feature-settings: 'tnum' 1;
 }
 
 /* ── Command palette ───────────────────────────────────────────── */
 .cmdk-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(40, 28, 14, 0.30);
+  background: rgba(40, 28, 14, 0.3);
   backdrop-filter: blur(4px) saturate(110%);
   -webkit-backdrop-filter: blur(4px) saturate(110%);
   z-index: 1000;
@@ -4113,8 +3972,12 @@ button.status-chip-cmdk:hover {
 }
 
 @keyframes cmdk-overlay-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .cmdk-panel {
@@ -4131,8 +3994,14 @@ button.status-chip-cmdk:hover {
 }
 
 @keyframes cmdk-panel-in {
-  from { opacity: 0; transform: translateY(-8px) scale(0.985); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .cmdk-search {
@@ -4231,8 +4100,9 @@ button.status-chip-cmdk:hover {
   padding: 9px 12px;
   text-align: left;
   cursor: pointer;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
   font-family: inherit;
 }
 
@@ -4290,7 +4160,6 @@ button.status-chip-cmdk:hover {
   color: var(--accent);
 }
 
-
 /* ─────────────────────────────────────────────────────────────────
    Workbench — left-pane front door
    ───────────────────────────────────────────────────────────────── */
@@ -4307,55 +4176,189 @@ button.status-chip-cmdk:hover {
   gap: 14px;
 }
 
+/* TODAY card — was a single <button>; v5 splits it into two click
+   zones (open Inbox vs. draft replies with Claude) so it's now a
+   <div> wrapper with two <button> children. */
 .workbench-today {
-  display: block;
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
   background:
-    radial-gradient(ellipse at top right, rgba(199, 90, 44, 0.18) 0%, transparent 70%),
+    radial-gradient(
+      ellipse at top right,
+      rgba(199, 90, 44, 0.18) 0%,
+      transparent 70%
+    ),
     linear-gradient(180deg, #fff8ec 0%, var(--surface) 100%);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 14px 16px 12px;
   box-shadow: var(--shadow-card);
   position: relative;
   overflow: hidden;
-  transition: border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
-
-.workbench-today:hover:not(:disabled) {
+.workbench-today.has-escalated {
+  /* Subtle warm glow on the card when there are escalated tickets —
+     enough to signal "something here needs you" without being a
+     loud notification. */
+  border-color: rgba(199, 154, 46, 0.35);
+  box-shadow:
+    var(--shadow-card),
+    0 0 0 3px rgba(245, 185, 72, 0.06);
+}
+.workbench-today:hover:not(.has-disabled) {
   border-color: var(--accent-soft);
   transform: translateY(-1px);
   box-shadow: var(--shadow-lift);
 }
-
-.workbench-today:disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
+.workbench-today.has-escalated:hover {
+  border-color: rgba(199, 154, 46, 0.5);
 }
 
 .workbench-today::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(rgba(120, 96, 60, 0.05) 1px, transparent 1px);
+  background-image: radial-gradient(
+    rgba(120, 96, 60, 0.05) 1px,
+    transparent 1px
+  );
   background-size: 14px 14px;
   pointer-events: none;
   opacity: 0.5;
 }
 
+/* Main click zone — open the Tickets Inbox. Reset button chrome
+   so it inherits the card's surface; the visual treatment lives on
+   the wrapping .workbench-today div. */
+.workbench-today-main {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+.workbench-today-main:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* Secondary CTA — appears below the main count when escalations
+   are pending. Compact pill that's clearly a separate action.
+   Sits inside the same card so the relationship to the count is
+   visually obvious. */
+.workbench-today-cta {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(245, 185, 72, 0.1);
+  color: #5c3d00;
+  border: 0;
+  border-top: 1px solid rgba(199, 154, 46, 0.3);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+  text-align: left;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+.workbench-today-cta:hover:not(:disabled) {
+  background: rgba(245, 185, 72, 0.18);
+  color: var(--text);
+}
+.workbench-today-cta:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.workbench-today-cta:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+.workbench-today-cta-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: rgba(199, 154, 46, 0.25);
+  color: #6b4e10;
+  border-radius: 5px;
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.workbench-today-cta-text {
+  flex: 1;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+}
+.workbench-today-cta-arrow {
+  font-size: 12px;
+  opacity: 0.6;
+  transition:
+    transform var(--t-fast) var(--ease),
+    opacity var(--t-fast) var(--ease);
+}
+.workbench-today-cta:hover:not(:disabled) .workbench-today-cta-arrow {
+  transform: translateX(2px);
+  opacity: 1;
+}
+
+/* Top row of the TODAY card — TODAY eyebrow on the left, OpenIT
+   brand mark on the right. Both render in the same row so they
+   share a baseline. */
+.workbench-today-topline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
 .workbench-today-eyebrow {
   font-family: var(--font-display);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.14em;
   color: var(--accent);
-  margin-bottom: 4px;
+}
+/* Subtle brand mark on the right of the eyebrow row. Same italic
+   Fraunces "IT" treatment as the title rail's wordmark, but
+   muted (text-faint) so it reads as a quiet signature on the
+   card rather than competing with the count below. */
+.workbench-today-brand {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: -0.01em;
+  color: var(--text-faint);
+  line-height: 1;
+  user-select: none;
+}
+.workbench-today-brand em {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--accent);
+  margin: 0 -1px;
 }
 
 .workbench-today-hero {
@@ -4458,10 +4461,11 @@ button.status-chip-cmdk:hover {
   text-align: left;
   font-family: inherit;
   box-shadow: var(--shadow-sm);
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 
 .station:hover {
@@ -4559,8 +4563,9 @@ button.status-chip-cmdk:hover {
    above it flips. Smooth height transition. */
 .left-files-region {
   overflow: hidden;
-  transition: max-height var(--t-slow) var(--ease),
-              opacity var(--t-base) var(--ease);
+  transition:
+    max-height var(--t-slow) var(--ease),
+    opacity var(--t-base) var(--ease);
 }
 
 .left-files-region.collapsed {
@@ -4574,65 +4579,9 @@ button.status-chip-cmdk:hover {
   opacity: 1;
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Header refinements — minimal lockup, cmd-K hint, primary cloud CTA
-   ───────────────────────────────────────────────────────────────── */
-
-.header-cmdk-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px 5px 8px;
-  background: transparent;
-  border: 1px dashed var(--border-strong);
-  border-radius: 999px;
-  cursor: pointer;
-  color: var(--text-faint);
-  font-family: var(--font-body);
-  font-size: 11px;
-  transition: border-color var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease);
-}
-
-.header-cmdk-hint:hover {
-  border-color: var(--accent-soft);
-  background: var(--accent-faint);
-  border-style: solid;
-  color: var(--text-muted);
-}
-
-.header-cmdk-hint kbd {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text);
-  line-height: 1.1;
-}
-
-.icon-btn-primary {
-  background: linear-gradient(180deg, #db6b39 0%, var(--accent) 100%);
-  color: #fff8ec;
-  border-color: rgba(120, 50, 20, 0.5);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.22) inset,
-    var(--shadow-sm);
-}
-
-.icon-btn-primary:hover {
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
-  border-color: var(--accent-hover);
-}
-
-.icon-btn-ghost {
-  background: transparent;
-  border-color: var(--border);
-  box-shadow: none;
-}
-
+/* Header refinements removed — .header-cmdk-hint, .icon-btn-primary,
+   .icon-btn-ghost migrated to <Button variant="cmdk"|"primary"|"ghost">
+   in src/ui/Button.tsx. Consumers in src/App.tsx now use those. */
 
 /* ─────────────────────────────────────────────────────────────────
    Pane drag-and-drop reorder
@@ -4656,9 +4605,10 @@ button.status-chip-cmdk:hover {
   cursor: grab;
   user-select: none;
   opacity: 0.45;
-  transition: color var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease),
-              opacity var(--t-fast) var(--ease);
+  transition:
+    color var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease),
+    opacity var(--t-fast) var(--ease);
 }
 
 .pane-drag-handle:hover {
@@ -4700,7 +4650,7 @@ button.status-chip-cmdk:hover {
 }
 
 .pane-drop-target::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   background: var(--accent-faint);
@@ -4712,8 +4662,13 @@ button.status-chip-cmdk:hover {
 }
 
 @keyframes pane-drop-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(199, 90, 44, 0.0); }
-  50%      { box-shadow: 0 0 0 6px rgba(199, 90, 44, 0.18); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(199, 90, 44, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(199, 90, 44, 0.18);
+  }
 }
 
 .right-pane.pane-drop-target::before {
@@ -4749,10 +4704,11 @@ button.status-chip-cmdk:hover {
   line-height: 1;
   cursor: pointer;
   flex: 0 0 auto;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease);
 }
 
 .pane-icon-btn:hover:not(:disabled) {
@@ -4786,7 +4742,7 @@ button.status-chip-cmdk:hover {
 
 /* Inside the dark theatre, the accent button needs a dark-aware tint. */
 .right-pane .pane-icon-btn-accent {
-  background: rgba(199, 90, 44, 0.20);
+  background: rgba(199, 90, 44, 0.2);
   border-color: rgba(199, 90, 44, 0.45);
   color: #f3a76a;
 }
@@ -4797,29 +4753,7 @@ button.status-chip-cmdk:hover {
   color: #fff8ec;
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Status chip refinements — for the bottom status bar
-   ───────────────────────────────────────────────────────────────── */
-.status-chip-icon {
-  flex: 0 0 auto;
-  color: currentColor;
-  opacity: 0.85;
-}
-
-.status-chip-merged {
-  background: var(--surface);
-  border-color: var(--border-strong);
-}
-
-/* Make the intake-form chip clickable like a button. */
-button.status-chip-info {
-  cursor: pointer;
-}
-
-button.status-chip-info:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-}
+/* Status chip refinements removed — folded into <Chip> primitive. */
 
 /* ─────────────────────────────────────────────────────────────────
    EntityCardGrid — unified card grid for entity-list views (agents,
@@ -4877,10 +4811,11 @@ button.status-chip-info:hover {
   font: inherit;
   color: var(--text);
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease),
-              background var(--t-fast) var(--ease);
+  transition:
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease),
+    background var(--t-fast) var(--ease);
 }
 
 .entity-card-clickable {
@@ -5116,7 +5051,7 @@ button.status-chip-info:hover {
   --tone-border: var(--ochre);
 }
 .entity-tone-link {
-  --tone-bg: rgba(74, 92, 184, 0.10);
+  --tone-bg: rgba(74, 92, 184, 0.1);
   --tone-color: var(--link);
   --tone-border: rgba(74, 92, 184, 0.32);
 }
@@ -5179,8 +5114,12 @@ button.status-chip-info:hover {
    Unified button family — coerce existing class names into one set
    of tokens so the visual rhythm is consistent everywhere.
    ───────────────────────────────────────────────────────────────── */
+/* .icon-btn / .icon-btn-primary / .icon-btn-ghost / .icon-btn.key-set
+   are gone — the App.tsx header now uses the v5 <Button> primitive.
+   .deploy-btn / .viewer-* / .onboard-signup-btn still exist; this
+   consolidator continues to coerce them into a shared rhythm until
+   they migrate in subsequent PRs. */
 .btn,
-.icon-btn,
 .deploy-btn,
 .viewer-add-btn,
 .viewer-back-btn,
@@ -5200,15 +5139,15 @@ button.status-chip-info:hover {
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-sm);
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              transform var(--t-fast) var(--ease),
-              box-shadow var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease);
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    transform var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
 }
 
 .btn:hover:not(:disabled),
-.icon-btn:hover:not(:disabled),
 .viewer-add-btn:hover:not(:disabled),
 .viewer-back-btn:hover:not(:disabled),
 .onboard-signup-btn:hover:not(:disabled) {
@@ -5219,13 +5158,11 @@ button.status-chip-info:hover {
 }
 
 .btn:active:not(:disabled),
-.icon-btn:active:not(:disabled),
 .deploy-btn:active:not(:disabled) {
   transform: translateY(0);
 }
 
 .btn:disabled,
-.icon-btn:disabled,
 .deploy-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -5235,8 +5172,7 @@ button.status-chip-info:hover {
 
 /* Primary — gradient orange CTA. */
 .btn-primary,
-.deploy-btn,
-.icon-btn-primary {
+.deploy-btn {
   background: linear-gradient(180deg, #db6b39 0%, var(--accent) 100%);
   color: #fff8ec;
   border-color: rgba(120, 50, 20, 0.5);
@@ -5247,9 +5183,12 @@ button.status-chip-info:hover {
 }
 
 .btn-primary:hover:not(:disabled),
-.deploy-btn:hover:not(:disabled),
-.icon-btn-primary:hover:not(:disabled) {
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
+.deploy-btn:hover:not(:disabled) {
+  background: linear-gradient(
+    180deg,
+    var(--accent) 0%,
+    var(--accent-hover) 100%
+  );
   border-color: var(--accent-hover);
   transform: translateY(-1px);
   box-shadow:
@@ -5259,7 +5198,6 @@ button.status-chip-info:hover {
 
 /* Ghost — for secondary / dismiss actions. */
 .btn-ghost,
-.icon-btn-ghost,
 .onboard-signup-btn {
   background: transparent;
   border-color: var(--border);
@@ -5268,7 +5206,6 @@ button.status-chip-info:hover {
 }
 
 .btn-ghost:hover:not(:disabled),
-.icon-btn-ghost:hover:not(:disabled),
 .onboard-signup-btn:hover:not(:disabled) {
   background: var(--surface-hover);
   border-color: var(--border-strong);
@@ -5277,16 +5214,14 @@ button.status-chip-info:hover {
 }
 
 /* Success — sage palette. */
-.btn-success,
-.icon-btn.key-set {
+.btn-success {
   background: var(--sage-soft);
   border-color: var(--sage);
   color: #2c4d27;
   box-shadow: var(--shadow-sm);
 }
 
-.btn-success:hover:not(:disabled),
-.icon-btn.key-set:hover:not(:disabled) {
+.btn-success:hover:not(:disabled) {
   background: #cfdfc6;
   border-color: var(--sage);
   color: #2c4d27;
@@ -5404,7 +5339,9 @@ button.status-chip-info:hover {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.1s ease, transform 0.05s ease;
+  transition:
+    background 0.1s ease,
+    transform 0.05s ease;
 }
 
 .cloud-cta-primary:hover:not(:disabled) {
@@ -5426,7 +5363,10 @@ button.status-chip-info:hover {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.1s ease, border-color 0.1s ease, transform 0.05s ease;
+  transition:
+    background 0.1s ease,
+    border-color 0.1s ease,
+    transform 0.05s ease;
 }
 
 .cloud-cta-secondary:hover:not(:disabled) {
@@ -5447,21 +5387,5 @@ button.status-chip-info:hover {
   line-height: 1.5;
 }
 
-
-/* ── Slack chip in unconfigured state ─────────────────────────────
-   Always-rendered Slack pill. Dashed border + muted color signals
-   "you don't have one yet — click to set up." Same flow as the
-   configured-state click — both kick off /connect-slack canvas. */
-.status-chip-unset {
-  background: transparent;
-  border: 1px dashed var(--border-strong);
-  color: var(--text-muted);
-}
-
-button.status-chip-unset:hover {
-  background: var(--accent-faint);
-  border-color: var(--accent-soft);
-  border-style: solid;
-  color: var(--accent);
-}
-
+/* .status-chip-unset removed — handled by the v5 <Chip> primitive's
+   built-in dashed/unset variant in src/ui/Chip.tsx. */

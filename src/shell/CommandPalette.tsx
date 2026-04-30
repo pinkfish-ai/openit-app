@@ -199,7 +199,6 @@ export function CommandPalette({
           <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
           <span><kbd>↵</kbd> select</span>
           <span><kbd>esc</kbd> close</span>
-          <span className="cmdk-footer-brand">OpenIT</span>
         </div>
       </div>
     </div>

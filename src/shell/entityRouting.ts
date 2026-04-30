@@ -541,8 +541,24 @@ export async function resolvePathToSource(
   const filestoreCollectionMatch = rel.match(/^filestores\/([^/]+)$/);
   const isAttachmentsParent =
     filestoreCollectionMatch && filestoreCollectionMatch[1] === "attachments";
+  // Built-in filestore collections each get their own entity-folder
+  // entity so the right-pane title bar + empty-state copy can be
+  // tailored. `library` was the only one historically; `skills` +
+  // `scripts` join it under PIN-5829. Anything else under filestores/
+  // (user-created or dynamic openit-* collection) still routes through
+  // the generic `library` rendering path.
+  const filestoreSubdir = filestoreCollectionMatch && !isAttachmentsParent
+    ? filestoreCollectionMatch[1]
+    : null;
   const entityFolderEntry: {
-    entity: "agents" | "workflows" | "knowledge-base" | "library" | "reports";
+    entity:
+      | "agents"
+      | "workflows"
+      | "knowledge-base"
+      | "library"
+      | "reports"
+      | "skills"
+      | "scripts";
   } | null =
     rel === "agents"
       ? { entity: "agents" }
@@ -550,11 +566,15 @@ export async function resolvePathToSource(
         ? { entity: "workflows" }
         : kbCollectionMatch
           ? { entity: "knowledge-base" }
-          : filestoreCollectionMatch && !isAttachmentsParent
-            ? { entity: "library" }
-            : rel === "reports"
-              ? { entity: "reports" }
-              : null;
+          : filestoreSubdir === "skills"
+            ? { entity: "skills" }
+            : filestoreSubdir === "scripts"
+              ? { entity: "scripts" }
+              : filestoreSubdir
+                ? { entity: "library" }
+                : rel === "reports"
+                  ? { entity: "reports" }
+                  : null;
   if (entityFolderEntry) {
     try {
       const nodes = await fsList(path);
@@ -779,6 +799,20 @@ export async function resolvePathToSource(
         description:
           "Curated reference docs admins keep handy — runbooks, scripts, recurring PDFs. Drag files in to add. Cloud-synced when connected.",
         itemNoun: "file",
+      },
+      // PIN-5829: skills + scripts are admin-curated artifacts captured
+      // by /conversation-to-automation. Both are built-in like
+      // attachments + library; they sync as their own cloud
+      // filestore collections.
+      skills: {
+        description:
+          "Admin workflow skills captured from resolved tickets — markdown prompts Claude (or you) read and follow. Mirrored to .claude/skills/ for slash-command discovery.",
+        itemNoun: "skill",
+      },
+      scripts: {
+        description:
+          "Runnable scripts captured from resolved tickets — deterministic CLI sequences Claude or you can invoke. Mirrored to .claude/scripts/ for direct execution.",
+        itemNoun: "script",
       },
     };
 

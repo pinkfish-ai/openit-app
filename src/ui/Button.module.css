@@ -1,0 +1,166 @@
+/* Button — one base, five variants, three sizes, four states.
+   Replaces 20+ classes in App.css (.icon-btn, .btn, .deploy-btn,
+   .sc-commit-btn, .viewer-edit-btn-*, .skill-action-dock-button,
+   .cloud-cta-primary, .onboard-signup-btn, .btn-ghost, etc.). */
+
+.btn {
+  --_h: var(--h-control);
+  --_pad: 0 var(--space-4);
+  --_fs: var(--fs-meta);
+  --_fw: var(--fw-medium);
+  --_bg: transparent;
+  --_fg: var(--color-text);
+  --_border: var(--color-border-strong);
+  --_radius: var(--r-sm);
+
+  /* Opt out of the Tauri/macOS titlebar drag region so clicks land
+     when the button sits inside a draggable rail. */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--_h);
+  padding: var(--_pad);
+  background: var(--_bg);
+  color: var(--_fg);
+  border: 1px solid var(--_border);
+  border-radius: var(--_radius);
+  font-family: var(--font-body);
+  font-size: var(--_fs);
+  font-weight: var(--_fw);
+  line-height: 1;
+  letter-spacing: var(--tracking-normal);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition:
+    background var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Sizes */
+.sm  { --_h: var(--h-control-sm); --_pad: 0 var(--space-3); --_fs: var(--fs-caption); }
+.md  { /* default */ }
+.lg  {
+  --_h: var(--h-control-lg);
+  --_pad: 0 var(--space-5);
+  --_fs: var(--fs-body);
+  --_fw: var(--fw-semibold);
+}
+
+/* Variants */
+.primary {
+  --_bg: var(--color-accent);
+  --_fg: var(--color-on-accent);
+  --_border: var(--color-accent-hover);
+  --_fw: var(--fw-semibold);
+}
+.primary:hover:not(:disabled) {
+  --_bg: var(--color-accent-hover);
+  --_border: var(--color-accent-active);
+}
+.primary:active:not(:disabled) { --_bg: var(--color-accent-active); }
+
+.secondary {
+  --_bg: var(--color-surface);
+  --_fg: var(--color-text);
+  --_border: var(--color-border-strong);
+  box-shadow: var(--shadow-sm);
+}
+.secondary:hover:not(:disabled) {
+  background:
+    linear-gradient(var(--color-hover-overlay), var(--color-hover-overlay)),
+    var(--color-surface);
+}
+.secondary:active:not(:disabled) {
+  background:
+    linear-gradient(var(--color-active-overlay), var(--color-active-overlay)),
+    var(--color-surface);
+}
+
+.ghost {
+  --_bg: transparent;
+  --_fg: var(--color-text-muted);
+  --_border: transparent;
+}
+.ghost:hover:not(:disabled) {
+  --_bg: var(--color-hover-overlay);
+  --_fg: var(--color-text);
+}
+.ghost:active:not(:disabled) { --_bg: var(--color-active-overlay); }
+
+.link {
+  --_h: auto;
+  --_pad: 0;
+  --_bg: transparent;
+  --_fg: var(--color-accent);
+  --_border: transparent;
+  --_radius: 0;
+  position: relative;
+  padding-bottom: 1px;
+}
+.link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity var(--t-fast) var(--ease);
+}
+.link:hover:not(:disabled)::after { opacity: 1; }
+
+.destructive {
+  --_bg: var(--color-critical);
+  --_fg: var(--color-on-accent);
+  --_border: var(--color-critical-deep);
+  --_fw: var(--fw-semibold);
+}
+.destructive:hover:not(:disabled) { --_bg: var(--color-critical-deep); }
+
+/* Icon-only modifier — square width matching height */
+.icon { width: var(--_h); padding: 0; }
+.icon.sm { width: var(--h-control-sm); }
+.icon.lg { width: var(--h-control-lg); }
+
+/* Cmdk-hint variant — dashed border, kbd children */
+.cmdk {
+  --_border: var(--color-border-strong);
+  border-style: dashed;
+  --_fg: var(--color-text-muted);
+  --_fs: var(--fs-caption);
+}
+.cmdk:hover:not(:disabled) {
+  --_border: var(--color-accent-soft);
+  border-style: solid;
+  background: var(--color-accent-faint);
+  --_fg: var(--color-text);
+}
+.btn kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text);
+  line-height: 1.1;
+  font-feature-settings: "tnum" 1;
+}

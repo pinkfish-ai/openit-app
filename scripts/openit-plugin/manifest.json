@@ -1,5 +1,5 @@
 {
-  "version": "2026-04-30-009",
+  "version": "2026-04-30-010",
   "bubbles": [
     { "label": "Answer ticket", "skill": "/answer-ticket" }
   ],
@@ -43,6 +43,8 @@
     { "path": "seed/conversations/sample-ticket-3/msg-1745751738000-cc02.json" },
     { "path": "seed/conversations/sample-ticket-4/msg-1745916300000-dd01.json" },
     { "path": "seed/conversations/sample-ticket-5/msg-1745667000000-ee01.json" },
-    { "path": "seed/conversations/sample-ticket-5/msg-1745669100000-ee02.json" }
+    { "path": "seed/conversations/sample-ticket-5/msg-1745669100000-ee02.json" },
+    { "path": "seed/skills/hello-world.md" },
+    { "path": "seed/scripts/hello-world.mjs" }
   ]
 }

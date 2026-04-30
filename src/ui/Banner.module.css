@@ -1,0 +1,143 @@
+/* Banner — INLINE notification. Never position: fixed.
+   Replaces .conflict-banner, .agent-activity-banner, and
+   .escalated-ticket-banner. The banner is parented to the
+   surface it relates to (chat pane, file explorer, sync
+   panel) so it clips to that surface's rounded corners. */
+
+.banner {
+  --_bg: var(--color-accent-faint);
+  --_border: var(--color-accent-soft);
+  --_stripe: var(--color-accent);
+  --_eyebrow: var(--color-accent-hover);
+  --_fg: #5a2812;
+
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-4) calc(var(--space-4) + 1px);
+  background: var(--_bg);
+  border: 1px solid var(--_border);
+  border-left: 3px solid var(--_stripe);
+  border-radius: var(--r-md);
+  color: var(--_fg);
+  font-family: var(--font-body);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-normal);
+  position: relative;
+  animation: slide-in var(--t-base) var(--ease);
+}
+
+@keyframes slide-in {
+  from { transform: translateY(-4px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+/* "Inline" modifier — when the banner is parented inside a
+   pane card and should hug the edges (no radius, no extra
+   border on the sides). The pane's border handles outer
+   chrome. */
+.inline {
+  border-radius: 0;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 1px solid var(--_border);
+}
+
+/* Inline + dark-pane modifier — when the banner sits inside the
+   dark chat pane, the sage cream block reads as a jarring light
+   block. Tone it down: dark warm background, sage left stripe,
+   sage eyebrow, light cream body text. Keeps the semantic color
+   role without the visual jolt. */
+.onDark {
+  --_bg: rgba(111, 143, 106, 0.12);
+  --_border: rgba(111, 143, 106, 0.35);
+  --_fg: var(--color-text-on-dark);
+}
+.onDark .eyebrow { color: #b8d4a0; }
+.onDark .text { color: var(--color-text-on-dark); }
+.onDark .icon {
+  background: rgba(111, 143, 106, 0.18);
+  color: #b8d4a0;
+}
+.onDark .close { color: var(--color-text-on-dark-mute); }
+.onDark .close:hover { background: rgba(255, 255, 255, 0.06); }
+
+.success {
+  --_bg: var(--color-success-soft);
+  --_border: rgba(111, 143, 106, 0.4);
+  --_stripe: var(--color-success);
+  --_eyebrow: var(--color-success-deep);
+  --_fg: var(--color-success-deep);
+}
+.warn {
+  --_bg: var(--color-warn-soft);
+  --_border: rgba(199, 154, 46, 0.4);
+  --_stripe: var(--color-warn);
+  --_eyebrow: var(--color-warn-deep);
+  --_fg: var(--color-warn-deep);
+}
+.critical {
+  --_bg: var(--color-critical-soft);
+  --_border: rgba(179, 74, 58, 0.4);
+  --_stripe: var(--color-critical);
+  --_eyebrow: var(--color-critical-deep);
+  --_fg: var(--color-critical-deep);
+}
+
+.icon {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--_stripe);
+  font-size: 12px;
+}
+.body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.eyebrow {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--fs-meta);
+  color: var(--_eyebrow);
+  letter-spacing: var(--tracking-snug);
+}
+.text {
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  color: var(--_fg);
+}
+.text strong { font-weight: var(--fw-semibold); }
+
+.actions {
+  margin-top: var(--space-3);
+  display: flex;
+  gap: var(--space-2);
+}
+
+.close {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-sm);
+  color: var(--_fg);
+  opacity: 0.5;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 14px;
+  line-height: 1;
+}
+.close:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.06);
+}

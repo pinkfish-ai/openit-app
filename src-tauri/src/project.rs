@@ -84,6 +84,12 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
             "filestores",
             "filestores/attachments",
             "filestores/library",
+            // Skills and scripts (PIN-5829) — admin-curated artifacts
+            // captured by /conversation-to-automation. Auto-created so
+            // the file tree + station tiles render the empty folders
+            // before anything's been captured yet.
+            "filestores/skills",
+            "filestores/scripts",
             // Knowledge bases got the same plural-with-default split
             // as filestores (2026-04-27): one folder per KB, with
             // `default` shipping out of the box. Skills target
@@ -104,13 +110,15 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
         }
     }
 
-    // Idempotent layout maintenance: ensure the filestores/{attachments,library}
-    // and knowledge-bases/default dirs exist for every project on every
-    // open, even ones bootstrapped before the splits. Cheap to create,
-    // lets the explorer render the canonical structure without waiting
-    // for first-use.
+    // Idempotent layout maintenance: ensure the standard filestore +
+    // knowledge-base subdirs exist for every project on every open,
+    // even ones bootstrapped before the splits. Cheap to create, lets
+    // the explorer render the canonical structure without waiting for
+    // first-use.
     let _ = fs::create_dir_all(path.join("filestores").join("attachments"));
     let _ = fs::create_dir_all(path.join("filestores").join("library"));
+    let _ = fs::create_dir_all(path.join("filestores").join("skills"));
+    let _ = fs::create_dir_all(path.join("filestores").join("scripts"));
     let _ = fs::create_dir_all(path.join("knowledge-bases").join("default"));
     // Same idempotent guard for `reports/` so projects bootstrapped
     // before the reports feature shipped get the dir on next open.
