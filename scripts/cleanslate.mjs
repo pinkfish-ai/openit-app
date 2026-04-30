@@ -3,11 +3,15 @@
 //   1. Tauri app_data state at ~/Library/Application Support/<id>/state.json
 //      (holds last_repo + onboarding_complete — auto-rebinds on relaunch).
 //   2. The repo workspace pointed at by state.json's last_repo.
+//   3. macOS keychain entries under service `ai.pinkfish.openit`. Stale
+//      entries are bound to the previous binary's ACL — leaving them
+//      behind triggers the "openit-app wants to use your confidential
+//      information" prompt on next launch (see src-tauri/scripts/README.md).
 //
 // Dev creds (.env.development) are NOT touched — toggle those with
 // `npm run devmode -- off` if you want to land on the connect screen.
-// Cloud-side `openit-*` collections are NOT touched — delete those in the
-// Pinkfish dashboard if you want the seed gates to fire from scratch.
+// Cloud-side `openit-*` collections are NOT touched — run
+// `npm run clear-cloud-slate` for that.
 //
 // Usage:
 //   npm run cleanslate
@@ -15,6 +19,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 
 const TAURI_IDENT = "ai.pinkfish.openit";
 const STATE_PATH = join(
@@ -56,9 +61,28 @@ if (existsSync(STATE_PATH)) {
   skip(`tauri state already gone (${STATE_PATH})`);
 }
 
+// Drain every generic-password entry under the OpenIT service. `security
+// delete-generic-password -s <svc>` removes one matching entry per call,
+// so loop until it reports "not found" (exit code 44 / 36 depending on
+// macOS version, or any non-zero with no match printed).
+let removed = 0;
+while (true) {
+  const r = spawnSync("security", ["delete-generic-password", "-s", TAURI_IDENT], {
+    encoding: "utf8",
+  });
+  if (r.status === 0) {
+    removed += 1;
+    continue;
+  }
+  break;
+}
+if (removed > 0) {
+  step(`removed ${removed} keychain entr${removed === 1 ? "y" : "ies"} for ${TAURI_IDENT}`);
+} else {
+  skip(`no keychain entries to remove for ${TAURI_IDENT}`);
+}
+
 console.log();
 console.log("Local clean. Reminder: cloud-side `openit-*` collections still");
-console.log("exist in your dev org. Delete them in the Pinkfish dashboard if");
-console.log("you want the seed gates to fire from scratch:");
-console.log("  • openit-tickets / openit-people / openit-conversations (datastore)");
-console.log("  • openit-* knowledge bases / filestores (if you want a full reset)");
+console.log("exist in your dev org. Run `npm run clear-cloud-slate` to wipe");
+console.log("them so the seed gates fire from scratch.");
