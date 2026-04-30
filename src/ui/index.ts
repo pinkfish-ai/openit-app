@@ -15,6 +15,9 @@ export type { ChipProps, ChipVariant } from "./Chip";
 export { IntakeChip } from "./IntakeChip";
 export type { IntakeChipProps } from "./IntakeChip";
 
+export { SlackChip } from "./SlackChip";
+export type { SlackChipProps } from "./SlackChip";
+
 export { Badge } from "./Badge";
 export type { BadgeProps, BadgeTone } from "./Badge";
 
