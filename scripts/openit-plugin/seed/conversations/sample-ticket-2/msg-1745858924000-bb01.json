@@ -1,0 +1,8 @@
+{
+  "id": "msg-1745858924000-bb01",
+  "ticketId": "sample-ticket-2",
+  "role": "asker",
+  "sender": "bob.sample@example.com",
+  "timestamp": "2026-04-28T16:08:44Z",
+  "body": "Working remote today and the VPN drops every ~15 minutes. Reconnects but it's killing my flow. Anyone else seeing this?"
+}

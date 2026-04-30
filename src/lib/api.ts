@@ -436,6 +436,12 @@ export type KbFileState = {
   /// signal "user has reconciled against this remote version" without
   /// re-fetching.
   conflict_remote_version?: string;
+  /// Server's canonical filename when it differs from the manifest key
+  /// (the local filename). Filestore uploads return UUID-prefixed names;
+  /// keeping the local file at the user's original name and stashing the
+  /// cloud-side name here lets reconciliation match without renaming.
+  /// (PIN-5827.)
+  cloud_filename?: string;
 };
 export type KbStatePersisted = {
   collection_id: string | null;
@@ -612,22 +618,6 @@ export async function datastoreStateSave(
   state: KbStatePersisted,
 ): Promise<void> {
   return invoke("entity_state_save", { repo, name: "datastore", state });
-}
-
-/// List local row files for one datastore collection. Filters out
-/// `_schema.json` and non-`.json` entries TS-side now that the underlying
-/// command is generic. Same shape as `kbListLocal` / `fsStoreListLocal`.
-export async function datastoreListLocal(
-  repo: string,
-  collectionName: string,
-): Promise<KbLocalFile[]> {
-  const all = await invoke<KbLocalFile[]>("entity_list_local", {
-    repo,
-    subdir: `databases/${collectionName}`,
-  });
-  return all.filter(
-    (f) => f.filename !== "_schema.json" && f.filename.endsWith(".json"),
-  );
 }
 
 export async function fsStoreDownloadToLocal(

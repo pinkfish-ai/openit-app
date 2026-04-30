@@ -1,0 +1,11 @@
+{
+  "firstName": "Diana",
+  "lastName": "Sample",
+  "email": "diana.sample@example.com",
+  "role": "Account Executive",
+  "department": "Sales",
+  "channels": ["email:diana.sample@example.com"],
+  "notes": "Sample seed record — uses MacBook Pro M2.",
+  "createdAt": "2026-04-15T13:00:00Z",
+  "updatedAt": "2026-04-29T08:45:00Z"
+}

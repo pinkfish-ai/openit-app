@@ -29,6 +29,7 @@ import { pullDatastoresOnce } from "../lib/datastoreSync";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fsWatchStart, fsWatchStop, onFsChanged } from "../lib/fsWatcher";
 import { startAutoCommitDriver, stopAutoCommitDriver } from "../lib/autoCommitDriver";
+import { startSkillMirrorDriver, stopSkillMirrorDriver } from "../lib/skillMirror";
 import { ChatPane } from "./ChatPane";
 import { ChatShellHeader } from "./ChatShellHeader";
 import { PaneDragHandle } from "./PaneDragHandle";
@@ -121,8 +122,6 @@ function sourceKey(s: ViewerSource): string {
       return "attachments-folder";
     case "knowledge-bases-list":
       return "knowledge-bases-list";
-    case "cloud-cta":
-      return "cloud-cta";
     case "tools":
       return "tools";
   }
@@ -140,7 +139,6 @@ export function Shell({
   onSyncLine,
   bubbles,
   cloudConnected,
-  onConnectRequest,
   intakeUrl,
   dock,
   slackOrgId,
@@ -157,9 +155,6 @@ export function Shell({
   /** Whether Pinkfish creds are loaded. Drives the Sync-to-Cloud button:
    *  push when true, CTA-to-connect when false. */
   cloudConnected: boolean;
-  /** Called when the user wants to start the Pinkfish OAuth flow from
-   *  inside the Sync tab (no creds + clicked Sync to Cloud). */
-  onConnectRequest: () => void;
   /** Current intake server URL (or null if not yet started). Substituted
    *  into `{{INTAKE_URL}}` placeholders in markdown content (e.g. the
    *  welcome doc). */
@@ -446,7 +441,13 @@ export function Shell({
     registerSwitchToSync(() => setLeftTab("source-control"));
   }, [registerSwitchToSync]);
   useEffect(() => {
-    registerShowCloudCta(() => setSource({ kind: "cloud-cta" }));
+    registerShowCloudCta(() => {
+      if (!repo) return;
+      const path = `${repo}/connect-to-cloud.md`;
+      resolvePathToSource(path, repo)
+        .then(setSource)
+        .catch((e) => console.error("[shell] cloud-cta resolution failed:", e));
+    });
   }, [registerShowCloudCta]);
 
   // Auto-open getting-started.md on first load — and re-open on demand
@@ -785,6 +786,10 @@ export function Shell({
         // admin Claude via /answer-ticket, manual edits). See the
         // module header for scope rationale.
         await startAutoCommitDriver(repo);
+        // Mirror filestore-side skills + scripts into `.claude/` so
+        // Claude Code's slash registry and Bash tool find them
+        // natively. Source of truth stays in `filestores/`. (PIN-5829.)
+        await startSkillMirrorDriver(repo);
       } catch (e) {
         console.warn("[shell] fs watcher failed to start:", e);
       }
@@ -793,6 +798,7 @@ export function Shell({
     return () => {
       unlisten?.();
       void stopAutoCommitDriver();
+      void stopSkillMirrorDriver();
       fsWatchStop().catch(() => {});
     };
   }, [repo, bumpFs, onSyncLine]);
@@ -925,7 +931,13 @@ export function Shell({
                   onFsChange={bumpFs}
                   onChangeCount={setChangeCount}
                   cloudConnected={cloudConnected}
-                  onConnectRequest={() => setSource({ kind: "cloud-cta" })}
+                  onConnectRequest={() => {
+                    if (!repo) return;
+                    const path = `${repo}/connect-to-cloud.md`;
+                    resolvePathToSource(path, repo)
+                      .then(setSource)
+                      .catch((e) => console.error("[shell] cloud-cta resolution failed:", e));
+                  }}
                 />
               </div>
             </div>
@@ -952,7 +964,6 @@ export function Shell({
                   const resolved = await resolvePathToSource(path, repo);
                   setSource(resolved);
                 }}
-                onConnectCloud={onConnectRequest}
                 onGoBack={goBack}
                 onGoForward={goForward}
                 canGoBack={canGoBack}

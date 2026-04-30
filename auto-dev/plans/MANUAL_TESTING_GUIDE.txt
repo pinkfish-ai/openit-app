@@ -87,6 +87,10 @@ Fix: Verify resolveProjectFilestoresImpl filters collection names to start with 
 RESET STATE:
 
 To completely reset between scenarios:
+npm run cleanslate           # wipe ~/Library/.../state.json + workspace dir
+npm run devmode              # show current dev-creds state
+npm run devmode -- off       # rename .env.development → .bak  (land on connect screen)
+npm run devmode -- on        # rename .env.development.bak → .env.development
 
-rm -rf ~/OpenIT/
+
 # Then restart app in WINDOW 1

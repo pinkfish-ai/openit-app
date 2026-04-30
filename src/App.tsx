@@ -37,6 +37,7 @@ import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
 import { startAgentSync, stopAgentSync } from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
 import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
+import { seedIfEmpty } from "./lib/seed";
 import { invoke } from "@tauri-apps/api/core";
 import { type Bubble as PromptBubble } from "./shell/PromptBubbles";
 import "./App.css";
@@ -106,10 +107,22 @@ function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubbl
   }));
 }
 
+function stopAllCloudSyncs(): void {
+  stopKbSync();
+  stopFilestoreSync();
+  stopDatastoreSync();
+  stopAgentSync();
+  stopWorkflowSync();
+}
+
 /// Fan out the cloud sync engines for a connected project. Centralized so
 /// the relaunch + fresh-bootstrap paths can't drift on which engines they
 /// start. Each engine swallows its own init error so one failure doesn't
 /// take down the others.
+///
+/// Seed is NOT called here — it's a first-install affordance that runs
+/// only in the local-only bootstrap path. Once an account is in the loop,
+/// we trust cloud state and never re-seed.
 function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): void {
   startKbSync({ creds, repo }).catch((e) =>
     console.error("kb sync init failed:", e),
@@ -117,14 +130,14 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): 
   startFilestoreSync({ creds, repo }).catch((e) =>
     console.error("filestore sync init failed:", e),
   );
-  startDatastoreSync({ creds, repo }).catch((e) =>
-    console.error("datastore sync init failed:", e),
-  );
   startAgentSync({ creds, repo }).catch((e) =>
     console.error("agent sync init failed:", e),
   );
   startWorkflowSync({ creds, repo }).catch((e) =>
     console.error("workflow sync init failed:", e),
+  );
+  startDatastoreSync({ creds, repo }).catch((e) =>
+    console.error("datastore sync init failed:", e),
   );
 }
 
@@ -156,6 +169,10 @@ function App() {
   const manualPullRef = useRef<(() => void) | null>(null);
   const switchToSyncRef = useRef<(() => void) | null>(null);
   const showCloudCtaRef = useRef<(() => void) | null>(null);
+  // Latest browserConnect.start, captured by a ref so the
+  // openit:start-cloud-onboarding listener doesn't need to re-bind on
+  // every browserConnect identity change.
+  const browserConnectRef = useRef<(() => void) | null>(null);
 
   // Single-source-of-truth handler for "kick off the Slack flow":
   //   1. scaffold the connect-slack skill canvas state (setup or
@@ -419,6 +436,39 @@ function App() {
     return () => window.removeEventListener("openit:show-cloud-cta", onShowCta);
   }, [connected]);
 
+  // connect-to-cloud.md's primary CTA dispatches this event
+  // (Viewer.tsx::ExternalAnchor catches `openit://connect-cloud`). Kicks
+  // off the same OAuth handoff the header/Sync-panel buttons use. We
+  // capture the start fn through a ref so this effect doesn't need to
+  // re-bind every render of browserConnect.
+  useEffect(() => {
+    const onStartOnboarding = () => {
+      if (connected) setBypassOnboarding(false);
+      else browserConnectRef.current?.();
+    };
+    window.addEventListener("openit:start-cloud-onboarding", onStartOnboarding);
+    return () => window.removeEventListener("openit:start-cloud-onboarding", onStartOnboarding);
+  }, [connected]);
+
+  // getting-started.md's "Create sample dataset" CTA dispatches this
+  // event (Viewer.tsx::ExternalAnchor catches `openit://create-samples`).
+  // Writes the bundled sample tickets/people/conversations/KB articles
+  // to disk. Per-target gate is just "is the local folder empty?" so
+  // re-clicks after content exists are no-ops, not clobber.
+  useEffect(() => {
+    const onCreateSamples = () => {
+      if (!repo) {
+        console.warn("[app] create-samples clicked before repo is ready");
+        return;
+      }
+      seedIfEmpty({ repo, onLog: (msg) => console.log(`[seed] ${msg}`) })
+        .then((res) => console.log(`[app] create-samples wrote ${res.wrote} file(s)`))
+        .catch((e) => console.error("[app] create-samples failed:", e));
+    };
+    window.addEventListener("openit:create-samples", onCreateSamples);
+    return () => window.removeEventListener("openit:create-samples", onCreateSamples);
+  }, [repo]);
+
   useEffect(() => {
     Promise.all([stateLoad(), startAuth(), loadCreds()])
       .then(async ([s, _token, creds]) => {
@@ -609,11 +659,7 @@ function App() {
     const unsub = subscribeToken((t) => setConnected(t !== null));
     return () => {
       unsub();
-      stopKbSync();
-      stopFilestoreSync();
-      stopDatastoreSync();
-      stopAgentSync();
-      stopWorkflowSync();
+      stopAllCloudSyncs();
     };
   }, []);
 
@@ -759,6 +805,7 @@ function App() {
     [onPinkfishConnected],
   );
   const browserConnect = useBrowserConnect({ onConnected: onBrowserConnected });
+  browserConnectRef.current = () => browserConnect.start();
 
   const showOnboarding = loaded && !bypassOnboarding;
 
@@ -881,7 +928,6 @@ function App() {
         onSyncLine={onSyncLine}
         bubbles={bubbles}
         cloudConnected={connected}
-        onConnectRequest={() => browserConnect.start()}
         intakeUrl={intakeServerUrl}
         dock={dock}
         slackOrgId={slackOrgId}

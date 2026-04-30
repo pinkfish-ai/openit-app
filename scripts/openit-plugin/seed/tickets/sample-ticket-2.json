@@ -1,0 +1,14 @@
+{
+  "subject": "Sample — VPN keeps disconnecting from coffee shop wifi",
+  "description": "Working remote today and the VPN drops every ~15 minutes. Reconnects but it's killing my flow. Anyone else seeing this?",
+  "asker": "bob.sample@example.com",
+  "askerChannel": "slack",
+  "status": "escalated",
+  "priority": "high",
+  "assignee": null,
+  "tags": ["sample", "vpn", "network"],
+  "createdAt": "2026-04-28T16:08:44Z",
+  "updatedAt": "2026-04-28T16:55:02Z",
+  "kbArticleRefs": [],
+  "notes": "Sample seed record — safe to delete."
+}

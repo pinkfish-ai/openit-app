@@ -1,0 +1,14 @@
+{
+  "subject": "Sample — Need access to the design Figma project",
+  "description": "Just joined the marketing team. Can someone add me to the shared Figma workspace? My email is carol.sample@example.com.",
+  "asker": "Carol Sample",
+  "askerChannel": "chat",
+  "status": "resolved",
+  "priority": "low",
+  "assignee": "admin",
+  "tags": ["sample", "access", "onboarding"],
+  "createdAt": "2026-04-27T10:11:00Z",
+  "updatedAt": "2026-04-27T10:42:18Z",
+  "kbArticleRefs": ["knowledge-bases/default/sample-article-2.md"],
+  "notes": "Sample seed record — resolved by adding to design-team Figma group."
+}

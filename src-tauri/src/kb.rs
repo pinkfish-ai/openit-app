@@ -35,6 +35,15 @@ pub struct KbFileState {
     /// the field absent in the on-disk JSON when not in conflict.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conflict_remote_version: Option<String>,
+    /// Server's canonical filename when it differs from the manifest
+    /// key (the local filename). Filestore uploads come back with a
+    /// `<uuid>-<original-name>` prefix; we keep the local file at the
+    /// user's original name and stash the cloud-side name here for
+    /// reconciliation. Absent → cloud_filename equals the manifest key
+    /// (KB and any filestore upload that didn't get sanitized).
+    /// (PIN-5827.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_filename: Option<String>,
 }
 
 #[derive(Serialize)]

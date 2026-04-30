@@ -1,0 +1,11 @@
+{
+  "firstName": "Alice",
+  "lastName": "Sample",
+  "email": "alice.sample@example.com",
+  "role": "Marketing Manager",
+  "department": "Marketing",
+  "channels": ["email:alice.sample@example.com"],
+  "notes": "Sample seed record — safe to delete.",
+  "createdAt": "2026-04-26T09:00:00Z",
+  "updatedAt": "2026-04-28T14:22:11Z"
+}

@@ -261,6 +261,46 @@ function ExternalAnchor({
       </a>
     );
   }
+  // openit://connect-cloud — kicks off the OAuth flow directly. Used by
+  // the connect-to-cloud markdown's primary CTA. Distinct from
+  // `openit://cloud-cta` (which opens the pitch page); this one starts
+  // the browser handoff. App.tsx listens and calls browserConnect.start().
+  if (href === "openit://connect-cloud") {
+    return (
+      <a
+        href="#"
+        data-openit-cta="connect-cloud"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent("openit:start-cloud-onboarding"));
+        }}
+        {...rest}
+      >
+        {children}
+      </a>
+    );
+  }
+  // openit://create-samples — populates the workspace with bundled
+  // sample tickets / people / conversations / KB articles. App.tsx
+  // listens and calls into seedIfEmpty (per-target local-empty gate,
+  // so re-clicks after content exists are no-ops).
+  if (href === "openit://create-samples") {
+    return (
+      <a
+        href="#"
+        data-openit-cta="create-samples"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(new CustomEvent("openit:create-samples"));
+        }}
+        {...rest}
+      >
+        {children}
+      </a>
+    );
+  }
   if (href && href.startsWith("openit://skill/")) {
     const skillName = href.slice("openit://skill/".length).split("?")[0];
     // Use href="#" rather than the openit:// URL — the Tauri webview
@@ -357,7 +397,6 @@ export function Viewer({
   intakeUrl,
   welcomeFlashKey,
   onOpenPath,
-  onConnectCloud,
   onGoBack,
   onGoForward,
   canGoBack,
@@ -379,9 +418,6 @@ export function Viewer({
    *  cards to drill into a specific thread). Optional — falls back to
    *  no-op if the parent didn't wire it. */
   onOpenPath?: (path: string) => void | Promise<void>;
-  /** Kick off the Pinkfish onboarding flow. Wired by the cloud-cta
-   *  primary button; ignored for every other source kind. */
-  onConnectCloud?: () => void;
   /** Browser-style back/forward across the center-pane view history.
    *  Wired by Shell so every page gets the same pair of arrows in
    *  the viewer header instead of relying on per-page back buttons. */
@@ -780,7 +816,6 @@ export function Viewer({
       case "agent-trace-list":
         return `Agent traces — ${source.subject} (${source.docs.length} turn${source.docs.length === 1 ? "" : "s"})`;
       case "people-list":        return "People";
-      case "cloud-cta": return "Connect to Pinkfish Cloud";
       case "tools": return "Tools";
       default: return "";
     }
@@ -1444,71 +1479,6 @@ export function Viewer({
       );
     }
 
-    // Cloud CTA — pitch page shown when an admin clicks any
-    // "Connect to Cloud" affordance while still local-only. The page
-    // is intentionally static (no data fetch) so it can iterate on
-    // copy without regression risk. Primary button calls
-    // `onConnectCloud` which kicks the existing onboarding flow.
-    if (source.kind === "cloud-cta") {
-      return (
-        <div className="viewer-summary cloud-cta">
-          <p className="cloud-cta-eyebrow">CLOUD</p>
-          <h1 className="cloud-cta-headline">Unlock the rest of OpenIT.</h1>
-          <p className="cloud-cta-lead">
-            Bring your team in, run agents in the cloud, and plug in 200+ systems.
-          </p>
-
-          <div className="cloud-cta-card">
-            <h2 className="cloud-cta-card-title">Work with your team</h2>
-            <p className="cloud-cta-card-body">
-              Tickets and knowledge sync across the team — instantly.
-            </p>
-          </div>
-
-          <div className="cloud-cta-card">
-            <h2 className="cloud-cta-card-title">Cloud agents that don't sleep</h2>
-            <p className="cloud-cta-card-body">
-              Run agents in the cloud, even with your laptop closed.
-            </p>
-          </div>
-
-          <div className="cloud-cta-card">
-            <h2 className="cloud-cta-card-title">200+ integrations</h2>
-            <p className="cloud-cta-card-body">
-              Plug in the systems your tickets actually live in.
-            </p>
-            <ul className="cloud-cta-mcps">
-              <li>Jamf</li>
-              <li>Okta</li>
-              <li>Microsoft 365</li>
-              <li>Google Workspace</li>
-              <li>Intune</li>
-              <li>ServiceNow</li>
-              <li>JumpCloud</li>
-              <li>Slack</li>
-              <li>1Password</li>
-              <li>Zendesk</li>
-              <li className="cloud-cta-mcp-more">+ 190 more</li>
-            </ul>
-          </div>
-
-          <div className="cloud-cta-actions">
-            <button
-              type="button"
-              className="cloud-cta-primary"
-              onClick={() => onConnectCloud?.()}
-              disabled={!onConnectCloud}
-            >
-              Connect to Pinkfish Cloud
-            </button>
-            <p className="cloud-cta-fineprint">
-              Local mode keeps working — cloud just adds.
-            </p>
-          </div>
-        </div>
-      );
-    }
-
     // Top-level `filestores/` parent. Two cards (attachments,
     // library) — same layout as databases-list. Click attachments →
     // attachments-folder welcome stub. Click library → entity-folder
@@ -1940,6 +1910,26 @@ export function Viewer({
             `${ticketId}.json`,
             JSON.stringify(parsed, null, 2),
           );
+          // PIN-5829: kick off /conversation-to-automation so Claude
+          // harvests the resolution into a KB article, skill, or
+          // script. The ticket is already flipped to resolved on
+          // disk, so even if the paste fails the resolve sticks; we
+          // surface a one-shot alert in the no-session case so the
+          // admin knows the capture didn't fire (matching the
+          // skill-anchor pattern around line 321).
+          const cmd = `/conversation-to-automation ${ticketId}`;
+          const wrapped = `${BRACKETED_PASTE_OPEN}${cmd}${BRACKETED_PASTE_CLOSE}`;
+          try {
+            const pasted = await writeToActiveSession(wrapped);
+            if (!pasted) {
+              alert(
+                "Ticket marked resolved, but couldn't reach Claude to capture the resolution. " +
+                  `Open Claude in the right pane and run \`${cmd}\` to capture as a KB article, skill, or script.`,
+              );
+            }
+          } catch (e) {
+            console.warn(`[viewer] /conversation-to-automation paste failed:`, e);
+          }
           if (onOpenPath) {
             void onOpenPath(`${repo}/databases/conversations`);
           }
@@ -2082,19 +2072,23 @@ export function Viewer({
               disabled={replySending}
             />
             <div className="thread-reply-footer">
+              {/* End-action lives on the left; the right side is the
+                  continue-action (Send). Asymmetry helps the role:
+                  resolve closes the conversation + harvests learnings,
+                  Send keeps it going. (PIN-5829.) */}
+              <button
+                type="button"
+                className="viewer-edit-btn thread-reply-resolve"
+                onClick={() => void markResolved()}
+                disabled={replySending}
+                title="Mark this ticket as resolved and capture the resolution as a KB article, skill, or script"
+              >
+                Mark as resolved
+              </button>
               {replyError && (
                 <span className="thread-reply-error">{replyError}</span>
               )}
               <span className="thread-reply-hint">⌘↩ to send · drop files to attach</span>
-              <button
-                type="button"
-                className="viewer-edit-btn"
-                onClick={() => void markResolved()}
-                disabled={replySending}
-                title="Mark this ticket as resolved and return to the inbox"
-              >
-                Mark as resolved
-              </button>
               <button
                 type="button"
                 className="viewer-edit-btn viewer-edit-btn-primary"

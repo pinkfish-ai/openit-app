@@ -1,0 +1,8 @@
+{
+  "id": "msg-1745861702000-bb02",
+  "ticketId": "sample-ticket-2",
+  "role": "agent",
+  "sender": "Triage agent",
+  "timestamp": "2026-04-28T16:55:02Z",
+  "body": "I checked the KB and don't have a clean fix for intermittent drops on coffee-shop wifi specifically. This looks like an environment issue rather than something we've solved before — escalating to the admin so they can take a look."
+}
