@@ -50,41 +50,21 @@ async function writeSyncedPluginVersion(repo: string, version: string): Promise<
   }
 }
 
-/// Fetch the manifest. Tries cloud when creds are provided and falls back to
-/// the bundled copy. With no creds, reads bundled directly. Local-first means
-/// the bundled copy is always the source of truth at install/first-run time —
-/// cloud is only ahead once an admin has actually edited it there.
+/// Fetch the manifest. Always reads the bundled copy shipped with the app
+/// binary. Cloud-served plugin fetch is disabled until dev is stable —
+/// re-enable by restoring the `creds` branch that calls
+/// `skills_fetch_manifest` (Rust command stays registered).
 export async function fetchSkillsManifest(
-  creds: PinkfishCreds | null,
+  _creds: PinkfishCreds | null,
 ): Promise<PluginManifest> {
-  if (creds) {
-    try {
-      const manifestJson = await invoke<string>("skills_fetch_manifest", {
-        appApiUrl: creds.tokenUrl,
-      });
-      return JSON.parse(manifestJson);
-    } catch (error) {
-      console.warn("[skillsSync] cloud manifest fetch failed, falling back to bundled:", error);
-    }
-  }
   const manifestJson = await invoke<string>("skills_fetch_bundled_manifest");
   return JSON.parse(manifestJson);
 }
 
 export async function fetchSkillFile(
   skillPath: string,
-  creds: PinkfishCreds | null,
+  _creds: PinkfishCreds | null,
 ): Promise<string> {
-  if (creds) {
-    try {
-      return await invoke<string>("skills_fetch_file", {
-        appApiUrl: creds.tokenUrl,
-        skillPath,
-      });
-    } catch (error) {
-      console.warn(`[skillsSync] cloud fetch ${skillPath} failed, falling back to bundled:`, error);
-    }
-  }
   return await invoke<string>("skills_fetch_bundled_file", { skillPath });
 }
 
