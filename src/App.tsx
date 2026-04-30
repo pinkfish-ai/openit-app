@@ -923,6 +923,7 @@ function App() {
         bubbles={bubbles}
         cloudConnected={connected}
         intakeUrl={intakeServerUrl}
+        tunnelUrl={tunnelPublicUrl}
         dock={dock}
         slackOrgId={slackOrgId}
         stagedSlackBotToken={stagedSlackBotToken}
