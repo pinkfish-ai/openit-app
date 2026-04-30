@@ -40,7 +40,10 @@ import {
   withRepoLock,
   type EntityAdapter,
 } from "./syncEngine";
-import { localSubdirFor } from "./datastorePaths";
+import {
+  CONVERSATIONS_COLLECTION_NAME,
+  localSubdirFor,
+} from "./datastorePaths";
 
 export { localSubdirFor };
 
@@ -64,23 +67,39 @@ type DefaultDatastore = {
   isStructured: boolean;
 };
 
+// All three defaults are created **unstructured** on the cloud. Reason:
+// the cloud's `POST /memory/items` row-insert path doesn't honor caller-
+// supplied schema field IDs — it accepts the create-time schema then
+// rejects every row with `Unknown column: '<id>'`. Until that bug is
+// fixed cloud-side, structured collections aren't writable from OpenIT.
+//
+// We still ship `databases/{tickets,people}/_schema.json` to disk via
+// the plugin overlay (`routeFile: schemas/<col>._schema.json` →
+// `databases/<col>/_schema.json`), so the local UI's schema-aware
+// rendering / Cards view continues to work. The split is:
+//   - cloud = dumb bucket, accepts any JSON row;
+//   - disk  = bundled schema, used by the local UI for structure.
+//
+// When the cloud row-insert path is fixed, flip `isStructured: true` for
+// `openit-tickets` and `openit-people` (and add `templateId` if needed)
+// — no schema or local-layout changes required.
 const DEFAULT_DATASTORES: DefaultDatastore[] = [
   {
     name: "openit-tickets",
-    templateId: "case-management",
+    templateId: null,
     description: "IT ticket tracking",
-    isStructured: true,
+    isStructured: false,
   },
   {
     name: "openit-people",
-    templateId: "contacts",
+    templateId: null,
     description: "Contact/people directory",
-    isStructured: true,
+    isStructured: false,
   },
   {
     name: "openit-conversations",
     templateId: null,
-    description: "Per-message conversation turns (unstructured)",
+    description: "Per-message conversation turns",
     isStructured: false,
   },
 ];
@@ -417,7 +436,7 @@ async function pushAllToDatastoresImpl(args: {
 
   for (const col of collections) {
     const colDir = `${repo}/${localSubdirFor(col.name)}`;
-    const isConversations = col.name === "openit-conversations";
+    const isConversations = col.name === CONVERSATIONS_COLLECTION_NAME;
 
     let remote: MemoryItem[];
     try {

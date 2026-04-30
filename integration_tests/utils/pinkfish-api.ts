@@ -159,6 +159,122 @@ export class PinkfishClient {
   }
 
   /**
+   * Create a data collection. Mirrors the POST our app sends in
+   * `resolveProjectDatastores` (datastoreSync.ts) — single-call create
+   * with caller schema. Cloud fixes #1 and #2 must be in for this to
+   * land a structured collection on the first try.
+   *
+   * Endpoint: POST /datacollection/
+   */
+  async createCollection(body: Record<string, unknown>): Promise<DataCollection> {
+    const url = new URL("/datacollection/", this.skillsBaseUrl);
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: { ...(await this.authHeaders()), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `createCollection failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+    return (await response.json()) as DataCollection;
+  }
+
+  /**
+   * Delete an entire data collection by id. Best-effort cleanup —
+   * tolerates 403 (cred scope) and 404 (already gone).
+   *
+   * Endpoint: DELETE /datacollection/{id}
+   */
+  async deleteCollection(id: string): Promise<void> {
+    const url = new URL(
+      `/datacollection/${encodeURIComponent(id)}`,
+      this.skillsBaseUrl,
+    );
+    const response = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: await this.authHeaders(),
+    });
+    if (response.ok || response.status === 404) return;
+    if (response.status === 403) {
+      console.warn(`[pinkfish-api] cleanup delete forbidden for collection ${id}`);
+      return;
+    }
+    throw new Error(
+      `deleteCollection failed: HTTP ${response.status}: ${await response.text()}`,
+    );
+  }
+
+  /**
+   * Convenience: delete every collection whose name matches one of the
+   * given names (across ALL types). Used by integration tests to
+   * idempotently reset a known set of openit-* fixtures before a run.
+   */
+  async deleteCollectionsByName(names: string[]): Promise<number> {
+    const types: Array<"datastore" | "filestorage" | "knowledge_base"> = [
+      "datastore", "filestorage", "knowledge_base",
+    ];
+    let deleted = 0;
+    for (const t of types) {
+      const all = await this.listCollections(t);
+      for (const c of all) {
+        if (names.includes(c.name)) {
+          await this.deleteCollection(c.id);
+          deleted += 1;
+        }
+      }
+    }
+    return deleted;
+  }
+
+  /**
+   * List items in a datastore collection. Returns parsed items array.
+   * Endpoint: GET /memory/bquery?collectionId={id}
+   */
+  async listDatastoreItems(collectionId: string, limit = 200): Promise<{
+    items: Array<{ id?: string; key?: string; content?: unknown; updatedAt?: string }>;
+  }> {
+    const url = new URL("/memory/bquery", this.skillsBaseUrl);
+    url.searchParams.set("collectionId", collectionId);
+    url.searchParams.set("limit", String(limit));
+    const response = await fetch(url.toString(), { headers: await this.authHeaders() });
+    if (!response.ok) {
+      throw new Error(
+        `listDatastoreItems failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+    const data = await response.json();
+    return { items: Array.isArray(data?.items) ? data.items : [] };
+  }
+
+  /**
+   * POST one row to a datastore collection. Mirrors what
+   * `pushAllToDatastoresImpl` does for new local files.
+   * Endpoint: POST /memory/items?collectionId={id}
+   */
+  async postDatastoreRow(
+    collectionId: string,
+    key: string,
+    content: unknown,
+  ): Promise<{ id: string }> {
+    const url = new URL("/memory/items", this.skillsBaseUrl);
+    url.searchParams.set("collectionId", collectionId);
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: { ...(await this.authHeaders()), "Content-Type": "application/json" },
+      body: JSON.stringify({ key, content }),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `postDatastoreRow failed: HTTP ${response.status}: ${await response.text()}`,
+      );
+    }
+    const data = await response.json();
+    return { id: String(data?.id ?? "") };
+  }
+
+  /**
    * Upload a file to a filestorage collection. Multipart form upload to
    * the same endpoint the Tauri backend uses.
    * Endpoint: POST /filestorage/items/upload?collectionId={id}

@@ -158,3 +158,11 @@ Diverged from the plan in three small ways. None changed the brief contract.
 Follow-up surfaces noted for later (not blocking v1):
 - The local file isn't rewritten when push injects `ticketId` from the folder name. Cloud ends up with ticketId, local stays as-authored. No conflict (manifest reconcile after push aligns them on `updatedAt`), but the divergence is silent. If we want strict "local is the source of truth," add a local-rewrite alongside the push payload. v1 lets it slide because the only effect is the local file potentially missing a field that's present on cloud — engine + UI use folder name for ticket linkage anyway.
 - `listOpenitCollectionNames` in `seed.ts` makes one extra GET per type on every connect (datastore + KB = 2 calls). Negligible in practice; deferring optimization.
+
+### Cloud-side bug discovered during stage-04
+
+While running the new integration scenarios against `dev20`, found a separate cloud bug not on `2026-04-29-datastore-cloud-fixes.md`: **`POST /memory/items` rejects rows on structured collections that were created with caller-supplied schema field IDs.** The schema POST honored fields like `firstName` (cloud fix #1 + #2 worked), and `GET /datacollection/{id}` echoes the schema back with those IDs intact — but row-insert errors with `Unknown column: 'firstName'`. There's no field-ID shape (semantic, `f_N`, label) that the row-insert path accepts; the structured table backing the collection isn't getting the caller schema applied to it.
+
+**v1 workaround:** all three default datastores are created **unstructured** (`isStructured: false`). The local UI stays structure-aware via the bundled `_schema.json` files written to disk by the plugin overlay (`scripts/openit-plugin/schemas/{tickets,people}._schema.json` → `databases/{tickets,people}/_schema.json`). Cloud is a "dumb bucket" until the row-insert bug is fixed.
+
+When the cloud row-insert path is fixed, flip `isStructured: true` for `openit-tickets` and `openit-people` in `DEFAULT_DATASTORES` (one-line change per default). No schema-file or local-layout edits needed. Document the cloud bug separately and reference from a follow-up Linear ticket.
