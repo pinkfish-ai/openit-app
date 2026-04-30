@@ -40,6 +40,9 @@ import {
   withRepoLock,
   type EntityAdapter,
 } from "./syncEngine";
+import { localSubdirFor } from "./datastorePaths";
+
+export { localSubdirFor };
 
 export { fetchDatastoreItems };
 
@@ -82,15 +85,9 @@ const DEFAULT_DATASTORES: DefaultDatastore[] = [
   },
 ];
 
-/// Map a cloud collection name to its local working-tree folder.
-/// `openit-tickets` → `databases/tickets`. The `openit-` prefix is a
-/// cloud-side discovery hint; on disk we want the readable folder name.
-export function localSubdirFor(collectionName: string): string {
-  const folder = collectionName.startsWith("openit-")
-    ? collectionName.slice("openit-".length)
-    : collectionName;
-  return `databases/${folder}`;
-}
+// `localSubdirFor` and `CONVERSATIONS_COLLECTION_NAME` live in
+// `./datastorePaths` so the adapter (`entities/datastore.ts`) can share
+// them without a circular import.
 
 // Org-scoped cache to prevent collections from one org leaking into another.
 let createdCollections = new Map<string, Map<string, DataCollection>>();

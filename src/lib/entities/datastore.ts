@@ -34,6 +34,10 @@ import {
   type RemoteItem,
 } from "../syncEngine";
 import { fetchDatastoreItems } from "./datastoreApi";
+import {
+  CONVERSATIONS_COLLECTION_NAME,
+  localSubdirFor,
+} from "../datastorePaths";
 
 const PAGE = 1000;
 /// Defend against a backend that always claims `hasNextPage=true`. 100k rows
@@ -41,24 +45,12 @@ const PAGE = 1000;
 /// flag pagination as failed so the engine skips its server-delete pass.
 const PAGINATION_SAFETY_CAP = 100_000;
 
-const CONVERSATIONS_COLLECTION_NAME = "openit-conversations";
-
 function manifestKey(colName: string, key: string): string {
   return `${colName}/${key}`;
 }
 
 function rowKey(item: MemoryItem): string {
   return (item.key ?? item.id ?? "").toString();
-}
-
-/// Map a cloud collection name to its local working-tree folder.
-/// Mirrors `localSubdirFor` in datastoreSync (kept duplicated here to
-/// avoid a circular import: datastoreSync imports the adapter).
-function localSubdirFor(colName: string): string {
-  const folder = colName.startsWith("openit-")
-    ? colName.slice("openit-".length)
-    : colName;
-  return `databases/${folder}`;
 }
 
 /// Pull a `ticketId` string out of a row's content, defending against
