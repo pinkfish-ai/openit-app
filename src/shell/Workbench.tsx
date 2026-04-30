@@ -2,9 +2,7 @@ import { useEffect, useState } from "react";
 import { fsList, type FileNode } from "../lib/api";
 import { scanEscalatedTickets, type TicketSummary } from "../lib/escalatedTickets";
 import { listInstalled as listInstalledTools } from "../lib/toolsInstall";
-import { writeToActiveSession } from "./activeSession";
 import { ENTITY_META, type EntityKind } from "./entityIcons";
-import { Button } from "../ui";
 
 type Station = {
   id: string;
@@ -90,7 +88,6 @@ export function Workbench({
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [escalatedTickets, setEscalatedTickets] = useState<TicketSummary[]>([]);
   const escalatedCount = escalatedTickets.length;
-  const [drafting, setDrafting] = useState(false);
 
   useEffect(() => {
     if (!repo) {
@@ -125,10 +122,9 @@ export function Workbench({
         }),
       );
       if (!cancelled) setCounts(next);
-      // "Unresolved" === escalated for today-hero purposes. Open
-      // tickets are still being worked by the agent, resolved /
-      // closed are done; only escalated demands the admin's
-      // attention, so that's what the hero counts.
+      // The today-hero counts escalated tickets only — open tickets
+      // are still being worked by the agent, resolved/closed are
+      // done; only escalated demands the admin's attention.
       try {
         const esc = await scanEscalatedTickets(repo);
         if (!cancelled) setEscalatedTickets(esc);
@@ -146,44 +142,6 @@ export function Workbench({
   const inboxStation = STATIONS.find((s) => s.id === "inbox")!;
   const openInbox = () => {
     if (repo) onOpen(`${repo}/${inboxStation.rel}`);
-  };
-
-  // Secondary action on the TODAY card when escalations are pending:
-  // paste an /answer-ticket invocation into the active Claude PTY so
-  // the admin can draft a reply with Claude's help. Replaces the
-  // previous standalone EscalatedTicketBanner — the notification now
-  // lives where the data lives, on the TODAY card itself.
-  const draftRepliesWithClaude = async () => {
-    if (drafting || escalatedTickets.length === 0) return;
-    setDrafting(true);
-    try {
-      const lines: string[] = [];
-      lines.push(
-        escalatedTickets.length === 1
-          ? `/answer-ticket ${escalatedTickets[0].relPath}`
-          : `/answer-ticket ${escalatedTickets.length} escalated tickets:`,
-      );
-      if (escalatedTickets.length > 1) {
-        for (const t of escalatedTickets) lines.push(`  - ${t.relPath}`);
-      }
-      const wrapped = `\x1b[200~${lines.join("\n")}\x1b[201~`;
-      await writeToActiveSession(wrapped);
-
-      // Open the first conversation in the center pane so the admin
-      // sees the thread alongside Claude's draft. Mirrors the old
-      // banner's behavior.
-      if (repo) {
-        const ticketFile = escalatedTickets[0].relPath.split("/").pop() || "";
-        const ticketId = ticketFile.replace(/\.json$/, "");
-        if (ticketId) {
-          onOpen(`${repo}/databases/conversations/${ticketId}`);
-        }
-      }
-    } catch (e) {
-      console.error("[workbench] draft-replies-with-claude failed:", e);
-    } finally {
-      setTimeout(() => setDrafting(false), 500);
-    }
   };
 
   return (
@@ -216,35 +174,11 @@ export function Workbench({
             <span className="workbench-today-hero">
               <span className="workbench-today-number">{escalatedCount}</span>
               <span className="workbench-today-label">
-                unresolved ticket{escalatedCount === 1 ? "" : "s"}
+                escalated ticket{escalatedCount === 1 ? "" : "s"}
               </span>
             </span>
           )}
         </button>
-        {escalatedCount > 0 && (
-          <Button
-            variant="subtle"
-            className="workbench-today-cta"
-            onClick={draftRepliesWithClaude}
-            disabled={!repo || drafting}
-            loading={drafting}
-            title="Paste an /answer-ticket prompt into Claude so you can draft a reply with its help"
-          >
-            <span className="workbench-today-cta-glyph" aria-hidden>
-              ✎
-            </span>
-            <span className="workbench-today-cta-text">
-              {drafting
-                ? "Sending to Claude…"
-                : escalatedCount === 1
-                  ? "Draft reply with Claude"
-                  : `Draft ${escalatedCount} replies with Claude`}
-            </span>
-            <span className="arrow" aria-hidden>
-              →
-            </span>
-          </Button>
-        )}
       </div>
 
       <div className="workbench-stations">

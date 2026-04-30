@@ -1,6 +1,6 @@
 [package]
 name = "openit-app"
-version = "0.2.2"
+version = "0.2.3"
 description = "OpenIT — Tauri desktop wrapper for Claude Code"
 authors = ["Pinkfish"]
 edition = "2021"
