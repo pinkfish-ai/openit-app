@@ -127,10 +127,14 @@
   --h-control-lg: 36px;
   --h-rail:       44px;     /* every section bar height */
 
-  /* Layout — cream gutters around the panes row. Bottom is slightly
-     larger so the panes' rounded bottom corners have visible breathing
-     room against the cream canvas (the panes' drop shadow falls into
-     the extra space). */
+  /* Layout — cream gutters around the panes row. Asymmetric on
+     purpose:
+       - top:    6px  — tight, the title rail's bottom edge feels
+                       adjacent to the panes (not floating above)
+       - sides:  14px — comfortable breathing on the left/right
+       - bottom: 18px — extra room for each pane's drop shadow to
+                       fall and the rounded bottom corner to read */
+  --layout-gutter-top: 6px;
   --layout-gutter: 14px;
   --layout-gutter-bottom: 18px;
   --layout-pane-gap: 10px;

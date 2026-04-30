@@ -202,7 +202,10 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: var(--layout-pane-gap);
-  padding: var(--layout-gutter) var(--layout-gutter) var(--layout-gutter-bottom);
+  padding:
+    var(--layout-gutter-top)
+    var(--layout-gutter)
+    var(--layout-gutter-bottom);
   /* No overflow:hidden here — would clip each pane's drop-shadow at
      this row's bottom edge, hiding the visible curve we worked to
      get. The .app parent has overflow:hidden so the page can't
@@ -218,14 +221,19 @@ body::before {
      anything that would escape the window. */
 }
 
-/* Float each pane as a card on the cream canvas. */
+/* Float each pane as a card on the cream canvas. v5: bumped to
+   --r-lg (14px) — the previous 10px curve was too small to read
+   visually. 14px is unmistakably rounded against the cream. */
 .left-pane,
 .right-pane,
 .viewer,
 .sc-panel,
 .explorer {
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   overflow: hidden;
+  /* Belt-and-suspenders: ensure no inherited clip-path masks the
+     rounded corners. */
+  clip-path: none;
 }
 .left-pane,
 .viewer {
@@ -238,6 +246,19 @@ body::before {
 .right-pane {
   box-shadow: var(--shadow-pane-dark);
   border: 1px solid var(--color-border-dark);
+}
+
+/* react-resizable-panels wraps each <Panel> in a div with
+   data-panel attributes and applies overflow:hidden by default to
+   support its resize math. That wrapper sits between
+   .shell-panes-row and our .left-pane/.right-pane/.viewer — its
+   overflow:hidden was clipping each pane's drop-shadow at the
+   wrapper's bottom edge, which is why the rounded bottom corners
+   read as "chipped" no matter how we styled the pane itself.
+   Override here. The library's resize behavior depends on the
+   ResizeHandle elements, not on the Panel wrapper's overflow. */
+[data-panel] {
+  overflow: visible !important;
 }
 .viewer {
   background: var(--surface);
