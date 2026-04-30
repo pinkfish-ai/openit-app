@@ -120,11 +120,9 @@
   --r-md:   10px;
   --r-lg:   14px;
   --r-pill: 999px;
-  /* Pane card radius — TEST VALUE 24px. Cranked aggressively to
-     confirm the CSS pipeline is actually applying changes; will
-     dial back to ~16px once the user confirms the rounded corners
-     are visible. */
-  --r-pane: 24px;
+  /* Pane card radius — 16px reads as clearly rounded against cream
+     gutter without the "pillow" feel of 24px+. */
+  --r-pane: 16px;
 
   /* ─── SIZES ─────────────────────────────────────────────── */
   --h-control-sm: 24px;
@@ -139,10 +137,9 @@
        - sides:  14px — comfortable breathing on the left/right
        - bottom: 18px — extra room for each pane's drop shadow to
                        fall and the rounded bottom corner to read */
-  /* TEST VALUES — aggressive to confirm pipeline. Dial back later. */
-  --layout-gutter-top: 0px;
+  --layout-gutter-top: 4px;
   --layout-gutter: 14px;
-  --layout-gutter-bottom: 32px;
+  --layout-gutter-bottom: 20px;
   --layout-pane-gap: 10px;
 
   /* Traffic-light clearance (macOS) */

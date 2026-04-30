@@ -241,7 +241,11 @@ body::before {
 .left-pane,
 .viewer {
   box-shadow: var(--shadow-pane);
-  border: 1px solid var(--color-border);
+  /* --color-border-strong gives the rounded edge enough contrast
+     against both the pane fill (cream-tinted on the left, white in
+     the viewer) AND the cream gutter outside. With --color-border
+     the rounded corners read as "chipped" against cream-on-cream. */
+  border: 1px solid var(--color-border-strong);
 }
 /* Right pane is the dark Claude theatre — needs its own deeper
    shadow to make the rounded bottom corner visibly pop against
@@ -264,25 +268,11 @@ body::before {
   overflow: visible !important;
 }
 
-/* ─── DEBUG OUTLINES — diagnostic only, remove after fix ───────
-   Outlines (not borders) so they don't affect layout. Bright
-   colors so the user can see the exact bounds of each container
-   and identify which one is "the big bottom bar" cutting off the
-   pane corners. Each container gets a distinct color:
-     - red    = .shell           (the outer shell)
-     - blue   = .shell-panes-row (the row that holds the panes)
-     - green  = [data-panel]     (react-resizable-panels wrapper)
-     - purple = .left/.right-pane/.viewer (the actual pane card)
-*/
-.shell { outline: 4px solid red !important; outline-offset: -2px; }
-.shell-panes-row { outline: 4px solid blue !important; outline-offset: -2px; }
-[data-panel] { outline: 4px solid green !important; outline-offset: -2px; }
-.left-pane,
-.right-pane,
-.viewer {
-  outline: 4px solid magenta !important;
-  outline-offset: -2px;
-}
+/* (debug outlines removed — diagnostic confirmed the structure was
+   correct; the perceived "bottom bar" was the panes' own
+   low-contrast cream background blending into the gutter cream,
+   not a phantom element. Fix: stronger border so the rounded edge
+   reads regardless of fill contrast.) */
 .viewer {
   background: var(--surface);
   position: relative;
