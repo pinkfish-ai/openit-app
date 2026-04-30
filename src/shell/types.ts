@@ -145,6 +145,8 @@ export type ViewerSource =
         | "knowledge-base"
         | "library"
         | "reports"
+        | "skills"
+        | "scripts"
         | "attachments-ticket";
       // Repo-relative path the resolver matched. For non-KB entities
       // it equals the entity name; for KB it carries the specific
