@@ -2058,12 +2058,12 @@ body::before {
   font-weight: 600;
 }
 
-/* When the CTA-style link sits alone in its own paragraph, center it.
-   Reads as a discrete action rather than awkwardly inline next to body
-   text. Triggered automatically by markdown of the form `[**text**](url)`
-   on its own line. */
+/* When the CTA-style link sits alone in its own paragraph, right-align
+   it. Reads as a discrete action rather than awkwardly inline next to
+   body text. Triggered automatically by markdown of the form
+   `[**text**](url)` on its own line. */
 .viewer-md p:has(> a:only-child > strong:only-child) {
-  text-align: center;
+  text-align: right;
   margin: 1.2em 0;
 }
 
