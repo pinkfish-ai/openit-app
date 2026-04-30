@@ -847,16 +847,12 @@ function App() {
 
   // Cloud-connect button label/variant logic — extracted from the
   // legacy header so the merged TitleRail can render it cleanly.
+  // When not connected we always show "Connect to Cloud"; the
+  // browser-handoff progress is surfaced on the cloud-CTA pane and
+  // the onboarding screen, not the header pill.
   const cloudLabel = connected
     ? `Cloud · ${orgName ?? "connected"}`
-    : browserConnect.state.kind === "waiting"
-      ? "Authorize in browser…"
-      : browserConnect.state.kind === "validating"
-        ? "Validating…"
-        : "Connect to Cloud";
-  const cloudDisabled =
-    browserConnect.state.kind !== "idle" &&
-    browserConnect.state.kind !== "error";
+    : "Connect to Cloud";
 
   return (
     <>
@@ -895,7 +891,6 @@ function App() {
             <Button
               variant={connected ? "secondary" : "primary"}
               size="md"
-              disabled={cloudDisabled}
               title={
                 connected
                   ? "Connected — click to update credentials"
