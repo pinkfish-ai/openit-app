@@ -274,12 +274,14 @@ body::before {
 
 /* TWEAK PANE BORDER — dark Claude theatre (right pane).
    Darker drop shadow to make the rounded bottom corner pop
-   against cream. Keep the dark border-dark token; using a
-   light-pane color here would visually conflict with the dark
-   surface. */
+   against cream. Border uses --color-border-strong (warm beige)
+   to match the light panes — same width, same tone, so all
+   three panes read as a unified set ringed by the same beige.
+   Against the dark interior the beige line clearly traces the
+   rounded edge; against cream outside it does the same. */
 .right-pane {
   box-shadow: var(--shadow-pane-dark);
-  border: 1px solid var(--color-border-dark);
+  border: 1.5px solid var(--color-border-strong);
 }
 
 /* ════════════════════════════════════════════════════════════
