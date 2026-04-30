@@ -67,7 +67,7 @@ describe("kbAdapter", () => {
     });
     vi.mocked(api.kbListRemote).mockResolvedValue([remoteFile("readme.md")]);
 
-    const result = await adapter.listRemote("test-repo");
+    const result = await adapter.listRemote("test-repo", { collection_id: null, collection_name: null, files: {} });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].manifestKey).toBe("readme.md");
@@ -83,7 +83,7 @@ describe("kbAdapter", () => {
     });
     vi.mocked(api.kbListRemote).mockResolvedValue([remoteFile("vpn-reset.md")]);
 
-    const result = await adapter.listRemote("test-repo");
+    const result = await adapter.listRemote("test-repo", { collection_id: null, collection_name: null, files: {} });
 
     expect(result.items[0].workingTreePath).toBe(
       "knowledge-bases/runbooks/vpn-reset.md",
@@ -113,7 +113,7 @@ describe("kbAdapter", () => {
     });
     vi.mocked(api.kbListRemote).mockResolvedValue([remoteFile("how-to.md")]);
 
-    const result = await adapter.listRemote("test-repo");
+    const result = await adapter.listRemote("test-repo", { collection_id: null, collection_name: null, files: {} });
     await result.items[0].fetchAndWrite("test-repo");
 
     expect(api.kbDownloadToLocal).toHaveBeenCalledWith(
@@ -131,7 +131,7 @@ describe("kbAdapter", () => {
     });
     vi.mocked(api.kbListRemote).mockResolvedValue([remoteFile("conflict.md")]);
 
-    const result = await adapter.listRemote("test-repo");
+    const result = await adapter.listRemote("test-repo", { collection_id: null, collection_name: null, files: {} });
     await result.items[0].writeShadow("test-repo");
 
     expect(api.kbDownloadToLocal).toHaveBeenCalledWith(

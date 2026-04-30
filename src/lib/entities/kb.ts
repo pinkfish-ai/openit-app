@@ -75,7 +75,7 @@ export function kbAdapter(args: {
     saveManifest: (repo, m) =>
       saveCollectionManifest(repo, "kb", collection.id, collection.name, m),
 
-    async listRemote(_repo) {
+    async listRemote(_repo, _manifest) {
       const token = getToken();
       if (!token) throw new Error("not authenticated");
       const urls = derivedUrls(creds.tokenUrl);

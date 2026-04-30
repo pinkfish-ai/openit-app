@@ -83,7 +83,7 @@ export function datastoreAdapter(args: {
     loadManifest: (repo) => datastoreStateLoad(repo),
     saveManifest: (repo, m) => datastoreStateSave(repo, m),
 
-    async listRemote(_repo) {
+    async listRemote(_repo, _manifest) {
       const items: RemoteItem[] = [];
       // Per-collection failure tracking: when collection A fails (network,
       // safety-cap, etc.), only A's manifest keys should be excluded from

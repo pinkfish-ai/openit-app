@@ -125,7 +125,7 @@ export function agentAdapter(args: {
     saveManifest: (repo, m) =>
       invoke<void>("entity_state_save", { repo, name: "agent", state: m }),
 
-    async listRemote(_repo) {
+    async listRemote(_repo, _manifest) {
       const agents = cachedFirst ?? (await resolveProjectAgents(creds));
       cachedFirst = undefined;
       const items: RemoteItem[] = [];

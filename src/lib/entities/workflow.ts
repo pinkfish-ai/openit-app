@@ -112,7 +112,7 @@ export function workflowAdapter(args: {
     saveManifest: (repo, m) =>
       invoke<void>("entity_state_save", { repo, name: "workflow", state: m }),
 
-    async listRemote(_repo) {
+    async listRemote(_repo, _manifest) {
       const workflows = cachedFirst ?? (await resolveProjectWorkflows(creds));
       cachedFirst = undefined;
       const items: RemoteItem[] = [];

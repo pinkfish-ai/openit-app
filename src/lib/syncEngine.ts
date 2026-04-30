@@ -198,7 +198,12 @@ export type EntityAdapter = {
   /// `manifestKey` starts with one of these prefixes from the
   /// server-delete pass — collections that listed successfully still
   /// have their server-deleted rows reconciled.
-  listRemote(repo: string): Promise<{
+  ///
+  /// `manifest` is the just-loaded manifest. Filestore uses it to map
+  /// the server's UUID-prefixed filenames back to the local filenames
+  /// stored under `cloud_filename` (PIN-5827). Other adapters can
+  /// ignore it.
+  listRemote(repo: string, manifest: Manifest): Promise<{
     items: RemoteItem[];
     paginationFailed: boolean;
     unreliableKeyPrefixes?: string[];
@@ -510,7 +515,7 @@ async function pullEntityImpl(
     items: remote,
     paginationFailed,
     unreliableKeyPrefixes = [],
-  } = await adapter.listRemote(repo);
+  } = await adapter.listRemote(repo, manifest);
   const local = await adapter.listLocal(repo);
 
   // Index local items so we can answer "is this manifestKey on disk?" and

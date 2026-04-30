@@ -436,6 +436,12 @@ export type KbFileState = {
   /// signal "user has reconciled against this remote version" without
   /// re-fetching.
   conflict_remote_version?: string;
+  /// Server's canonical filename when it differs from the manifest key
+  /// (the local filename). Filestore uploads return UUID-prefixed names;
+  /// keeping the local file at the user's original name and stashing the
+  /// cloud-side name here lets reconciliation match without renaming.
+  /// (PIN-5827.)
+  cloud_filename?: string;
 };
 export type KbStatePersisted = {
   collection_id: string | null;

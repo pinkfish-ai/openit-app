@@ -72,7 +72,7 @@ export function filestoreAdapter(args: {
     saveManifest: (repo, m) =>
       saveCollectionManifest(repo, "fs", collection.id, collection.name, m),
 
-    async listRemote(_repo) {
+    async listRemote(_repo, manifest) {
       const token = getToken();
       if (!token) throw new Error("not authenticated");
       const urls = derivedUrls(creds.tokenUrl);
@@ -81,24 +81,38 @@ export function filestoreAdapter(args: {
         skillsBaseUrl: urls.skillsBaseUrl,
         accessToken: token.accessToken,
       });
+      // PIN-5827: cloud filestore filenames are UUID-prefixed but the
+      // local file keeps its original name. Build a reverse map
+      // cloud_filename → local_filename from the manifest so a
+      // round-trip pull lands on the same path that was pushed (no
+      // duplicate downloads, no working-tree churn). Files we have no
+      // manifest entry for (uploaded from another device, or first
+      // pull on this device) fall through to the cloud filename — same
+      // behavior as before, since there's no local name to honor.
+      const cloudToLocal = new Map<string, string>();
+      for (const [localName, state] of Object.entries(manifest.files)) {
+        const cloudName = state.cloud_filename ?? localName;
+        cloudToLocal.set(cloudName, localName);
+      }
       const items: RemoteItem[] = [];
       for (const r of rows) {
         if (!r.filename || !r.signed_url) continue;
         const downloadUrl = r.signed_url;
-        const filename = r.filename;
+        const cloudFilename = r.filename;
+        const localFilename = cloudToLocal.get(cloudFilename) ?? cloudFilename;
         items.push({
-          manifestKey: filename,
-          workingTreePath: `${DIR}/${filename}`,
+          manifestKey: localFilename,
+          workingTreePath: `${DIR}/${localFilename}`,
           updatedAt: r.updated_at ?? "",
           fetchAndWrite: async (repo) => {
             await ensureDirectoryExists(repo, DIR);
-            return fsStoreDownloadToLocal(repo, filename, downloadUrl, DIR);
+            return fsStoreDownloadToLocal(repo, localFilename, downloadUrl, DIR);
           },
           writeShadow: async (repo) => {
             await ensureDirectoryExists(repo, DIR);
             return fsStoreDownloadToLocal(
               repo,
-              shadowFilename(filename),
+              shadowFilename(localFilename),
               downloadUrl,
               DIR,
             );

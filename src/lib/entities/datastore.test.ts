@@ -57,7 +57,7 @@ describe("datastoreAdapter — local routing strips openit- prefix", () => {
     } as any);
 
     const adapter = datastoreAdapter({ creds: FAKE_CREDS, collections: [ticketsCol()] });
-    const result = await adapter.listRemote("/repo");
+    const result = await adapter.listRemote("/repo", { collection_id: null, collection_name: null, files: {} });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].workingTreePath).toBe("databases/tickets/CS-1.json");
@@ -79,7 +79,7 @@ describe("datastoreAdapter — openit-conversations nested layout", () => {
       creds: FAKE_CREDS,
       collections: [conversationsCol()],
     });
-    const result = await adapter.listRemote("/repo");
+    const result = await adapter.listRemote("/repo", { collection_id: null, collection_name: null, files: {} });
 
     expect(result.items.map((r) => r.workingTreePath)).toEqual([
       "databases/conversations/T1/msg-aa01.json",
@@ -107,7 +107,7 @@ describe("datastoreAdapter — openit-conversations nested layout", () => {
       creds: FAKE_CREDS,
       collections: [conversationsCol()],
     });
-    const result = await adapter.listRemote("/repo");
+    const result = await adapter.listRemote("/repo", { collection_id: null, collection_name: null, files: {} });
 
     // Only the well-formed row survives; the malformed one was warn-and-skipped.
     expect(result.items).toHaveLength(1);

@@ -80,7 +80,7 @@ describe("filestoreAdapter", () => {
       makeRemoteFile({ filename: "_claudesetup.txt" }),
     ]);
 
-    const result = await adapter.listRemote("test-repo");
+    const result = await adapter.listRemote("test-repo", { collection_id: null, collection_name: null, files: {} });
 
     expect(result.items).toHaveLength(1);
     const item = result.items[0];
@@ -108,7 +108,7 @@ describe("filestoreAdapter", () => {
       }),
     ]);
 
-    const result = await adapter.listRemote("test-repo");
+    const result = await adapter.listRemote("test-repo", { collection_id: null, collection_name: null, files: {} });
     const item = result.items[0];
 
     vi.mocked(api.entityWriteFile).mockResolvedValue(undefined);
@@ -153,7 +153,7 @@ describe("filestoreAdapter", () => {
       makeRemoteFile({ filename: "book.md" }),
     ]);
 
-    const result = await adapter.listRemote("test-repo");
+    const result = await adapter.listRemote("test-repo", { collection_id: null, collection_name: null, files: {} });
     const item = result.items[0];
 
     vi.mocked(api.entityWriteFile).mockRejectedValue(
@@ -179,14 +179,80 @@ describe("filestoreAdapter", () => {
       .mockResolvedValueOnce([makeRemoteFile({ filename: "guide.md" })])
       .mockResolvedValueOnce([makeRemoteFile({ filename: "image.png" })]);
 
-    const docsResult = await docAdapter.listRemote("test-repo");
-    const attachResult = await attachAdapter.listRemote("test-repo");
+    const docsResult = await docAdapter.listRemote("test-repo", { collection_id: null, collection_name: null, files: {} });
+    const attachResult = await attachAdapter.listRemote("test-repo", { collection_id: null, collection_name: null, files: {} });
 
     expect(docsResult.items[0].workingTreePath).toBe(
       "filestores/docs-123/guide.md",
     );
     expect(attachResult.items[0].workingTreePath).toBe(
       "filestores/attachments/image.png",
+    );
+  });
+
+  it("maps cloud_filename → local filename via the manifest (PIN-5827)", async () => {
+    // Filestore push leaves the local file at its original name and
+    // stashes the server's UUID-prefixed name as `cloud_filename` in
+    // the manifest. listRemote must use that bridge so the next pull
+    // doesn't see the cloud row as a new file.
+    const adapter = filestoreAdapter({
+      creds: TEST_CREDS,
+      collection: { id: "lib-id", name: "openit-library" },
+    });
+
+    vi.mocked(api.kbListRemote).mockResolvedValue([
+      makeRemoteFile({
+        filename: "a5b91194-a595-4ea4-ab6e-20d5c1512693-chart_data.json",
+      }),
+    ]);
+
+    const manifest = {
+      collection_id: "lib-id",
+      collection_name: "openit-library",
+      files: {
+        "chart_data.json": {
+          remote_version: "2026-04-30T00:00:00Z",
+          pulled_at_mtime_ms: 1745848931000,
+          cloud_filename: "a5b91194-a595-4ea4-ab6e-20d5c1512693-chart_data.json",
+        },
+      },
+    };
+
+    const result = await adapter.listRemote("test-repo", manifest);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].manifestKey).toBe("chart_data.json");
+    expect(result.items[0].workingTreePath).toBe(
+      "filestores/library/chart_data.json",
+    );
+  });
+
+  it("falls back to cloud filename when no manifest entry exists (PIN-5827)", async () => {
+    // First pull, or a file uploaded from another device — no
+    // cloud_filename mapping yet. The cloud filename becomes both the
+    // manifest key and the working-tree path. Same behavior as before.
+    const adapter = filestoreAdapter({
+      creds: TEST_CREDS,
+      collection: { id: "lib-id", name: "openit-library" },
+    });
+
+    vi.mocked(api.kbListRemote).mockResolvedValue([
+      makeRemoteFile({
+        filename: "a5b91194-a595-4ea4-ab6e-20d5c1512693-other.json",
+      }),
+    ]);
+
+    const result = await adapter.listRemote("test-repo", {
+      collection_id: "lib-id",
+      collection_name: "openit-library",
+      files: {},
+    });
+
+    expect(result.items[0].manifestKey).toBe(
+      "a5b91194-a595-4ea4-ab6e-20d5c1512693-other.json",
+    );
+    expect(result.items[0].workingTreePath).toBe(
+      "filestores/library/a5b91194-a595-4ea4-ab6e-20d5c1512693-other.json",
     );
   });
 
