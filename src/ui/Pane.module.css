@@ -33,8 +33,23 @@
 }
 .spacer { flex: 1; }
 
+/* The body owns three things across every pane:
+   1. The scroller — exactly one per pane, never nested.
+   2. The scrollbar gutter — reserved at all times so content's
+      left/right edge cannot shift when a scrollbar appears or
+      disappears (the cause of the perceived "pane resized" jank).
+   3. The outer padding — one canonical pair of values from tokens
+      so every page has the same inset from the pane edge.
+   .flush opts out of (3) for full-bleed lists/toolbars whose rows
+   must reach the pane edge (e.g. file explorer, datastore tables). */
 .body {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
+  padding: var(--pane-body-pad-y) var(--pane-body-pad-x);
+}
+.body.flush {
+  padding: 0;
 }

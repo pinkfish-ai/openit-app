@@ -225,6 +225,7 @@ body::before {
 }
 .shell-panes-row {
   flex: 1 1 0;
+  min-width: 0;
   min-height: 0;
   display: flex;
   /* Same: no overflow here. Pane shadows extend below into the
@@ -254,6 +255,10 @@ body::before {
      the PanelGroup's bounds and get clipped by its overflow:hidden,
      producing visibly chopped sides on the outer panes only. */
   box-sizing: border-box;
+  /* Defensive: descendant min-content can never push us wider than
+     our parent Panel's allocated %. See the min-width:0 note on
+     [data-panel] above for the full explanation. */
+  min-width: 0;
 }
 /* ════════════════════════════════════════════════════════════
    ▼▼▼ PANE BORDER + SHADOW — TWEAK ME ▼▼▼            (line 241)
@@ -307,9 +312,21 @@ body::before {
    wrapper's bottom edge, which is why the rounded bottom corners
    read as "chipped" no matter how we styled the pane itself.
    Override here. The library's resize behavior depends on the
-   ResizeHandle elements, not on the Panel wrapper's overflow. */
+   ResizeHandle elements, not on the Panel wrapper's overflow.
+
+   min-width: 0 is critical. The library sizes each Panel with
+   `flex: <pct> <pct> 0` to target the desired %, but CSS flexbox
+   respects min-width:auto (= min-content) over flex-basis. Without
+   min-width:0, an unbreakable string deep in the pane (a commit
+   hash, ticket id, file path) propagates its min-content all the
+   way up and forces the Panel wider than its allocated %. The user
+   observes this as "switching to the Sync tab makes the left pane
+   grow"; with min-width:0 here the chain is broken at the Panel
+   wrapper and content that doesn't fit just clips at .left-pane
+   (which has overflow:hidden). */
 [data-panel] {
   overflow: visible !important;
+  min-width: 0;
 }
 
 /* (debug outlines removed — diagnostic confirmed the structure was
@@ -648,19 +665,9 @@ body::before {
   }
 }
 
-.left-tab-panel {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.left-tab-panel[hidden] {
-  display: none;
-}
-
-/* File explorer */
+/* File explorer — sits inside PaneBody flush. height:100% lets it
+   claim the pane's full height; overflow-y:auto handles its own
+   scrolling so the toolbar + file tree scroll as one unit. */
 .explorer {
   height: 100%;
   background: var(--bg-canvas);
@@ -1092,14 +1099,12 @@ body::before {
 /* Conversation thread list — one clickable card per ticket. Shown
    when the conversations/ folder itself is selected. Cards click
    through to the chat-bubble view for that thread. */
+/* Inner padding/scroll moved to PaneBody — this is just a flex
+   column of thread cards. Card spacing is the only concern. */
 .viewer-thread-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 16px;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 0;
 }
 
 .thread-card {
@@ -1932,10 +1937,8 @@ body::before {
   color: var(--text);
 }
 
+/* Inner padding/scroll moved to PaneBody. Typography stays. */
 .viewer-md {
-  flex: 1;
-  overflow: auto;
-  padding: 18px 28px;
   color: var(--text);
   font-size: 13px;
   line-height: 1.6;
@@ -2126,11 +2129,10 @@ body::before {
   background: var(--surface-soft);
 }
 
+/* Inner padding/scroll moved to PaneBody. This is just monospace
+   <pre> styling for raw file contents / sync output / diffs. */
 .viewer-content {
-  flex: 1;
   margin: 0;
-  padding: 12px 16px;
-  overflow: auto;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.55;
@@ -2280,12 +2282,14 @@ body::before {
   border-color: var(--clay);
 }
 
-/* Source Control panel */
+/* Source Control panel — sits inside PaneBody flush. height:100%
+   lets it claim the pane's full height so the inner .sc-commit-list
+   can flex:1 + overflow-y:auto and give the commit input + changes
+   a pinned-top behavior while only commits scroll. */
 .sc-panel {
   height: 100%;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
   background: var(--surface-soft);
 }
 
@@ -3264,12 +3268,12 @@ body::before {
 /* --------------------------------------------------------
    Summary views (Agent / Workflow)
    -------------------------------------------------------- */
-.viewer-summary {
-  flex: 1;
-  overflow: auto;
-  padding: 16px 20px;
-}
-
+/* Inner padding/scroll moved to PaneBody. The class itself is now
+   a plain block container so children that rely on margin-collapse
+   for spacing (datastore-table summary blocks, agent / workflow
+   detail sections) keep their original vertical rhythm. Specific
+   summary views like .viewer-conversations override to flex column
+   where they want gap-based spacing. */
 .viewer-summary h2 {
   font-size: 18px;
   margin: 0 0 6px;
@@ -4164,15 +4168,9 @@ body::before {
    Workbench — left-pane front door
    ───────────────────────────────────────────────────────────────── */
 
-.left-pane-scroll {
-  overflow-y: auto;
-  padding: 0;
-}
-
 .workbench {
   display: flex;
   flex-direction: column;
-  padding: 14px 14px 6px;
   gap: 14px;
 }
 
