@@ -1,37 +1,20 @@
-// Bundled-seed first-install helper. Writes sample tickets/people/
-// conversations/KB articles to disk on a fresh local-only install so
-// the user lands on a populated workspace before connecting.
+// Bundled-seed helper, exposed via the "Create sample dataset" CTA in
+// `getting-started.md`. Writes sample tickets/people/conversations/KB
+// articles to disk so a user has something to interact with.
 //
-// **Connected mode never seeds.** The seed is a first-install affordance
-// only — once an account is in the loop, we trust cloud state. (Earlier
-// drafts gated on `local-empty AND cloud-empty`, but the cloud probe was
-// a footgun: a transient blip that returned 0 collections would mis-seed
-// on top of populated orgs. Decoupling makes the contract simple: seed
-// runs in local-only bootstrap, never anywhere else.)
+// **Connected mode never auto-seeds.** Seeding is exclusively user-
+// triggered — once an account is in the loop, we trust whatever's on
+// disk and in the cloud.
 //
-// Per-target gate is just "is the local folder empty?" — `_schema.json`
-// (plugin contract) and dotfiles don't count. Once a sample is written,
-// it's a normal local row; deleting it doesn't bring it back, and a
-// later connect treats it as a regular unstaged push.
+// Gate is **per-file**, not per-folder: re-clicking the CTA fills in
+// any missing sample without clobbering files that already exist on
+// disk. A user who deleted `sample-ticket-3.json` and clicks again
+// gets just that one file back. A user who has authored their own
+// tickets alongside the samples gets nothing rewritten.
 
 import { invoke } from "@tauri-apps/api/core";
-import { fsList } from "./api";
+import { fsRead } from "./api";
 import { fetchSkillFile, fetchSkillsManifest } from "./skillsSync";
-
-type SeedTarget = "tickets" | "people" | "conversations" | "knowledge";
-
-type TargetConfig = {
-  target: SeedTarget;
-  /** Workspace path under `<repo>/`. */
-  localDir: string;
-};
-
-const TARGETS: TargetConfig[] = [
-  { target: "tickets",       localDir: "databases/tickets" },
-  { target: "people",        localDir: "databases/people" },
-  { target: "conversations", localDir: "databases/conversations" },
-  { target: "knowledge",     localDir: "knowledge-bases/default" },
-];
 
 /// Map a `seed/<target>/<...>` manifest path to its workspace destination.
 /// Returns null if the path doesn't match a known seed pattern.
@@ -61,71 +44,36 @@ export function seedRoute(
   return null;
 }
 
-function manifestPathToTarget(manifestPath: string): SeedTarget | null {
-  if (manifestPath.startsWith("seed/tickets/")) return "tickets";
-  if (manifestPath.startsWith("seed/people/")) return "people";
-  if (manifestPath.startsWith("seed/conversations/")) return "conversations";
-  if (manifestPath.startsWith("seed/knowledge/")) return "knowledge";
-  return null;
-}
-
-/// Whether a local folder is "empty" for seed purposes — i.e. has no
-/// user-authored rows yet. `_schema.json` (plugin contract) and dotfiles
-/// don't count; for nested layouts (conversations) any leaf file counts.
-async function isLocalTargetEmpty(repo: string, localDir: string): Promise<boolean> {
-  const root = `${repo}/${localDir}`;
-  let nodes;
+/// Does the destination file already exist on disk? Used by the
+/// per-file seed gate to skip without clobbering. `fsRead` throws
+/// (file not found / permission / unreadable) → treat as missing.
+async function fileExists(repo: string, subdir: string, filename: string): Promise<boolean> {
   try {
-    nodes = await fsList(root);
-  } catch {
-    // Directory doesn't exist yet → treat as empty.
+    await fsRead(`${repo}/${subdir}/${filename}`);
     return true;
-  }
-  for (const n of nodes) {
-    if (n.is_dir) {
-      // Recurse one level for nested layouts (conversations).
-      const sub = await fsList(n.path).catch(() => []);
-      for (const f of sub) {
-        if (!f.is_dir && !f.name.startsWith(".") && f.name !== "_schema.json") {
-          return false;
-        }
-      }
-      continue;
-    }
-    if (n.name.startsWith(".") || n.name === "_schema.json") continue;
+  } catch {
     return false;
   }
-  return true;
 }
 
-/// Run the local-only seed pass. Safe to call multiple times — gates
-/// re-evaluate on every call and a target with any user-authored content
-/// short-circuits.
+/// Run the seed pass. Gate is per-file: every missing sample lands,
+/// every existing sample is skipped (no clobber).
 export async function seedIfEmpty(args: {
   repo: string;
   onLog?: (msg: string) => void;
-}): Promise<{ wrote: number }> {
+}): Promise<{ wrote: number; skipped: number }> {
   const { repo, onLog } = args;
   const manifest = await fetchSkillsManifest(null);
 
-  const eligible = new Set<SeedTarget>();
-  for (const t of TARGETS) {
-    const empty = await isLocalTargetEmpty(repo, t.localDir);
-    if (!empty) continue;
-    eligible.add(t.target);
-  }
-
-  if (eligible.size === 0) {
-    onLog?.("seed: every target is already populated locally — skipping");
-    return { wrote: 0 };
-  }
-
   let wrote = 0;
+  let skipped = 0;
   for (const file of manifest.files) {
-    const target = manifestPathToTarget(file.path);
-    if (!target || !eligible.has(target)) continue;
     const route = seedRoute(file.path);
     if (!route) continue;
+    if (await fileExists(repo, route.subdir, route.filename)) {
+      skipped += 1;
+      continue;
+    }
     try {
       const content = await fetchSkillFile(file.path, null);
       await invoke("entity_write_file", {
@@ -140,6 +88,6 @@ export async function seedIfEmpty(args: {
     }
   }
 
-  onLog?.(`seed: wrote ${wrote} sample file(s) across ${eligible.size} target(s)`);
-  return { wrote };
+  onLog?.(`seed: wrote ${wrote} sample file(s), skipped ${skipped} already on disk`);
+  return { wrote, skipped };
 }

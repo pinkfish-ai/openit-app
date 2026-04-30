@@ -1,9 +1,9 @@
 /**
  * seedIfEmpty gate logic — Phase 3 of V2 sync (PIN-5793).
  *
- * Connected mode never seeds (see startCloudSyncs); seed is a local-only
- * first-install affordance. These tests cover the per-target local-empty
- * gate. Manifest fetch + file fetch are stubbed via vi.mock.
+ * Per-file gate: every missing sample writes, every existing sample
+ * skips. No per-folder "all or nothing" check anymore — re-clicking
+ * the CTA fills in deleted samples without clobbering user content.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -11,7 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 vi.mock("./api", () => ({
-  fsList: vi.fn(),
+  fsRead: vi.fn(),
 }));
 vi.mock("./skillsSync", () => ({
   fetchSkillsManifest: vi.fn(),
@@ -19,12 +19,12 @@ vi.mock("./skillsSync", () => ({
 }));
 
 import { invoke } from "@tauri-apps/api/core";
-import { fsList } from "./api";
+import { fsRead } from "./api";
 import { fetchSkillsManifest, fetchSkillFile } from "./skillsSync";
 import { seedIfEmpty, seedRoute } from "./seed";
 
 const mockInvoke = vi.mocked(invoke);
-const mockFsList = vi.mocked(fsList);
+const mockFsRead = vi.mocked(fsRead);
 const mockFetchSkillsManifest = vi.mocked(fetchSkillsManifest);
 const mockFetchSkillFile = vi.mocked(fetchSkillFile);
 
@@ -46,6 +46,8 @@ beforeEach(() => {
   mockFetchSkillsManifest.mockResolvedValue(SAMPLE_MANIFEST as any);
   mockFetchSkillFile.mockResolvedValue("{}");
   mockInvoke.mockResolvedValue(undefined);
+  // Default: nothing on disk yet.
+  mockFsRead.mockRejectedValue(new Error("not found"));
 });
 
 describe("seedRoute", () => {
@@ -83,69 +85,58 @@ describe("seedRoute", () => {
   });
 });
 
-describe("seedIfEmpty — per-target local-empty gate", () => {
-  it("seeds every target when local is empty", async () => {
-    mockFsList.mockResolvedValue([]);
-
+describe("seedIfEmpty — per-file gate", () => {
+  it("writes every sample when nothing is on disk", async () => {
     const res = await seedIfEmpty({ repo: "/repo" });
 
     expect(res.wrote).toBe(6); // 2 tickets + 1 person + 1 article + 2 conv messages
+    expect(res.skipped).toBe(0);
     const writeInvocations = mockInvoke.mock.calls.filter(([cmd]) => cmd === "entity_write_file");
     expect(writeInvocations).toHaveLength(6);
   });
 
-  it("skips a target when its local folder is non-empty", async () => {
-    mockFsList.mockImplementation(async (p: string) => {
-      if (p.endsWith("databases/tickets")) {
-        return [{ name: "user-row.json", path: `${p}/user-row.json`, is_dir: false }];
-      }
-      return [];
+  it("skips an individual sample that already exists on disk", async () => {
+    // Pretend `databases/tickets/sample-ticket-1.json` is already there.
+    mockFsRead.mockImplementation(async (path: string) => {
+      if (path.endsWith("databases/tickets/sample-ticket-1.json")) return "{}";
+      throw new Error("not found");
     });
 
     const res = await seedIfEmpty({ repo: "/repo" });
 
-    expect(res.wrote).toBe(4); // 1 person + 1 article + 2 conv messages (tickets skipped)
+    expect(res.wrote).toBe(5); // sample-ticket-1 skipped, the other 5 still write
+    expect(res.skipped).toBe(1);
   });
 
-  it("treats `_schema.json` and dotfiles as 'empty' for gate purposes", async () => {
-    mockFsList.mockImplementation(async (p: string) => {
-      if (p.endsWith("databases/tickets")) {
-        return [
-          { name: "_schema.json", path: `${p}/_schema.json`, is_dir: false },
-          { name: ".DS_Store", path: `${p}/.DS_Store`, is_dir: false },
-        ];
-      }
-      return [];
-    });
+  it("writes missing samples even when other files exist in the target folder", async () => {
+    // User has authored their own tickets but no sample-ticket-* files.
+    // The new per-file gate doesn't care about siblings — it only
+    // checks the specific destination filename.
+    mockFsRead.mockRejectedValue(new Error("not found"));
 
     const res = await seedIfEmpty({ repo: "/repo" });
 
     expect(res.wrote).toBe(6);
   });
 
-  it("treats nested-layout content as non-empty for the conversations target", async () => {
-    mockFsList.mockImplementation(async (p: string) => {
-      if (p.endsWith("databases/conversations")) {
-        return [{ name: "T1", path: `${p}/T1`, is_dir: true }];
-      }
-      if (p.endsWith("databases/conversations/T1")) {
-        return [{ name: "msg-existing.json", path: `${p}/msg-existing.json`, is_dir: false }];
-      }
-      return [];
-    });
-
-    const res = await seedIfEmpty({ repo: "/repo" });
-
-    expect(res.wrote).toBe(4); // tickets + person + article (conversations skipped)
-  });
-
-  it("skips everything when every local target is populated", async () => {
-    mockFsList.mockResolvedValue([
-      { name: "anything.json", path: "/anything.json", is_dir: false },
-    ]);
+  it("writes nothing when every sample is already on disk", async () => {
+    mockFsRead.mockResolvedValue("{}");
 
     const res = await seedIfEmpty({ repo: "/repo" });
 
     expect(res.wrote).toBe(0);
+    expect(res.skipped).toBe(6);
+  });
+
+  it("ignores manifest entries that aren't seed paths", async () => {
+    // skills/answer-ticket.md is in the manifest but seedRoute returns
+    // null for it; never written, never counted.
+    const res = await seedIfEmpty({ repo: "/repo" });
+
+    const writePaths = mockInvoke.mock.calls
+      .filter(([cmd]) => cmd === "entity_write_file")
+      .map(([, args]) => (args as any).filename);
+    expect(writePaths).not.toContain("answer-ticket.md");
+    expect(res.wrote + res.skipped).toBe(6);
   });
 });
