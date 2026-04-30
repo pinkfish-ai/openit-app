@@ -30,6 +30,12 @@ export function seedRoute(
   if (manifestPath.startsWith("seed/knowledge/")) {
     return { subdir: "knowledge-bases/default", filename: manifestPath.replace("seed/knowledge/", "") };
   }
+  if (manifestPath.startsWith("seed/skills/")) {
+    return { subdir: "filestores/skills", filename: manifestPath.replace("seed/skills/", "") };
+  }
+  if (manifestPath.startsWith("seed/scripts/")) {
+    return { subdir: "filestores/scripts", filename: manifestPath.replace("seed/scripts/", "") };
+  }
   if (manifestPath.startsWith("seed/conversations/")) {
     // Preserve the per-ticket subfolder: seed/conversations/<ticketId>/<file>
     // → databases/conversations/<ticketId>/<file>.
