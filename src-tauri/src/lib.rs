@@ -8,6 +8,7 @@ mod intake;
 mod kb;
 mod keychain;
 mod oauth_callback;
+mod openit_config;
 mod pinkfish;
 mod project;
 mod pty;

@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { fsRead, fsReadBytes, fsList, fsReveal, reportOverviewRun, entityWriteFileBytes, entityDeleteFile, entityListLocal } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
+import { loadOpenitConfig } from "../lib/openitConfig";
 import type { MemoryItem } from "../lib/skillsApi";
 import { DataTable } from "./DataTable";
 import { EntityCardGrid } from "./EntityCardGrid";
@@ -1882,18 +1883,23 @@ export function Viewer({
           `${msgId}.json`,
           JSON.stringify(payload, null, 2),
         );
-        // Any manual admin turn flips the ticket to `escalated`.
-        // `open` semantically means "agent is working on it"; once an
-        // admin chimes in, the agent is no longer the sole driver, so
-        // the ticket is escalated regardless of the previous status
-        // (open, resolved, closed, escalated). Best-effort: missing
-        // ticket file is logged but the reply itself stays.
+        // Any manual admin turn flips the ticket to `escalated` —
+        // `open` means "agent is working on it" and once an admin
+        // chimes in, the agent is no longer the sole driver. Gated on
+        // `ticketLifecycle.escalateOnAdminReply`: admins can disable
+        // to leave commentary on resolved threads without re-opening
+        // them. Even when the status flip is skipped, we still stamp
+        // `assignee` (admin authorship is a first-class fact about the
+        // turn, separate from the lifecycle decision).
         try {
+          const cfg = await loadOpenitConfig(repo);
           const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
           const raw = await fsRead(ticketPath);
           const parsed = JSON.parse(raw) as Record<string, unknown>;
-          parsed.status = "escalated";
-          parsed.updatedAt = isoNow;
+          if (cfg.ticketLifecycle.escalateOnAdminReply) {
+            parsed.status = "escalated";
+            parsed.updatedAt = isoNow;
+          }
           if (typeof parsed.assignee !== "string" || !parsed.assignee) {
             parsed.assignee = sender;
           }
