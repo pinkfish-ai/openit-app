@@ -659,6 +659,17 @@ function App() {
               })
               .catch((e) => console.error("bundled skill sync failed:", e));
           }
+          // Seed sample tickets/people/conversations/KB articles on local-
+          // only bootstrap too. Without this, a fresh `cleanslate` +
+          // `devmode -- off` user lands on an empty workspace and has
+          // nothing to interact with until they connect. The cloud-empty
+          // gate is moot here (there's no cloud) so seed runs purely on
+          // local-empty per target.
+          seedIfEmpty({
+            repo: projectPath,
+            creds: null,
+            onLog: (msg) => console.log(`[seed] ${msg}`),
+          }).catch((e) => console.warn("[app] local-only seed failed:", e));
         } catch (e) {
           console.error("[app] local-only bootstrap failed:", e);
         }

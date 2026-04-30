@@ -137,9 +137,14 @@ async function listOpenitCollectionNames(
 
 /// Run the seed pass. Safe to call multiple times — gates re-evaluate on
 /// every call and short-circuit when either gate fails for a target.
+///
+/// `creds` is optional: in local-only mode (no connection) we skip the
+/// cloud-empty check and seed purely on local-empty. There's no cloud
+/// state that could be clobbered, and a fresh-install user wants sample
+/// rows to interact with before they decide to connect.
 export async function seedIfEmpty(args: {
   repo: string;
-  creds: PinkfishCreds;
+  creds: PinkfishCreds | null;
   onLog?: (msg: string) => void;
 }): Promise<{ wrote: number }> {
   const { repo, creds, onLog } = args;
@@ -148,15 +153,21 @@ export async function seedIfEmpty(args: {
   // If we can't determine cloud state (no token, network blip, etc.) we
   // abort seeding entirely — the next connect will retry. Treating
   // "unknown cloud state" as "cloud is empty" would seed samples on top
-  // of populated orgs.
+  // of populated orgs. Local-only mode (no creds) explicitly treats
+  // every target as cloud-empty since there's no cloud to consult.
   let cloudDatastores: Set<string>;
   let cloudKbs: Set<string>;
-  try {
-    cloudDatastores = await listOpenitCollectionNames(creds, "datastore");
-    cloudKbs = await listOpenitCollectionNames(creds, "knowledge_base");
-  } catch (err) {
-    onLog?.(`seed: skipping — cloud state unknown (${err instanceof Error ? err.message : String(err)})`);
-    return { wrote: 0 };
+  if (creds) {
+    try {
+      cloudDatastores = await listOpenitCollectionNames(creds, "datastore");
+      cloudKbs = await listOpenitCollectionNames(creds, "knowledge_base");
+    } catch (err) {
+      onLog?.(`seed: skipping — cloud state unknown (${err instanceof Error ? err.message : String(err)})`);
+      return { wrote: 0 };
+    }
+  } else {
+    cloudDatastores = new Set();
+    cloudKbs = new Set();
   }
 
   // Map each target → which cloud-name set governs its gate.
