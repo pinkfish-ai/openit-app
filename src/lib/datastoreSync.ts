@@ -58,8 +58,6 @@ type CreateCollectionResponse = {
   [key: string]: unknown;
 };
 
-type ListCollectionsResponse = DataCollection[] | null;
-
 type DefaultDatastore = {
   name: string;
   /** Cloud template — only set for structured collections that want
@@ -150,50 +148,11 @@ async function loadBundledSchema(
 // `./datastorePaths` so the adapter (`entities/datastore.ts`) can share
 // them without a circular import.
 
-// Org-scoped cache to prevent collections from one org leaking into another.
-let createdCollections = new Map<string, Map<string, DataCollection>>();
-let lastCreationAttemptTime = new Map<string, number>();
-
-// Per-org in-flight resolve promise — concurrent callers share the same
-// operation so we never race two list-then-create sequences.
-const inflightResolve = new Map<string, Promise<DataCollection[]>>();
-
-function getOrgCache(orgId: string): Map<string, DataCollection> {
-  if (!createdCollections.has(orgId)) {
-    createdCollections.set(orgId, new Map());
-  }
-  return createdCollections.get(orgId)!;
-}
-
-function getLastCreationTime(orgId: string): number {
-  return lastCreationAttemptTime.get(orgId) ?? 0;
-}
-
-function setLastCreationTime(orgId: string, time: number): void {
-  lastCreationAttemptTime.set(orgId, time);
-}
-
-const CREATION_COOLDOWN_MS = 10_000;
-
+/// List `openit-*` datastore collections in the user's org, auto-creating
+/// any of the `DEFAULT_DATASTORES` that aren't there yet. Race-safe via
+/// `?ifMissing=true` — concurrent identical-name creates collapse to one
+/// row server-side, so no client-side cooldown / inflight dedupe / refetch.
 export async function resolveProjectDatastores(
-  creds: PinkfishCreds,
-  onLog?: (msg: string) => void,
-): Promise<DataCollection[]> {
-  const existing = inflightResolve.get(creds.orgId);
-  if (existing) {
-    console.log("[datastoreSync] joining in-flight resolve for org:", creds.orgId);
-    return existing;
-  }
-  const promise = resolveProjectDatastoresImpl(creds, onLog);
-  inflightResolve.set(creds.orgId, promise);
-  try {
-    return await promise;
-  } finally {
-    inflightResolve.delete(creds.orgId);
-  }
-}
-
-async function resolveProjectDatastoresImpl(
   creds: PinkfishCreds,
   onLog?: (msg: string) => void,
 ): Promise<DataCollection[]> {
@@ -206,63 +165,31 @@ async function resolveProjectDatastoresImpl(
     const fetchFn = makeSkillsFetch(token.accessToken);
     const url = new URL("/datacollection/", urls.skillsBaseUrl);
     url.searchParams.set("type", "datastore");
-    console.log("[datastoreSync] Fetching from:", url.toString());
     const response = await fetchFn(url.toString());
-
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-
     const result = (await response.json()) as DataCollection[] | null;
     const allCollections = Array.isArray(result) ? result : [];
     console.log(`[datastoreSync] ✓ Found ${allCollections.length} datastore collections`);
-    allCollections.forEach((c: DataCollection) => console.log(`  • ${c.name} (id: ${c.id})`));
-    // Multi-collection discovery — every `openit-*` datastore syncs, not
-    // just the hardcoded defaults. Auto-create still seeds any of the
-    // three defaults that are missing.
-    const defaults: DefaultDatastore[] = DEFAULT_DATASTORES;
-    let matching = allCollections.filter((c: DataCollection) =>
+
+    const matching = allCollections.filter((c: DataCollection) =>
       typeof c.name === "string" && c.name.startsWith("openit-"),
     );
-    console.log(`[datastoreSync] ✓ openit-* datastore collections: ${matching.length}`);
-
-    const orgCache = getOrgCache(creds.orgId);
-
-    // Cache whatever we found — even if some defaults are missing, we'll
-    // top them up below and return the union.
     for (const m of matching) {
-      orgCache.set(m.name, m);
       onLog?.(`  ✓ ${m.name}  (id: ${m.id})`);
     }
 
-    // Determine which defaults are missing and need auto-creation.
+    const defaults: DefaultDatastore[] = DEFAULT_DATASTORES;
     const presentNames = new Set(matching.map((c) => c.name));
     const missingDefaults = defaults.filter((d) => !presentNames.has(d.name));
 
-    if (missingDefaults.length === 0) {
-      return matching;
-    }
-
-    const now = Date.now();
-    const lastCreationTime = getLastCreationTime(creds.orgId);
-    if (orgCache.size > 0 && now - lastCreationTime < CREATION_COOLDOWN_MS) {
-      console.log("[datastoreSync] collections not yet visible in API list, returning cached collections");
-      return Array.from(orgCache.values());
-    }
-
-    if (now - lastCreationTime < CREATION_COOLDOWN_MS) {
-      console.log("[datastoreSync] skipping creation (cooldown active)");
-      return Array.from(orgCache.values());
-    }
-
-    console.log(
-      `[datastoreSync] creating ${missingDefaults.length} missing default(s): ${missingDefaults.map((d) => d.name).join(", ")}`,
-    );
-    setLastCreationTime(creds.orgId, now);
-    let conflictHit = false;
     for (const def of missingDefaults) {
       try {
         const createUrl = new URL("/datacollection/", urls.skillsBaseUrl);
+        // Server-side race collapse: two concurrent calls with the same
+        // name return the same id; the loser does not insert a duplicate.
+        createUrl.searchParams.set("ifMissing", "true");
         const body: Record<string, unknown> = {
           name: def.name,
           type: "datastore",
@@ -272,45 +199,24 @@ async function resolveProjectDatastoresImpl(
           triggerUrls: [],
           isStructured: def.isStructured,
         };
-        if (def.templateId) {
-          body.templateId = def.templateId;
-        }
-        // Load the bundled schema for structured defaults so the cloud
-        // collection lands with the right fields. Cloud fix #1 (PR #462)
-        // makes the server honor this and skip the auto-template path.
+        if (def.templateId) body.templateId = def.templateId;
+        // Bundled schema → structured collection lands with the right
+        // fields on first POST. Cloud fix #1 (PR #462) makes the server
+        // honor caller schema and skip the auto-template path.
         const schema = await loadBundledSchema(def, creds);
-        if (schema) {
-          body.schema = schema;
-        }
+        if (schema) body.schema = schema;
+
         const createResponse = await fetchFn(createUrl.toString(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
-
-        console.log(`[datastoreSync] POST /datacollection/ response status: ${createResponse.status} ${createResponse.statusText}`);
-
         if (!createResponse.ok) {
           const errText = await createResponse.text();
-          console.error("[datastoreSync] response error:", errText);
-          if (createResponse.status === 409) {
-            console.log(`[datastoreSync] collection ${def.name} already exists (409) — will refetch`);
-            conflictHit = true;
-            continue;
-          }
+          console.error("[datastoreSync] create failed:", errText);
           throw new Error(`HTTP ${createResponse.status}: ${createResponse.statusText}`);
         }
-
-        let createResult: CreateCollectionResponse | null;
-        try {
-          createResult = (await createResponse.json()) as CreateCollectionResponse | null;
-        } catch (e) {
-          console.error("[datastoreSync] failed to parse create response JSON:", e);
-          throw new Error(`Failed to parse collection creation response: ${e}`);
-        }
-
-        console.log(`[datastoreSync] create response for ${def.name}:`, JSON.stringify(createResult));
-
+        const createResult = (await createResponse.json()) as CreateCollectionResponse | null;
         const idAny = createResult?.id as string | number | undefined;
         const id = idAny != null ? String(idAny) : undefined;
         if (id) {
@@ -322,53 +228,20 @@ async function resolveProjectDatastoresImpl(
             isStructured: def.isStructured,
           } as DataCollection;
           matching.push(col);
-          orgCache.set(def.name, col);
-          console.log(`[datastoreSync] cached ${def.name} with id: ${id}`);
           onLog?.(`  + ${def.name}  (id: ${id})  [created]`);
         } else {
-          console.warn(`[datastoreSync] no id found in response for ${def.name}. Response keys:`, Object.keys(createResult || {}));
+          console.warn(
+            `[datastoreSync] no id in create response for ${def.name}. Response keys:`,
+            Object.keys(createResult || {}),
+          );
         }
       } catch (e) {
         console.warn(`[datastoreSync] failed to create ${def.name}:`, e);
       }
     }
 
-    if (matching.length > 0 || conflictHit) {
-      try {
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-
-        const refetchUrl = new URL("/datacollection/", urls.skillsBaseUrl);
-        refetchUrl.searchParams.set("type", "datastore");
-        const refetchResponse = await fetchFn(refetchUrl.toString());
-
-        let refetchResult: ListCollectionsResponse;
-        try {
-          refetchResult = (await refetchResponse.json()) as ListCollectionsResponse;
-        } catch (e) {
-          console.error("[datastoreSync] failed to parse refetch response JSON:", e);
-          throw new Error(`Failed to parse refetch response: ${e}`);
-        }
-
-        const refetched = Array.isArray(refetchResult) ? refetchResult : [];
-        const updatedMatching = refetched.filter(
-          (c: DataCollection) => typeof c.name === "string" && c.name.startsWith("openit-"),
-        );
-        if (updatedMatching.length >= matching.length && updatedMatching.length > 0) {
-          console.log("[datastoreSync] re-fetched collections after creation");
-          for (const m of updatedMatching) orgCache.set(m.name, m);
-          return updatedMatching;
-        }
-        if (conflictHit && matching.length === 0) {
-          console.warn("[datastoreSync] 409 conflict but refetch still returned no matches — API may be lagging");
-        }
-      } catch (e) {
-        console.warn("[datastoreSync] failed to re-fetch after creation:", e);
-      }
-    }
-
     return matching;
   } catch (error) {
-    console.log("----END DATASTORE SYNC (error)----");
     console.error("[datastoreSync] resolveProjectDatastores failed:", error);
     throw error;
   }

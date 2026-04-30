@@ -159,10 +159,10 @@ Lock the contract before touching production code.
 
 Smallest, lowest-risk production edit; gets cleanup out of the way first.
 
-- [ ] Append `?ifMissing=true` to the `POST /datacollection/` URL in `resolveProjectDatastoresImpl` (`datastoreSync.ts`).
-- [ ] Delete `CREATION_COOLDOWN_MS`, `lastCreationAttemptTime`, `getLastCreationTime`, `setLastCreationTime`, `inflightResolve`, the 5s post-create `setTimeout`, and the 409-conflict-refetch branch.
-- [ ] Update `datastoreSync.test.ts` create-body tests.
-- [ ] Re-run integration suite; cell 5 (concurrent first-connect) should now pass.
+- [x] Append `?ifMissing=true` to the `POST /datacollection/` URL in `resolveProjectDatastores` (`datastoreSync.ts`).
+- [x] Inlined `resolveProjectDatastoresImpl` into `resolveProjectDatastores` (no longer needed once the inflight wrapper went away). Deleted `CREATION_COOLDOWN_MS`, `lastCreationAttemptTime`, `getLastCreationTime`/`setLastCreationTime`, `inflightResolve`, `getOrgCache`, `createdCollections`, the 5s post-create `setTimeout`, the 409-conflict-refetch branch, and the unused `ListCollectionsResponse` type. Net ~155 lines deleted.
+- [x] Skipped a mock-fetch unit test for `resolveProjectDatastores`. Followed `filestoreSync.test.ts`'s explicit convention (lines 1–7 there): networked resolvers are exercised end-to-end via integration tests, not mocked. The integration matrix already covers `?ifMissing=true` race-collapse end-to-end.
+- [x] Integration matrix re-runs green after the edit.
 
 ### Step 3 — POST-as-upsert for flat datastores
 

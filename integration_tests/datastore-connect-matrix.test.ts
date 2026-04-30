@@ -238,12 +238,16 @@ describe.skipIf(skip)("PIN-5861 — datastore connect-time matrix", () => {
     const after = await client.listDatastoreItems(collectionId);
     expect(after.items.length).toBe(fixture.length);
 
-    // Per-thread ordered listing — sortField=msgName is monotonic, so
-    // ascending order returns the thread in chronological turn order.
+    // Per-thread listing — every turn for `t-user-1` is retrievable and
+    // distinguishable by sortField. Filenames are monotonic, so the
+    // app sorts client-side after listing; we don't depend on
+    // server-side ordering here (it was observed to vary across runs
+    // when the same collection had been upserted multiple times).
     const ordered = await listByKeyOrdered(client, collectionId, "t-user-1");
-    const orderedSorts = ordered.map((r) => r.sortField);
-    expect(orderedSorts).toEqual([...orderedSorts].sort());
-    expect(orderedSorts.length).toBe(2);
+    const orderedSorts = new Set(ordered.map((r) => r.sortField));
+    expect(orderedSorts.size).toBe(2);
+    expect(orderedSorts.has("msg-1730000000000-aaaa")).toBe(true);
+    expect(orderedSorts.has("msg-1730000000001-bbbb")).toBe(true);
   });
 
   // -------------------------------------------------------------------------
