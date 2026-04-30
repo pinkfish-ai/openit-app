@@ -139,6 +139,11 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
              everything fits together. Re-clicking is safe — it skips \
              any folder you've already touched.\n\n\
              [**Create sample dataset**](openit://create-samples)\n\n\
+             ## Connect to Slack\n\n\
+             Wire OpenIT into a Slack workspace so the agent can \
+             receive tickets in DMs and reply on your behalf. The \
+             walkthrough handles the bot-token paste and listener \
+             startup.\n\n\
              [**Connect Slack**](openit://skill/connect-slack)\n";
         let _ = fs::write(&getting_started_path, getting_started);
     }
