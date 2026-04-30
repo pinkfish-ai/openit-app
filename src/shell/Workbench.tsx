@@ -247,7 +247,6 @@ export function Workbench({
         )}
       </div>
 
-      <div className="workbench-section-label">Stations</div>
       <div className="workbench-stations">
         {STATIONS.map((s) => {
           const meta = ENTITY_META[s.kind];

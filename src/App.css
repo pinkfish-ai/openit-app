@@ -545,20 +545,6 @@ body::before {
    .left-tab-pull-glyph (incl. .is-pulling) and the tab-pull-spin keyframes
    removed — left-tabs migrated to <TabStrip> in src/ui/TabStrip.tsx. */
 
-/* Layout-only: Shell still passes .left-tab-pull-btn on a <Button> so the
-   pull-icon button shrinks-to-content within the left-tabs flex row.
-   Button chrome (background, border, color, padding, transition) is
-   handled by <Button variant="ghost" iconOnly>. */
-.left-tab-pull-btn {
-  flex: 0 0 auto;
-  /* The TabStrip stretches to fill .left-tabs' 44px rail (its
-     underline math depends on it). The pull button is a short
-     sm-icon button next to the strip, so without align-self it
-     pins to the top of the rail and reads as misaligned with the
-     viewer header's arrow buttons. */
-  align-self: center;
-}
-
 /* File explorer — sits inside PaneBody flush. height:100% lets it
    claim the pane's full height; overflow-y:auto handles its own
    scrolling so the toolbar + file tree scroll as one unit. */
@@ -3737,16 +3723,6 @@ body::before {
   border-radius: 50%;
   background: var(--clay);
   box-shadow: 0 0 8px rgba(179, 74, 58, 0.55);
-}
-
-.workbench-section-label {
-  font-family: var(--font-display);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  padding: 0 2px;
 }
 
 .workbench-stations {

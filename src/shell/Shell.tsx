@@ -47,7 +47,7 @@ import { AgentActivityBanner } from "./AgentActivityBanner";
 import { PromptBubbles, type Bubble } from "./PromptBubbles";
 import { SourceControl } from "./SourceControl";
 import { Viewer, type ViewerSource } from "./Viewer";
-import { Button, PaneBody, Tab, TabStrip } from "../ui";
+import { PaneBody, Tab, TabStrip } from "../ui";
 import type { DockKind } from "../lib/skillState";
 import { resolvePathToSource } from "./entityRouting";
 import { SkillActionDock } from "./SkillActionDock";
@@ -879,19 +879,6 @@ export function Shell({
                     Sync
                   </Tab>
                 </TabStrip>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  className="left-tab-pull-btn"
-                  onClick={handleManualPull}
-                  disabled={!repo || pulling}
-                  loading={pulling}
-                  aria-label="Pull from Pinkfish now"
-                  title={pulling ? "Pulling…" : "Pull from Pinkfish"}
-                >
-                  ↻
-                </Button>
               </div>
               <PaneBody hidden={leftTab !== "overview"}>
                 <Workbench
