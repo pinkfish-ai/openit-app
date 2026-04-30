@@ -2485,8 +2485,16 @@ export function Viewer({
         {showFileTabs && (
           <TabStrip variant="segmented">
             <Tab
-              active={mode === "rendered"}
-              onClick={() => setMode("rendered")}
+              // View covers both `rendered` (markdown preview) and
+              // `raw` (any other plain-text format). Edit is its own
+              // mode. Without this, a `.mjs` file lands in `raw` and
+              // neither tab reads as selected. (PIN-5829.)
+              active={mode !== "edit"}
+              onClick={() =>
+                // Markdown gets the rendered preview by default; every
+                // other editable text format shows raw content.
+                setMode(isMarkdown(source.path) ? "rendered" : "raw")
+              }
             >
               View
             </Tab>
