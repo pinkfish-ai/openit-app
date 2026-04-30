@@ -50,21 +50,25 @@ export function displayFilestoreName(name: string): string {
     : name;
 }
 
-/// Defaults for OpenIT-managed filestore collections. The orchestrator's
-/// auto-create loop ensures all four exist on the cloud whenever a
-/// fresh connect happens with any missing.
+/// Single source of truth for the OpenIT-managed filestore collections.
+/// Both `getDefaultFilestores` (caller-facing) and the engine handle's
+/// `defaultNames` below are derived from this list — they used to drift
+/// independently, which silently broke auto-create on the cloud for any
+/// new entries. Keep this list and only this list authoritative.
 ///
 ///   - `openit-library`     — shared admin docs (admin-curated).
 ///   - `openit-attachments` — intake-server uploads (per-ticket).
 ///   - `openit-skills`      — admin-side skill markdown (PIN-5829).
 ///   - `openit-scripts`     — admin-side runnable scripts (PIN-5829).
+const DEFAULT_FILESTORES: ReadonlyArray<{ name: string; description: string }> = [
+  { name: "openit-library", description: "Shared document storage for OpenIT" },
+  { name: "openit-attachments", description: "OpenIT filestore: attachments" },
+  { name: "openit-skills", description: "OpenIT filestore: admin skills" },
+  { name: "openit-scripts", description: "OpenIT filestore: admin scripts" },
+];
+
 export function getDefaultFilestores(_orgId: string) {
-  return [
-    { name: "openit-library", description: "Shared document storage for OpenIT" },
-    { name: "openit-attachments", description: "OpenIT filestore: attachments" },
-    { name: "openit-skills", description: "OpenIT filestore: admin skills" },
-    { name: "openit-scripts", description: "OpenIT filestore: admin scripts" },
-  ];
+  return DEFAULT_FILESTORES.map((d) => ({ ...d }));
 }
 
 /// Dedupe helper retained as an export so existing tests pin the
@@ -115,7 +119,7 @@ const handle = createCollectionEntitySync<FilestoreCollection>({
   entityName: "fs",
   displayName: "filestore",
   collectionType: "filestorage",
-  defaultNames: ["openit-library", "openit-attachments"],
+  defaultNames: DEFAULT_FILESTORES.map((d) => d.name),
   describeDefault: (name) =>
     `OpenIT filestore: ${displayFilestoreName(name)}`,
   localFolderRoot: "filestores",
