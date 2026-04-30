@@ -864,7 +864,7 @@ export function Shell({
                * up with two competing entry points.
                */}
               <div className="left-tabs">
-                <TabStrip className="left-tabs-strip">
+                <TabStrip fill className="left-tabs-strip">
                   <Tab
                     active={leftTab === "overview" || leftTab === "files"}
                     onClick={() => setLeftTab("overview")}

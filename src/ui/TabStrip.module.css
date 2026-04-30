@@ -14,6 +14,21 @@
 }
 .compact { gap: var(--space-3); }
 
+/* fill — tabs spread to fill the parent's full width with each tab
+   taking equal share. Used for primary navigation strips like the
+   left-pane Overview/Sync tabs that should occupy the entire
+   header rail. Without this the strip is content-width and the
+   tabs hug the left, leaving empty space on the right. */
+.fill {
+  display: flex;
+  width: 100%;
+  gap: 0;
+}
+.fill .tab {
+  flex: 1 1 0;
+  justify-content: center;
+}
+
 .tab {
   --_fg: var(--color-text-faint);
   --_fg-hover: var(--color-text-muted);
@@ -24,6 +39,12 @@
   background: transparent;
   border: 0;
   margin: 0;
+  /* margin-bottom: -1px overlaps the parent's hairline so the
+     active underline sits exactly on it (the parent border is at
+     the same y as the tab's bottom edge). Without this the
+     underline floats 1px above the parent's hairline and the
+     active tab reads as "two horizontal lines stacked". */
+  margin-bottom: -1px;
   padding: 0 0 6px;
   display: inline-flex;
   align-items: center;
@@ -31,7 +52,7 @@
   height: 100%;
   font-family: var(--font-body);
   font-size: var(--fs-caption);
-  font-weight: var(--fw-medium);
+  font-weight: var(--fw-semibold);
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--_fg);
@@ -91,18 +112,20 @@
   cursor: not-allowed;
 }
 
-/* Count badge inside a tab — pairs with the SYNC tab and any
-   tab showing a number. Uses the design-system Badge styling
-   inline (not the React component) so the tab is self-contained. */
+/* Count badge inside a tab — small accent pill paired with the
+   tab label. Tabs use uppercase 10px text; the badge is sized to
+   sit on the same baseline without towering over the label.
+   Subtler treatment when the tab is inactive (faded) so the badge
+   doesn't compete with the underline indicator on the active tab. */
 .tab .count {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
   border-radius: var(--r-pill);
-  background: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 70%, transparent);
   color: var(--color-on-accent);
   font-family: var(--font-mono);
   font-feature-settings: "tnum" 1;
@@ -111,6 +134,7 @@
   letter-spacing: 0;
   line-height: 1;
   text-transform: none;
+  transition: background var(--t-fast) var(--ease);
 }
 .tab[aria-selected="true"] .count {
   background: var(--color-accent);
