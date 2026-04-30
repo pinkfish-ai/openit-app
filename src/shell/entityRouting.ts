@@ -440,7 +440,7 @@ export async function resolvePathToSource(
     try {
       const raw = await fsRead(path);
       const agent = JSON.parse(raw);
-      return { kind: "agent", agent };
+      return { kind: "agent", agent, path };
     } catch {
       return { kind: "file", path };
     }
@@ -452,7 +452,7 @@ export async function resolvePathToSource(
     try {
       const raw = await fsRead(path);
       const workflow = JSON.parse(raw);
-      return { kind: "workflow", workflow };
+      return { kind: "workflow", workflow, path };
     } catch {
       return { kind: "file", path };
     }

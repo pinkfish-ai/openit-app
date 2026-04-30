@@ -84,8 +84,13 @@ export type ViewerSource =
   | { kind: "datastore-table"; collection: DataCollection; items?: MemoryItem[]; hasMore?: boolean; onLoadMore?: () => void }
   | { kind: "datastore-row"; collection: DataCollection; item: MemoryItem }
   | { kind: "datastore-schema"; collection: DataCollection }
-  | { kind: "agent"; agent: Agent }
-  | { kind: "workflow"; workflow: Workflow }
+  // path is the on-disk JSON file (`agents/<name>.json` /
+  // `workflows/<name>.json`) the resolver matched. Carried through so
+  // the file explorer can highlight the matching row when the agent /
+  // workflow card is open on the canvas — without it, sourceToTreePath
+  // has no way to derive the path from AgentRow/WorkflowRow alone.
+  | { kind: "agent"; agent: Agent; path: string }
+  | { kind: "workflow"; workflow: Workflow; path: string }
   | { kind: "conversation-thread"; ticketId: string; turns: ConversationTurn[] }
   | { kind: "conversations-list"; threads: ConversationThreadSummary[] }
   // People directory — one row per contact. Default view is cards
