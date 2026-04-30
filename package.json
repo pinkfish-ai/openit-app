@@ -13,7 +13,9 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "build:slack-listener": "node scripts/build-slack-listener.mjs"
+    "build:slack-listener": "node scripts/build-slack-listener.mjs",
+    "cleanslate": "node scripts/cleanslate.mjs",
+    "devmode": "node scripts/devmode.mjs"
   },
   "dependencies": {
     "@fontsource-variable/source-serif-4": "^5.2.9",

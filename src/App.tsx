@@ -35,6 +35,7 @@ import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
 import { startAgentSync, stopAgentSync } from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
 import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
+import { seedIfEmpty } from "./lib/seed";
 import { invoke } from "@tauri-apps/api/core";
 import { type Bubble as PromptBubble } from "./shell/PromptBubbles";
 import "./App.css";
@@ -104,19 +105,43 @@ function convertBubblesForPrompt(manifestBubbles: ManifestBubble[]): PromptBubbl
   }));
 }
 
+/// Run-token incremented on every stopAllCloudSyncs() call. startCloudSyncs
+/// captures the current value before kicking off seed; the post-seed
+/// engine-start step checks the token still matches before actually starting.
+/// Without this, a disconnect (or component unmount) that lands while
+/// `seedIfEmpty` is in-flight would call stop* on engines that haven't
+/// started yet (no-op), then `.finally()` would start them anyway against
+/// stale credentials. (PIN-5793 BugBot R4 finding.)
+let cloudSyncsRunId = 0;
+
+function stopAllCloudSyncs(): void {
+  cloudSyncsRunId += 1;
+  stopKbSync();
+  stopFilestoreSync();
+  stopDatastoreSync();
+  stopAgentSync();
+  stopWorkflowSync();
+}
+
 /// Fan out the cloud sync engines for a connected project. Centralized so
 /// the relaunch + fresh-bootstrap paths can't drift on which engines they
 /// start. Each engine swallows its own init error so one failure doesn't
 /// take down the others.
+///
+/// Only the **datastore** engine waits for seed (PIN-5793). Its cloud-empty
+/// gate must see the pre-auto-create state so the per-target seed decision
+/// is honest. KB / filestore / agent / workflow engines have no such
+/// dependency and start immediately — delaying them would add seed's
+/// network round-trips to every launch's cold-start latency, including
+/// for returning users whose seed gates short-circuit anyway.
 function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): void {
+  const myRun = ++cloudSyncsRunId;
+
   startKbSync({ creds, repo }).catch((e) =>
     console.error("kb sync init failed:", e),
   );
   startFilestoreSync({ creds, repo }).catch((e) =>
     console.error("filestore sync init failed:", e),
-  );
-  startDatastoreSync({ creds, repo }).catch((e) =>
-    console.error("datastore sync init failed:", e),
   );
   startAgentSync({ creds, repo }).catch((e) =>
     console.error("agent sync init failed:", e),
@@ -124,6 +149,24 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): 
   startWorkflowSync({ creds, repo }).catch((e) =>
     console.error("workflow sync init failed:", e),
   );
+
+  seedIfEmpty({
+    repo,
+    creds,
+    onLog: (msg) => console.log(`[seed] ${msg}`),
+  })
+    .catch((e) => console.warn("seed (PIN-5793) failed; datastore starting anyway:", e))
+    .finally(() => {
+      if (myRun !== cloudSyncsRunId) {
+        console.log(
+          "[startCloudSyncs] disconnect arrived during seed; not starting datastore for this stale session",
+        );
+        return;
+      }
+      startDatastoreSync({ creds, repo }).catch((e) =>
+        console.error("datastore sync init failed:", e),
+      );
+    });
 }
 
 function App() {
@@ -625,11 +668,7 @@ function App() {
     const unsub = subscribeToken((t) => setConnected(t !== null));
     return () => {
       unsub();
-      stopKbSync();
-      stopFilestoreSync();
-      stopDatastoreSync();
-      stopAgentSync();
-      stopWorkflowSync();
+      stopAllCloudSyncs();
     };
   }, []);
 

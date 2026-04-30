@@ -6,11 +6,18 @@
   "description": "Contacts directory. Anyone who files a ticket should land here so we can identify askers consistently across tickets and channels.",
   "fields": [
     {
-      "id": "displayName",
-      "label": "Name",
+      "id": "firstName",
+      "label": "First name",
       "type": "string",
       "required": true,
-      "comment": "How the person is referred to. 'Alice Johnson', 'Bob from Marketing', etc."
+      "comment": "Given name. Combined with lastName for display."
+    },
+    {
+      "id": "lastName",
+      "label": "Last name",
+      "type": "string",
+      "nullable": true,
+      "comment": "Family name. Optional — some askers go by single name or handle."
     },
     {
       "id": "email",

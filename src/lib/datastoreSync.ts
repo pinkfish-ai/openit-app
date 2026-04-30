@@ -25,12 +25,14 @@ import {
   entityWriteFile,
   fsList,
   fsRead,
+  projectUpdateLastSyncAt,
   type KbStatePersisted,
 } from "./api";
 import { derivedUrls, getToken, type PinkfishCreds } from "./pinkfishAuth";
 import { makeSkillsFetch } from "../api/fetchAdapter";
 import { datastoreAdapter } from "./entities/datastore";
 import { fetchDatastoreItems } from "./entities/datastoreApi";
+import { fetchSkillFile } from "./skillsSync";
 import {
   classifyAsShadow,
   clearConflictsForPrefix,
@@ -39,6 +41,12 @@ import {
   withRepoLock,
   type EntityAdapter,
 } from "./syncEngine";
+import {
+  CONVERSATIONS_COLLECTION_NAME,
+  localSubdirFor,
+} from "./datastorePaths";
+
+export { localSubdirFor };
 
 export { fetchDatastoreItems };
 
@@ -52,18 +60,95 @@ type CreateCollectionResponse = {
 
 type ListCollectionsResponse = DataCollection[] | null;
 
-const DEFAULT_DATASTORES = [
+type DefaultDatastore = {
+  name: string;
+  /** Cloud template — only set for structured collections that want
+   *  template data populated. Left null for the OpenIT defaults: we
+   *  ship our own bundled schema and don't want sample rows. */
+  templateId: string | null;
+  description: string;
+  isStructured: boolean;
+  /** Plugin-manifest path (under `scripts/openit-plugin/`) of the
+   *  bundled `_schema.json`. Loaded at create-time via `fetchSkillFile`
+   *  so the cloud collection lands structured against the same fields
+   *  the disk-side `databases/<col>/_schema.json` describes. Null for
+   *  unstructured collections. */
+  schemaPath: string | null;
+};
+
+// `openit-tickets` and `openit-people` are **structured**: each ships a
+// bundled `_schema.json` (under `scripts/openit-plugin/schemas/`) that
+// the resolver loads and includes in the create-collection POST body.
+// Cloud fix #1 (firebase-helpers PR #462) makes the cloud honor that
+// schema and skip the auto-template injection.
+//
+// `openit-conversations` is **unstructured**: per-message rows are
+// freeform JSON keyed by msgId, with the parent `ticketId` carried in
+// `content.ticketId`. The local layout is nested
+// (`databases/conversations/<ticketId>/<msgId>.json`); the engine
+// adapter explodes by `content.ticketId` on pull and composes back on
+// push.
+const DEFAULT_DATASTORES: DefaultDatastore[] = [
   {
     name: "openit-tickets",
-    templateId: "case-management",
+    templateId: null,
     description: "IT ticket tracking",
+    isStructured: true,
+    schemaPath: "schemas/tickets._schema.json",
   },
   {
     name: "openit-people",
-    templateId: "contacts",
+    templateId: null,
     description: "Contact/people directory",
+    isStructured: true,
+    schemaPath: "schemas/people._schema.json",
+  },
+  {
+    name: "openit-conversations",
+    templateId: null,
+    description: "Per-message conversation turns",
+    isStructured: false,
+    schemaPath: null,
   },
 ];
+
+/// Load a default's bundled `_schema.json` and shape it for the cloud
+/// `POST /datacollection/` body. Returns `null` if the schema isn't
+/// applicable (unstructured) or fails to load (caller continues without
+/// — auto-template behavior on the cloud already short-circuits because
+/// `templateId` is null).
+async function loadBundledSchema(
+  def: DefaultDatastore,
+  creds: PinkfishCreds,
+): Promise<{ fields: Array<Record<string, unknown>>; nextFieldId: number } | null> {
+  if (!def.schemaPath) return null;
+  try {
+    const raw = await fetchSkillFile(def.schemaPath, creds);
+    const parsed = JSON.parse(raw) as {
+      fields?: Array<Record<string, unknown>>;
+      nextFieldId?: number;
+    };
+    const fields = Array.isArray(parsed.fields) ? parsed.fields : [];
+    if (fields.length === 0) return null;
+    // Honor an explicit `nextFieldId` from the schema file (cloud uses it
+    // to allocate the next `f_N`-style id when admins add fields). If the
+    // file omits it (current bundled schemas do — all ids are semantic),
+    // fall back to a count-based default so the first cloud-generated
+    // field doesn't collide with anything we shipped.
+    const nextFieldId =
+      typeof parsed.nextFieldId === "number" && Number.isFinite(parsed.nextFieldId)
+        ? parsed.nextFieldId
+        : fields.length + 1;
+    return { fields, nextFieldId };
+  } catch (err) {
+    console.warn(`[datastoreSync] failed to load bundled schema ${def.schemaPath}:`, err);
+    return null;
+  }
+}
+
+// `localSubdirFor` and `CONVERSATIONS_COLLECTION_NAME` live in
+// `./datastorePaths` so the adapter (`entities/datastore.ts`) can share
+// them without a circular import.
 
 // Org-scoped cache to prevent collections from one org leaking into another.
 let createdCollections = new Map<string, Map<string, DataCollection>>();
@@ -132,22 +217,29 @@ async function resolveProjectDatastoresImpl(
     const allCollections = Array.isArray(result) ? result : [];
     console.log(`[datastoreSync] ✓ Found ${allCollections.length} datastore collections`);
     allCollections.forEach((c: DataCollection) => console.log(`  • ${c.name} (id: ${c.id})`));
-    const defaults = DEFAULT_DATASTORES.map((d) => ({
-      ...d,
-      name: `${d.name}-${creds.orgId}`,
-    }));
+    // Multi-collection discovery — every `openit-*` datastore syncs, not
+    // just the hardcoded defaults. Auto-create still seeds any of the
+    // three defaults that are missing.
+    const defaults: DefaultDatastore[] = DEFAULT_DATASTORES;
     let matching = allCollections.filter((c: DataCollection) =>
-      defaults.some((d) => d.name === c.name),
+      typeof c.name === "string" && c.name.startsWith("openit-"),
     );
-    console.log(`[datastoreSync] ✓ Matching default collections: ${matching.length}`);
+    console.log(`[datastoreSync] ✓ openit-* datastore collections: ${matching.length}`);
 
     const orgCache = getOrgCache(creds.orgId);
 
-    if (matching.length > 0) {
-      for (const m of matching) {
-        orgCache.set(m.name, m);
-        onLog?.(`  ✓ ${m.name}  (id: ${m.id})`);
-      }
+    // Cache whatever we found — even if some defaults are missing, we'll
+    // top them up below and return the union.
+    for (const m of matching) {
+      orgCache.set(m.name, m);
+      onLog?.(`  ✓ ${m.name}  (id: ${m.id})`);
+    }
+
+    // Determine which defaults are missing and need auto-creation.
+    const presentNames = new Set(matching.map((c) => c.name));
+    const missingDefaults = defaults.filter((d) => !presentNames.has(d.name));
+
+    if (missingDefaults.length === 0) {
       return matching;
     }
 
@@ -163,26 +255,37 @@ async function resolveProjectDatastoresImpl(
       return Array.from(orgCache.values());
     }
 
-    console.log("[datastoreSync] no openit-* datastores found — creating defaults");
-    orgCache.clear();
+    console.log(
+      `[datastoreSync] creating ${missingDefaults.length} missing default(s): ${missingDefaults.map((d) => d.name).join(", ")}`,
+    );
     setLastCreationTime(creds.orgId, now);
     let conflictHit = false;
-    for (const def of defaults) {
+    for (const def of missingDefaults) {
       try {
         const createUrl = new URL("/datacollection/", urls.skillsBaseUrl);
+        const body: Record<string, unknown> = {
+          name: def.name,
+          type: "datastore",
+          description: def.description,
+          createdBy: creds.orgId,
+          createdByName: "OpenIT",
+          triggerUrls: [],
+          isStructured: def.isStructured,
+        };
+        if (def.templateId) {
+          body.templateId = def.templateId;
+        }
+        // Load the bundled schema for structured defaults so the cloud
+        // collection lands with the right fields. Cloud fix #1 (PR #462)
+        // makes the server honor this and skip the auto-template path.
+        const schema = await loadBundledSchema(def, creds);
+        if (schema) {
+          body.schema = schema;
+        }
         const createResponse = await fetchFn(createUrl.toString(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: def.name,
-            type: "datastore",
-            templateId: def.templateId,
-            description: def.description,
-            createdBy: creds.orgId,
-            createdByName: "OpenIT",
-            triggerUrls: [],
-            isStructured: true,
-          }),
+          body: JSON.stringify(body),
         });
 
         console.log(`[datastoreSync] POST /datacollection/ response status: ${createResponse.status} ${createResponse.statusText}`);
@@ -216,6 +319,7 @@ async function resolveProjectDatastoresImpl(
             name: def.name,
             type: "datastore",
             description: def.description,
+            isStructured: def.isStructured,
           } as DataCollection;
           matching.push(col);
           orgCache.set(def.name, col);
@@ -246,8 +350,8 @@ async function resolveProjectDatastoresImpl(
         }
 
         const refetched = Array.isArray(refetchResult) ? refetchResult : [];
-        const updatedMatching = refetched.filter((c: DataCollection) =>
-          defaults.some((d) => d.name === c.name),
+        const updatedMatching = refetched.filter(
+          (c: DataCollection) => typeof c.name === "string" && c.name.startsWith("openit-"),
         );
         if (updatedMatching.length >= matching.length && updatedMatching.length > 0) {
           console.log("[datastoreSync] re-fetched collections after creation");
@@ -302,8 +406,12 @@ async function writeDatastoreSchemas(
     let written = 0;
     let unchanged = 0;
     for (const col of collections) {
+      // Unstructured collections (e.g. openit-conversations) carry no
+      // schema and don't get a `_schema.json` written. Structured ones
+      // without a server-side schema also skip — there's nothing to write.
+      if (col.isStructured === false) continue;
       if (!col.schema) continue;
-      const subdir = `databases/${col.name}`;
+      const subdir = localSubdirFor(col.name);
       const schemaContent = JSON.stringify(col.schema, null, 2);
       const schemaPath = `${repo}/${subdir}/_schema.json`;
       let existing: string | null = null;
@@ -376,7 +484,8 @@ async function pushAllToDatastoresImpl(args: {
   const pushedKeysByCol = new Map<string, Set<string>>();
 
   for (const col of collections) {
-    const colDir = `${repo}/databases/${col.name}`;
+    const colDir = `${repo}/${localSubdirFor(col.name)}`;
+    const isConversations = col.name === CONVERSATIONS_COLLECTION_NAME;
 
     let remote: MemoryItem[];
     try {
@@ -397,37 +506,102 @@ async function pushAllToDatastoresImpl(args: {
     // because the directory doesn't exist yet, an empty `localFiles` does
     // NOT mean "user deleted everything" — skip the deletion phase
     // entirely so we don't nuke remote rows.
-    let localFiles: { key: string; absPath: string }[] = [];
+    //
+    // For openit-conversations the on-disk layout is one extra level
+    // deep (`databases/conversations/<ticketId>/<msgId>.json`); we walk
+    // each per-ticket subfolder and remember the parent so push can
+    // inject `ticketId` into content if missing.
+    type LocalRow = { key: string; absPath: string; ticketId?: string };
+    let localFiles: LocalRow[] = [];
     let localDirExists = true;
+    // Tracks whether any per-ticket subfolder listing failed during the
+    // conversations walk. We can't distinguish "user emptied this folder"
+    // from "fsList errored" from the outside, so any inner-walk error
+    // disables the remote-delete phase for this collection — better to
+    // skip a deletion than to nuke teammates' rows because of a transient
+    // read failure. (PIN-5793 BugBot R4 finding.)
+    let innerWalkFailed = false;
     try {
-      const nodes = await fsList(colDir);
-      // Build canonical-sibling set (per-collection) so we exclude shadow
-      // rows but not legitimate filenames containing `.server.`. A row
-      // keyed `nginx.server` produces filename `nginx.server.json`; with
-      // no sibling `nginx.json` it should still push.
-      const candidateNames = nodes
-        .filter(
-          (n) =>
-            !n.is_dir && n.name.endsWith(".json") && n.name !== "_schema.json",
-        )
-        .map((n) => n.name);
-      // Full set of candidate filenames; see classifyAsShadow doc.
-      const siblings = new Set(candidateNames);
-      localFiles = nodes
-        .filter(
-          (n) =>
-            !n.is_dir &&
-            n.name.endsWith(".json") &&
-            n.name !== "_schema.json" &&
-            !classifyAsShadow(n.name, siblings),
-        )
-        .map((n) => ({ key: n.name.replace(/\.json$/, ""), absPath: n.path }));
+      const topNodes = await fsList(colDir);
+      if (isConversations) {
+        // Cloud-side row key is just the msgId (no `<ticketId>__` prefix).
+        // If the user lands the same msgId in two ticket folders, the
+        // second push would silently overwrite the first cloud row. The
+        // bundled seed uses timestamp+suffix ids so this is theoretical
+        // for first-party content, but admin-authored or copy-pasted
+        // rows can collide. First-writer-wins + a loud warning is
+        // cheaper than retrofitting a composite cloud key here. (R7
+        // BugBot finding.)
+        const seenKeys = new Map<string, string>();
+        for (const top of topNodes) {
+          if (!top.is_dir) continue;
+          const ticketId = top.name;
+          let inner;
+          try {
+            inner = await fsList(top.path);
+          } catch (e) {
+            console.warn(
+              `[datastoreSync] failed to list conversations subfolder ${ticketId}; ` +
+                `disabling remote-delete pass for ${col.name} this push:`,
+              e,
+            );
+            innerWalkFailed = true;
+            continue;
+          }
+          const candidateNames = inner
+            .filter(
+              (n) =>
+                !n.is_dir && n.name.endsWith(".json") && n.name !== "_schema.json",
+            )
+            .map((n) => n.name);
+          const siblings = new Set(candidateNames);
+          for (const n of inner) {
+            if (n.is_dir) continue;
+            if (!n.name.endsWith(".json")) continue;
+            if (n.name === "_schema.json") continue;
+            if (classifyAsShadow(n.name, siblings)) continue;
+            const key = n.name.replace(/\.json$/, "");
+            const firstSeenIn = seenKeys.get(key);
+            if (firstSeenIn !== undefined) {
+              console.warn(
+                `[datastoreSync] duplicate conversation msgId "${key}" — already pushing from ` +
+                  `ticket "${firstSeenIn}", skipping copy in "${ticketId}". Rename one to avoid ` +
+                  `silent overwrite on cloud.`,
+              );
+              continue;
+            }
+            seenKeys.set(key, ticketId);
+            localFiles.push({ key, absPath: n.path, ticketId });
+          }
+        }
+      } else {
+        // Build canonical-sibling set (per-collection) so we exclude shadow
+        // rows but not legitimate filenames containing `.server.`. A row
+        // keyed `nginx.server` produces filename `nginx.server.json`; with
+        // no sibling `nginx.json` it should still push.
+        const candidateNames = topNodes
+          .filter(
+            (n) =>
+              !n.is_dir && n.name.endsWith(".json") && n.name !== "_schema.json",
+          )
+          .map((n) => n.name);
+        const siblings = new Set(candidateNames);
+        localFiles = topNodes
+          .filter(
+            (n) =>
+              !n.is_dir &&
+              n.name.endsWith(".json") &&
+              n.name !== "_schema.json" &&
+              !classifyAsShadow(n.name, siblings),
+          )
+          .map((n) => ({ key: n.name.replace(/\.json$/, ""), absPath: n.path }));
+      }
     } catch {
       localDirExists = false;
     }
     const localKeys = new Set(localFiles.map((f) => f.key));
 
-    for (const { key, absPath } of localFiles) {
+    for (const { key, absPath, ticketId } of localFiles) {
       let parsed: unknown;
       try {
         const raw = await fsRead(absPath);
@@ -437,6 +611,19 @@ async function pushAllToDatastoresImpl(args: {
         totalFailed += 1;
         continue;
       }
+
+      // Conversations: ensure `content.ticketId` matches the parent
+      // folder name. Folder is the source-of-truth linkage on disk; if
+      // the user authored a row without it (or copied across folders),
+      // fix it before pushing so cloud-side filtering by ticketId works.
+      if (isConversations && ticketId && parsed && typeof parsed === "object") {
+        const obj = parsed as Record<string, unknown>;
+        if (obj.ticketId !== ticketId) obj.ticketId = ticketId;
+      }
+
+      const logPath = isConversations && ticketId
+        ? `${col.name}/${ticketId}/${key}.json`
+        : `${col.name}/${key}.json`;
 
       const existing = remoteByKey.get(key);
       try {
@@ -449,7 +636,7 @@ async function pushAllToDatastoresImpl(args: {
             body: JSON.stringify({ key, content: parsed }),
           });
           if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-          onLine?.(`  + ${col.name}/${key}.json (created)`);
+          onLine?.(`  + ${logPath} (created)`);
           totalPushed += 1;
           if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
           pushedKeysByCol.get(col.id)!.add(key);
@@ -462,7 +649,7 @@ async function pushAllToDatastoresImpl(args: {
             body: JSON.stringify({ content: parsed }),
           });
           if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-          onLine?.(`  ✓ ${col.name}/${key}.json (updated)`);
+          onLine?.(`  ✓ ${logPath} (updated)`);
           totalPushed += 1;
           if (!pushedKeysByCol.has(col.id)) pushedKeysByCol.set(col.id, new Set());
           pushedKeysByCol.get(col.id)!.add(key);
@@ -474,11 +661,13 @@ async function pushAllToDatastoresImpl(args: {
     }
 
     // SAFETY: only run the deletion phase if the local collection dir
-    // actually exists. Otherwise an empty `localKeys` would be
-    // interpreted as "user deleted everything" and we'd nuke every remote
-    // row — which would happen on the very first commit if the datastore
-    // pull hadn't completed yet.
-    if (localDirExists) {
+    // actually exists AND every per-ticket subfolder we listed succeeded.
+    // Otherwise an empty `localKeys` would be interpreted as "user
+    // deleted everything" and we'd nuke every remote row — which would
+    // happen on the very first commit if the datastore pull hadn't
+    // completed yet OR if a transient read error truncated the local
+    // walk for the conversations collection.
+    if (localDirExists && !innerWalkFailed) {
       for (const r of remote) {
         const k = (r.key ?? r.id ?? "").toString();
         if (!k || localKeys.has(k)) continue;
@@ -498,7 +687,12 @@ async function pushAllToDatastoresImpl(args: {
         }
       }
     } else {
-      onLine?.(`▸ datastore: ${col.name} has no local dir yet — skipping deletion phase`);
+      const reason = !localDirExists
+        ? "has no local dir yet"
+        : "had a partial local walk";
+      onLine?.(
+        `▸ datastore: ${col.name} ${reason} — skipping deletion phase to avoid nuking remote rows`,
+      );
     }
   }
 
@@ -660,6 +854,11 @@ export async function startDatastoreSync(args: {
     }
     try {
       await pullEntity(adapter, repo);
+      // Stamp `cloud.json.lastSyncAt` on every successful pull (Phase 2
+      // deferral; matches what filestore + kb do).
+      projectUpdateLastSyncAt(repo).catch((err) =>
+        console.warn("[datastoreSync] lastSyncAt update failed:", err),
+      );
     } catch (e) {
       console.error("[datastoreSync] pull failed:", e);
       if (isFirst) throw e;
