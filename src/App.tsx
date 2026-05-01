@@ -34,7 +34,7 @@ import { useBrowserConnect } from "./lib/useBrowserConnect";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
 import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
-import { startAgentSync, stopAgentSync } from "./lib/agentSync";
+import { migrateFlatTriage, startAgentSync, stopAgentSync } from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
 import { pushAllEntities } from "./lib/pushAll";
 import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
@@ -125,9 +125,16 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): 
   startFilestoreSync({ creds, repo }).catch((e) =>
     console.error("filestore sync init failed:", e),
   );
-  startAgentSync({ creds, repo }).catch((e) =>
-    console.error("agent sync init failed:", e),
-  );
+  // Agent migration must complete before the first agent pull. A stale
+  // cloud-side `openit-triage` would otherwise overwrite the folder
+  // layout the migration is in the middle of writing.
+  migrateFlatTriage(repo)
+    .catch((e) => console.error("agent migration failed:", e))
+    .finally(() => {
+      startAgentSync({ creds, repo }).catch((e) =>
+        console.error("agent sync init failed:", e),
+      );
+    });
   startWorkflowSync({ creds, repo }).catch((e) =>
     console.error("workflow sync init failed:", e),
   );

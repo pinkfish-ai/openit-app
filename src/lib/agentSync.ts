@@ -20,6 +20,7 @@ import {
   type AgentRow,
 } from "./entities/agent";
 import {
+  entityDeleteFile,
   entityListLocal,
   entityWriteFile,
   fsRead,
@@ -123,6 +124,55 @@ export async function pullAgentsOnce(args: {
   } catch (e) {
     console.error("[agentSync] pull failed:", e);
     return { ok: false, error: String(e), pulled: 0, conflicts: [] };
+  }
+}
+
+async function fileExistsOnDisk(repo: string, relPath: string): Promise<boolean> {
+  try {
+    await invoke<string>("fs_read", { path: `${repo}/${relPath}` });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/// One-shot migration from V1's flat `agents/triage.json` to V2's
+/// folder layout `agents/triage/{triage.json,common.md,cloud.md,local.md}`.
+/// The user's existing `instructions` text lands verbatim in `common.md`;
+/// `cloud.md` / `local.md` come from the bundled plugin defaults on the
+/// next plugin sync tick (the write-once gate treats them as new files
+/// because the folder didn't exist before this shim ran).
+///
+/// MUST run before `startCloudSyncs` so a stale cloud-side agent doesn't
+/// get pulled before the local data is folded into the new layout.
+export async function migrateFlatTriage(repo: string): Promise<void> {
+  const flatExists = await fileExistsOnDisk(repo, "agents/triage.json");
+  const folderExists = await fileExistsOnDisk(repo, "agents/triage/triage.json");
+  if (!flatExists || folderExists) return;
+
+  try {
+    const content = await fsRead(`${repo}/agents/triage.json`);
+    const parsed = JSON.parse(content) as {
+      instructions?: unknown;
+      [k: string]: unknown;
+    };
+    const { instructions, ...structured } = parsed;
+
+    await entityWriteFile(
+      repo,
+      "agents/triage",
+      "triage.json",
+      JSON.stringify(structured, null, 2),
+    );
+
+    if (typeof instructions === "string" && instructions.length > 0) {
+      await entityWriteFile(repo, "agents/triage", "common.md", instructions);
+    }
+
+    await entityDeleteFile(repo, "agents", "triage.json");
+    console.log("[migrate] flat agents/triage.json → agents/triage/ folder");
+  } catch (e) {
+    console.error("[migrate] V2 folder migration failed:", e);
   }
 }
 

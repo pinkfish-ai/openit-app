@@ -11,6 +11,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 vi.mock("./api", () => ({
+  entityDeleteFile: vi.fn(),
   entityListLocal: vi.fn(),
   entityWriteFile: vi.fn(),
   fsRead: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock("./syncEngine", async () => {
 
 import { invoke } from "@tauri-apps/api/core";
 import {
+  entityDeleteFile,
   entityListLocal,
   entityWriteFile,
   fsRead,
@@ -62,7 +64,7 @@ import {
   patchUserAgent,
   postUserAgent,
 } from "./entities/agent";
-import { pushAllToAgents } from "./agentSync";
+import { migrateFlatTriage, pushAllToAgents } from "./agentSync";
 import { OutOfSync, pullEntity } from "./syncEngine";
 
 const creds = { tokenUrl: "https://x", orgId: "org" } as never;
@@ -258,6 +260,145 @@ describe("pushAllToAgents — PATCH flow (id present)", () => {
       instructions: "i",
     });
     expect(postUserAgent).not.toHaveBeenCalled();
+  });
+});
+
+describe("migrateFlatTriage", () => {
+  // The shim probes disk via fs_read; configure the invoke mock so the
+  // probes read the right paths and the migration writes call back into
+  // entity_write_file.
+  function setupFs(opts: {
+    flatExists: boolean;
+    folderExists: boolean;
+    flatContent?: string;
+  }): {
+    writes: Array<{ subdir: string; filename: string; content: string }>;
+    deletes: Array<{ subdir: string; filename: string }>;
+  } {
+    const writes: Array<{
+      subdir: string;
+      filename: string;
+      content: string;
+    }> = [];
+    const deletes: Array<{ subdir: string; filename: string }> = [];
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "fs_read") {
+        const { path } = args as { path: string };
+        if (path.endsWith("/agents/triage.json")) {
+          if (!opts.flatExists) throw new Error("ENOENT");
+          return (opts.flatContent ?? "{}") as never;
+        }
+        if (path.endsWith("/agents/triage/triage.json")) {
+          if (!opts.folderExists) throw new Error("ENOENT");
+          return "{}" as never;
+        }
+        throw new Error(`unexpected fs_read: ${path}`);
+      }
+      return undefined as never;
+    });
+    vi.mocked(fsRead).mockImplementation(async (path: string) => {
+      if (path.endsWith("/agents/triage.json")) return opts.flatContent ?? "{}";
+      throw new Error(`unexpected fsRead: ${path}`);
+    });
+    vi.mocked(entityWriteFile).mockImplementation(
+      async (_repo, subdir, filename, content) => {
+        writes.push({ subdir, filename, content });
+      },
+    );
+    vi.mocked(entityDeleteFile).mockImplementation(
+      async (_repo, subdir, filename) => {
+        deletes.push({ subdir, filename });
+      },
+    );
+    return { writes, deletes };
+  }
+
+  it("moves flat agents/triage.json into agents/triage/ folder, preserving instructions verbatim in common.md", async () => {
+    const flatContent = JSON.stringify({
+      id: "ua_x",
+      name: "triage",
+      description: "first responder",
+      instructions: "be helpful and be specific",
+      selectedModel: "haiku",
+    });
+    const { writes, deletes } = setupFs({
+      flatExists: true,
+      folderExists: false,
+      flatContent,
+    });
+
+    await migrateFlatTriage("/r");
+
+    // triage.json: structured fields only (instructions stripped).
+    const jsonWrite = writes.find(
+      (w) => w.subdir === "agents/triage" && w.filename === "triage.json",
+    );
+    expect(jsonWrite).toBeTruthy();
+    const written = JSON.parse(jsonWrite!.content);
+    expect(written).toEqual({
+      id: "ua_x",
+      name: "triage",
+      description: "first responder",
+      selectedModel: "haiku",
+    });
+    expect(written.instructions).toBeUndefined();
+
+    // common.md gets the verbatim instructions string.
+    const mdWrite = writes.find(
+      (w) => w.subdir === "agents/triage" && w.filename === "common.md",
+    );
+    expect(mdWrite?.content).toBe("be helpful and be specific");
+
+    // Flat file deleted.
+    expect(deletes).toContainEqual({
+      subdir: "agents",
+      filename: "triage.json",
+    });
+  });
+
+  it("no-ops when only the folder layout exists", async () => {
+    const { writes, deletes } = setupFs({
+      flatExists: false,
+      folderExists: true,
+    });
+
+    await migrateFlatTriage("/r");
+
+    expect(writes).toEqual([]);
+    expect(deletes).toEqual([]);
+  });
+
+  it("no-ops when both layouts exist (folder wins)", async () => {
+    const { writes, deletes } = setupFs({
+      flatExists: true,
+      folderExists: true,
+      flatContent: JSON.stringify({ name: "triage", instructions: "x" }),
+    });
+
+    await migrateFlatTriage("/r");
+
+    expect(writes).toEqual([]);
+    expect(deletes).toEqual([]);
+  });
+
+  it("skips common.md write when instructions is empty/missing but still moves structured fields and deletes flat", async () => {
+    const flatContent = JSON.stringify({ id: "ua_x", name: "triage" });
+    const { writes, deletes } = setupFs({
+      flatExists: true,
+      folderExists: false,
+      flatContent,
+    });
+
+    await migrateFlatTriage("/r");
+
+    const mdWrite = writes.find((w) => w.filename === "common.md");
+    expect(mdWrite).toBeUndefined();
+    const jsonWrite = writes.find((w) => w.filename === "triage.json");
+    expect(jsonWrite).toBeTruthy();
+    expect(deletes).toContainEqual({
+      subdir: "agents",
+      filename: "triage.json",
+    });
   });
 });
 
