@@ -176,3 +176,14 @@ Smallest change first; everything else depends on the index-lock fix being in pl
 ## 4. Stop — request human review before stage 03
 
 This plan is the contract. Do not start writing code until the human approves.
+
+---
+
+## BugBot Review Log
+
+### Iteration 1 (2026-04-30)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Concurrent filestore collections share global conflict state | Medium | Fixed | `a9be184` — added `getConflictsForPrefix(prefix)` accessor + per-collection conflict gate. Also fixed a related bug found while triaging: skip-clean was passing class-level strings (`"kb"`, `"filestore"`) to `hasConflictsForPrefix` but adapter prefixes are per-collection paths — the conflict precondition was effectively a no-op. |
+| 2 | Exported `filestoreHasServerShadowFiles` is never used | Low | Fixed | `255c112` — dropped the unused export. CLAUDE.md "every new export must have a caller". |
