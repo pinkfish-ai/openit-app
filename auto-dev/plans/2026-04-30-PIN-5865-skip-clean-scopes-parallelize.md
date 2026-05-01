@@ -209,3 +209,9 @@ Re-triggered after three commits fixing live-testing regressions (skip-clean cor
 | # | Finding | Severity | Disposition | Commit / Reason |
 |---|---------|----------|-------------|-----------------|
 | 1 | Auto-scroll fires before content DOM update | Medium | Fixed | `f411447` — auto-scroll effect depended on `[source]` and ran in declaration order BEFORE the content-loading effect's `setContent`, so `scrollHeight` measured the prior render. Switched deps to `[source, content]` so the scroll re-fires after the setContent re-render. |
+
+### Iteration 5 (2026-04-30)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Modified-then-committed files silently skip push | High | Fixed | `6f2ac42` — `manifestMatchesDisk` only compared filename sets. Editing a tracked file + committing left git clean, filenames matching, last_pull_at_ms set → skip-clean fired and the modification never pushed. Added the `mtime_ms > pulled_at_mtime_ms` check (same predicate `pushAllToKbImpl`'s `toPush` filter uses). Regression pinned by "kb file modified-then-committed unblocks skip-clean" in `pushAll.test.ts`. |
