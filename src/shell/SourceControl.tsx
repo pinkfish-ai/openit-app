@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  claudeDetect,
-  claudeGenerateCommitMessage,
   gitCommitStaged,
   gitDiff,
   gitDiscard,
@@ -110,13 +108,7 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [commitMsg, setCommitMsg] = useState("");
   const [committing, setCommitting] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [claudeAvailable, setClaudeAvailable] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    claudeDetect().then((p) => setClaudeAvailable(!!p)).catch(() => setClaudeAvailable(false));
-  }, []);
 
   const refresh = useCallback(() => {
     if (!repo) {
@@ -228,24 +220,6 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
     }
   };
 
-  const handleGenerate = async () => {
-    if (!repo || generating || files.length === 0) return;
-    setGenerating(true);
-    setError(null);
-    try {
-      // Sparkle reads the diff; auto-stage so it sees the user's actual changes.
-      if (unstaged.length > 0) {
-        await gitStage(repo, unstaged.map((f) => f.path));
-      }
-      const subject = await claudeGenerateCommitMessage(repo);
-      setCommitMsg(subject);
-    } catch (e) {
-      setError(`Generate failed: ${String(e)}`);
-    } finally {
-      setGenerating(false);
-    }
-  };
-
   const handleFileDiff = async (path: string) => {
     if (!repo) return;
     try {
@@ -267,11 +241,7 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
         <input
           className="sc-commit-input"
           placeholder={
-            generating
-              ? "Generating commit message…"
-              : files.length > 0
-              ? defaultCommitMessage(files)
-              : "Commit message"
+            files.length > 0 ? defaultCommitMessage(files) : "Commit message"
           }
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
@@ -281,33 +251,13 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
               handleCommit();
             }
           }}
-          disabled={committing || generating}
+          disabled={committing}
         />
-        {claudeAvailable && (
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            onClick={handleGenerate}
-            disabled={generating || committing || files.length === 0}
-            loading={generating}
-            aria-label="Generate commit message with Claude"
-            title={
-              files.length === 0
-                ? "No changes"
-                : generating
-                  ? "Asking Claude…"
-                  : "Generate commit message with Claude"
-            }
-          >
-            ✨
-          </Button>
-        )}
         <Button
           variant="primary"
           size="sm"
           onClick={handleCommit}
-          disabled={committing || generating}
+          disabled={committing}
           loading={committing}
           title={
             files.length > 0
@@ -315,7 +265,7 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
                 ? "Commit and sync to Cloud"
                 : "Commit locally (Connect to Cloud to also sync)"
               : cloudConnected
-                ? "Sync to Cloud (catches silent content drift)"
+                ? "Sync with Cloud (catches silent content drift)"
                 : "Connect to Cloud to enable sync"
           }
         >
@@ -323,7 +273,7 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
             ? "…"
             : files.length > 0
               ? "Commit"
-              : "Sync to Cloud"}
+              : "Sync with Cloud"}
         </Button>
       </div>
       {error && <div className="sc-error">{error}</div>}

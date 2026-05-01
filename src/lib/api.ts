@@ -448,6 +448,16 @@ export type KbStatePersisted = {
   collection_id: string | null;
   collection_name: string | null;
   files: Record<string, KbFileState>;
+  /// Set by the engine after every successful pull pipeline pass — even
+  /// when zero items came back. Used by `pushAllEntities` skip-clean
+  /// preflight as the "we've talked to remote at least once for this
+  /// collection" sentinel. Without it, a brand-new empty collection
+  /// (e.g. `openit-attachments` on a project with no ticket
+  /// attachments yet) keeps failing skip-clean forever because
+  /// `Object.keys(files).length` stays 0 — pulling on every click for
+  /// no benefit. Optional on the type for backwards-compat with
+  /// pre-PIN-5865 manifests on disk.
+  last_pull_at_ms?: number | null;
 };
 
 export async function kbInit(repo: string): Promise<string> {

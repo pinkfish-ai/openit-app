@@ -40,7 +40,7 @@
 //   - `.openit/`, `.claude/`, `CLAUDE.md` — gitignored / admin
 //     editing surface.
 
-import { gitCommitPaths } from "./api";
+import { commitTouched } from "./syncEngine";
 import { onFsChanged } from "./fsWatcher";
 
 const DEBOUNCE_MS = 1500;
@@ -91,15 +91,25 @@ async function flush(): Promise<void> {
   const repo = activeRepo;
   const paths = Array.from(pendingPaths);
   pendingPaths = null;
+  // Route through the engine's `commitTouched` rather than
+  // `gitCommitPaths` directly. `commitTouched` serialises through
+  // `withRepoLock(repo, "git")`, which the engine's pull/push
+  // pipelines also hold when they auto-commit. Sharing the lock
+  // prevents this driver and the engine from racing on
+  // `.git/index.lock` — exactly the failure mode that surfaced
+  // when PIN-5865 parallelised the per-class sync tasks and the
+  // file-system writes started overlapping with autoCommit's
+  // debounce flush.
+  //
+  // Outer try/catch even though `commitTouched` swallows
+  // `gitCommitPaths` errors internally: a `withRepoLock` rejection
+  // (corrupt lock chain, sync engine teardown mid-flush, etc.)
+  // would escape `commitTouched` and surface as an unhandled
+  // rejection because flush is fired via `void flush()` from
+  // setTimeout. PIN-5865 / BugBot iter 7 (Low).
   try {
-    const created = await gitCommitPaths(repo, paths, COMMIT_MESSAGE);
-    if (created) {
-      console.log(`[autoCommit] committed ${paths.length} path(s)`);
-    }
+    await commitTouched(repo, paths, COMMIT_MESSAGE);
   } catch (e) {
-    // Non-fatal — the writes already landed on disk; the next
-    // change in this scope re-tries the commit, or a manual
-    // commit picks them up.
     console.warn("[autoCommit] commit failed:", e);
   }
 }

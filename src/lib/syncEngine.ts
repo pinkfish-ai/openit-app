@@ -311,6 +311,36 @@ export function clearConflictsForPrefix(prefix: string): void {
   if (conflictsByPrefix.delete(prefix)) emitConflicts();
 }
 
+/// True if at least one aggregated conflict exists for this prefix. Used
+/// by the skip-clean preflight in `pushAllEntities` — a clean working
+/// tree alone isn't sufficient to skip a pre-push pull, because the
+/// previous pull may have surfaced conflicts the user hasn't resolved
+/// yet (their resolution will live in `.server.` shadow files, which
+/// are gitignored and thus invisible to `git status`).
+///
+/// **Prefix granularity matches the adapter that produced the conflict.**
+/// `kb` and `filestore` adapters use per-collection prefixes (e.g.
+/// `"knowledge-bases/default"`, `"filestores/library"`); `datastore`,
+/// `agent`, and `workflow` adapters use class-level strings
+/// (`"datastore"`, etc.). Pass the same string the adapter used as
+/// `prefix` — passing a class name like `"kb"` will never match the
+/// per-collection slots.
+export function hasConflictsForPrefix(prefix: string): boolean {
+  const list = conflictsByPrefix.get(prefix);
+  return list != null && list.length > 0;
+}
+
+/// Snapshot of conflicts for a single prefix. Same prefix-granularity
+/// rules as `hasConflictsForPrefix`. Used by parallel filestore pulls
+/// in `pushAllEntities` so each collection's post-pull conflict gate
+/// looks at ONLY its own conflicts — not the cross-collection union
+/// from `getFilestoreSyncStatus().conflicts`, which a sibling pull
+/// can race-contaminate when collections run concurrently.
+export function getConflictsForPrefix(prefix: string): AggregatedConflict[] {
+  const list = conflictsByPrefix.get(prefix);
+  return list != null ? [...list] : [];
+}
+
 /// Compute the on-disk shadow path for a conflict's canonical
 /// workingTreePath. e.g. `databases/openit-people-XXX/p123.json`
 /// → `databases/openit-people-XXX/p123.server.json`. Used by the
@@ -453,11 +483,18 @@ export async function commitTouched(
   message: string,
 ): Promise<void> {
   if (touched.length === 0) return;
-  try {
-    await gitCommitPaths(repo, touched, message);
-  } catch (e) {
-    console.warn(`[syncEngine] commit failed (${message}):`, e);
-  }
+  // Serialize commits across all entity prefixes through a dedicated
+  // `(repo, "git")` queue. Per-prefix locks already prevent two ops
+  // on the same entity from racing, but they don't prevent kb-push and
+  // filestore-pull from hitting `gitCommitPaths` concurrently — which
+  // races on `.git/index.lock`. PIN-5865.
+  await withRepoLock(repo, "git", async () => {
+    try {
+      await gitCommitPaths(repo, touched, message);
+    } catch (e) {
+      console.warn(`[syncEngine] commit failed (${message}):`, e);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -772,6 +809,22 @@ async function pullEntityImpl(
     }
   }
 
+  // Stamp the pull-completion sentinel so `pushAllEntities` skip-clean
+  // can recognise this prefix as "talked to remote at least once" even
+  // when both sides are empty. Without it, a collection that's empty
+  // on both ends (e.g. `openit-attachments` before any ticket has had
+  // an attachment) re-pulls on every sync click forever — manifest
+  // never populates, skip-clean's `last_pull_at_ms != null` check
+  // never flips, RTT bill grows. PIN-5865.
+  //
+  // Gated on `!paginationFailed`: a partial pull skipped the
+  // server-delete pass above, so its view of remote is incomplete.
+  // Stamping anyway would let skip-clean fire next click and the
+  // server-delete reconcile would be deferred indefinitely. Better
+  // to leave the sentinel un-set so the next click pulls again.
+  if (!paginationFailed) {
+    manifest.last_pull_at_ms = Date.now();
+  }
   await adapter.saveManifest(repo, manifest);
 
   if (touched.length > 0) {
