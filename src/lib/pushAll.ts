@@ -2,6 +2,16 @@
 // `.openit/push-request.json` trigger flow (the latter is what
 // `scripts/openit-plugin/sync-push.mjs` drives).
 //
+// PIN-5865: each entity-class task runs in parallel via
+// `Promise.allSettled` and short-circuits when its working-tree scope
+// is clean. The 60s background poller still surfaces remote-side
+// adds/deletes, so trusting `git status` here is safe for the no-op
+// case. KB / filestore / datastore are all wrapped in their own
+// per-class try/catch so a single class's failure doesn't take down
+// the others. `commitTouched` is serialised through a `(repo, "git")`
+// lock at the engine layer so concurrent pulls/pushes don't race
+// `.git/index.lock`.
+//
 // KB and filestore use their existing push functions; datastores use
 // pushAllToDatastores. We pre-pull each entity to surface conflicts
 // before clobbering teammate edits, then push and stream results.
@@ -18,13 +28,19 @@ import {
   pushAllToFilestore,
   getFilestoreSyncStatus,
   pullOnce as filestorePullOnce,
+  startFilestoreSync,
 } from "./filestoreSync";
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
-import { loadCreds } from "./pinkfishAuth";
+import { loadCreds, type PinkfishCreds } from "./pinkfishAuth";
+import { gitStatusShort, datastoreStateLoad } from "./api";
+import { hasConflictsForPrefix } from "./syncEngine";
+import { loadCollectionManifest } from "./nestedManifest";
+
+type LineFn = (line: string) => void;
 
 export async function pushAllEntities(
   repo: string,
-  onLine: (line: string) => void,
+  onLine: LineFn,
 ): Promise<void> {
   const creds = await loadCreds().catch(() => null);
   if (!creds) {
@@ -34,166 +50,325 @@ export async function pushAllEntities(
 
   onLine("▸ sync: starting push to Pinkfish");
 
-  // KB requires a resolved collection list; if sync hasn't run yet
-  // (e.g. user commits before the initial pull completes), kick it off
-  // inline. Phase 2: multi-collection.
-  let kbCollections = getSyncStatus().collections;
-  if (kbCollections.length === 0) {
-    onLine("▸ sync: resolving knowledge base");
-    try {
-      await startKbSync({ creds, repo });
-      kbCollections = getSyncStatus().collections;
-    } catch (e) {
-      onLine(`✗ sync: kb resolve failed: ${String(e)}`);
-    }
-  }
+  // Pre-flight: one `git status --short` per click, scoped per-class
+  // by string-prefix filter below. Cheaper than the previous N calls
+  // (one per adapter push) and lets us decide skip-or-run before any
+  // remote round-trip.
+  const gitFiles = await gitStatusShort(repo).catch(() => []);
+  const dirtyPaths = new Set(gitFiles.map((g) => g.path));
+  const dirtyUnderScope = (scopeDir: string): boolean => {
+    const prefix = `${scopeDir}/`;
+    for (const p of dirtyPaths) if (p.startsWith(prefix)) return true;
+    return false;
+  };
 
-  // KB: pre-pull every collection to detect remote/local conflicts
-  // before we clobber anything. A conflict in any collection blocks
-  // the push for ALL of them — half-applied state is worse than
-  // surfacing the conflict and asking the user to resolve.
-  if (kbCollections.length > 0) {
+  // All three entity-class tasks run concurrently. Each one owns its
+  // own try/catch + onLine output so a sub-task failure surfaces in
+  // the sync pane without taking the other classes down.
+  await Promise.allSettled([
+    runKb({ creds, repo, onLine, dirtyUnderScope }),
+    runFilestore({ creds, repo, onLine, dirtyUnderScope }),
+    runDatastore({ creds, repo, onLine, dirtyUnderScope }),
+  ]);
+
+  onLine("▸ sync: done");
+}
+
+// ---------------------------------------------------------------------------
+// KB — class-level skip + class-level pre-push pull (`pullAllKbNow`).
+// Per-collection push stays sequential; KB collections are usually a
+// single one in practice and the multipart `/upload` endpoint is the
+// bottleneck, not list-remote.
+// ---------------------------------------------------------------------------
+
+async function runKb(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLine: LineFn;
+  dirtyUnderScope: (scopeDir: string) => boolean;
+}): Promise<void> {
+  const { creds, repo, onLine, dirtyUnderScope } = args;
+  try {
+    // KB requires a resolved collection list; if sync hasn't run yet
+    // (e.g. user commits before the initial pull completes), kick it
+    // off inline.
+    let collections = getSyncStatus().collections;
+    if (collections.length === 0) {
+      onLine("▸ sync: resolving knowledge base");
+      try {
+        await startKbSync({ creds, repo });
+        collections = getSyncStatus().collections;
+      } catch (e) {
+        onLine(`✗ sync: kb resolve failed: ${String(e)}`);
+        return;
+      }
+    }
+    if (collections.length === 0) {
+      onLine("▸ sync: kb skipped (no collections)");
+      return;
+    }
+
+    // Skip-clean: every collection has a non-empty manifest (i.e. has
+    // been pulled at least once) AND no dirty paths under its dir AND
+    // no aggregate conflicts for the kb prefix. Trust the 60s poller
+    // for remote-side changes. PIN-5865.
+    const cleanByCol = await Promise.all(
+      collections.map(async (c) => {
+        const dir = `knowledge-bases/${displayKbName(c.name)}`;
+        if (dirtyUnderScope(dir)) return false;
+        const m = await loadCollectionManifest(repo, "kb", c.id);
+        return Object.keys(m.files).length > 0;
+      }),
+    );
+    if (cleanByCol.every(Boolean) && !hasConflictsForPrefix("kb")) {
+      onLine("▸ sync: kb skipped (clean)");
+      return;
+    }
+
+    // Pre-pull every collection to detect remote/local conflicts before
+    // we clobber anything. A conflict in any collection blocks the push
+    // for ALL of them — half-applied state is worse than surfacing the
+    // conflict and asking the user to resolve.
     const shadowBefore = await kbHasServerShadowFiles(repo);
     if (shadowBefore) {
       onLine(
         "✗ sync: kb has unresolved merge shadow (.server.) files — resolve and commit again",
       );
-    } else {
-      onLine(
-        `▸ sync: kb pre-push pull (${kbCollections.length} collection${kbCollections.length === 1 ? "" : "s"})`,
-      );
-      try {
-        await pullAllKbNow({ creds, repo });
-        const conflicts = getSyncStatus().conflicts;
-        const hasShadow = await kbHasServerShadowFiles(repo);
-        if (conflicts.length > 0 || hasShadow) {
-          onLine(
-            "✗ sync: kb pull surfaced conflicts — resolve in Claude, then commit again:",
-          );
-          for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
-          if (hasShadow && conflicts.length === 0) {
-            onLine(
-              "  • server shadow files present under one or more knowledge-bases/<name>/ folders",
-            );
-          }
-        } else {
-          for (const collection of kbCollections) {
-            const displayName = displayKbName(collection.name);
-            onLine(`▸ sync: kb (${displayName}) pushing`);
-            try {
-              const { pushed, failed } = await pushAllToKb({
-                creds,
-                repo,
-                collection,
-                onLine,
-              });
-              onLine(
-                `▸ sync: kb push (${displayName}) — ${pushed} ok, ${failed} failed`,
-              );
-            } catch (e) {
-              onLine(`✗ sync: kb push (${displayName}) failed: ${String(e)}`);
-            }
-          }
-        }
-      } catch (e) {
-        onLine(`✗ sync: kb pull failed: ${String(e)}`);
-      }
+      return;
     }
-  } else {
-    onLine("▸ sync: kb skipped (no collections)");
-  }
 
-  // Filestore: pre-push pull to detect remote-side edits before we
-  // clobber them. Same pattern as KB above.
-  const fsCollections = getFilestoreSyncStatus().collections;
-  if (fsCollections.length > 0) {
-    for (const collection of fsCollections) {
-      onLine(`▸ sync: filestore (${collection.name}) pre-push pull`);
-      let safe = true;
-      try {
-        const { ok, error, downloaded } = await filestorePullOnce({
-          creds,
-          repo,
-          collection,
-        });
-        const conflicts = getFilestoreSyncStatus().conflicts;
-        if (!ok) {
-          // pullOnce never throws; check ok explicitly. Without this
-          // a network/auth failure would leave conflicts empty AND no
-          // catch fires — push would silently proceed and clobber.
-          safe = false;
-          onLine(
-            `✗ sync: filestore (${collection.name}) pre-push pull failed: ${error ?? "unknown"}`,
-          );
-        } else if (conflicts.length > 0) {
-          safe = false;
-          onLine(
-            `✗ sync: filestore (${collection.name}) pull surfaced conflicts — resolve in Claude, then commit again:`,
-          );
-          for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
-        } else if (downloaded > 0) {
-          onLine(`  ✓ pulled ${downloaded} file(s) before push`);
-        }
-      } catch (e) {
-        safe = false;
-        onLine(`✗ sync: filestore (${collection.name}) pre-push pull failed: ${String(e)}`);
+    onLine(
+      `▸ sync: kb pre-push pull (${collections.length} collection${collections.length === 1 ? "" : "s"})`,
+    );
+    try {
+      await pullAllKbNow({ creds, repo });
+    } catch (e) {
+      onLine(`✗ sync: kb pull failed: ${String(e)}`);
+      return;
+    }
+    const conflicts = getSyncStatus().conflicts;
+    const hasShadow = await kbHasServerShadowFiles(repo);
+    if (conflicts.length > 0 || hasShadow) {
+      onLine(
+        "✗ sync: kb pull surfaced conflicts — resolve in Claude, then commit again:",
+      );
+      for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
+      if (hasShadow && conflicts.length === 0) {
+        onLine(
+          "  • server shadow files present under one or more knowledge-bases/<name>/ folders",
+        );
       }
-      if (!safe) continue;
+      return;
+    }
 
-      onLine(`▸ sync: filestore (${collection.name}) pushing`);
+    for (const collection of collections) {
+      const displayName = displayKbName(collection.name);
+      onLine(`▸ sync: kb (${displayName}) pushing`);
       try {
-        const { pushed, failed } = await pushAllToFilestore({
+        const { pushed, failed } = await pushAllToKb({
           creds,
           repo,
           collection,
           onLine,
         });
         onLine(
-          `▸ sync: filestore push (${collection.name}) — ${pushed} ok, ${failed} failed`,
+          `▸ sync: kb push (${displayName}) — ${pushed} ok, ${failed} failed`,
         );
       } catch (e) {
-        onLine(`✗ sync: filestore push (${collection.name}) failed: ${String(e)}`);
+        onLine(`✗ sync: kb push (${displayName}) failed: ${String(e)}`);
       }
-    }
-  } else {
-    onLine("▸ sync: filestore skipped (no collections)");
-  }
-
-  // Datastore: pre-push pull. Without this, user A's edit silently
-  // overwrites user B's remote edit when both sides changed since the
-  // last sync.
-  onLine("▸ sync: datastores pre-push pull");
-  let datastorePushSafe = true;
-  try {
-    const { ok, error, pulled, conflicts } = await pullDatastoresOnce({ creds, repo });
-    if (!ok) {
-      datastorePushSafe = false;
-      onLine(`✗ sync: datastores pre-push pull failed: ${error ?? "unknown"}`);
-    } else if (conflicts.length > 0) {
-      datastorePushSafe = false;
-      onLine(
-        "✗ sync: datastores pull surfaced conflicts — resolve in Claude, then commit again:",
-      );
-      for (const c of conflicts) {
-        onLine(`  • ${c.collectionName}/${c.key}.json: ${c.reason}`);
-      }
-    } else if (pulled > 0) {
-      onLine(`  ✓ pulled ${pulled} row(s) before push`);
     }
   } catch (e) {
-    datastorePushSafe = false;
-    onLine(`✗ sync: datastores pre-push pull failed: ${String(e)}`);
+    onLine(`✗ sync: kb failed: ${String(e)}`);
   }
+}
 
-  if (datastorePushSafe) {
+// ---------------------------------------------------------------------------
+// Filestore — per-collection skip and per-collection pull/push, all
+// running concurrently. The engine's per-(repo, prefix) lock already
+// serialises pull-vs-push within a single collection; sibling
+// collections never block each other.
+// ---------------------------------------------------------------------------
+
+async function runFilestore(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLine: LineFn;
+  dirtyUnderScope: (scopeDir: string) => boolean;
+}): Promise<void> {
+  const { creds, repo, onLine, dirtyUnderScope } = args;
+  try {
+    let collections = getFilestoreSyncStatus().collections;
+    if (collections.length === 0) {
+      onLine("▸ sync: resolving filestore");
+      try {
+        await startFilestoreSync({ creds, repo });
+        collections = getFilestoreSyncStatus().collections;
+      } catch (e) {
+        onLine(`✗ sync: filestore resolve failed: ${String(e)}`);
+        return;
+      }
+    }
+    if (collections.length === 0) {
+      onLine("▸ sync: filestore skipped (no collections)");
+      return;
+    }
+
+    await Promise.allSettled(
+      collections.map((collection) =>
+        runFilestoreCollection({
+          creds,
+          repo,
+          collection,
+          onLine,
+          dirtyUnderScope,
+        }),
+      ),
+    );
+  } catch (e) {
+    onLine(`✗ sync: filestore failed: ${String(e)}`);
+  }
+}
+
+async function runFilestoreCollection(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  collection: { id: string; name: string };
+  onLine: LineFn;
+  dirtyUnderScope: (scopeDir: string) => boolean;
+}): Promise<void> {
+  const { creds, repo, collection, onLine, dirtyUnderScope } = args;
+  try {
+    // Mirror of `collectionLocalDir` in filestoreSync.ts. Both must
+    // agree on the path; tests pin the contract.
+    const folder = collection.name.startsWith("openit-")
+      ? collection.name.slice("openit-".length)
+      : collection.name;
+    const dir = `filestores/${folder}`;
+
+    if (!dirtyUnderScope(dir) && !hasConflictsForPrefix("filestore")) {
+      const m = await loadCollectionManifest(repo, "fs", collection.id);
+      if (Object.keys(m.files).length > 0) {
+        onLine(`▸ sync: filestore (${collection.name}) skipped (clean)`);
+        return;
+      }
+    }
+
+    onLine(`▸ sync: filestore (${collection.name}) pre-push pull`);
+    let safe = true;
+    try {
+      const { ok, error, downloaded } = await filestorePullOnce({
+        creds,
+        repo,
+        collection,
+      });
+      const conflicts = getFilestoreSyncStatus().conflicts;
+      if (!ok) {
+        // pullOnce never throws; check ok explicitly. Without this a
+        // network/auth failure would leave conflicts empty AND no catch
+        // fires — push would silently proceed and clobber.
+        safe = false;
+        onLine(
+          `✗ sync: filestore (${collection.name}) pre-push pull failed: ${error ?? "unknown"}`,
+        );
+      } else if (conflicts.length > 0) {
+        safe = false;
+        onLine(
+          `✗ sync: filestore (${collection.name}) pull surfaced conflicts — resolve in Claude, then commit again:`,
+        );
+        for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
+      } else if (downloaded > 0) {
+        onLine(`  ✓ pulled ${downloaded} file(s) before push`);
+      }
+    } catch (e) {
+      safe = false;
+      onLine(
+        `✗ sync: filestore (${collection.name}) pre-push pull failed: ${String(e)}`,
+      );
+    }
+    if (!safe) return;
+
+    onLine(`▸ sync: filestore (${collection.name}) pushing`);
+    try {
+      const { pushed, failed } = await pushAllToFilestore({
+        creds,
+        repo,
+        collection,
+        onLine,
+      });
+      onLine(
+        `▸ sync: filestore push (${collection.name}) — ${pushed} ok, ${failed} failed`,
+      );
+    } catch (e) {
+      onLine(`✗ sync: filestore push (${collection.name}) failed: ${String(e)}`);
+    }
+  } catch (e) {
+    onLine(`✗ sync: filestore (${collection.name}) failed: ${String(e)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Datastore — single class, single pre-push pull, single push call.
+// ---------------------------------------------------------------------------
+
+async function runDatastore(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLine: LineFn;
+  dirtyUnderScope: (scopeDir: string) => boolean;
+}): Promise<void> {
+  const { creds, repo, onLine, dirtyUnderScope } = args;
+  try {
+    if (!dirtyUnderScope("databases") && !hasConflictsForPrefix("datastore")) {
+      const m = await datastoreStateLoad(repo).catch(() => null);
+      const manifestNonEmpty =
+        m != null && Object.keys(m.files ?? {}).length > 0;
+      if (manifestNonEmpty) {
+        onLine("▸ sync: datastores skipped (clean)");
+        return;
+      }
+    }
+
+    onLine("▸ sync: datastores pre-push pull");
+    let safe = true;
+    try {
+      const { ok, error, pulled, conflicts } = await pullDatastoresOnce({
+        creds,
+        repo,
+      });
+      if (!ok) {
+        safe = false;
+        onLine(`✗ sync: datastores pre-push pull failed: ${error ?? "unknown"}`);
+      } else if (conflicts.length > 0) {
+        safe = false;
+        onLine(
+          "✗ sync: datastores pull surfaced conflicts — resolve in Claude, then commit again:",
+        );
+        for (const c of conflicts) {
+          onLine(`  • ${c.collectionName}/${c.key}.json: ${c.reason}`);
+        }
+      } else if (pulled > 0) {
+        onLine(`  ✓ pulled ${pulled} row(s) before push`);
+      }
+    } catch (e) {
+      safe = false;
+      onLine(`✗ sync: datastores pre-push pull failed: ${String(e)}`);
+    }
+
+    if (!safe) return;
+
     onLine("▸ sync: datastores pushing");
     try {
-      const { pushed, failed } = await pushAllToDatastores({ creds, repo, onLine });
+      const { pushed, failed } = await pushAllToDatastores({
+        creds,
+        repo,
+        onLine,
+      });
       onLine(`▸ sync: datastore push complete — ${pushed} ok, ${failed} failed`);
     } catch (e) {
       onLine(`✗ sync: datastore push failed: ${String(e)}`);
     }
+  } catch (e) {
+    onLine(`✗ sync: datastore failed: ${String(e)}`);
   }
-
-  onLine("▸ sync: done");
 }
