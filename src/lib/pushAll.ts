@@ -42,18 +42,19 @@ import { loadCollectionManifest } from "./nestedManifest";
 
 type LineFn = (line: string) => void;
 
-/// True iff every canonical (non-shadow) file under `dir` already has a
-/// matching manifest entry AND every manifest entry still has a file on
-/// disk. Used by skip-clean to detect:
-///   - new files added + committed (not in manifest yet → would push)
-///   - files deleted locally (still in manifest → would issue remote DELETE)
+/// True iff every canonical (non-shadow) file under `dir` already has
+/// a matching manifest entry, every manifest entry still has a file on
+/// disk, AND no on-disk file's mtime has advanced past its tracked
+/// `pulled_at_mtime_ms`. Used by skip-clean to detect:
+///   - new files added + committed (filename set mismatch)
+///   - files deleted locally (filename set mismatch other direction)
+///   - **modified** files committed (mtime advanced past tracked stamp)
 ///
-/// Without this, `git status` clean + manifest-bootstrap-set + no
-/// conflicts returns true even when there's a brand-new committed file
-/// in the scope — and we'd skip the push, leaving the new file local
-/// forever. (User-reported regression: dropped invoice.pdf into
-/// knowledge-bases/default, committed, clicked Sync, nothing
-/// happened.) PIN-5865.
+/// Mirrors the predicate the push function uses in `toPush`: the same
+/// three conditions that mean "needs push" in `pushAllToKbImpl` /
+/// `pushAllToFilestoreImpl` are exactly the ones that should block
+/// skip-clean here. Earlier version checked filenames only and missed
+/// the modified-then-committed case (BugBot iter 5, High). PIN-5865.
 async function manifestMatchesDisk(args: {
   repo: string;
   dir: string;
@@ -65,11 +66,17 @@ async function manifestMatchesDisk(args: {
   const localCanonical = local.filter(
     (f) => !classifyAsShadow(f.filename, allNames),
   );
-  const localCanonicalNames = new Set(localCanonical.map((f) => f.filename));
   const tracked = manifest.files;
-  if (localCanonicalNames.size !== Object.keys(tracked).length) return false;
-  for (const name of localCanonicalNames) {
-    if (!(name in tracked)) return false;
+  if (localCanonical.length !== Object.keys(tracked).length) return false;
+  for (const f of localCanonical) {
+    const entry = tracked[f.filename];
+    if (!entry) return false;
+    // Modified-then-committed case: file's mtime advanced past the
+    // last-pulled stamp. Push would upload it; skip-clean must not
+    // fire.
+    if (f.mtime_ms != null && f.mtime_ms > entry.pulled_at_mtime_ms) {
+      return false;
+    }
   }
   return true;
 }

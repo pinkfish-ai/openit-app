@@ -185,6 +185,35 @@ describe("pushAllEntities — skip-clean (PIN-5865)", () => {
     expect(lines[lines.length - 1]).toBe("▸ sync: done");
   });
 
+  it("REGRESSION: kb file modified-then-committed unblocks skip-clean (BugBot iter 5)", async () => {
+    // BugBot iter 5 finding (High): editing an existing tracked file
+    // and committing it leaves `git status` clean, the filename set
+    // unchanged, and last_pull_at_ms set — but mtime has advanced
+    // past pulled_at_mtime_ms. Earlier manifestMatchesDisk only
+    // checked filenames and would fire skip-clean → the
+    // modification never reached the cloud. Fix: also compare
+    // mtime_ms against pulled_at_mtime_ms.
+    vi.mocked(loadCollectionManifest).mockResolvedValue({
+      collection_id: "kb-default",
+      collection_name: "default",
+      files: {
+        "seed.md": { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+      },
+      last_pull_at_ms: 2000,
+    } as never);
+    vi.mocked(entityListLocal).mockResolvedValue([
+      // Same filename, but mtime is ahead of pulled_at_mtime_ms —
+      // user edited the file post-pull and committed.
+      { filename: "seed.md", mtime_ms: 5000, isShadow: false } as never,
+    ]);
+    vi.mocked(gitStatusShort).mockResolvedValue([] as never); // committed, clean
+
+    await pushAllEntities("/repo", () => {});
+
+    expect(pullAllKbNow).toHaveBeenCalledTimes(1);
+    expect(pushAllToKb).toHaveBeenCalled();
+  });
+
   it("REGRESSION: kb file committed-but-unsynced unblocks skip-clean (invoice.pdf scenario)", async () => {
     // The user-visible bug from PIN-5865: drop a file into
     // knowledge-bases/default, commit it, click Sync. `git status`
