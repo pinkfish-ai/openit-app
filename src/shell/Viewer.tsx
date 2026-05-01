@@ -572,6 +572,15 @@ export function Viewer({
   // the scroll container per `.viewer-content` styling — so we walk
   // up to the closest overflow-scroll ancestor and pin it to the
   // bottom.
+  //
+  // Depend on `content`, not `source`. The content-loading effect
+  // below also depends on `[source]`, runs in declaration order
+  // AFTER this one, and is what calls `setContent(...)` for sync
+  // sources. If we depend on `[source]` here, our scroll runs while
+  // the DOM still shows the previous content — `scrollHeight`
+  // reads the old height and the bottom-pin lags by a render. Keying
+  // on `content` re-runs after the setContent re-render so the DOM
+  // is up to date by the time we measure. (BugBot iter 4.)
   const syncPreRef = useRef<HTMLPreElement | null>(null);
   useEffect(() => {
     if (source?.kind !== "sync") return;
@@ -586,7 +595,7 @@ export function Viewer({
       }
       p = p.parentElement;
     }
-  }, [source]);
+  }, [source, content]);
   useEffect(() => {
     setReplyText("");
     setReplySending(false);
