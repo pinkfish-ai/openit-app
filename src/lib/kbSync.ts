@@ -231,11 +231,6 @@ async function pushAllToKbImpl(args: {
   const manifestKeys = Object.keys(persisted.files);
   const toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
 
-  // [sync-debug]
-  console.log(
-    `[sync-debug:kb:${collection.name}] push toPush=${JSON.stringify(toPush.map((f) => f.filename))} toDelete=${JSON.stringify(toDelete)} (localCanonical=${JSON.stringify(Array.from(localCanonicalNames))} manifestKeys=${JSON.stringify(manifestKeys)})`,
-  );
-
   if (toPush.length === 0 && toDelete.length === 0) {
     onLine?.(`▸ kb push (${displayKbName(collection.name)}): nothing new to upload`);
     return { pushed: 0, failed: 0 };
