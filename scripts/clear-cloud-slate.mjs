@@ -95,6 +95,46 @@ async function deleteCollection(token, id) {
   throw new Error(`delete failed: HTTP ${res.status}: ${await res.text()}`);
 }
 
+// Mirrors derivedUrls(tokenUrl).appBaseUrl — strip /oauth/token to
+// get the appapi root. Used for /service/useragents calls below.
+function deriveAppBaseUrl(tokenUrl) {
+  try {
+    const u = new URL(tokenUrl);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return "https://app-api.app.pinkfish.ai";
+  }
+}
+
+const appBaseUrl = deriveAppBaseUrl(tokenUrl);
+
+async function listAgents(token) {
+  const url = new URL("/service/useragents", appBaseUrl);
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "*/*" },
+  });
+  if (!res.ok) {
+    throw new Error(`listAgents failed: HTTP ${res.status}: ${await res.text()}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+
+async function deleteAgent(token, id) {
+  const url = new URL(
+    `/service/useragents/${encodeURIComponent(id)}`,
+    appBaseUrl,
+  );
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}`, Accept: "*/*" },
+  });
+  if (res.ok || res.status === 404) return "ok";
+  if (res.status === 403) return "forbidden";
+  if (res.status === 405) return "route-missing";
+  throw new Error(`delete failed: HTTP ${res.status}: ${await res.text()}`);
+}
+
 const TYPES = ["filestorage", "datastore", "knowledge_base"];
 
 console.log(`▸ token endpoint:  ${tokenUrl}`);
@@ -109,15 +149,23 @@ const matches = [];
 for (const type of TYPES) {
   const all = await listCollections(token, type);
   const openit = all.filter((c) => typeof c.name === "string" && c.name.startsWith("openit-"));
-  for (const c of openit) matches.push({ type, id: c.id, name: c.name });
+  for (const c of openit) matches.push({ kind: "collection", type, id: c.id, name: c.name });
+}
+
+const allAgents = await listAgents(token);
+const openitAgents = allAgents.filter(
+  (a) => typeof a.name === "string" && a.name.startsWith("openit-"),
+);
+for (const a of openitAgents) {
+  matches.push({ kind: "agent", type: "useragent", id: a.id, name: a.name });
 }
 
 if (matches.length === 0) {
-  console.log(`\n✓ no openit-* collections to delete — cloud is already clean.`);
+  console.log(`\n✓ no openit-* collections or agents to delete — cloud is already clean.`);
   process.exit(0);
 }
 
-console.log(`\nFound ${matches.length} openit-* collection(s):\n`);
+console.log(`\nFound ${matches.length} openit-* item(s):\n`);
 for (const m of matches) {
   console.log(`  [${m.type.padEnd(14)}] ${m.name}  (${m.id})`);
 }
@@ -140,12 +188,20 @@ if (!SKIP_CONFIRM) {
 console.log();
 let deleted = 0;
 let forbidden = 0;
+let routeMissing = 0;
 for (const m of matches) {
   try {
-    const result = await deleteCollection(token, m.id);
+    const result = m.kind === "agent"
+      ? await deleteAgent(token, m.id)
+      : await deleteCollection(token, m.id);
     if (result === "forbidden") {
       console.log(`  ⚠  forbidden  ${m.name}  (cred lacks delete scope)`);
       forbidden += 1;
+    } else if (result === "route-missing") {
+      console.log(
+        `  ⚠  route-missing  ${m.name}  (DELETE /service/useragents/{id} not deployed yet)`,
+      );
+      routeMissing += 1;
     } else {
       console.log(`  ✓ deleted    ${m.name}`);
       deleted += 1;
@@ -155,4 +211,9 @@ for (const m of matches) {
   }
 }
 
-console.log(`\nDone. Deleted ${deleted}/${matches.length}${forbidden ? `, ${forbidden} forbidden` : ""}.`);
+const tail = [];
+if (forbidden) tail.push(`${forbidden} forbidden`);
+if (routeMissing) tail.push(`${routeMissing} route-missing`);
+console.log(
+  `\nDone. Deleted ${deleted}/${matches.length}${tail.length ? `, ${tail.join(", ")}` : ""}.`,
+);
