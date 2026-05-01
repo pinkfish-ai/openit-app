@@ -816,7 +816,15 @@ async function pullEntityImpl(
   // an attachment) re-pulls on every sync click forever — manifest
   // never populates, skip-clean's `last_pull_at_ms != null` check
   // never flips, RTT bill grows. PIN-5865.
-  manifest.last_pull_at_ms = Date.now();
+  //
+  // Gated on `!paginationFailed`: a partial pull skipped the
+  // server-delete pass above, so its view of remote is incomplete.
+  // Stamping anyway would let skip-clean fire next click and the
+  // server-delete reconcile would be deferred indefinitely. Better
+  // to leave the sentinel un-set so the next click pulls again.
+  if (!paginationFailed) {
+    manifest.last_pull_at_ms = Date.now();
+  }
   await adapter.saveManifest(repo, manifest);
 
   if (touched.length > 0) {

@@ -746,6 +746,37 @@ describe("syncEngine.pullEntity", () => {
     // trusted as authoritative for "what's been deleted server-side".
     expect(h.savedManifest?.files.item_seen).toBeDefined();
     expect(h.savedManifest?.files.item_past_cutoff).toBeDefined();
+    // last_pull_at_ms is NOT stamped on a partial pull. If we did,
+    // skip-clean would fire on the next click and the deferred
+    // server-delete reconcile would never run until pagination
+    // succeeded — silently masking remote deletions for the user.
+    // PIN-5865.
+    expect(h.savedManifest?.last_pull_at_ms ?? null).toBeNull();
+  });
+
+  it("successful pull stamps last_pull_at_ms (skip-clean precondition)", async () => {
+    // Counterpart to the paginationFailed case. A complete pull —
+    // even one that returns zero items — is the one signal
+    // skip-clean uses to know "we've talked to remote at least once
+    // for this prefix". Without this stamping, the skip-clean
+    // precondition never flips and we re-pull the prefix on every
+    // click forever.
+    const h = buildHarness({
+      prefix: "test-prefix",
+      initialManifest: {
+        collection_id: null,
+        collection_name: null,
+        files: {},
+      },
+      remote: [],
+      local: [],
+    });
+
+    const before = Date.now();
+    await pullEntity(h.adapter, "/repo");
+
+    expect(h.savedManifest?.last_pull_at_ms).toBeDefined();
+    expect(h.savedManifest?.last_pull_at_ms ?? 0).toBeGreaterThanOrEqual(before);
   });
 });
 
