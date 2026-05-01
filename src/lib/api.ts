@@ -722,6 +722,25 @@ export async function reportOverviewRun(repo: string): Promise<string> {
   return invoke("report_overview_run", { repo });
 }
 
+/// Run an arbitrary `.mjs` script in the repo with `node` and return
+/// the captured stdout/stderr/exitCode. The Rust side rejects scripts
+/// that resolve outside the repo root (canonicalize + starts_with),
+/// so a bad UI path or crafted arg can't escape into system binaries.
+/// Powers the "Run" button on each filestores/scripts/ card.
+export interface ScriptRunOutput {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  durationMs: number;
+}
+
+export async function scriptRun(
+  repo: string,
+  scriptPath: string,
+): Promise<ScriptRunOutput> {
+  return invoke("script_run", { repo, scriptPath });
+}
+
 /// Generic JSON-RPC tools/call against any Pinkfish MCP server. Returns the
 /// raw JSON-RPC envelope; callers pluck `.result.structuredContent` etc.
 export async function pinkfishMcpCall(args: {

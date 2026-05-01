@@ -180,28 +180,20 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     let connect_cloud_path = path.join("connect-to-cloud.md");
     if !connect_cloud_path.exists() {
         let connect_cloud = "# Connect to Pinkfish Cloud\n\n\
-             ## Unlock the rest of OpenIT.\n\n\
-             Bring your team in, run agents in the cloud, and plug in \
-             200+ systems.\n\n\
-             ## Work with your team\n\n\
-             Tickets and knowledge sync across the team — instantly.\n\n\
-             ## Cloud agents that don't sleep\n\n\
-             Run agents in the cloud, even with your laptop closed.\n\n\
-             ## 200+ integrations\n\n\
-             Plug in the systems your tickets actually live in.\n\n\
-             - Jamf\n\
-             - Okta\n\
-             - Microsoft 365\n\
-             - Google Workspace\n\
-             - Intune\n\
-             - ServiceNow\n\
-             - JumpCloud\n\
-             - Slack\n\
-             - 1Password\n\
-             - Zendesk\n\
-             - *+ 190 more*\n\n\
-             [**Connect to Pinkfish Cloud**](openit://connect-cloud)\n\n\
-             *Local mode keeps working — cloud just adds.*\n";
+             **Bring your team in. Run agents while you sleep. \
+             Plug into 200+ systems your tickets actually live in.**\n\n\
+             [**Connect now…**](openit://connect-cloud)\n\n\
+             *Local mode keeps working — cloud just adds.*\n\n\
+             ---\n\n\
+             ### Work with your team\n\
+             Tickets and knowledge sync instantly — your laptop, \
+             your teammate's laptop, your phone.\n\n\
+             ### Agents that don't sleep\n\
+             Triage and draft replies even when your laptop is closed.\n\n\
+             ### 200+ integrations\n\
+             Slack, Okta, Microsoft 365, Google Workspace, Jamf, \
+             Intune, ServiceNow, JumpCloud, 1Password, Zendesk \
+             — *plus 190 more*.\n";
         let _ = fs::write(&connect_cloud_path, connect_cloud);
     }
 

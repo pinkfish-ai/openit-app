@@ -125,6 +125,10 @@ function sourceKey(s: ViewerSource): string {
       return "knowledge-bases-list";
     case "tools":
       return "tools";
+    case "script-output":
+      return `script-output:${s.script}`;
+    case "draft-file":
+      return `draft-file:${s.path}`;
   }
 }
 
@@ -960,6 +964,7 @@ export function Shell({
                   const resolved = await resolvePathToSource(path, repo);
                   setSource(resolved);
                 }}
+                onShowSource={(s) => setSource(s)}
                 onGoBack={goBack}
                 onGoForward={goForward}
                 canGoBack={canGoBack}

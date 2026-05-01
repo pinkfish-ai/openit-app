@@ -941,6 +941,41 @@ body::before {
   color: var(--text);
 }
 
+/* File-title rename affordance. The display state is a borderless
+   button styled to look like the static title; the edit state swaps
+   in a real input that picks up the same typography so the user
+   doesn't perceive a layout shift. Hover hint is a faint underline
+   so it reads as "click to edit" without competing with the
+   right-side action chrome. */
+button.viewer-title.viewer-title-editable {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  cursor: text;
+  color: inherit;
+}
+button.viewer-title.viewer-title-editable:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--color-border-faint);
+  text-underline-offset: 3px;
+}
+input.viewer-title.viewer-title-rename {
+  background: var(--surface-soft, rgba(0, 0, 0, 0.025));
+  border: 1px solid var(--accent, #c43e3e);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin: -3px 0;
+  outline: none;
+}
+.viewer-title-rename-error {
+  font-family: var(--font-display);
+  font-size: 12px;
+  color: var(--warn-text, #a85b00);
+  flex: 0 0 auto;
+}
+
 /* .viewer-tabs / .viewer-tab (incl. :hover, .active) / .viewer-tab-count
    removed — segmented controls migrated to <TabStrip> in
    src/ui/TabStrip.tsx. */
@@ -1109,6 +1144,18 @@ body::before {
    Pulled out of the main header so the links don't compete with
    filter pills or tab strips for horizontal space (and don't wrap
    awkwardly when the header is dense). */
+/* Inline play glyph for the "run" affordance in the viewer-subheader.
+   Sized just under the surrounding caption text and tinted muted so
+   it reads as a secondary marker instead of competing with the link
+   label, mirroring the trailing "→" / "+" treatment on the other
+   subheader links. */
+.viewer-run-glyph {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
 .viewer-subheader {
   display: flex;
   justify-content: flex-end;
@@ -1442,13 +1489,32 @@ body::before {
   background: var(--accent-soft, rgba(196, 62, 62, 0.05));
 }
 
+/* On entity-folder views that accept desktop drops (library /
+   knowledge-base / skills / scripts), stretch the wrapper to the
+   full pane height so the drop target is the entire white area, not
+   just the strip occupied by existing tiles. Without this, a folder
+   with one or two cards leaves most of the panel un-droppable.
+   `position: relative` anchors the drag-highlight overlay below. */
+.viewer-summary-droppable {
+  min-height: 100%;
+  box-sizing: border-box;
+  position: relative;
+}
+
 /* Drag-from-desktop highlight on the library/knowledge-base entity-
-   folder view. Same affordance as the reply composer, scaled up to
-   the full card-grid panel. */
-.viewer-summary-drag {
-  outline: 2px dashed var(--accent, #c43e3e);
-  outline-offset: -6px;
+   folder view. Painted via an absolutely-positioned pseudo-element
+   so it overlays the cards instead of sitting behind their opaque
+   surface. `pointer-events: none` keeps the underlying drop handler
+   on the wrapper live. */
+.viewer-summary-drag::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 2px dashed var(--accent, #c43e3e);
+  border-radius: 14px;
   background: var(--accent-soft, rgba(196, 62, 62, 0.05));
+  z-index: 2;
 }
 
 /* Empty-folder state dressed up as a drop zone. Activates only on
@@ -1470,6 +1536,14 @@ body::before {
   background: var(--accent-soft, rgba(196, 62, 62, 0.05));
 }
 
+/* Empty-state dropzone already renders its own dashed-border + tinted
+   highlight via the rule above — the overlay pseudo-element from
+   .viewer-summary-drag would just paint a second dashed border on
+   top. Suppress it so the empty case stays single-bordered. */
+.viewer-summary-dropzone.viewer-summary-drag::after {
+  display: none;
+}
+
 .viewer-summary-dropzone-hint {
   display: block;
   margin-top: 10px;
@@ -1478,12 +1552,67 @@ body::before {
   font-style: italic;
 }
 
+/* Captured stdout / stderr from a "Run" button invocation in the
+   scripts folder. Summary row up top, mono blocks below. The two
+   streams use the same monospace style; only the left-rule color
+   distinguishes stderr (red) from stdout (neutral). */
+.script-output-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--color-border-faint);
+}
+.script-output-status {
+  font-weight: 600;
+}
+.script-output-status.ok {
+  color: var(--ok-text, #2f7a3e);
+}
+.script-output-status.fail {
+  color: var(--warn-text, #a85b00);
+}
+.script-output-duration {
+  font-variant-numeric: tabular-nums;
+}
+.script-output-script {
+  font-family: var(--font-mono);
+  background: var(--surface-soft, rgba(0, 0, 0, 0.04));
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.script-output-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 12px 0 4px;
+}
+.script-output-label-err {
+  color: var(--warn-text, #a85b00);
+}
+.script-output-stream {
+  background: var(--surface-soft, rgba(0, 0, 0, 0.025));
+  border-left: 3px solid var(--border);
+  padding: 8px 10px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.script-output-stream-err {
+  border-left-color: var(--warn-text, #a85b00);
+}
+
 /* Toolbar above the entity-folder card grid — currently hosts the
    sort-reverse toggle. Right-aligned so it sits where the eye lands
    for table-style controls. */
 .viewer-folder-toolbar {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   padding: 0 0 8px 0;
 }
 
@@ -4115,6 +4244,28 @@ body::before {
 
 .entity-card-wrapper:hover .entity-card-delete {
   display: inline-flex;
+}
+
+/* Run affordance — same hover-reveal pattern as delete, but anchored
+   to the LEFT of the delete slot so the destructive button stays on
+   the far edge. Offset by ~28px (icon button width + breathing room). */
+.entity-card-run {
+  position: absolute;
+  top: 50%;
+  right: 38px;
+  transform: translateY(-50%);
+  display: none;
+  z-index: 1;
+}
+
+.entity-card-wrapper:hover .entity-card-run {
+  display: inline-flex;
+}
+
+/* When a card has run-only (no delete), pull the run slot back to the
+   delete position so it doesn't float in dead space. */
+.entity-card-wrapper:not(:has(.entity-card-delete)) .entity-card-run {
+  right: 10px;
 }
 
 /* People-list cards (and other thread-card surfaces) reuse the same
