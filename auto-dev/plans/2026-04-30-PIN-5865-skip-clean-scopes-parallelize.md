@@ -215,3 +215,18 @@ Re-triggered after three commits fixing live-testing regressions (skip-clean cor
 | # | Finding | Severity | Disposition | Commit / Reason |
 |---|---------|----------|-------------|-----------------|
 | 1 | Modified-then-committed files silently skip push | High | Fixed | `6f2ac42` — `manifestMatchesDisk` only compared filename sets. Editing a tracked file + committing left git clean, filenames matching, last_pull_at_ms set → skip-clean fired and the modification never pushed. Added the `mtime_ms > pulled_at_mtime_ms` check (same predicate `pushAllToKbImpl`'s `toPush` filter uses). Regression pinned by "kb file modified-then-committed unblocks skip-clean" in `pushAll.test.ts`. |
+
+### Iteration 6 (2026-04-30)
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | (none — clean run on `edd56b5`) | — | — | — |
+
+### Iteration 7 (2026-04-30)
+
+Triggered with a focused edge-case prompt — sync correctness is core to the product. Six specific concerns named (concurrent paths, predicate parity, partial-pull window, autoCommit caller assumptions, log decoration under concurrency, save-vs-commit failure). BugBot found two real ones plus my proactive fixes from iter 6→7 (`82e7896`: gated `last_pull_at_ms` on `!paginationFailed`; routed `autoCommitDriver` through `commitTouched`).
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Skip-clean misses filestore files with null mtime | Medium | Fixed | `a3c3d95` — `manifestMatchesDisk` now treats null mtime as not-clean. Filestore push (filestoreSync.ts:204) treats null mtime as "needs push"; my predicate had short-circuited it as clean. Mirrored the looser of the two adapters' push predicates so skip-clean can never silently drop work the push would do. Regression test added. |
+| 2 | autoCommitDriver flush lost its try/catch guard | Low | Fixed | `36e2593` — wrapped `commitTouched` in try/catch. `commitTouched` swallows `gitCommitPaths` errors internally but a `withRepoLock` rejection would still escape; flush invoked via `void flush()` from setTimeout would surface that as an unhandled rejection. |
