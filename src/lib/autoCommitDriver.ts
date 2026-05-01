@@ -99,8 +99,19 @@ async function flush(): Promise<void> {
   // `.git/index.lock` — exactly the failure mode that surfaced
   // when PIN-5865 parallelised the per-class sync tasks and the
   // file-system writes started overlapping with autoCommit's
-  // debounce flush. PIN-5865.
-  await commitTouched(repo, paths, COMMIT_MESSAGE);
+  // debounce flush.
+  //
+  // Outer try/catch even though `commitTouched` swallows
+  // `gitCommitPaths` errors internally: a `withRepoLock` rejection
+  // (corrupt lock chain, sync engine teardown mid-flush, etc.)
+  // would escape `commitTouched` and surface as an unhandled
+  // rejection because flush is fired via `void flush()` from
+  // setTimeout. PIN-5865 / BugBot iter 7 (Low).
+  try {
+    await commitTouched(repo, paths, COMMIT_MESSAGE);
+  } catch (e) {
+    console.warn("[autoCommit] commit failed:", e);
+  }
 }
 
 /// Start the auto-commit driver for `repo`. Idempotent — calling
