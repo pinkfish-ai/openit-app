@@ -201,3 +201,11 @@ Re-triggered after merging `origin/main` to bring in PR #99 (`fix/sync-local-del
 | # | Finding | Severity | Disposition | Commit / Reason |
 |---|---------|----------|-------------|-----------------|
 | 1 | (none — clean run on `f060072`) | — | — | — |
+
+### Iteration 4 (2026-04-30)
+
+Re-triggered after three commits fixing live-testing regressions (skip-clean correctness, auto-push on connect, sparkle removal, auto-scroll).
+
+| # | Finding | Severity | Disposition | Commit / Reason |
+|---|---------|----------|-------------|-----------------|
+| 1 | Auto-scroll fires before content DOM update | Medium | Fixed | `f411447` — auto-scroll effect depended on `[source]` and ran in declaration order BEFORE the content-loading effect's `setContent`, so `scrollHeight` measured the prior render. Switched deps to `[source, content]` so the scroll re-fires after the setContent re-render. |
