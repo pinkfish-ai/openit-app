@@ -418,6 +418,15 @@ function isMjsScript(path: string): boolean {
   return /\.mjs$/i.test(path);
 }
 
+/// Files the in-app "Run" button can execute (`node` for JS family,
+/// `python3` for `.py`). Used to gate the run affordance and the
+/// always-edit mode — runnable scripts skip the View/Edit toggle
+/// since "view" doesn't add value when the file is plain text the
+/// user came here to edit + run.
+function isRunnableScript(path: string): boolean {
+  return /\.(mjs|js|cjs|py)$/i.test(path);
+}
+
 /// Files that should expose View / Edit tabs and a textarea-backed
 /// edit mode. Markdown, JSON, and `.mjs` scripts.
 function hasEditableTextMode(path: string): boolean {
@@ -665,9 +674,19 @@ export function Viewer({
         setContent("");
         return;
       }
-      setMode(isMarkdown(path) ? "rendered" : "raw");
+      // Runnable scripts default into edit mode and stay there —
+      // there's no "View" worth toggling for plain code, and the
+      // admin came here to edit + run. The textarea draft is
+      // seeded from disk in the .then below so Cancel still has
+      // something to revert to.
+      const runnable = isRunnableScript(path);
+      setMode(runnable ? "edit" : isMarkdown(path) ? "rendered" : "raw");
       fsRead(path)
-        .then((c) => !cancelled && setContent(c))
+        .then((c) => {
+          if (cancelled) return;
+          setContent(c);
+          if (runnable) setEditDraft(c);
+        })
         .catch((e) => !cancelled && setError(String(e)));
       return () => { cancelled = true; };
     }
@@ -927,8 +946,13 @@ export function Viewer({
   const title = getTitle();
 
   // --- Tabs ---
+  // Runnable scripts skip the View/Edit toggle (they always render
+  // edit mode) — the tab strip would be a single live tab, which is
+  // worse than no tabs.
   const showFileTabs =
-    (source.kind === "file" && hasEditableTextMode(source.path)) ||
+    (source.kind === "file" &&
+      hasEditableTextMode(source.path) &&
+      !isRunnableScript(source.path)) ||
     source.kind === "datastore-schema";
   const showRowTabs = source.kind === "datastore-row";
   const showPeopleTabs = source.kind === "people-list";
@@ -1170,8 +1194,9 @@ export function Viewer({
     filePath: string;
     /// Mode to return to on Cancel and after a successful Save. Markdown
     /// has a rendered preview ("rendered"); JSON / .mjs / schema only
-    /// have raw text ("raw").
-    afterMode: "raw" | "rendered";
+    /// have raw text ("raw"); runnable scripts stay in "edit" because
+    /// the View/Edit toggle is suppressed for them.
+    afterMode: "raw" | "rendered" | "edit";
     /// Run `JSON.parse(draft)` before writing. Surfaces typos on Save
     /// instead of letting them silently fall through to defaults at
     /// load time.
@@ -1266,7 +1291,11 @@ export function Viewer({
       if (mode === "edit" && hasEditableTextMode(source.path)) {
         return renderEditTextarea({
           filePath: source.path,
-          afterMode: isMarkdown(source.path) ? "rendered" : "raw",
+          afterMode: isRunnableScript(source.path)
+            ? "edit"
+            : isMarkdown(source.path)
+              ? "rendered"
+              : "raw",
           validateAsJson: isJsonFile(source.path),
         });
       }
@@ -2979,6 +3008,17 @@ export function Viewer({
             </Button>
           </>
         )}
+        {runFileAffordance && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void runFileAffordance.onRun()}
+            title="Run this script with node / python3 and show the output"
+          >
+            <span className="viewer-run-glyph" aria-hidden="true">▶</span>
+            Run
+          </Button>
+        )}
         {showFileTabs && (
           <TabStrip variant="segmented">
             <Tab
@@ -3111,10 +3151,7 @@ export function Viewer({
           </Button>
         )}
       </div>
-      {(chatAddPath ||
-        attachmentsTicketId ||
-        newFileAffordance ||
-        runFileAffordance) && (
+      {(chatAddPath || attachmentsTicketId || newFileAffordance) && (
         <div className="viewer-subheader">
           {attachmentsTicketId && onOpenPath && (
             <Button
@@ -3136,16 +3173,6 @@ export function Viewer({
             >
               new
               <span className="arrow" aria-hidden="true">+</span>
-            </Button>
-          )}
-          {runFileAffordance && (
-            <Button
-              variant="linkMuted"
-              onClick={() => void runFileAffordance.onRun()}
-              title="Run this script with node / python3 and show the output"
-            >
-              <span className="viewer-run-glyph" aria-hidden="true">▶</span>
-              run
             </Button>
           )}
           {chatAddPath && (
