@@ -493,11 +493,29 @@ export async function resolveResourceRefs(
     return {};
   }
 
-  const [kbList, dsList, fsList, proxyByResource] = await Promise.all([
+  // `/api/proxy-endpoints` requires Cognito auth (browser-only) — see
+  // platform routes.go comment about RuntimeTokenFromContext. OpenIT
+  // has a runtime token, not a Cognito one, so this 401s. There's no
+  // /service/ equivalent today. When the fetch fails (auth or
+  // otherwise), drop all resources and let the omit-when-absent
+  // semantics preserve whatever's currently on the cloud agent. Tools,
+  // identity, and instructions still round-trip; resources just don't
+  // auto-attach. Tracked for a platform-side /service/proxy-endpoints
+  // route in V3.
+  let proxyByResource: Map<string, string>;
+  try {
+    proxyByResource = await fetchProxyEndpoints(creds);
+  } catch (e) {
+    onWarn?.(
+      `  ⚠ resources skipped — proxy endpoint lookup unavailable (${String(e).split("\n")[0]})`,
+    );
+    return {};
+  }
+
+  const [kbList, dsList, fsList] = await Promise.all([
     fetchCollectionsByType(creds, "knowledge_base"),
     fetchCollectionsByType(creds, "datastore"),
     fetchCollectionsByType(creds, "filestore"),
-    fetchProxyEndpoints(creds),
   ]);
 
   const resolveOne = (
