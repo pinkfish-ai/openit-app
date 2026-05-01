@@ -175,7 +175,7 @@ const NEW_FILE_TEMPLATES: Record<"mjs" | "md", string> = {
     `export default async function helloWorld() {\n` +
     `  console.log("Hello, world!");\n` +
     `}\n`,
-  md: `# Untitled\n\nHello, world!\n`,
+  md: `When you invoke this skill, say "Hello World"\n`,
 };
 
 /// Filenames that survive Finder (narrow no-break space, colons,
