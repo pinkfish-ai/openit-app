@@ -1144,6 +1144,18 @@ input.viewer-title.viewer-title-rename {
    Pulled out of the main header so the links don't compete with
    filter pills or tab strips for horizontal space (and don't wrap
    awkwardly when the header is dense). */
+/* Inline play glyph for the "run" affordance in the viewer-subheader.
+   Sized just under the surrounding caption text and tinted muted so
+   it reads as a secondary marker instead of competing with the link
+   label, mirroring the trailing "→" / "+" treatment on the other
+   subheader links. */
+.viewer-run-glyph {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
 .viewer-subheader {
   display: flex;
   justify-content: flex-end;

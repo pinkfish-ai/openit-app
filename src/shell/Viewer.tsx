@@ -975,6 +975,42 @@ export function Viewer({
       ? source.path.replace(/^filestores\/attachments\//, "")
       : null;
 
+  // "run" affordance in the viewer-subheader for runnable script
+  // files (.mjs / .js / .cjs / .py living anywhere — gates on
+  // extension, not just the scripts folder, so an admin viewing a
+  // script in a sub-folder still gets the same affordance). Same
+  // backend as the run-icon on the folder card; routes the viewer
+  // to a `script-output` source so the captured streams show up
+  // inline.
+  const runFileAffordance: { onRun: () => Promise<void> } | null =
+    source && source.kind === "file" && repo &&
+    /\.(mjs|js|cjs|py)$/i.test(source.path) &&
+    onShowSource
+      ? (() => {
+          const filePath = source.path;
+          return {
+            onRun: async () => {
+              try {
+                const { scriptRun } = await import("../lib/api");
+                const out = await scriptRun(repo, filePath);
+                onShowSource({
+                  kind: "script-output",
+                  script: filePath,
+                  stdout: out.stdout,
+                  stderr: out.stderr,
+                  exitCode: out.exitCode,
+                  durationMs: out.durationMs,
+                });
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                console.error(`[script-run] header run failed:`, err);
+                showToast(`Run failed: ${reason}`);
+              }
+            },
+          };
+        })()
+      : null;
+
   // "new +" affordance in the viewer-subheader for the scripts /
   // skills folder views. Mirrors the placement of the "add to chat"
   // link so the create action lives at the top-right of the pane,
@@ -3075,7 +3111,10 @@ export function Viewer({
           </Button>
         )}
       </div>
-      {(chatAddPath || attachmentsTicketId || newFileAffordance) && (
+      {(chatAddPath ||
+        attachmentsTicketId ||
+        newFileAffordance ||
+        runFileAffordance) && (
         <div className="viewer-subheader">
           {attachmentsTicketId && onOpenPath && (
             <Button
@@ -3097,6 +3136,16 @@ export function Viewer({
             >
               new
               <span className="arrow" aria-hidden="true">+</span>
+            </Button>
+          )}
+          {runFileAffordance && (
+            <Button
+              variant="linkMuted"
+              onClick={() => void runFileAffordance.onRun()}
+              title="Run this script with node / python3 and show the output"
+            >
+              <span className="viewer-run-glyph" aria-hidden="true">▶</span>
+              run
             </Button>
           )}
           {chatAddPath && (
