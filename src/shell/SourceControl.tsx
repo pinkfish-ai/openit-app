@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Minus, Plus, RefreshCw, Undo2 } from "lucide-react";
 import {
   gitCommitStaged,
   gitDiff,
@@ -7,6 +8,7 @@ import {
   gitLog,
   gitStage,
   gitStatusShort,
+  gitUnstage,
   type GitCommit,
   type GitFileStatus,
 } from "../lib/api";
@@ -109,6 +111,7 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
   const [commitMsg, setCommitMsg] = useState("");
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const refresh = useCallback(() => {
     if (!repo) {
@@ -119,6 +122,26 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
     gitStatusShort(repo).then(setFiles).catch(() => setFiles([]));
     gitLog(repo).then(setCommits).catch(() => setCommits([]));
   }, [repo]);
+
+  /** User-triggered refresh — drives the spin animation on the icon.
+   *  Distinct from the 3s background poll, which uses `refresh` directly
+   *  and shouldn't flash the spinner on every tick. */
+  const handleManualRefresh = useCallback(async () => {
+    if (!repo || refreshing) return;
+    setRefreshing(true);
+    try {
+      const [nextFiles, nextCommits] = await Promise.all([
+        gitStatusShort(repo).catch(() => [] as GitFileStatus[]),
+        gitLog(repo).catch(() => [] as GitCommit[]),
+      ]);
+      setFiles(nextFiles);
+      setCommits(nextCommits);
+    } finally {
+      // Small floor so the animation reads as a real "I did something"
+      // even when the calls resolve in <50ms.
+      setTimeout(() => setRefreshing(false), 350);
+    }
+  }, [repo, refreshing]);
 
   useEffect(() => {
     refresh();
@@ -174,6 +197,26 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
     onFsChange?.();
   };
 
+  const handleStage = async (paths: string[]) => {
+    if (!repo) return;
+    try {
+      await gitStage(repo, paths);
+    } catch (e) {
+      setError(`Stage failed: ${String(e)}`);
+    }
+    refresh();
+  };
+
+  const handleUnstage = async (paths: string[]) => {
+    if (!repo) return;
+    try {
+      await gitUnstage(repo, paths);
+    } catch (e) {
+      setError(`Unstage failed: ${String(e)}`);
+    }
+    refresh();
+  };
+
   const handleCommit = async () => {
     if (!repo) return;
     const hasPending = staged.length > 0 || unstaged.length > 0;
@@ -191,10 +234,15 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
     setError(null);
     try {
       if (hasPending) {
-        if (unstaged.length > 0) {
+        // VSCode-style smart commit: when nothing is staged, stage
+        // everything (the user clearly meant "commit it all"). When
+        // something IS staged, only commit those — respect the user's
+        // explicit selection.
+        const committedSet = staged.length > 0 ? staged : files;
+        if (staged.length === 0 && unstaged.length > 0) {
           await gitStage(repo, unstaged.map((f) => f.path));
         }
-        const msg = commitMsg.trim() || defaultCommitMessage(files);
+        const msg = commitMsg.trim() || defaultCommitMessage(committedSet);
         await gitCommitStaged(repo, msg);
         setCommitMsg("");
         refresh();
@@ -241,7 +289,9 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
         <input
           className="sc-commit-input"
           placeholder={
-            files.length > 0 ? defaultCommitMessage(files) : "Commit message"
+            files.length > 0
+              ? defaultCommitMessage(staged.length > 0 ? staged : files)
+              : "Commit message"
           }
           value={commitMsg}
           onChange={(e) => setCommitMsg(e.target.value)}
@@ -278,27 +328,29 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
       </div>
       {error && <div className="sc-error">{error}</div>}
 
-      {/* Single Changes list — Commit auto-stages everything. */}
+      {/* Staged + Changes lists. VSCode-style — Staged renders only when
+          something is actually staged; Changes is the persistent home so
+          the header doesn't pop in/out as the user stages files. */}
       <div className="sc-changes">
-        {files.length > 0 ? (
+        {staged.length > 0 && (
           <>
             <div className="sc-group-header">
-              <span className="sc-group-label">Changes</span>
-              <span className="sc-count">{files.length}</span>
+              <span className="sc-group-label">Staged Changes</span>
+              <span className="sc-count">{staged.length}</span>
               <Button
                 variant="ghost"
-                tone="destructive"
                 size="sm"
                 iconOnly
-                onClick={() => handleDiscard(files.map((f) => f.path))}
-                title="Discard all changes"
+                onClick={() => handleUnstage(staged.map((f) => f.path))}
+                title="Unstage all changes"
+                aria-label="Unstage all changes"
               >
-                ↺
+                <Minus size={14} />
               </Button>
             </div>
             <ul className="sc-file-list">
-              {files.map((f) => (
-                <li key={f.path} className="sc-file-row">
+              {staged.map((f) => (
+                <li key={`staged-${f.path}`} className="sc-file-row">
                   <Button
                     variant="link"
                     className="sc-file-name"
@@ -313,20 +365,92 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
                   </span>
                   <Button
                     variant="ghost"
-                    tone="destructive"
                     size="sm"
                     iconOnly
-                    onClick={() => handleDiscard([f.path])}
-                    title="Discard changes"
+                    onClick={() => handleUnstage([f.path])}
+                    title="Unstage changes"
+                    aria-label="Unstage changes"
                   >
-                    ↺
+                    <Minus size={14} />
                   </Button>
                 </li>
               ))}
             </ul>
           </>
+        )}
+        <div className="sc-group-header">
+          <span className="sc-group-label">Changes</span>
+          <span className="sc-count">{unstaged.length}</span>
+          {unstaged.length > 0 && (
+            <>
+              <Button
+                variant="ghost"
+                tone="destructive"
+                size="sm"
+                iconOnly
+                onClick={() => handleDiscard(unstaged.map((f) => f.path))}
+                title="Discard all changes"
+                aria-label="Discard all changes"
+              >
+                <Undo2 size={14} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                onClick={() => handleStage(unstaged.map((f) => f.path))}
+                title="Stage all changes"
+                aria-label="Stage all changes"
+              >
+                <Plus size={14} />
+              </Button>
+            </>
+          )}
+        </div>
+        {unstaged.length > 0 ? (
+          <ul className="sc-file-list">
+            {unstaged.map((f) => (
+              <li key={`unstaged-${f.path}`} className="sc-file-row">
+                <Button
+                  variant="link"
+                  className="sc-file-name"
+                  onClick={() => handleFileDiff(f.path)}
+                  title={f.path}
+                >
+                  {f.path.split("/").pop()}
+                </Button>
+                <span className="sc-file-dir">{f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/")) : ""}</span>
+                <span className={`sc-badge ${statusColorClass(f.status)}`} title={statusTitle(f.status)}>
+                  {statusLabel(f.status)}
+                </span>
+                <Button
+                  variant="ghost"
+                  tone="destructive"
+                  size="sm"
+                  iconOnly
+                  onClick={() => handleDiscard([f.path])}
+                  title="Discard changes"
+                  aria-label="Discard changes"
+                >
+                  <Undo2 size={14} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  onClick={() => handleStage([f.path])}
+                  title="Stage changes"
+                  aria-label="Stage changes"
+                >
+                  <Plus size={14} />
+                </Button>
+              </li>
+            ))}
+          </ul>
         ) : (
-          <div className="sc-empty-hint">No changes</div>
+          <div className="sc-empty-hint">
+            {staged.length > 0 ? "All changes staged" : "No changes"}
+          </div>
         )}
       </div>
 
@@ -339,14 +463,17 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
             variant="ghost"
             size="sm"
             iconOnly
-            onClick={refresh}
+            onClick={handleManualRefresh}
+            disabled={refreshing}
             title="Refresh commits"
+            aria-label="Refresh commits"
+            className={refreshing ? "is-spinning" : undefined}
           >
-            ↻
+            <RefreshCw size={14} />
           </Button>
         </div>
         <ul className="sc-commit-list">
-          {commits.map((c, i) => (
+          {commits.map((c) => (
             <li
               key={c.sha}
               className="sc-commit-row"
@@ -354,7 +481,6 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
             >
               <div className="sc-timeline">
                 <span className={commitDotClass(c.subject)} />
-                {i < commits.length - 1 && <span className="sc-timeline-line" />}
               </div>
               <div className="sc-commit-body">
                 <div className="sc-commit-subject">{c.subject}</div>
