@@ -90,6 +90,25 @@ export type ViewerSource =
       exitCode: number;
       durationMs: number;
     }
+  | {
+      /** In-memory file stub created by the "New" button — no bytes
+       *  on disk yet. The Viewer renders an edit textarea seeded with
+       *  `initialContent`; Save writes the file and routes to a real
+       *  `kind: "file"` source. Cancel discards without ever creating
+       *  the file. Lets the user audit / paste / edit the template
+       *  before committing — no phantom file if they back out. */
+      kind: "draft-file";
+      /** Absolute path the file will land at on Save. */
+      path: string;
+      /** Repo-relative subdir for `entity_write_file`. Pre-computed
+       *  by the New-button handler so the draft view doesn't have to
+       *  parse the path back apart on Save. */
+      subdir: string;
+      /** Filename portion (e.g. `untitled.mjs`). Same rationale. */
+      filename: string;
+      /** Pre-filled textarea content. */
+      initialContent: string;
+    }
   | { kind: "datastore-table"; collection: DataCollection; items?: MemoryItem[]; hasMore?: boolean; onLoadMore?: () => void }
   | { kind: "datastore-row"; collection: DataCollection; item: MemoryItem }
   | { kind: "datastore-schema"; collection: DataCollection }

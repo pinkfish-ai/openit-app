@@ -70,6 +70,7 @@ export function sourceToTreePath(
     case "agent-trace-list":
     case "tools":
     case "script-output":
+    case "draft-file":
       return null;
   }
 }

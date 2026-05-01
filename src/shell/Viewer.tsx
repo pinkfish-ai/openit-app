@@ -557,12 +557,6 @@ export function Viewer({
     setRenameError(null);
   }, [source]);
 
-  // Path the "New" button (scripts / skills folder views) just created.
-  // When the file-load effect resolves for this path, we drop straight
-  // into edit mode with the starter content seeded — so a freshly
-  // created untitled.mjs / untitled.md lands the user in the textarea
-  // instead of the read-only render of the boilerplate.
-  const [pendingEditPath, setPendingEditPath] = useState<string | null>(null);
   // Parallel state for row-edit mode — keyed by field id, mirrors the
   // row content. Stored as `unknown` per field so `string[]`,
   // booleans, etc. round-trip without coercion until save.
@@ -671,17 +665,9 @@ export function Viewer({
         setContent("");
         return;
       }
-      const autoEdit = pendingEditPath === path && hasEditableTextMode(path);
-      setMode(autoEdit ? "edit" : isMarkdown(path) ? "rendered" : "raw");
+      setMode(isMarkdown(path) ? "rendered" : "raw");
       fsRead(path)
-        .then((c) => {
-          if (cancelled) return;
-          setContent(c);
-          if (autoEdit) {
-            setEditDraft(c);
-            setPendingEditPath(null);
-          }
-        })
+        .then((c) => !cancelled && setContent(c))
         .catch((e) => !cancelled && setError(String(e)));
       return () => { cancelled = true; };
     }
@@ -698,6 +684,17 @@ export function Viewer({
     if (source.kind === "script-output") {
       setMode("rendered");
       setContent("");
+      return;
+    }
+    // Draft files: no disk read. Pre-seed the textarea with the
+    // template content so the user can audit/edit before Save.
+    // `content` stays empty so `isDirty = editDraft !== content` is
+    // true on first paint — Save lights up immediately, no need for
+    // the user to wiggle the cursor before they can commit.
+    if (source.kind === "draft-file") {
+      setMode("edit");
+      setContent("");
+      setEditDraft(source.initialContent);
       return;
     }
     if (source.kind === "datastore-table") {
@@ -892,6 +889,7 @@ export function Viewer({
       case "diff": return "Git diff";
       case "script-output":
         return `Run: ${source.script.split("/").pop() ?? source.script}`;
+      case "draft-file": return source.filename;
       case "datastore-table": return source.collection?.name ?? "Datastore";
       case "datastore-schema": return `${source.collection?.name ?? "Datastore"} — Schema`;
       case "datastore-row": return `${source.collection?.name ?? "Datastore"} / ${source.item?.key || source.item?.id || "Row"}`;
@@ -981,9 +979,10 @@ export function Viewer({
   // skills folder views. Mirrors the placement of the "add to chat"
   // link so the create action lives at the top-right of the pane,
   // not inside the dropzone where it competed with the drag target.
-  // The handler writes a starter template to disk, opens the new
-  // file, and queues edit-mode entry via `pendingEditPath`.
-  const newFileAffordance: { onCreate: () => Promise<void>; title: string } | null =
+  // Routes to a `draft-file` source — no file lands on disk until
+  // the user clicks Save (so a Cancel on the edit screen leaves
+  // nothing behind).
+  const newFileAffordance: { onCreate: () => void; title: string } | null =
     source && source.kind === "entity-folder" && repo &&
     (source.entity === "scripts" || source.entity === "skills")
       ? (() => {
@@ -993,9 +992,14 @@ export function Viewer({
           return {
             title:
               source.entity === "scripts"
-                ? "Create a new untitled.mjs script"
-                : "Create a new untitled.md skill",
-            onCreate: async () => {
+                ? "Draft a new untitled.mjs script — Save to commit it"
+                : "Draft a new untitled.md skill — Save to commit it",
+            onCreate: () => {
+              if (!onShowSource) return;
+              // Pick the first free `untitled[-N].<ext>` against the
+              // current listing. The draft is in-memory only — Save
+              // will write the file and route to it; if the user
+              // Cancels, no file ever lands on disk.
               const relSubdir = toRepoRelative(repo, subdirAbs);
               const taken = new Set(existing);
               let filename = `untitled.${ext}`;
@@ -1004,25 +1008,16 @@ export function Viewer({
                 filename = `untitled-${i}.${ext}`;
                 i += 1;
               }
-              try {
-                const { entityWriteFile } = await import("../lib/api");
-                await entityWriteFile(
-                  repo,
-                  relSubdir,
-                  filename,
-                  NEW_FILE_TEMPLATES[ext],
-                );
-                showToast(`Created ${filename}`);
-                const fullPath = relSubdir
-                  ? `${repo}/${relSubdir}/${filename}`
-                  : `${repo}/${filename}`;
-                setPendingEditPath(fullPath);
-                if (onOpenPath) await onOpenPath(fullPath);
-              } catch (err) {
-                const reason = err instanceof Error ? err.message : String(err);
-                console.error(`[new-file] failed:`, err);
-                setFolderUploadError(`Failed to create ${filename}: ${reason}`);
-              }
+              const fullPath = relSubdir
+                ? `${repo}/${relSubdir}/${filename}`
+                : `${repo}/${filename}`;
+              onShowSource({
+                kind: "draft-file",
+                path: fullPath,
+                subdir: relSubdir,
+                filename,
+                initialContent: NEW_FILE_TEMPLATES[ext],
+              });
             },
           };
         })()
@@ -1271,6 +1266,87 @@ export function Viewer({
         );
       }
       return <pre className="viewer-content">{content}</pre>;
+    }
+
+    // In-memory draft from the "New" button — no file on disk yet.
+    // Same edit chrome as the existing file editor, but Save commits
+    // a fresh write and routes the viewer to the now-real file.
+    // Cancel uses the parent's back-stack (the entity-folder is the
+    // last-known nav target). Save is naturally enabled because the
+    // baseline `content` is empty so any draft text reads as dirty.
+    if (source.kind === "draft-file") {
+      const draftSource = source;
+      const onSaveDraft = async () => {
+        if (!repo) return;
+        setEditSaving(true);
+        setEditError(null);
+        try {
+          const { entityWriteFile } = await import("../lib/api");
+          await entityWriteFile(
+            repo,
+            draftSource.subdir,
+            draftSource.filename,
+            editDraft,
+          );
+          showToast(`Created ${draftSource.filename}`);
+          // Refresh the parent folder in place so the new file shows
+          // up in its card list, THEN navigate to the file. Same-
+          // sourceKey check in setSource means the folder refresh is
+          // an in-place update (no extra back-stack entry); the file
+          // nav pushes the now-fresh folder onto back so the back
+          // arrow lands on a current listing.
+          if (onOpenPath) {
+            const folderAbs = `${repo}/${draftSource.subdir}`;
+            await onOpenPath(folderAbs);
+            await onOpenPath(draftSource.path);
+          }
+        } catch (err) {
+          setEditError(
+            `Save failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        } finally {
+          setEditSaving(false);
+        }
+      };
+      const onCancelDraft = () => {
+        // Discard the draft and go back. The user came from an
+        // entity-folder (the New button only appears there), so
+        // back-history is reliably non-empty here. The fallback
+        // is a no-op in that edge case rather than risk a stuck
+        // canvas — the user can navigate via the file tree.
+        if (onGoBack && canGoBack) onGoBack();
+      };
+      return (
+        <div className="viewer-edit">
+          <textarea
+            className="viewer-edit-textarea"
+            value={editDraft}
+            onChange={(e) => setEditDraft(e.target.value)}
+            spellCheck={false}
+            autoFocus
+          />
+          <div className="viewer-edit-footer">
+            {editError && <span className="viewer-edit-error">{editError}</span>}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onCancelDraft}
+              disabled={editSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={onSaveDraft}
+              disabled={editSaving || editDraft.length === 0}
+              loading={editSaving}
+            >
+              {editSaving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </div>
+      );
     }
 
     // Captured stdout / stderr from a Run-button invocation. Two

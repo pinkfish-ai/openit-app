@@ -127,6 +127,8 @@ function sourceKey(s: ViewerSource): string {
       return "tools";
     case "script-output":
       return `script-output:${s.script}`;
+    case "draft-file":
+      return `draft-file:${s.path}`;
   }
 }
 
