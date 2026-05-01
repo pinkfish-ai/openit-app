@@ -124,6 +124,22 @@ pub fn project_bootstrap(org_name: String, org_id: String) -> Result<BootstrapRe
     // before the reports feature shipped get the dir on next open.
     let _ = fs::create_dir_all(path.join("reports"));
 
+    // First-launch `.openit/config.json` with defaults. Gives admins a
+    // discoverable surface to tune without reading docs — file is in
+    // the explorer's "show system files" view, structure is obvious.
+    // Idempotent: only writes when the file is missing, so admin
+    // overrides survive across app launches.
+    let openit_dir = path.join(".openit");
+    let config_path = openit_dir.join("config.json");
+    if !config_path.exists() {
+        let _ = fs::create_dir_all(&openit_dir);
+        if let Ok(json) =
+            serde_json::to_string_pretty(&crate::openit_config::OpenitConfig::default())
+        {
+            let _ = fs::write(&config_path, format!("{}\n", json));
+        }
+    }
+
     // First-launch Getting Started page. Idempotent: only writes when
     // the file is missing, so user edits survive across app launches.
     // `{{INTAKE_URL}}` is substituted by the markdown viewer at render

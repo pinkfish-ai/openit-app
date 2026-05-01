@@ -48,7 +48,7 @@ The transition `resolved → closed` is automated by the auto-close walker in `e
 
 ## `.openit/config.json` — admin-tunable knobs
 
-Vanilla install has no `.openit/config.json` — defaults apply. Drop a file into `.openit/config.json` to override individual fields; missing fields fall through to their defaults.
+A `.openit/config.json` with the default values is written on first project bootstrap so the file is discoverable in the explorer. Edit it to override; missing fields fall through to their compiled-in defaults so a partial file is fine. Subsequent bootstraps do not overwrite — admin edits survive app launches.
 
 ```json
 {
