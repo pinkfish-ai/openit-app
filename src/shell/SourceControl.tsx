@@ -315,7 +315,7 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
                 ? "Commit and sync to Cloud"
                 : "Commit locally (Connect to Cloud to also sync)"
               : cloudConnected
-                ? "Sync to Cloud (catches silent content drift)"
+                ? "Sync with Cloud (catches silent content drift)"
                 : "Connect to Cloud to enable sync"
           }
         >
@@ -323,7 +323,7 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
             ? "…"
             : files.length > 0
               ? "Commit"
-              : "Sync to Cloud"}
+              : "Sync with Cloud"}
         </Button>
       </div>
       {error && <div className="sc-error">{error}</div>}
