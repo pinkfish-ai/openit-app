@@ -18,6 +18,7 @@ import {
   pushAllToFilestore,
   getFilestoreSyncStatus,
   pullOnce as filestorePullOnce,
+  startFilestoreSync,
 } from "./filestoreSync";
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
 import { loadCreds } from "./pinkfishAuth";
@@ -104,8 +105,22 @@ export async function pushAllEntities(
   }
 
   // Filestore: pre-push pull to detect remote-side edits before we
-  // clobber them. Same pattern as KB above.
-  const fsCollections = getFilestoreSyncStatus().collections;
+  // clobber them. Same pattern as KB above — including the inline
+  // resolve fallback for the case where filestore sync hadn't finished
+  // initializing by the time the user clicked Sync (Vite HMR reload,
+  // racy lifecycle, modal-skipped flow). Without this fallback, push
+  // silently skipped every filestore collection — including any new
+  // file the user had added but never synced.
+  let fsCollections = getFilestoreSyncStatus().collections;
+  if (fsCollections.length === 0) {
+    onLine("▸ sync: resolving filestore");
+    try {
+      await startFilestoreSync({ creds, repo });
+      fsCollections = getFilestoreSyncStatus().collections;
+    } catch (e) {
+      onLine(`✗ sync: filestore resolve failed: ${String(e)}`);
+    }
+  }
   if (fsCollections.length > 0) {
     for (const collection of fsCollections) {
       onLine(`▸ sync: filestore (${collection.name}) pre-push pull`);
