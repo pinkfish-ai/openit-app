@@ -74,9 +74,9 @@ describe("routeFile", () => {
 
   describe("agents/<name>.template.json", () => {
     it("strips .template suffix; lands at agents/<name>.json (slug-free)", () => {
-      expect(routeFile("agents/triage.template.json", slug)).toEqual({
+      expect(routeFile("agents/openit-triage.template.json", slug)).toEqual({
         subdir: "agents",
-        filename: "triage.json",
+        filename: "openit-triage.json",
         substituteSlug: false,
       });
     });
