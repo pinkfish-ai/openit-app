@@ -11,14 +11,15 @@ import {
   agentAdapter,
   AGENT_DIR,
   AGENT_PREFIX,
+  cloudAgentName,
   listUserAgentsWithMeta,
+  localAgentName,
   patchUserAgent,
   postUserAgent,
   resolveProjectAgents,
   type AgentRow,
 } from "./entities/agent";
 import {
-  entityDeleteFile,
   entityListLocal,
   entityWriteFile,
   fsRead,
@@ -41,11 +42,6 @@ import {
 export type Agent = AgentRow;
 
 export { resolveProjectAgents };
-
-const LEGACY_FILENAME = "triage.json";
-const CURRENT_FILENAME = "openit-triage.json";
-const LEGACY_NAME = "triage";
-const CURRENT_NAME = "openit-triage";
 
 let handle: ReadOnlySyncHandle | null = null;
 
@@ -70,8 +66,11 @@ export async function startAgentSync(args: {
         a.name.startsWith(AGENT_PREFIX),
       );
       if (isFirstBuild && onLog) {
+        // Log the local form so the bootstrap log matches what the user
+        // sees in the file tree (`triage`, not `openit-triage`).
         for (const a of agents) {
-          onLog(`  ✓ ${a.name || "(unnamed)"}  (id: ${a.id || "?"})`);
+          const local = localAgentName(a.name);
+          onLog(`  ✓ ${local || "(unnamed)"}  (id: ${a.id || "?"})`);
         }
       }
       const built = agentAdapter({
@@ -95,66 +94,6 @@ export function stopAgentSync(): void {
     handle = null;
   }
   clearConflictsForPrefix("agent");
-}
-
-// ---------------------------------------------------------------------------
-// Migration shim. The legacy bundled-plugin wrote `agents/triage.json`
-// (`name: "triage"`); V1 standardises on `agents/openit-triage.json`
-// (`name: "openit-triage"`) so the local filename, the in-file `name`,
-// and the platform's `openit-` filter all agree.
-//
-// Must run **before** the first cloud pull. If a stale `openit-triage`
-// exists on cloud, a cloud-pull-first ordering would write that
-// version to `openit-triage.json` before the shim runs, the shim
-// would see the new file already exists and bail, and the user's
-// local edits in `triage.json` would be lost. (Reviewer flagged.)
-// ---------------------------------------------------------------------------
-
-async function fileExistsOnDisk(
-  repo: string,
-  subdir: string,
-  filename: string,
-): Promise<boolean> {
-  try {
-    await fsRead(`${repo}/${subdir}/${filename}`);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function migrateLegacyTriageFilename(repo: string): Promise<void> {
-  const oldExists = await fileExistsOnDisk(repo, AGENT_DIR, LEGACY_FILENAME);
-  const newExists = await fileExistsOnDisk(repo, AGENT_DIR, CURRENT_FILENAME);
-  if (!oldExists || newExists) return;
-  try {
-    const content = await fsRead(`${repo}/${AGENT_DIR}/${LEGACY_FILENAME}`);
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(content) as Record<string, unknown>;
-    } catch {
-      // Malformed JSON — bail without losing the file. User can fix and
-      // restart; the shim no-ops on subsequent runs once the new file
-      // exists.
-      console.warn("[migrate] agents/triage.json is malformed; skipping rename");
-      return;
-    }
-    // Only rewrite name if it's still the bundled default. A user-edited
-    // name (e.g. they renamed the agent) is preserved verbatim.
-    if (parsed.name === LEGACY_NAME) parsed.name = CURRENT_NAME;
-    await entityWriteFile(
-      repo,
-      AGENT_DIR,
-      CURRENT_FILENAME,
-      JSON.stringify(parsed, null, 2),
-    );
-    await entityDeleteFile(repo, AGENT_DIR, LEGACY_FILENAME);
-    console.log(
-      `[migrate] renamed agents/${LEGACY_FILENAME} → agents/${CURRENT_FILENAME}`,
-    );
-  } catch (e) {
-    console.error("[migrate] failed:", e);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -242,8 +181,11 @@ export async function pushAllToAgents(args: {
           continue;
         }
 
+        // Add the `openit-` prefix at the sync boundary. Local disk uses
+        // the unprefixed form (`triage`); Pinkfish stores `openit-triage`.
+        // Same convention as datastore/filestore/KB collection naming.
         const body = {
-          name,
+          name: cloudAgentName(name),
           description: parsed.description ?? "",
           instructions: parsed.instructions ?? "",
         };

@@ -2,7 +2,7 @@
 //
 // A coworker on the same machine (or LAN, when the Phase 3b toggle
 // ships) opens the URL surfaced in the OpenIT header and chats with
-// an AI agent. The agent — driven by `agents/openit-triage.json` and the
+// an AI agent. The agent — driven by `agents/triage.json` and the
 // `ai-intake` skill — gathers the question, searches the local
 // knowledge base, and either answers inline (KB hit) or escalates to
 // the admin (KB miss → status flips to `escalated`, admin sees the
@@ -18,7 +18,7 @@
 // command lock to prevent races.
 //
 // Per-turn agent: each user message spawns a fresh `claude -p`
-// subprocess with cwd = repo, model from `agents/openit-triage.json`, and
+// subprocess with cwd = repo, model from `agents/triage.json`, and
 // the conversation history + ticket id passed in the prompt. The
 // skill writes ticket / conversation / people files directly via
 // Claude's Read/Write/Edit tools.
@@ -623,7 +623,7 @@ async fn chat_turn(
     let mut history = history_before;
     history.push(user_msg);
 
-    // Read the agent's persona + selected model from agents/openit-triage.json.
+    // Read the agent's persona + selected model from agents/triage.json.
     let (agent_instructions, model) = load_triage_agent(&repo).await;
 
     // Build the prompt and run claude -p. This is the slow part
@@ -1198,11 +1198,11 @@ fn mime_for_attachment(path: &Path) -> String {
 // Helpers — agent invocation, ticket file operations.
 // ---------------------------------------------------------------------------
 
-/// Read `agents/openit-triage.json` for the persona instructions +
-/// selected model. Falls back to safe defaults if the file is missing
-/// or malformed (rare — the bundled-skills sync writes it on first run).
+/// Read `agents/triage.json` for the persona instructions + selected
+/// model. Falls back to safe defaults if the file is missing or
+/// malformed (rare — the bundled-skills sync writes it on first run).
 async fn load_triage_agent(repo: &Path) -> (String, String) {
-    let path = repo.join("agents").join("openit-triage.json");
+    let path = repo.join("agents").join("triage.json");
     let raw = match tokio::fs::read_to_string(&path).await {
         Ok(s) => s,
         Err(_) => {

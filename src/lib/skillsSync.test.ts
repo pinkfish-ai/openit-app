@@ -74,9 +74,9 @@ describe("routeFile", () => {
 
   describe("agents/<name>.template.json", () => {
     it("strips .template suffix; lands at agents/<name>.json (slug-free)", () => {
-      expect(routeFile("agents/openit-triage.template.json", slug)).toEqual({
+      expect(routeFile("agents/triage.template.json", slug)).toEqual({
         subdir: "agents",
-        filename: "openit-triage.json",
+        filename: "triage.json",
         substituteSlug: false,
       });
     });
@@ -133,8 +133,8 @@ describe("routeFile", () => {
     });
 
     it("ignores slug for agents (output is slug-free)", () => {
-      const r = routeFile("agents/openit-triage.template.json", "any-slug-here");
-      expect(r?.filename).toBe("openit-triage.json");
+      const r = routeFile("agents/triage.template.json", "any-slug-here");
+      expect(r?.filename).toBe("triage.json");
     });
   });
 });
@@ -154,11 +154,11 @@ describe("syncSkillsToDisk — agent write-once gate", () => {
       if (cmd === "skills_fetch_bundled_manifest") {
         return JSON.stringify({
           version: "test-1",
-          files: [{ path: "agents/openit-triage.template.json" }],
+          files: [{ path: "agents/triage.template.json" }],
         }) as never;
       }
       if (cmd === "skills_fetch_bundled_file") {
-        return JSON.stringify({ name: "openit-triage" }) as never;
+        return JSON.stringify({ name: "triage" }) as never;
       }
       if (cmd === "fs_read") {
         // Simulate the agent file already existing on disk so the
@@ -175,7 +175,7 @@ describe("syncSkillsToDisk — agent write-once gate", () => {
     await syncSkillsToDisk("/repo", null);
 
     const agentWrites = writeCalls.filter(
-      (c) => c.subdir === "agents" && c.filename === "openit-triage.json",
+      (c) => c.subdir === "agents" && c.filename === "triage.json",
     );
     expect(agentWrites).toEqual([]);
   });
@@ -186,11 +186,11 @@ describe("syncSkillsToDisk — agent write-once gate", () => {
       if (cmd === "skills_fetch_bundled_manifest") {
         return JSON.stringify({
           version: "test-1",
-          files: [{ path: "agents/openit-triage.template.json" }],
+          files: [{ path: "agents/triage.template.json" }],
         }) as never;
       }
       if (cmd === "skills_fetch_bundled_file") {
-        return JSON.stringify({ name: "openit-triage" }) as never;
+        return JSON.stringify({ name: "triage" }) as never;
       }
       if (cmd === "fs_read") {
         // File missing → fileExistsOnDisk returns false → write fires.
@@ -206,7 +206,7 @@ describe("syncSkillsToDisk — agent write-once gate", () => {
     await syncSkillsToDisk("/repo", null);
 
     const agentWrites = writeCalls.filter(
-      (c) => c.subdir === "agents" && c.filename === "openit-triage.json",
+      (c) => c.subdir === "agents" && c.filename === "triage.json",
     );
     expect(agentWrites).toHaveLength(1);
   });

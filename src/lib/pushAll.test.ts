@@ -574,7 +574,7 @@ describe("pushAllEntities — error isolation (PIN-5865)", () => {
 describe("pushAllEntities — runAgent", () => {
   it("dirty agents/* unblocks pre-push pull and push", async () => {
     vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/openit-triage.json", status: " M", staged: false },
+      { path: "agents/triage.json", status: " M", staged: false },
     ] as never);
 
     await pushAllEntities("/repo", () => {});
@@ -585,15 +585,15 @@ describe("pushAllEntities — runAgent", () => {
 
   it("agent conflict slot non-empty surfaces conflicts and skips push", async () => {
     vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/openit-triage.json", status: " M", staged: false },
+      { path: "agents/triage.json", status: " M", staged: false },
     ] as never);
     vi.mocked(getConflictsForPrefix).mockImplementation((prefix: string) => {
       if (prefix === "agent") {
         return [
           {
             prefix: "agent",
-            manifestKey: "openit-triage.json",
-            workingTreePath: "agents/openit-triage.json",
+            manifestKey: "triage.json",
+            workingTreePath: "agents/triage.json",
             reason: "local-and-remote-changed" as const,
           },
         ];
@@ -615,7 +615,7 @@ describe("pushAllEntities — runAgent", () => {
 
   it("pre-push pull failure short-circuits before push", async () => {
     vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/openit-triage.json", status: " M", staged: false },
+      { path: "agents/triage.json", status: " M", staged: false },
     ] as never);
     vi.mocked(pullAgentsOnce).mockResolvedValue({
       ok: false,
@@ -648,7 +648,7 @@ describe("pushAllEntities — runAgent", () => {
 
   it("agent failure does not block other classes (error isolation)", async () => {
     vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/openit-triage.json", status: " M", staged: false },
+      { path: "agents/triage.json", status: " M", staged: false },
       { path: "knowledge-bases/default/dirty.md", status: " M", staged: false },
     ] as never);
     vi.mocked(pushAllToAgents).mockRejectedValue(new Error("agent boom"));

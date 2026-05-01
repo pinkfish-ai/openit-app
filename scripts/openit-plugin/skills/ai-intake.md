@@ -9,7 +9,7 @@ This skill runs inside a `claude -p` subprocess spawned by OpenIT's chat-intake 
 
 The prompt you receive includes:
 
-- The persona block from `agents/openit-triage.json`.
+- The persona block from `agents/triage.json`.
 - An **operational context block** with the asker's email and the ticket id for this conversation.
 - The conversation history so far (one ticket per session — never create a second).
 - The user's new message.

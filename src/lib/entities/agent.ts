@@ -1,6 +1,9 @@
 // Agent adapter for syncEngine. Lists `/user-agents` (REST) — replaces the
 // pre-R4 MCP-based agent_list call which didn't expose `updatedAt`. Each
-// openit-* agent becomes a JSON file at `agents/<name>.json`.
+// openit-* cloud agent becomes a JSON file at `agents/<localName>.json`,
+// where `localName` is the cloud `name` with the `openit-` prefix
+// stripped. Same convention as `databases/<name>` ↔ `openit-<name>` for
+// datastores and `filestores/<name>` ↔ `openit-<name>` for filestores.
 //
 // V1 push surface: typed POST/PATCH/DELETE wrappers below. The on-disk
 // shape is narrowed to exactly the fields V1 owns (`id`, `name`,
@@ -31,6 +34,23 @@ import {
 
 const DIR = "agents";
 const PREFIX = "openit-";
+
+/// Strip the `openit-` prefix for the local form. Cloud `openit-triage`
+/// becomes local `triage`; the local file lives at `agents/triage.json`
+/// with `name: "triage"`. Idempotent for unprefixed inputs.
+export function localAgentName(cloudName: string): string {
+  return cloudName.startsWith(PREFIX)
+    ? cloudName.slice(PREFIX.length)
+    : cloudName;
+}
+
+/// Add the `openit-` prefix for the cloud form. Local `triage` becomes
+/// cloud `openit-triage` for POST/PATCH bodies. Idempotent if the local
+/// name already carries the prefix (defensive — user-edited names that
+/// somehow include the prefix still produce a single-prefix cloud name).
+export function cloudAgentName(localName: string): string {
+  return localName.startsWith(PREFIX) ? localName : `${PREFIX}${localName}`;
+}
 
 export type AgentRow = {
   id: string;
@@ -247,8 +267,17 @@ export function agentAdapter(args: {
       const items: RemoteItem[] = [];
       for (const a of agents) {
         if (!a.name) continue;
-        const filename = safeFilename(a.name);
-        const content = canonicalizeForDisk(a);
+        // Strip the prefix at the sync boundary — disk uses the local
+        // form (`triage`), cloud uses the prefixed form (`openit-triage`).
+        // The boundary is symmetric with `pushAllToAgents`'s
+        // `cloudAgentName(localName)` re-prefixing on POST/PATCH.
+        const localName = localAgentName(a.name);
+        const localRow: AgentRow & { updatedAt?: string } = {
+          ...a,
+          name: localName,
+        };
+        const filename = safeFilename(localName);
+        const content = canonicalizeForDisk(localRow);
         items.push({
           manifestKey: filename,
           workingTreePath: `${DIR}/${filename}`,
