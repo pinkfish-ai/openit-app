@@ -178,43 +178,6 @@ const NEW_FILE_TEMPLATES: Record<"mjs" | "md", string> = {
   md: `# Untitled\n\nHello, world!\n`,
 };
 
-/// Create a new "untitled" file in `subdir` with a starter template,
-/// picking the next available numeric suffix when the base name is
-/// already taken (`untitled.mjs`, `untitled-2.mjs`, …). Used by the
-/// scripts / skills folder "New" button. Opens the new file in the
-/// viewer once it's on disk so the user lands straight in edit mode.
-async function createUntitledEntityFile(
-  repo: string,
-  relSubdir: string,
-  ext: "mjs" | "md",
-  existingNames: string[],
-  setError: (msg: string | null) => void,
-  onToast: ((msg: string) => void) | undefined,
-  onOpenPath: ((p: string) => void | Promise<void>) | undefined,
-): Promise<void> {
-  setError(null);
-  const taken = new Set(existingNames);
-  let filename = `untitled.${ext}`;
-  let i = 2;
-  while (taken.has(filename)) {
-    filename = `untitled-${i}.${ext}`;
-    i += 1;
-  }
-  try {
-    const { entityWriteFile } = await import("../lib/api");
-    await entityWriteFile(repo, relSubdir, filename, NEW_FILE_TEMPLATES[ext]);
-    onToast?.(`Created ${filename}`);
-    const fullPath = relSubdir
-      ? `${repo}/${relSubdir}/${filename}`
-      : `${repo}/${filename}`;
-    if (onOpenPath) await onOpenPath(fullPath);
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    console.error(`[new-file] failed for ${filename}:`, err);
-    setError(`Failed to create ${filename}: ${reason}`);
-  }
-}
-
 /// Filenames that survive Finder (narrow no-break space, colons,
 /// stray Unicode whitespace) routinely break the sync push and other
 /// downstream tools that assume POSIX-safe names. Normalize before
@@ -568,6 +531,12 @@ export function Viewer({
   const [editDraft, setEditDraft] = useState<string>("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Path the "New" button (scripts / skills folder views) just created.
+  // When the file-load effect resolves for this path, we drop straight
+  // into edit mode with the starter content seeded — so a freshly
+  // created untitled.mjs / untitled.md lands the user in the textarea
+  // instead of the read-only render of the boilerplate.
+  const [pendingEditPath, setPendingEditPath] = useState<string | null>(null);
   // Parallel state for row-edit mode — keyed by field id, mirrors the
   // row content. Stored as `unknown` per field so `string[]`,
   // booleans, etc. round-trip without coercion until save.
@@ -676,9 +645,17 @@ export function Viewer({
         setContent("");
         return;
       }
-      setMode(isMarkdown(path) ? "rendered" : "raw");
+      const autoEdit = pendingEditPath === path && hasEditableTextMode(path);
+      setMode(autoEdit ? "edit" : isMarkdown(path) ? "rendered" : "raw");
       fsRead(path)
-        .then((c) => !cancelled && setContent(c))
+        .then((c) => {
+          if (cancelled) return;
+          setContent(c);
+          if (autoEdit) {
+            setEditDraft(c);
+            setPendingEditPath(null);
+          }
+        })
         .catch((e) => !cancelled && setError(String(e)));
       return () => { cancelled = true; };
     }
@@ -965,6 +942,57 @@ export function Viewer({
   const attachmentsTicketId: string | null =
     source && source.kind === "entity-folder" && source.entity === "attachments-ticket"
       ? source.path.replace(/^filestores\/attachments\//, "")
+      : null;
+
+  // "new +" affordance in the viewer-subheader for the scripts /
+  // skills folder views. Mirrors the placement of the "add to chat"
+  // link so the create action lives at the top-right of the pane,
+  // not inside the dropzone where it competed with the drag target.
+  // The handler writes a starter template to disk, opens the new
+  // file, and queues edit-mode entry via `pendingEditPath`.
+  const newFileAffordance: { onCreate: () => Promise<void>; title: string } | null =
+    source && source.kind === "entity-folder" && repo &&
+    (source.entity === "scripts" || source.entity === "skills")
+      ? (() => {
+          const ext: "mjs" | "md" = source.entity === "scripts" ? "mjs" : "md";
+          const subdirAbs = source.path;
+          const existing = source.files.map((f) => f.name);
+          return {
+            title:
+              source.entity === "scripts"
+                ? "Create a new untitled.mjs script"
+                : "Create a new untitled.md skill",
+            onCreate: async () => {
+              const relSubdir = toRepoRelative(repo, subdirAbs);
+              const taken = new Set(existing);
+              let filename = `untitled.${ext}`;
+              let i = 2;
+              while (taken.has(filename)) {
+                filename = `untitled-${i}.${ext}`;
+                i += 1;
+              }
+              try {
+                const { entityWriteFile } = await import("../lib/api");
+                await entityWriteFile(
+                  repo,
+                  relSubdir,
+                  filename,
+                  NEW_FILE_TEMPLATES[ext],
+                );
+                showToast(`Created ${filename}`);
+                const fullPath = relSubdir
+                  ? `${repo}/${relSubdir}/${filename}`
+                  : `${repo}/${filename}`;
+                setPendingEditPath(fullPath);
+                if (onOpenPath) await onOpenPath(fullPath);
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                console.error(`[new-file] failed:`, err);
+                setFolderUploadError(`Failed to create ${filename}: ${reason}`);
+              }
+            },
+          };
+        })()
       : null;
 
   // Pre-compute conversation status counts so the header pills can
@@ -1948,56 +1976,27 @@ export function Viewer({
           {folderUploadError && (
             <p className="viewer-edit-error">{folderUploadError}</p>
           )}
-          {(cards.length > 1 ||
-            source.entity === "scripts" ||
-            source.entity === "skills") && (
+          {cards.length > 1 && (
             <div className="viewer-folder-toolbar">
-              {cards.length > 1 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    setSortReversed((prev) => ({
-                      ...prev,
-                      [source.path]: !prev[source.path],
-                    }))
-                  }
-                  title="Reverse sort order"
-                >
-                  {isReport
-                    ? reversed
-                      ? "oldest first"
-                      : "newest first"
-                    : reversed
-                      ? "Z → A"
-                      : "A → Z"}
-                </Button>
-              )}
-              {(source.entity === "scripts" || source.entity === "skills") &&
-                repo && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() =>
-                      void createUntitledEntityFile(
-                        repo,
-                        toRepoRelative(repo, source.path),
-                        source.entity === "scripts" ? "mjs" : "md",
-                        source.files.map((f) => f.name),
-                        setFolderUploadError,
-                        showToast,
-                        onOpenPath,
-                      )
-                    }
-                    title={
-                      source.entity === "scripts"
-                        ? "Create a new untitled.mjs script"
-                        : "Create a new untitled.md skill"
-                    }
-                  >
-                    New
-                  </Button>
-                )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  setSortReversed((prev) => ({
+                    ...prev,
+                    [source.path]: !prev[source.path],
+                  }))
+                }
+                title="Reverse sort order"
+              >
+                {isReport
+                  ? reversed
+                    ? "oldest first"
+                    : "newest first"
+                  : reversed
+                    ? "Z → A"
+                    : "A → Z"}
+              </Button>
             </div>
           )}
           <EntityCardGrid
@@ -2807,7 +2806,7 @@ export function Viewer({
           </Button>
         )}
       </div>
-      {(chatAddPath || attachmentsTicketId) && (
+      {(chatAddPath || attachmentsTicketId || newFileAffordance) && (
         <div className="viewer-subheader">
           {attachmentsTicketId && onOpenPath && (
             <Button
@@ -2833,6 +2832,16 @@ export function Viewer({
             >
               add to chat
               <span className="arrow" aria-hidden="true">→</span>
+            </Button>
+          )}
+          {newFileAffordance && (
+            <Button
+              variant="linkMuted"
+              onClick={() => void newFileAffordance.onCreate()}
+              title={newFileAffordance.title}
+            >
+              new
+              <span className="arrow" aria-hidden="true">+</span>
             </Button>
           )}
         </div>
