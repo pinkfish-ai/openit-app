@@ -76,7 +76,10 @@ What every entity provides. Five required methods, one optional:
 }
 ```
 
-`manifestKey` is usually the working-tree path, except for datastore where it's `<collectionName>/<key>` so collisions across collections can't fight.
+`manifestKey` is usually the working-tree path, except for datastore:
+
+- **Flat collections** (tickets, people, custom): `<collectionName>/<key>` so keys can't collide across collections.
+- **`openit-conversations`** (nested layout): `<collectionName>/<ticketId>/<sortField>`. Mirrors the cloud's composite identity `(key=ticketId, sortField=msgBase)` and stays collision-free even if two threads share a `msgBase` (PIN-5861).
 
 `conflict_remote_version` is the load-bearing piece of the resolve flow. The engine writes it into the entry when it creates a `.server.` shadow, capturing the *current* `r.updatedAt` (which doesn't match `remote_version` because remote moved since the last successful pull). The resolve script reads it back and replays it as the new `remote_version` — that's how OpenIT encodes "the user has reconciled against this remote version, push their local content next" without the script needing to make HTTP calls.
 
@@ -167,6 +170,52 @@ After the loop: anything still tracked that wasn't in the remote list is a serve
 **Pagination guards:**
 - `paginationFailed: true` → skip the entire server-delete pass. The truncated list isn't authoritative.
 - `unreliableKeyPrefixes: [...]` → skip only manifest keys with these prefixes. Datastore uses this when one collection out of N fails mid-paginate; other collections still reconcile.
+
+---
+
+## Push semantics (per entity)
+
+The pull pipeline is one-size-fits-all; push has a few entity-specific contracts that matter when wiring a new adapter or debugging a "row appeared twice on Pinkfish" report. The story for each:
+
+### KB
+
+**Endpoint:** multipart `POST /filestorage/items/upload`. Stays on multipart because the server's vector-store indexing pipeline runs only in that path — signed-URL upload stores the bytes but doesn't trigger semantic indexing, so KB content wouldn't be searchable.
+
+**Known wart:** the multipart endpoint rewrites filenames with a UUID prefix and creates a new doc per call, so repeated KB pushes accumulate duplicates server-side. The cleanup script at `scripts/cleanup-uuid-duplicates.mjs` is the safety net while a server-side dedupe-by-filename fix is pending.
+
+### Filestore (PIN-5847)
+
+**Endpoint:** `POST /filestorage/items/upload-request` (returns a signed GCS PUT URL) → `PUT <signedUrl>` with the bytes. Same filename in, same filename out (only `formatFileName` sanitization). Same Firestore row on re-upload — no UUID prefix, no duplicates.
+
+**Why split from KB:** filestore doesn't need vector indexing; the signed-URL contract gives clean filename-stable upserts. Validated by `integration_tests/upload-request-contract.test.ts`.
+
+**Cleanup of pre-PIN-5847 UUID duplicates:** `node scripts/cleanup-uuid-duplicates.mjs --apply`.
+
+### Datastore (PIN-5861)
+
+**Endpoint:** `POST /memory/items?collectionId=<id>` with body `{ key, sortField, content }`. The `(collectionId, key, sortField)` triple is the composite identity — POST with the same triple is an upsert, not an insert.
+
+**`sortField` is required for upsert.** A bare POST without `sortField` causes the server to stamp `Date.now()` as the sortField, which never matches anything → every push inserts a new row. This was the bug PIN-5861 fixed; the integration matrix at `integration_tests/datastore-connect-matrix.test.ts` has a control case that pins the server's insert-on-missing-sortField behavior so we'd catch a regression.
+
+How adapters set the composite:
+
+- **Flat (`openit-tickets`, `openit-people`, custom)**: `sortField = key`. The composite degenerates to identity — same key always upserts in place.
+- **`openit-conversations`** (nested): `key = ticketId`, `sortField = msgBase`. Many turns under one logical thread, each turn a distinct row by composite. The on-disk hierarchy `databases/conversations/<ticketId>/<msgBase>.json` mirrors the cloud's composite directly — `ticketId` is the folder, `msgBase` is the filename.
+
+**Collection create:** `POST /datacollection/?ifMissing=true`. Server collapses concurrent identical-name creates to one row, returning the same id to both callers. Replaced ~155 lines of client-side cooldown / inflight-dedupe / refetch machinery.
+
+**Push loop structure (`pushAllToDatastoresImpl`):**
+
+1. Pre-fetch the remote collection once (`fetchDatastoreItems` → `/memory/bquery`); build `remoteByComposite` keyed by `${key}#${sortField}`.
+2. For each local row: skip if `remoteByComposite` already has identical content (`jsonEqual`); otherwise POST `{ key, sortField, content }`.
+3. Deletion-reconcile: any remote composite not present in `localComposites` gets `DELETE /memory/items/id/<r.id>`.
+4. Post-push manifest reconcile: re-list the touched collections, write `<col>/<key>` (flat) or `<col>/<key>/<sortField>` (conversations) entries with the server's authoritative `updatedAt`.
+
+**Pull side (`entities/datastore.ts` `listRemote`):** for conversations, derives the per-thread folder from `item.key` (was `content.ticketId`) and the filename from `${item.sortField}.json`. Rows missing `sortField` are warn-and-skipped — a conversation row with no per-turn anchor can't be filed.
+
+### Agents / workflows
+
+Read-only on the OpenIT side today — the wrapper rebuilds the adapter every poll tick to pick up server-side adds/deletes. No push surface.
 
 ---
 
