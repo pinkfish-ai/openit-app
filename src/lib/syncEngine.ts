@@ -311,6 +311,17 @@ export function clearConflictsForPrefix(prefix: string): void {
   if (conflictsByPrefix.delete(prefix)) emitConflicts();
 }
 
+/// True if at least one aggregated conflict exists for this prefix. Used
+/// by the skip-clean preflight in `pushAllEntities` — a clean working
+/// tree alone isn't sufficient to skip a pre-push pull, because the
+/// previous pull may have surfaced conflicts the user hasn't resolved
+/// yet (their resolution will live in `.server.` shadow files, which
+/// are gitignored and thus invisible to `git status`).
+export function hasConflictsForPrefix(prefix: string): boolean {
+  const list = conflictsByPrefix.get(prefix);
+  return list != null && list.length > 0;
+}
+
 /// Compute the on-disk shadow path for a conflict's canonical
 /// workingTreePath. e.g. `databases/openit-people-XXX/p123.json`
 /// → `databases/openit-people-XXX/p123.server.json`. Used by the
@@ -453,11 +464,18 @@ export async function commitTouched(
   message: string,
 ): Promise<void> {
   if (touched.length === 0) return;
-  try {
-    await gitCommitPaths(repo, touched, message);
-  } catch (e) {
-    console.warn(`[syncEngine] commit failed (${message}):`, e);
-  }
+  // Serialize commits across all entity prefixes through a dedicated
+  // `(repo, "git")` queue. Per-prefix locks already prevent two ops
+  // on the same entity from racing, but they don't prevent kb-push and
+  // filestore-pull from hitting `gitCommitPaths` concurrently — which
+  // races on `.git/index.lock`. PIN-5865.
+  await withRepoLock(repo, "git", async () => {
+    try {
+      await gitCommitPaths(repo, touched, message);
+    } catch (e) {
+      console.warn(`[syncEngine] commit failed (${message}):`, e);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
