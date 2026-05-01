@@ -231,6 +231,11 @@ async function pushAllToFilestoreImpl(args: {
   let pushed = 0;
   let failed = 0;
   const pushedNames = new Set<string>();
+  // Tracks "old name → cloud-sanitized new name" renames so the
+  // post-push commit also stages the deletion of the old path. Without
+  // this, the user is left with a pending `D <old-name>` change in git
+  // every time the server sanitizes a filename.
+  const renamedFromNames = new Set<string>();
 
   for (const f of toPush) {
     try {
@@ -283,6 +288,7 @@ async function pushAllToFilestoreImpl(args: {
         // pre-rename key — self-heals but adds churn and noise, and
         // means the manifest briefly disagrees with disk.
         delete persisted.files[f.filename];
+        renamedFromNames.add(f.filename);
       }
       persisted.files[cloudName] = {
         remote_version: new Date().toISOString(),
@@ -381,9 +387,17 @@ async function pushAllToFilestoreImpl(args: {
   // Sync's `git status` check, which would mark them dirty and re-push
   // (creating duplicates on every Sync click pre-PIN-5847). Mirrors the
   // post-push commit kbSync.ts has had since Phase 2.
-  if (pushedNames.size > 0) {
+  //
+  // Also include any "renamed-from" paths so `git add` stages the
+  // deletion of the original local filename when the server sanitized
+  // the upload name. Without this, the user is left with a pending
+  // `D <old-name>` change after every spaces→hyphens rewrite.
+  if (pushedNames.size > 0 || renamedFromNames.size > 0) {
     const ts = new Date().toISOString();
-    const paths = Array.from(pushedNames).map((n) => `${dir}/${n}`);
+    const paths = [
+      ...Array.from(pushedNames).map((n) => `${dir}/${n}`),
+      ...Array.from(renamedFromNames).map((n) => `${dir}/${n}`),
+    ];
     await commitTouched(repo, paths, `sync: deployed @ ${ts}`);
   }
 
