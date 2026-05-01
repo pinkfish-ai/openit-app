@@ -36,6 +36,556 @@ const BRACKETED_PASTE_OPEN = "\x1b[200~";
 const BRACKETED_PASTE_CLOSE = "\x1b[201~";
 import type { ViewerSource } from "./types";
 
+/// Default model dropdown options. Mirrors the platform's set
+/// (`sonnet`, `haiku`, `opus`, `opus-low`); blank means "preserve cloud
+/// value" (omit-when-absent on push).
+const AGENT_MODEL_OPTIONS = [
+  { value: "", label: "(use cloud default)" },
+  { value: "haiku", label: "haiku" },
+  { value: "sonnet", label: "sonnet" },
+  { value: "opus", label: "opus" },
+  { value: "opus-low", label: "opus-low" },
+];
+
+const AGENT_TRIAGE_SUBDIR = "agents/triage";
+
+type AgentResourceFormRow = {
+  name: string;
+  canRead: boolean;
+  canWrite: boolean;
+  canDelete: boolean;
+};
+
+async function loadAgentEditState(args: {
+  repo: string;
+  source: ViewerSource | null;
+  agentOverride: Agent | null;
+  setDraft: (draft: {
+    description: string;
+    common: string;
+    cloud: string;
+    local: string;
+    selectedModel: string;
+    isShared: boolean;
+    promptExamples: string;
+    introMessage: string;
+    knowledgeBases: AgentResourceFormRow[];
+    datastores: AgentResourceFormRow[];
+    filestores: AgentResourceFormRow[];
+    servers: { name: string; allTools: boolean }[];
+  }) => void;
+  setLoaded: (loaded: {
+    json: Record<string, unknown>;
+    common: string;
+    cloud: string;
+    local: string;
+  }) => void;
+  setKbs: (list: string[] | null) => void;
+  setDss: (list: string[] | null) => void;
+  setFss: (list: string[] | null) => void;
+}): Promise<void> {
+  if (!args.source || args.source.kind !== "agent") return;
+  const a = args.agentOverride ?? args.source.agent;
+  // Re-read triage.json from disk so we capture every field the form
+  // doesn't render (V4 will add per-tool config; cloud may have a 4th
+  // MCP server). Without this, Save round-trips only the fields the
+  // form knows about and silently drops anything else.
+  let parsed: Record<string, unknown> = {};
+  try {
+    const raw = await fsRead(args.source.path);
+    parsed = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    // fall back to the in-memory shape — better than blank form
+    parsed = JSON.parse(JSON.stringify(a)) as Record<string, unknown>;
+  }
+  const repo = args.repo;
+  const [common, cloud, local] = await Promise.all([
+    fsRead(`${repo}/${AGENT_TRIAGE_SUBDIR}/common.md`).catch(() => ""),
+    fsRead(`${repo}/${AGENT_TRIAGE_SUBDIR}/cloud.md`).catch(() => ""),
+    fsRead(`${repo}/${AGENT_TRIAGE_SUBDIR}/local.md`).catch(() => ""),
+  ]);
+  args.setLoaded({ json: parsed, common, cloud, local });
+
+  const resources = (parsed.resources as
+    | { knowledgeBases?: AgentResourceFormRow[]; datastores?: AgentResourceFormRow[]; filestores?: AgentResourceFormRow[] }
+    | undefined) ?? {};
+  const tools = (parsed.tools as { servers?: { name: string; allTools?: boolean }[] } | undefined) ?? {};
+  args.setDraft({
+    description: typeof parsed.description === "string" ? parsed.description : "",
+    common,
+    cloud,
+    local,
+    selectedModel:
+      typeof parsed.selectedModel === "string" ? parsed.selectedModel : "",
+    isShared: typeof parsed.isShared === "boolean" ? parsed.isShared : false,
+    promptExamples: Array.isArray(parsed.promptExamples)
+      ? (parsed.promptExamples as unknown[])
+          .filter((x): x is string => typeof x === "string")
+          .join("\n")
+      : "",
+    introMessage:
+      typeof parsed.introMessage === "string" ? parsed.introMessage : "",
+    knowledgeBases: (resources.knowledgeBases ?? []).map(normalizeResourceRow),
+    datastores: (resources.datastores ?? []).map(normalizeResourceRow),
+    filestores: (resources.filestores ?? []).map(normalizeResourceRow),
+    servers: (tools.servers ?? []).map((s) => ({
+      name: typeof s.name === "string" ? s.name : "",
+      allTools: typeof s.allTools === "boolean" ? s.allTools : true,
+    })),
+  });
+
+  // Fetch collection lists from the running sync engines + a one-off
+  // datastore call. Each is best-effort — errors leave that picker in
+  // its empty state (which renders the "connect cloud first" hint).
+  args.setKbs(null);
+  args.setDss(null);
+  args.setFss(null);
+  try {
+    const { getSyncStatus } = await import("../lib/kbSync");
+    const list = getSyncStatus().collections.map((c) => c.name);
+    args.setKbs(list.map(stripOpenitPrefix));
+  } catch {
+    args.setKbs([]);
+  }
+  try {
+    const { getFilestoreSyncStatus } = await import("../lib/filestoreSync");
+    const list = getFilestoreSyncStatus().collections.map((c) => c.name);
+    args.setFss(list.map(stripOpenitPrefix));
+  } catch {
+    args.setFss([]);
+  }
+  try {
+    const { resolveProjectDatastores } = await import("../lib/datastoreSync");
+    const creds = await loadCreds();
+    if (creds) {
+      const cols = await resolveProjectDatastores(creds);
+      args.setDss(cols.map((c) => stripOpenitPrefix(c.name)));
+    } else {
+      args.setDss([]);
+    }
+  } catch {
+    args.setDss([]);
+  }
+}
+
+function normalizeResourceRow(r: AgentResourceFormRow | { name?: string; canRead?: boolean; canWrite?: boolean; canDelete?: boolean }): AgentResourceFormRow {
+  return {
+    name: typeof r.name === "string" ? r.name : "",
+    canRead: typeof r.canRead === "boolean" ? r.canRead : true,
+    canWrite: typeof r.canWrite === "boolean" ? r.canWrite : false,
+    canDelete: typeof r.canDelete === "boolean" ? r.canDelete : false,
+  };
+}
+
+function stripOpenitPrefix(name: string): string {
+  return name.startsWith("openit-") ? name.slice("openit-".length) : name;
+}
+
+/// Save handler for the agent Edit form. Diffs each form field against
+/// the loaded snapshot and writes only the files that actually
+/// changed — no all-files-write churn on a one-character edit.
+async function saveAgentEditDraft(args: {
+  repo: string;
+  draft: {
+    description: string;
+    common: string;
+    cloud: string;
+    local: string;
+    selectedModel: string;
+    isShared: boolean;
+    promptExamples: string;
+    introMessage: string;
+    knowledgeBases: AgentResourceFormRow[];
+    datastores: AgentResourceFormRow[];
+    filestores: AgentResourceFormRow[];
+    servers: { name: string; allTools: boolean }[];
+  };
+  loaded: {
+    json: Record<string, unknown>;
+    common: string;
+    cloud: string;
+    local: string;
+  } | null;
+  agent: Agent;
+}): Promise<void> {
+  const { repo, draft, loaded, agent } = args;
+  if (loaded && draft.common !== loaded.common) {
+    await entityWriteFile(repo, AGENT_TRIAGE_SUBDIR, "common.md", draft.common);
+  }
+  if (loaded && draft.cloud !== loaded.cloud) {
+    await entityWriteFile(repo, AGENT_TRIAGE_SUBDIR, "cloud.md", draft.cloud);
+  }
+  if (loaded && draft.local !== loaded.local) {
+    await entityWriteFile(repo, AGENT_TRIAGE_SUBDIR, "local.md", draft.local);
+  }
+
+  // Build the new triage.json: start from the loaded JSON (so unknown
+  // array entries / per-tool config / cloud-side additions round-trip
+  // verbatim) and overlay the form-managed fields.
+  const next: Record<string, unknown> = { ...(loaded?.json ?? {}) };
+  next.id = String(next.id ?? agent.id ?? "");
+  next.name = String(next.name ?? agent.name ?? "");
+  next.description = draft.description;
+  if (draft.selectedModel) next.selectedModel = draft.selectedModel;
+  else delete next.selectedModel;
+  next.isShared = draft.isShared;
+  const promptExamples = draft.promptExamples
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (promptExamples.length > 0) next.promptExamples = promptExamples;
+  else delete next.promptExamples;
+  if (draft.introMessage) next.introMessage = draft.introMessage;
+  else delete next.introMessage;
+
+  // Resources: merge form rows with any unknown rows from the loaded
+  // JSON. Form rows replace by name; unknown names round-trip as-is.
+  const loadedResources =
+    (loaded?.json.resources as
+      | { knowledgeBases?: AgentResourceFormRow[]; datastores?: AgentResourceFormRow[]; filestores?: AgentResourceFormRow[] }
+      | undefined) ?? {};
+  next.resources = {
+    knowledgeBases: mergeResourceRows(loadedResources.knowledgeBases, draft.knowledgeBases),
+    datastores: mergeResourceRows(loadedResources.datastores, draft.datastores),
+    filestores: mergeResourceRows(loadedResources.filestores, draft.filestores),
+  };
+
+  // Tools.servers: same merge — preserve any cloud-side additions the
+  // form doesn't render (V4 will add per-tool config UI).
+  const loadedServers = ((loaded?.json.tools as { servers?: { name: string; allTools?: boolean }[] } | undefined)?.servers) ?? [];
+  next.tools = { servers: mergeServerRows(loadedServers, draft.servers) };
+
+  const filename = `${agent.name}.json`;
+  await entityWriteFile(
+    repo,
+    AGENT_TRIAGE_SUBDIR,
+    filename,
+    JSON.stringify(next, null, 2),
+  );
+}
+
+function mergeResourceRows(
+  loaded: AgentResourceFormRow[] | undefined,
+  formRows: AgentResourceFormRow[],
+): AgentResourceFormRow[] {
+  // Drop rows where every permission is false (mirrors platform
+  // validateResources). Form name keys the row identity; unknown loaded
+  // names round-trip verbatim.
+  const formByName = new Map(formRows.map((r) => [r.name, r]));
+  const out: AgentResourceFormRow[] = [];
+  if (Array.isArray(loaded)) {
+    for (const row of loaded) {
+      if (formByName.has(row.name)) {
+        const merged = formByName.get(row.name)!;
+        if (merged.canRead || merged.canWrite || merged.canDelete) out.push(merged);
+        formByName.delete(row.name);
+      } else {
+        out.push(normalizeResourceRow(row));
+      }
+    }
+  }
+  for (const r of formByName.values()) {
+    if (r.canRead || r.canWrite || r.canDelete) out.push(r);
+  }
+  return out;
+}
+
+function mergeServerRows(
+  loaded: { name: string; allTools?: boolean; [k: string]: unknown }[],
+  formRows: { name: string; allTools: boolean }[],
+): { name: string; allTools: boolean; [k: string]: unknown }[] {
+  const formByName = new Map(formRows.map((r) => [r.name, r]));
+  const out: { name: string; allTools: boolean; [k: string]: unknown }[] = [];
+  for (const row of loaded) {
+    const formRow = formByName.get(row.name);
+    if (formRow) {
+      out.push({ ...row, name: formRow.name, allTools: formRow.allTools });
+      formByName.delete(row.name);
+    } else {
+      out.push({ ...row, name: row.name, allTools: row.allTools ?? true });
+    }
+  }
+  for (const r of formByName.values()) out.push(r);
+  return out;
+}
+
+function AgentResourceSection(props: {
+  title: string;
+  emptyHint: string;
+  available: string[] | null;
+  rows: AgentResourceFormRow[];
+  onChange: (rows: AgentResourceFormRow[]) => void;
+}): ReactNode {
+  const { title, emptyHint, available, rows, onChange } = props;
+  const attachedNames = new Set(rows.map((r) => r.name));
+  const unattached = (available ?? []).filter((n) => !attachedNames.has(n));
+  return (
+    <div className="agent-edit-section">
+      <h4 className="agent-edit-section-title">{title}</h4>
+      {available !== null && available.length === 0 && (
+        <p className="agent-edit-empty">{emptyHint}</p>
+      )}
+      {rows.length === 0 && available !== null && available.length > 0 && (
+        <p className="agent-edit-empty">No {title.toLowerCase()} attached.</p>
+      )}
+      {rows.map((row, idx) => (
+        <div className="agent-edit-row" key={`${row.name}-${idx}`}>
+          <code className="agent-edit-row-name">{row.name}</code>
+          <label className="agent-edit-row-perm">
+            <input
+              type="checkbox"
+              checked={row.canRead}
+              onChange={(e) => {
+                const next = [...rows];
+                next[idx] = { ...row, canRead: e.target.checked };
+                onChange(next);
+              }}
+            />
+            R
+          </label>
+          <label className="agent-edit-row-perm">
+            <input
+              type="checkbox"
+              checked={row.canWrite}
+              onChange={(e) => {
+                const next = [...rows];
+                next[idx] = { ...row, canWrite: e.target.checked };
+                onChange(next);
+              }}
+            />
+            W
+          </label>
+          <label className="agent-edit-row-perm">
+            <input
+              type="checkbox"
+              checked={row.canDelete}
+              onChange={(e) => {
+                const next = [...rows];
+                next[idx] = { ...row, canDelete: e.target.checked };
+                onChange(next);
+              }}
+            />
+            D
+          </label>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onChange(rows.filter((_, i) => i !== idx))}
+          >
+            Remove
+          </Button>
+        </div>
+      ))}
+      {unattached.length > 0 && (
+        <div className="agent-edit-add-row">
+          <select
+            value=""
+            onChange={(e) => {
+              if (!e.target.value) return;
+              onChange([
+                ...rows,
+                {
+                  name: e.target.value,
+                  canRead: true,
+                  canWrite: false,
+                  canDelete: false,
+                },
+              ]);
+            }}
+          >
+            <option value="">+ Attach {title.toLowerCase().replace(/s$/, "")}…</option>
+            {unattached.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AgentToolsSection(props: {
+  rows: { name: string; allTools: boolean }[];
+  onChange: (rows: { name: string; allTools: boolean }[]) => void;
+}): ReactNode {
+  const { rows, onChange } = props;
+  // V2 form ships the three default MCP servers as toggles; custom
+  // servers come from the loaded JSON via mergeServerRows. The form's
+  // identity for each row is `name`.
+  const DEFAULTS = ["knowledge-base", "datastore-structured", "filestorage"];
+  const presentByName = new Map(rows.map((r) => [r.name, r]));
+  const visible: { name: string; allTools: boolean }[] = [];
+  for (const name of DEFAULTS) {
+    visible.push(presentByName.get(name) ?? { name, allTools: true });
+  }
+  // Preserve any non-default servers (cloud-side adds) below the
+  // defaults so the user can toggle them on/off too.
+  for (const row of rows) {
+    if (DEFAULTS.includes(row.name)) continue;
+    visible.push(row);
+  }
+  const setEnabled = (name: string, enabled: boolean): void => {
+    if (enabled) {
+      const existing = presentByName.get(name);
+      const next = [
+        ...rows.filter((r) => r.name !== name),
+        existing ?? { name, allTools: true },
+      ];
+      onChange(next);
+    } else {
+      onChange(rows.filter((r) => r.name !== name));
+    }
+  };
+  return (
+    <div className="agent-edit-section">
+      <h4 className="agent-edit-section-title">MCP servers</h4>
+      {visible.map((row) => {
+        const enabled = presentByName.has(row.name);
+        return (
+          <label className="agent-edit-row" key={row.name}>
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(row.name, e.target.checked)}
+            />
+            <code className="agent-edit-row-name">{row.name}</code>
+            <span className="agent-edit-row-hint">(all tools)</span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function AgentRenderedView(props: { agent: Agent; repo: string | null }): ReactNode {
+  const { agent: a, repo } = props;
+  const [common, setCommon] = useState<string>("");
+  const [cloud, setCloud] = useState<string>("");
+  const [local, setLocal] = useState<string>("");
+  useEffect(() => {
+    if (!repo) return;
+    let cancelled = false;
+    Promise.all([
+      fsRead(`${repo}/${AGENT_TRIAGE_SUBDIR}/common.md`).catch(() => ""),
+      fsRead(`${repo}/${AGENT_TRIAGE_SUBDIR}/cloud.md`).catch(() => ""),
+      fsRead(`${repo}/${AGENT_TRIAGE_SUBDIR}/local.md`).catch(() => ""),
+    ]).then(([c, cl, l]) => {
+      if (cancelled) return;
+      setCommon(c);
+      setCloud(cl);
+      setLocal(l);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, a.id, a.name]);
+  return (
+    <div className="viewer-summary">
+      <h2>{a.name}</h2>
+      {a.description && <p className="summary-desc">{a.description}</p>}
+      <div className="summary-section">
+        <h3>Details</h3>
+        <table className="summary-table">
+          <tbody>
+            <tr><td>ID</td><td><code>{a.id}</code></td></tr>
+            {a.selectedModel && <tr><td>Model</td><td>{a.selectedModel}</td></tr>}
+            {a.isShared !== undefined && (
+              <tr><td>Shared</td><td>{a.isShared ? "Yes" : "No"}</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {a.introMessage && (
+        <div className="summary-section">
+          <h3>Intro message</h3>
+          <p>{a.introMessage}</p>
+        </div>
+      )}
+      {a.promptExamples && a.promptExamples.length > 0 && (
+        <div className="summary-section">
+          <h3>Prompt bubbles</h3>
+          <ul>
+            {a.promptExamples.map((p, i) => (
+              <li key={i}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {a.resources && (
+        <div className="summary-section">
+          <h3>Resources</h3>
+          <table className="summary-table">
+            <tbody>
+              {a.resources.knowledgeBases && a.resources.knowledgeBases.length > 0 && (
+                <tr>
+                  <td>Knowledge bases</td>
+                  <td>{a.resources.knowledgeBases.map((r) => r.name).join(", ")}</td>
+                </tr>
+              )}
+              {a.resources.datastores && a.resources.datastores.length > 0 && (
+                <tr>
+                  <td>Datastores</td>
+                  <td>{a.resources.datastores.map((r) => r.name).join(", ")}</td>
+                </tr>
+              )}
+              {a.resources.filestores && a.resources.filestores.length > 0 && (
+                <tr>
+                  <td>Filestores</td>
+                  <td>{a.resources.filestores.map((r) => r.name).join(", ")}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {a.tools?.servers && a.tools.servers.length > 0 && (
+        <div className="summary-section">
+          <h3>Tools</h3>
+          <table className="summary-table">
+            <tbody>
+              <tr>
+                <td>MCP servers</td>
+                <td>{a.tools.servers.map((s) => s.name).join(", ")}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      {(common || cloud || local) && (
+        <div className="summary-section">
+          <h3>Instructions</h3>
+          {common && (
+            <>
+              <h4>Common</h4>
+              <div className="viewer-md">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{common}</ReactMarkdown>
+              </div>
+            </>
+          )}
+          {cloud && (
+            <>
+              <h4>Cloud-runtime</h4>
+              <div className="viewer-md">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{cloud}</ReactMarkdown>
+              </div>
+            </>
+          )}
+          {local && (
+            <>
+              <h4>Local-runtime</h4>
+              <div className="viewer-md">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{local}</ReactMarkdown>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export type { ViewerSource };
 
 /// Land each dropped file into `<repo>/<subdir>/<filename>`. Used by
@@ -571,10 +1121,53 @@ export function Viewer({
   // rowOverride pattern but for the agent panel: draft holds the
   // in-flight form values, override flips the rendered/raw view to the
   // saved content without waiting for the FS watcher to re-read disk.
+  //
+  // V2 fans the draft across structured fields plus the three .md
+  // instruction blocks (common / cloud / local). The full triage.json
+  // payload is captured in `loadedJson` so `unknown array entries`
+  // (extra MCP servers, extra resources added on web) round-trip
+  // unchanged through Save.
   const [agentEditDraft, setAgentEditDraft] = useState<{
     description: string;
-    instructions: string;
-  }>({ description: "", instructions: "" });
+    common: string;
+    cloud: string;
+    local: string;
+    selectedModel: string;
+    isShared: boolean;
+    promptExamples: string;
+    introMessage: string;
+    knowledgeBases: { name: string; canRead: boolean; canWrite: boolean; canDelete: boolean }[];
+    datastores: { name: string; canRead: boolean; canWrite: boolean; canDelete: boolean }[];
+    filestores: { name: string; canRead: boolean; canWrite: boolean; canDelete: boolean }[];
+    servers: { name: string; allTools: boolean }[];
+  }>({
+    description: "",
+    common: "",
+    cloud: "",
+    local: "",
+    selectedModel: "",
+    isShared: false,
+    promptExamples: "",
+    introMessage: "",
+    knowledgeBases: [],
+    datastores: [],
+    filestores: [],
+    servers: [],
+  });
+  // Snapshot of the original disk state at Edit-tab open. Save uses it
+  // to diff form fields against loaded values and write only changed
+  // files. Holds the full parsed JSON + each .md verbatim.
+  const [agentEditLoaded, setAgentEditLoaded] = useState<{
+    json: Record<string, unknown>;
+    common: string;
+    cloud: string;
+    local: string;
+  } | null>(null);
+  // Lists of cloud collections for the resource pickers — fetched on
+  // Edit-tab open. Empty until loaded.
+  const [agentEditKbs, setAgentEditKbs] = useState<string[] | null>(null);
+  const [agentEditDss, setAgentEditDss] = useState<string[] | null>(null);
+  const [agentEditFss, setAgentEditFss] = useState<string[] | null>(null);
   const [agentOverride, setAgentOverride] = useState<Agent | null>(null);
 
   // Reply composer state for the conversation-thread view. The admin
@@ -1714,19 +2307,22 @@ export function Viewer({
       const a: Agent = agentOverride ?? source.agent;
 
       if (mode === "raw") {
-        // Same shape `canonicalizeForDisk` produces — keeps Raw view
-        // identical to what's on disk.
-        const json = JSON.stringify(
-          {
-            id: a.id ?? "",
-            name: a.name ?? "",
-            description: a.description ?? "",
-            instructions: a.instructions ?? "",
-          },
-          null,
-          2,
-        );
-        return <pre className="viewer-content">{json}</pre>;
+        // V2: the on-disk JSON no longer carries `instructions` (the
+        // three .md siblings own those). Show the structured fields
+        // verbatim — same shape canonicalizeForDisk produces, so Raw
+        // matches what `cat agents/triage/triage.json` would show.
+        const out: Record<string, unknown> = {
+          id: a.id ?? "",
+          name: a.name ?? "",
+          description: a.description ?? "",
+        };
+        if (a.selectedModel !== undefined) out.selectedModel = a.selectedModel;
+        if (a.isShared !== undefined) out.isShared = a.isShared;
+        if (a.promptExamples !== undefined) out.promptExamples = a.promptExamples;
+        if (a.introMessage !== undefined) out.introMessage = a.introMessage;
+        if (a.resources !== undefined) out.resources = a.resources;
+        if (a.tools !== undefined) out.tools = a.tools;
+        return <pre className="viewer-content">{JSON.stringify(out, null, 2)}</pre>;
       }
 
       if (mode === "edit") {
@@ -1738,26 +2334,22 @@ export function Viewer({
           setEditSaving(true);
           setEditError(null);
           try {
-            // Filename is the local (unprefixed) `name` — agents/<name>.json.
-            // Editing the in-file `name` is out of V1 scope; only
-            // description + instructions round-trip from this form, so
-            // the filename never changes.
-            const filename = `${a.name}.json`;
-            const json = JSON.stringify(
-              {
-                id: a.id ?? "",
-                name: a.name ?? "",
-                description: agentEditDraft.description,
-                instructions: agentEditDraft.instructions,
-              },
-              null,
-              2,
-            );
-            await entityWriteFile(repo, "agents", filename, json);
+            await saveAgentEditDraft({
+              repo,
+              draft: agentEditDraft,
+              loaded: agentEditLoaded,
+              agent: a,
+            });
             setAgentOverride({
               ...a,
               description: agentEditDraft.description,
-              instructions: agentEditDraft.instructions,
+              selectedModel: agentEditDraft.selectedModel || undefined,
+              isShared: agentEditDraft.isShared,
+              promptExamples: agentEditDraft.promptExamples
+                .split("\n")
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0),
+              introMessage: agentEditDraft.introMessage || undefined,
             });
             setMode("rendered");
           } catch (err) {
@@ -1773,7 +2365,7 @@ export function Viewer({
           setMode("rendered");
         };
         return (
-          <div className="row-edit">
+          <div className="row-edit agent-edit-form">
             <div className="row-edit-form">
               <label className="row-edit-field">
                 <span className="row-edit-label">Description</span>
@@ -1790,19 +2382,131 @@ export function Viewer({
                 />
               </label>
               <label className="row-edit-field">
-                <span className="row-edit-label">Instructions</span>
+                <span className="row-edit-label">Common instructions (universal)</span>
                 <textarea
                   className="row-edit-textarea"
-                  rows={20}
-                  value={agentEditDraft.instructions}
+                  rows={10}
+                  value={agentEditDraft.common}
+                  onChange={(e) =>
+                    setAgentEditDraft({ ...agentEditDraft, common: e.target.value })
+                  }
+                />
+              </label>
+              <label className="row-edit-field">
+                <span className="row-edit-label">Cloud instructions (Pinkfish runtime)</span>
+                <textarea
+                  className="row-edit-textarea"
+                  rows={6}
+                  value={agentEditDraft.cloud}
+                  onChange={(e) =>
+                    setAgentEditDraft({ ...agentEditDraft, cloud: e.target.value })
+                  }
+                />
+              </label>
+              <label className="row-edit-field">
+                <span className="row-edit-label">Local instructions (OpenIT runtime)</span>
+                <textarea
+                  className="row-edit-textarea"
+                  rows={6}
+                  value={agentEditDraft.local}
+                  onChange={(e) =>
+                    setAgentEditDraft({ ...agentEditDraft, local: e.target.value })
+                  }
+                />
+              </label>
+              <label className="row-edit-field">
+                <span className="row-edit-label">Model</span>
+                <select
+                  className="row-edit-input"
+                  value={agentEditDraft.selectedModel}
                   onChange={(e) =>
                     setAgentEditDraft({
                       ...agentEditDraft,
-                      instructions: e.target.value,
+                      selectedModel: e.target.value,
+                    })
+                  }
+                >
+                  {AGENT_MODEL_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="row-edit-field row-edit-field-inline">
+                <input
+                  type="checkbox"
+                  checked={agentEditDraft.isShared}
+                  onChange={(e) =>
+                    setAgentEditDraft({
+                      ...agentEditDraft,
+                      isShared: e.target.checked,
+                    })
+                  }
+                />
+                <span className="row-edit-label">Shared with org</span>
+              </label>
+              <label className="row-edit-field">
+                <span className="row-edit-label">Prompt bubbles (one per line)</span>
+                <textarea
+                  className="row-edit-textarea"
+                  rows={4}
+                  value={agentEditDraft.promptExamples}
+                  onChange={(e) =>
+                    setAgentEditDraft({
+                      ...agentEditDraft,
+                      promptExamples: e.target.value,
                     })
                   }
                 />
               </label>
+              <label className="row-edit-field">
+                <span className="row-edit-label">Intro message</span>
+                <textarea
+                  className="row-edit-textarea"
+                  rows={3}
+                  value={agentEditDraft.introMessage}
+                  onChange={(e) =>
+                    setAgentEditDraft({
+                      ...agentEditDraft,
+                      introMessage: e.target.value,
+                    })
+                  }
+                />
+              </label>
+              <AgentResourceSection
+                title="Knowledge bases"
+                emptyHint="No knowledge bases connected — connect cloud first."
+                available={agentEditKbs}
+                rows={agentEditDraft.knowledgeBases}
+                onChange={(rows) =>
+                  setAgentEditDraft({ ...agentEditDraft, knowledgeBases: rows })
+                }
+              />
+              <AgentResourceSection
+                title="Datastores"
+                emptyHint="No datastores connected — connect cloud first."
+                available={agentEditDss}
+                rows={agentEditDraft.datastores}
+                onChange={(rows) =>
+                  setAgentEditDraft({ ...agentEditDraft, datastores: rows })
+                }
+              />
+              <AgentResourceSection
+                title="Filestores"
+                emptyHint="No filestores connected — connect cloud first."
+                available={agentEditFss}
+                rows={agentEditDraft.filestores}
+                onChange={(rows) =>
+                  setAgentEditDraft({ ...agentEditDraft, filestores: rows })
+                }
+              />
+              <AgentToolsSection
+                rows={agentEditDraft.servers}
+                onChange={(rows) =>
+                  setAgentEditDraft({ ...agentEditDraft, servers: rows })
+                }
+              />
             </div>
             <div className="row-edit-footer">
               {editError && <span className="row-edit-error">{editError}</span>}
@@ -1829,28 +2533,7 @@ export function Viewer({
       }
 
       // Default: rendered (read-only beautiful view).
-      return (
-        <div className="viewer-summary">
-          <h2>{a.name}</h2>
-          {a.description && <p className="summary-desc">{a.description}</p>}
-          <div className="summary-section">
-            <h3>Details</h3>
-            <table className="summary-table">
-              <tbody>
-                <tr><td>ID</td><td><code>{a.id}</code></td></tr>
-              </tbody>
-            </table>
-          </div>
-          {a.instructions && (
-            <div className="summary-section">
-              <h3>Instructions</h3>
-              <div className="viewer-md">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{a.instructions}</ReactMarkdown>
-              </div>
-            </div>
-          )}
-        </div>
-      );
+      return <AgentRenderedView agent={a} repo={repo} />;
     }
 
     // Workflow summary
@@ -3318,11 +4001,16 @@ export function Viewer({
             <Tab
               active={mode === "edit"}
               onClick={() => {
-                if (mode !== "edit" && source.kind === "agent") {
-                  const a = agentOverride ?? source.agent;
-                  setAgentEditDraft({
-                    description: a.description ?? "",
-                    instructions: a.instructions ?? "",
+                if (mode !== "edit" && source.kind === "agent" && repo) {
+                  void loadAgentEditState({
+                    repo,
+                    source,
+                    agentOverride,
+                    setDraft: setAgentEditDraft,
+                    setLoaded: setAgentEditLoaded,
+                    setKbs: setAgentEditKbs,
+                    setDss: setAgentEditDss,
+                    setFss: setAgentEditFss,
                   });
                 }
                 setEditError(null);
