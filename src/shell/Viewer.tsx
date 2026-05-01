@@ -166,6 +166,24 @@ async function deleteFileInSubdir(
   }
 }
 
+/// Hello-world starter content for the "New" button on the scripts /
+/// skills folder views. The .mjs template exports a default async
+/// function (the shape every plugin-script entry point uses); the .md
+/// template seeds a frontmatter-less skill stub the user can fill in.
+const NEW_FILE_TEMPLATES: Record<"mjs" | "md", string> = {
+  // Default-export AND top-level invocation so the same file works
+  // both ways — `import helloWorld from './untitled.mjs'` for reuse
+  // elsewhere, AND `node untitled.mjs` (the in-app Run button) prints
+  // "Hello, world!" without the user having to add a call site.
+  mjs:
+    `export default async function helloWorld() {\n` +
+    `  console.log("Hello, world!");\n` +
+    `}\n` +
+    `\n` +
+    `await helloWorld();\n`,
+  md: `When you invoke this skill, say "Hello World"\n`,
+};
+
 /// Filenames that survive Finder (narrow no-break space, colons,
 /// stray Unicode whitespace) routinely break the sync push and other
 /// downstream tools that assume POSIX-safe names. Normalize before
@@ -400,6 +418,15 @@ function isMjsScript(path: string): boolean {
   return /\.mjs$/i.test(path);
 }
 
+/// Files the in-app "Run" button can execute (`node` for JS family,
+/// `python3` for `.py`). Used to gate the run affordance and the
+/// always-edit mode — runnable scripts skip the View/Edit toggle
+/// since "view" doesn't add value when the file is plain text the
+/// user came here to edit + run.
+function isRunnableScript(path: string): boolean {
+  return /\.(mjs|js|cjs|py)$/i.test(path);
+}
+
 /// Files that should expose View / Edit tabs and a textarea-backed
 /// edit mode. Markdown, JSON, and `.mjs` scripts.
 function hasEditableTextMode(path: string): boolean {
@@ -442,6 +469,7 @@ export function Viewer({
   tunnelUrl,
   welcomeFlashKey,
   onOpenPath,
+  onShowSource,
   onGoBack,
   onGoForward,
   canGoBack,
@@ -465,6 +493,11 @@ export function Viewer({
    *  cards to drill into a specific thread). Optional — falls back to
    *  no-op if the parent didn't wire it. */
   onOpenPath?: (path: string) => void | Promise<void>;
+  /** Programmatically route the viewer to a non-path source (e.g.
+   *  the captured stdout/stderr of a script run). The parent owns
+   *  the source state, so a card-level handler can't call setSource
+   *  directly — this prop is the escape hatch. */
+  onShowSource?: (source: ViewerSource) => void;
   /** Browser-style back/forward across the center-pane view history.
    *  Wired by Shell so every page gets the same pair of arrows in
    *  the viewer header instead of relying on per-page back buttons. */
@@ -519,6 +552,20 @@ export function Viewer({
   const [editDraft, setEditDraft] = useState<string>("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Inline rename state for the file-title in the viewer-header.
+  // `renamingPath` is the source path the user is currently editing
+  // (null when not renaming). `renameDraft` is the textbox value.
+  // Both reset whenever the source changes — opening a different file
+  // mid-rename discards the draft.
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState<string>("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  useEffect(() => {
+    setRenamingPath(null);
+    setRenameDraft("");
+    setRenameError(null);
+  }, [source]);
+
   // Parallel state for row-edit mode — keyed by field id, mirrors the
   // row content. Stored as `unknown` per field so `string[]`,
   // booleans, etc. round-trip without coercion until save.
@@ -627,9 +674,19 @@ export function Viewer({
         setContent("");
         return;
       }
-      setMode(isMarkdown(path) ? "rendered" : "raw");
+      // Runnable scripts default into edit mode and stay there —
+      // there's no "View" worth toggling for plain code, and the
+      // admin came here to edit + run. The textarea draft is
+      // seeded from disk in the .then below so Cancel still has
+      // something to revert to.
+      const runnable = isRunnableScript(path);
+      setMode(runnable ? "edit" : isMarkdown(path) ? "rendered" : "raw");
       fsRead(path)
-        .then((c) => !cancelled && setContent(c))
+        .then((c) => {
+          if (cancelled) return;
+          setContent(c);
+          if (runnable) setEditDraft(c);
+        })
         .catch((e) => !cancelled && setError(String(e)));
       return () => { cancelled = true; };
     }
@@ -641,6 +698,22 @@ export function Viewer({
     if (source.kind === "diff") {
       setMode("raw");
       setContent(source.text);
+      return;
+    }
+    if (source.kind === "script-output") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
+    // Draft files: no disk read. Pre-seed the textarea with the
+    // template content so the user can audit/edit before Save.
+    // `content` stays empty so `isDirty = editDraft !== content` is
+    // true on first paint — Save lights up immediately, no need for
+    // the user to wiggle the cursor before they can commit.
+    if (source.kind === "draft-file") {
+      setMode("edit");
+      setContent("");
+      setEditDraft(source.initialContent);
       return;
     }
     if (source.kind === "datastore-table") {
@@ -833,6 +906,9 @@ export function Viewer({
       case "file": return source.path.split("/").pop() ?? source.path;
       case "sync": return "Sync output";
       case "diff": return "Git diff";
+      case "script-output":
+        return `Run: ${source.script.split("/").pop() ?? source.script}`;
+      case "draft-file": return source.filename;
       case "datastore-table": return source.collection?.name ?? "Datastore";
       case "datastore-schema": return `${source.collection?.name ?? "Datastore"} — Schema`;
       case "datastore-row": return `${source.collection?.name ?? "Datastore"} / ${source.item?.key || source.item?.id || "Row"}`;
@@ -855,9 +931,9 @@ export function Viewer({
         return ENTITY_FOLDER_LABELS[source.entity];
       }
       case "databases-list":     return "Databases";
-      case "filestores-list":    return "Files";
+      case "filestores-list":    return "Filestores";
       case "attachments-folder": return "Attachments";
-      case "knowledge-bases-list": return "Knowledge";
+      case "knowledge-bases-list": return "Knowledge Bases";
       case "agent-trace":
         return `Agent trace — ${source.subject}`;
       case "agent-trace-list":
@@ -870,8 +946,13 @@ export function Viewer({
   const title = getTitle();
 
   // --- Tabs ---
+  // Runnable scripts skip the View/Edit toggle (they always render
+  // edit mode) — the tab strip would be a single live tab, which is
+  // worse than no tabs.
   const showFileTabs =
-    (source.kind === "file" && hasEditableTextMode(source.path)) ||
+    (source.kind === "file" &&
+      hasEditableTextMode(source.path) &&
+      !isRunnableScript(source.path)) ||
     source.kind === "datastore-schema";
   const showRowTabs = source.kind === "datastore-row";
   const showPeopleTabs = source.kind === "people-list";
@@ -918,9 +999,131 @@ export function Viewer({
       ? source.path.replace(/^filestores\/attachments\//, "")
       : null;
 
+  // "run" affordance in the viewer-subheader for runnable script
+  // files (.mjs / .js / .cjs / .py living anywhere — gates on
+  // extension, not just the scripts folder, so an admin viewing a
+  // script in a sub-folder still gets the same affordance). Same
+  // backend as the run-icon on the folder card; routes the viewer
+  // to a `script-output` source so the captured streams show up
+  // inline.
+  const runFileAffordance: { onRun: () => Promise<void> } | null =
+    source && source.kind === "file" && repo &&
+    /\.(mjs|js|cjs|py)$/i.test(source.path) &&
+    onShowSource
+      ? (() => {
+          const filePath = source.path;
+          return {
+            onRun: async () => {
+              try {
+                const { scriptRun } = await import("../lib/api");
+                const out = await scriptRun(repo, filePath);
+                onShowSource({
+                  kind: "script-output",
+                  script: filePath,
+                  stdout: out.stdout,
+                  stderr: out.stderr,
+                  exitCode: out.exitCode,
+                  durationMs: out.durationMs,
+                });
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                console.error(`[script-run] header run failed:`, err);
+                showToast(`Run failed: ${reason}`);
+              }
+            },
+          };
+        })()
+      : null;
+
+  // "new +" affordance in the viewer-subheader for the scripts /
+  // skills folder views. Mirrors the placement of the "add to chat"
+  // link so the create action lives at the top-right of the pane,
+  // not inside the dropzone where it competed with the drag target.
+  // Routes to a `draft-file` source — no file lands on disk until
+  // the user clicks Save (so a Cancel on the edit screen leaves
+  // nothing behind).
+  const newFileAffordance: { onCreate: () => void; title: string } | null =
+    source && source.kind === "entity-folder" && repo &&
+    (source.entity === "scripts" || source.entity === "skills")
+      ? (() => {
+          const ext: "mjs" | "md" = source.entity === "scripts" ? "mjs" : "md";
+          const subdirAbs = source.path;
+          const existing = source.files.map((f) => f.name);
+          return {
+            title:
+              source.entity === "scripts"
+                ? "Draft a new untitled.mjs script — Save to commit it"
+                : "Draft a new untitled.md skill — Save to commit it",
+            onCreate: () => {
+              if (!onShowSource) return;
+              // Pick the first free `untitled[-N].<ext>` against the
+              // current listing. The draft is in-memory only — Save
+              // will write the file and route to it; if the user
+              // Cancels, no file ever lands on disk.
+              const relSubdir = toRepoRelative(repo, subdirAbs);
+              const taken = new Set(existing);
+              let filename = `untitled.${ext}`;
+              let i = 2;
+              while (taken.has(filename)) {
+                filename = `untitled-${i}.${ext}`;
+                i += 1;
+              }
+              const fullPath = relSubdir
+                ? `${repo}/${relSubdir}/${filename}`
+                : `${repo}/${filename}`;
+              onShowSource({
+                kind: "draft-file",
+                path: fullPath,
+                subdir: relSubdir,
+                filename,
+                initialContent: NEW_FILE_TEMPLATES[ext],
+              });
+            },
+          };
+        })()
+      : null;
+
   // Pre-compute conversation status counts so the header pills can
   // display them without re-walking on each render frame. Memoising
   // would be overkill — the array is small and reads from the same
+  /// Validate + commit an inline rename from the viewer-header. Reads
+  /// `renamingPath` / `renameDraft`, calls `entity_rename_file` on
+  /// disk, then re-routes the viewer to the new path so the next
+  /// fsTick refresh doesn't bounce the user back to a stale source.
+  /// Bails (no-op) when the draft is empty, contains a path
+  /// separator, or matches the original — keeping a click-then-blur
+  /// without changes from triggering a needless write.
+  async function commitRename(): Promise<void> {
+    if (!renamingPath || !source || source.kind !== "file") return;
+    const original = renamingPath.split("/").pop() ?? renamingPath;
+    const next = renameDraft.trim();
+    if (!next || next === original) {
+      setRenamingPath(null);
+      setRenameDraft("");
+      setRenameError(null);
+      return;
+    }
+    if (next.includes("/") || next.includes("\\")) {
+      setRenameError("Filename can't contain slashes");
+      return;
+    }
+    const dirAbs = renamingPath.slice(0, renamingPath.length - original.length - 1);
+    const relSubdir = toRepoRelative(repo, dirAbs);
+    try {
+      const { entityRenameFile } = await import("../lib/api");
+      await entityRenameFile(repo, relSubdir, original, next);
+      const newPath = `${dirAbs}/${next}`;
+      setRenamingPath(null);
+      setRenameDraft("");
+      setRenameError(null);
+      if (onOpenPath) await onOpenPath(newPath);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`[rename] failed for ${original} → ${next}:`, err);
+      setRenameError(`Rename failed: ${reason}`);
+    }
+  }
+
   // reference until fsTick triggers a new resolver run.
   const conversationCounts: Record<
     "all" | "open" | "resolved" | "escalated",
@@ -991,8 +1194,9 @@ export function Viewer({
     filePath: string;
     /// Mode to return to on Cancel and after a successful Save. Markdown
     /// has a rendered preview ("rendered"); JSON / .mjs / schema only
-    /// have raw text ("raw").
-    afterMode: "raw" | "rendered";
+    /// have raw text ("raw"); runnable scripts stay in "edit" because
+    /// the View/Edit toggle is suppressed for them.
+    afterMode: "raw" | "rendered" | "edit";
     /// Run `JSON.parse(draft)` before writing. Surfaces typos on Save
     /// instead of letting them silently fall through to defaults at
     /// load time.
@@ -1087,7 +1291,11 @@ export function Viewer({
       if (mode === "edit" && hasEditableTextMode(source.path)) {
         return renderEditTextarea({
           filePath: source.path,
-          afterMode: isMarkdown(source.path) ? "rendered" : "raw",
+          afterMode: isRunnableScript(source.path)
+            ? "edit"
+            : isMarkdown(source.path)
+              ? "rendered"
+              : "raw",
           validateAsJson: isJsonFile(source.path),
         });
       }
@@ -1123,6 +1331,136 @@ export function Viewer({
         );
       }
       return <pre className="viewer-content">{content}</pre>;
+    }
+
+    // In-memory draft from the "New" button — no file on disk yet.
+    // Same edit chrome as the existing file editor, but Save commits
+    // a fresh write and routes the viewer to the now-real file.
+    // Cancel uses the parent's back-stack (the entity-folder is the
+    // last-known nav target). Save is naturally enabled because the
+    // baseline `content` is empty so any draft text reads as dirty.
+    if (source.kind === "draft-file") {
+      const draftSource = source;
+      const onSaveDraft = async () => {
+        if (!repo) return;
+        setEditSaving(true);
+        setEditError(null);
+        try {
+          const { entityWriteFile } = await import("../lib/api");
+          await entityWriteFile(
+            repo,
+            draftSource.subdir,
+            draftSource.filename,
+            editDraft,
+          );
+          showToast(`Created ${draftSource.filename}`);
+          // Refresh the parent folder in place so the new file shows
+          // up in its card list, THEN navigate to the file. Same-
+          // sourceKey check in setSource means the folder refresh is
+          // an in-place update (no extra back-stack entry); the file
+          // nav pushes the now-fresh folder onto back so the back
+          // arrow lands on a current listing.
+          if (onOpenPath) {
+            const folderAbs = `${repo}/${draftSource.subdir}`;
+            await onOpenPath(folderAbs);
+            await onOpenPath(draftSource.path);
+          }
+        } catch (err) {
+          setEditError(
+            `Save failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        } finally {
+          setEditSaving(false);
+        }
+      };
+      const onCancelDraft = () => {
+        // Discard the draft and go back. The user came from an
+        // entity-folder (the New button only appears there), so
+        // back-history is reliably non-empty here. The fallback
+        // is a no-op in that edge case rather than risk a stuck
+        // canvas — the user can navigate via the file tree.
+        if (onGoBack && canGoBack) onGoBack();
+      };
+      return (
+        <div className="viewer-edit">
+          <textarea
+            className="viewer-edit-textarea"
+            value={editDraft}
+            onChange={(e) => setEditDraft(e.target.value)}
+            spellCheck={false}
+            autoFocus
+          />
+          <div className="viewer-edit-footer">
+            {editError && <span className="viewer-edit-error">{editError}</span>}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onCancelDraft}
+              disabled={editSaving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={onSaveDraft}
+              disabled={editSaving || editDraft.length === 0}
+              loading={editSaving}
+            >
+              {editSaving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    // Captured stdout / stderr from a Run-button invocation. Two
+    // monospaced blocks (stdout green-tinted, stderr red-tinted)
+    // bracketed by a one-line summary so the admin can see exit
+    // status + duration at a glance. Empty streams are suppressed
+    // so a successful silent run doesn't leave dangling labels.
+    if (source.kind === "script-output") {
+      const ok = source.exitCode === 0;
+      const filename = source.script.split("/").pop() ?? source.script;
+      return (
+        <div className="viewer-summary script-output">
+          <div className="script-output-summary">
+            <span
+              className={`script-output-status ${ok ? "ok" : "fail"}`}
+              aria-label={ok ? "Exited 0" : `Exited ${source.exitCode}`}
+            >
+              {ok ? "✓" : "✗"} exit {source.exitCode}
+            </span>
+            <span className="script-output-duration">
+              {source.durationMs}ms
+            </span>
+            <code className="script-output-script">{filename}</code>
+          </div>
+          {source.stdout && (
+            <>
+              <h3 className="script-output-label">stdout</h3>
+              <pre className="viewer-content script-output-stream">
+                {source.stdout}
+              </pre>
+            </>
+          )}
+          {source.stderr && (
+            <>
+              <h3 className="script-output-label script-output-label-err">
+                stderr
+              </h3>
+              <pre className="viewer-content script-output-stream script-output-stream-err">
+                {source.stderr}
+              </pre>
+            </>
+          )}
+          {!source.stdout && !source.stderr && (
+            <p className="summary-desc">
+              The script ran to completion without printing anything.
+            </p>
+          )}
+        </div>
+      );
     }
 
     // Datastore schema (the `_schema.json` for a collection). Rendered
@@ -1414,12 +1752,25 @@ export function Viewer({
     // view via the parent's onOpenPath callback.
     if (source.kind === "conversations-list") {
       if (source.threads.length === 0) {
+        const sampleUrl = tunnelUrl || intakeUrl || null;
         return (
           <div className="viewer-summary">
             <p className="summary-desc">
               No conversation threads yet. They appear here once a ticket gets
               its first message — file a ticket via the Intake form to start one.
             </p>
+            {sampleUrl && (
+              <Button
+                variant="primary"
+                onClick={() => {
+                  openUrl(sampleUrl).catch((err) =>
+                    console.warn("[viewer] openUrl failed:", err),
+                  );
+                }}
+              >
+                Submit sample ticket
+              </Button>
+            )}
           </div>
         );
       }
@@ -1817,6 +2168,33 @@ export function Viewer({
                 deleteFileInSubdir(repo, source.path, f.name, setFolderUploadError, showToast)
             : undefined,
           onReveal: () => void fsReveal(f.path).catch(console.error),
+          // "Run" only for the scripts folder. Spawns `node <script>`
+          // server-side and routes the viewer to a script-output
+          // source so the captured stdout / stderr lands in the main
+          // content window instead of an external terminal.
+          onRun:
+            source.entity === "scripts" &&
+            /\.(mjs|js|cjs|py)$/i.test(f.path) &&
+            onShowSource
+              ? async () => {
+                  try {
+                    const { scriptRun } = await import("../lib/api");
+                    const out = await scriptRun(repo, f.path);
+                    onShowSource({
+                      kind: "script-output",
+                      script: f.path,
+                      stdout: out.stdout,
+                      stderr: out.stderr,
+                      exitCode: out.exitCode,
+                      durationMs: out.durationMs,
+                    });
+                  } catch (err) {
+                    const reason = err instanceof Error ? err.message : String(err);
+                    console.error(`[script-run] ${f.name} failed:`, err);
+                    showToast(`Run failed: ${reason}`);
+                  }
+                }
+              : undefined,
         };
       });
       // Drag-and-drop upload from the desktop is enabled for the two
@@ -1839,8 +2217,10 @@ export function Viewer({
       return (
         <div
           className={`viewer-summary${
-            acceptsDrop && folderDragOver ? " viewer-summary-drag" : ""
-          }${showDropZone ? " viewer-summary-dropzone" : ""}`}
+            acceptsDrop ? " viewer-summary-droppable" : ""
+          }${acceptsDrop && folderDragOver ? " viewer-summary-drag" : ""}${
+            showDropZone ? " viewer-summary-dropzone" : ""
+          }`}
           onDragOver={(e) => {
             // preventDefault is required EVERY time on a file dragover
             // — even when this folder doesn't accept drops. The HTML5
@@ -2526,7 +2906,53 @@ export function Viewer({
           </Button>
         </div>
         {headerKind && <EntityBadge kind={headerKind} showLabel={false} />}
-        <span className="viewer-title">{title}</span>
+        {source && source.kind === "file" ? (
+          renamingPath === source.path ? (
+            <input
+              type="text"
+              className="viewer-title viewer-title-rename"
+              value={renameDraft}
+              autoFocus
+              onChange={(e) => {
+                setRenameDraft(e.target.value);
+                setRenameError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void commitRename();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setRenamingPath(null);
+                  setRenameDraft("");
+                  setRenameError(null);
+                }
+              }}
+              onBlur={() => void commitRename()}
+            />
+          ) : (
+            <button
+              type="button"
+              className="viewer-title viewer-title-editable"
+              onClick={() => {
+                const filename = source.path.split("/").pop() ?? source.path;
+                setRenamingPath(source.path);
+                setRenameDraft(filename);
+                setRenameError(null);
+              }}
+              title="Click to rename"
+            >
+              {title}
+            </button>
+          )
+        ) : (
+          <span className="viewer-title">{title}</span>
+        )}
+        {renameError && (
+          <span className="viewer-title-rename-error" role="alert">
+            {renameError}
+          </span>
+        )}
         {source && source.kind === "conversation-thread" && onOpenPath && (
           <TabStrip variant="segmented">
             <Tab active>Conversation</Tab>
@@ -2581,6 +3007,28 @@ export function Viewer({
               <span className="arrow" aria-hidden="true">→</span>
             </Button>
           </>
+        )}
+        {runFileAffordance && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void runFileAffordance.onRun()}
+            title="Run this script with node / python3 and show the output"
+          >
+            <span className="viewer-run-glyph" aria-hidden="true">▶</span>
+            Run
+          </Button>
+        )}
+        {newFileAffordance && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => newFileAffordance.onCreate()}
+            title={newFileAffordance.title}
+          >
+            New
+            <span className="arrow" aria-hidden="true">+</span>
+          </Button>
         )}
         {showFileTabs && (
           <TabStrip variant="segmented">
