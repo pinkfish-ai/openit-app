@@ -213,22 +213,23 @@ async function pushAllToKbImpl(args: {
   });
 
   // Files in the manifest but no longer on disk → user-deleted; push must
-  // issue a remote DELETE. See the matching block in filestoreSync.ts for
-  // the full rationale and safety-guard reasoning.
+  // issue a remote DELETE.
+  //
+  // No "local empty + manifest non-empty → refuse" guard here: the
+  // original concern was a transient `entityListLocal` failure nuking
+  // remote, but `entity_list_local` returns an empty Vec for both
+  // "directory missing" and "directory present but empty" and only
+  // surfaces real read errors as throws (which propagate up the await
+  // and skip the deletion phase entirely). The trade-off was blocking
+  // legitimate "user deleted every file in this collection" — a real
+  // case the user hit and could not work around.
   //
   // KB-specific caveat: the multipart `/upload` endpoint rewrites
   // filenames with a UUID prefix and can leave duplicate rows on remote.
   // We delete by exact filename only — UUID-prefixed orphans are still
   // the responsibility of `scripts/cleanup-uuid-duplicates.mjs`.
   const manifestKeys = Object.keys(persisted.files);
-  let toDelete: string[] = [];
-  if (localCanonicalNames.size === 0 && manifestKeys.length > 0) {
-    onLine?.(
-      `▸ kb push (${displayKbName(collection.name)}): local listing empty but manifest has ${manifestKeys.length} entr${manifestKeys.length === 1 ? "y" : "ies"} — skipping deletion phase to avoid nuking remote`,
-    );
-  } else {
-    toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
-  }
+  const toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
 
   // [sync-debug]
   console.log(

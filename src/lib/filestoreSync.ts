@@ -209,27 +209,18 @@ async function pushAllToFilestoreImpl(args: {
   });
 
   // Files in the manifest but no longer on disk → user-deleted; push must
-  // issue a remote DELETE. Without this pass, local deletes never reach the
-  // cloud (the engine's pull leaves the manifest entry alone for push to
-  // reconcile, per syncEngine.ts case 4 / sync-engine.md §"server-delete").
+  // issue a remote DELETE. Without this pass, local deletes never reach
+  // the cloud (the engine's pull leaves the manifest entry alone for
+  // push to reconcile, per syncEngine.ts case 4).
   //
-  // Safety guard: if local listing is empty but the manifest has entries,
-  // refuse to delete. This is the "wiped working tree / transient read
-  // failure" scenario datastore guards against — without the check, a
-  // single bad listLocal would nuke every remote item. Datastore uses
-  // `localDirExists && !innerWalkFailed`; we use the simpler shape because
-  // filestore is one flat dir per collection. A truly empty filestore
-  // collection is recovered on the *next* push after the user re-deletes
-  // each file — annoying but not destructive.
+  // No "local empty + manifest non-empty → refuse" guard: see the
+  // matching comment in kbSync.ts. `entity_list_local` returns an empty
+  // Vec for both "directory missing" and "directory present but empty"
+  // and only surfaces real read errors as throws, so the guard
+  // additionally blocked the legitimate "user wiped this collection"
+  // case the user actually hit.
   const manifestKeys = Object.keys(persisted.files);
-  let toDelete: string[] = [];
-  if (localCanonicalNames.size === 0 && manifestKeys.length > 0) {
-    onLine?.(
-      `▸ filestore push (${collection.name}): local listing empty but manifest has ${manifestKeys.length} entr${manifestKeys.length === 1 ? "y" : "ies"} — skipping deletion phase to avoid nuking remote`,
-    );
-  } else {
-    toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
-  }
+  const toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
 
   // [sync-debug]
   console.log(`[sync-debug:fs:${collection.name}] push inputs:`, {
