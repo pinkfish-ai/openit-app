@@ -865,7 +865,9 @@ export function Viewer({
   const title = getTitle();
 
   // --- Tabs ---
-  const showFileTabs = source.kind === "file" && hasEditableTextMode(source.path);
+  const showFileTabs =
+    (source.kind === "file" && hasEditableTextMode(source.path)) ||
+    source.kind === "datastore-schema";
   const showRowTabs = source.kind === "datastore-row";
   const showPeopleTabs = source.kind === "people-list";
   const showConversationsFilter = source.kind === "conversations-list";
@@ -968,12 +970,98 @@ export function Viewer({
   const flushBody =
     source.kind === "conversation-thread" ||
     (source.kind === "datastore-row" && mode === "edit") ||
+    (source.kind === "datastore-schema" && mode === "edit") ||
     (source.kind === "file" &&
       (isImage(source.path) ||
         isPdf(source.path) ||
         isSpreadsheet(source.path) ||
         isOfficeDoc(source.path) ||
         (mode === "edit" && hasEditableTextMode(source.path))));
+
+  // Shared edit-mode renderer: textarea + Cancel / Save footer. Used by
+  // both the `kind: file` editable-text path (markdown / JSON / .mjs)
+  // and the `kind: datastore-schema` editor (which writes back to
+  // `databases/<col>/_schema.json`).
+  const renderEditTextarea = (args: {
+    filePath: string;
+    /// Mode to return to on Cancel and after a successful Save. Markdown
+    /// has a rendered preview ("rendered"); JSON / .mjs / schema only
+    /// have raw text ("raw").
+    afterMode: "raw" | "rendered";
+    /// Run `JSON.parse(draft)` before writing. Surfaces typos on Save
+    /// instead of letting them silently fall through to defaults at
+    /// load time.
+    validateAsJson: boolean;
+  }): ReactNode => {
+    const { filePath, afterMode, validateAsJson } = args;
+    const onSave = async () => {
+      if (!repo || !filePath.startsWith(`${repo}/`)) {
+        setEditError("Cannot save: file is outside the project folder.");
+        return;
+      }
+      if (validateAsJson) {
+        try {
+          JSON.parse(editDraft);
+        } catch (e) {
+          setEditError(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
+          return;
+        }
+      }
+      const rel = filePath.slice(repo.length + 1);
+      const lastSlash = rel.lastIndexOf("/");
+      const subdir = lastSlash >= 0 ? rel.slice(0, lastSlash) : "";
+      const filename = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
+      setEditSaving(true);
+      setEditError(null);
+      try {
+        const { entityWriteFile } = await import("../lib/api");
+        await entityWriteFile(repo, subdir, filename, editDraft);
+        setContent(editDraft);
+        setMode(afterMode);
+      } catch (err) {
+        setEditError(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setEditSaving(false);
+      }
+    };
+    const onCancel = () => {
+      setEditDraft(content);
+      setEditError(null);
+      setMode(afterMode);
+    };
+    const isDirty = editDraft !== content;
+    return (
+      <div className="viewer-edit">
+        <textarea
+          className="viewer-edit-textarea"
+          value={editDraft}
+          onChange={(e) => setEditDraft(e.target.value)}
+          spellCheck={false}
+          autoFocus
+        />
+        <div className="viewer-edit-footer">
+          {editError && <span className="viewer-edit-error">{editError}</span>}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onCancel}
+            disabled={editSaving}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={onSave}
+            disabled={editSaving || !isDirty}
+            loading={editSaving}
+          >
+            {editSaving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   // --- Render body ---
   const renderBody = () => {
@@ -992,82 +1080,11 @@ export function Viewer({
         return <OfficeViewer filename={source.path} />;
       }
       if (mode === "edit" && hasEditableTextMode(source.path)) {
-        const filePath = source.path;
-        const isJson = isJsonFile(filePath);
-        const onSave = async () => {
-          if (!repo || !filePath.startsWith(`${repo}/`)) {
-            setEditError("Cannot save: file is outside the project folder.");
-            return;
-          }
-          // Validate JSON shape before writing — the loader's
-          // parse-error fallback would silently revert to defaults,
-          // and we'd rather surface a typo on Save than have it look
-          // like nothing happened.
-          if (isJson) {
-            try {
-              JSON.parse(editDraft);
-            } catch (e) {
-              setEditError(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
-              return;
-            }
-          }
-          const rel = filePath.slice(repo.length + 1);
-          const lastSlash = rel.lastIndexOf("/");
-          const subdir = lastSlash >= 0 ? rel.slice(0, lastSlash) : "";
-          const filename = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
-          setEditSaving(true);
-          setEditError(null);
-          try {
-            const { entityWriteFile } = await import("../lib/api");
-            await entityWriteFile(repo, subdir, filename, editDraft);
-            setContent(editDraft);
-            // For markdown the user expects to land back on the rendered
-            // preview after save; for JSON there's no rendered view, so
-            // stay on raw view (the saved JSON re-renders as `<pre>`).
-            setMode(isJson ? "raw" : "rendered");
-          } catch (err) {
-            setEditError(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
-          } finally {
-            setEditSaving(false);
-          }
-        };
-        const onCancel = () => {
-          setEditDraft(content);
-          setEditError(null);
-          setMode(isJson ? "raw" : "rendered");
-        };
-        const isDirty = editDraft !== content;
-        return (
-          <div className="viewer-edit">
-            <textarea
-              className="viewer-edit-textarea"
-              value={editDraft}
-              onChange={(e) => setEditDraft(e.target.value)}
-              spellCheck={false}
-              autoFocus
-            />
-            <div className="viewer-edit-footer">
-              {editError && <span className="viewer-edit-error">{editError}</span>}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={onCancel}
-                disabled={editSaving}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={onSave}
-                disabled={editSaving || !isDirty}
-                loading={editSaving}
-              >
-                {editSaving ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          </div>
-        );
+        return renderEditTextarea({
+          filePath: source.path,
+          afterMode: isMarkdown(source.path) ? "rendered" : "raw",
+          validateAsJson: isJsonFile(source.path),
+        });
       }
       if (mode === "rendered" && isMarkdown(source.path)) {
         // Substitute live template tokens before rendering. {{INTAKE_URL}}
@@ -1099,6 +1116,23 @@ export function Viewer({
             </ReactMarkdown>
           </div>
         );
+      }
+      return <pre className="viewer-content">{content}</pre>;
+    }
+
+    // Datastore schema (the `_schema.json` for a collection). Rendered
+    // as raw JSON for read; the textarea editor lets admins tweak field
+    // labels / types / comments inline. Save writes back to
+    // `databases/<col>/_schema.json` and JSON-validates first so a typo
+    // can't drop the whole schema. After save, the on-disk file watcher
+    // (fsTick) pulls the new schema into the row + table viewers.
+    if (source.kind === "datastore-schema") {
+      if (mode === "edit") {
+        return renderEditTextarea({
+          filePath: `${repo}/databases/${source.collection.name}/_schema.json`,
+          afterMode: "raw",
+          validateAsJson: true,
+        });
       }
       return <pre className="viewer-content">{content}</pre>;
     }
@@ -2548,11 +2582,13 @@ export function Viewer({
             <Tab
               active={mode !== "edit"}
               onClick={() => {
-                // Markdown files have a rendered preview; JSON config
-                // files only have a raw textual view. Branch the target
-                // mode on file type so the View tab returns the user
+                // Markdown files have a rendered preview; JSON,
+                // .mjs, and datastore schemas only have a raw textual
+                // view. Branch on file type so View returns the user
                 // to whichever read-only mode applies.
-                setMode(isMarkdown(source.path) ? "rendered" : "raw");
+                const renderable =
+                  source.kind === "file" && isMarkdown(source.path);
+                setMode(renderable ? "rendered" : "raw");
               }}
             >
               View
