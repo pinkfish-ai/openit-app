@@ -99,6 +99,31 @@ export const CATALOG: CatalogEntry[] = [
       "1Password CLI (`op`) is installed. Use `op item get`, `op read op://...` for secrets. Run `op --help` for the full surface.",
     docsUrl: "https://developer.1password.com/docs/cli/",
   },
+  {
+    id: "gam",
+    name: "GAM",
+    description: "Google Workspace admin: users, groups, licenses, Drive, OUs.",
+    binary: "gam",
+    // GAM doesn't ship a Homebrew formula — the official path is the
+    // GAM-team installer script. brew install will fail; the failed-
+    // state UI then offers "Ask Claude to debug" which hands off the
+    // stderr to Claude (the install script URL is in the hint below
+    // so the agent has the canonical install method).
+    brewPkg: "gam",
+    claudeMdHint:
+      "GAM (`gam`) is installed for Google Workspace admin. Auth via `gam oauth create`. Run `gam help` for the full surface. If `gam` isn't on PATH, install with the official script at https://github.com/GAM-team/GAM/wiki/How-to-Install-GAM (curl-bash, no brew formula).",
+    docsUrl: "https://github.com/GAM-team/GAM/wiki",
+  },
+  {
+    id: "stripe",
+    name: "Stripe CLI",
+    description: "Stripe billing/audit: customers, subscriptions, events, logs.",
+    binary: "stripe",
+    brewPkg: "stripe/stripe-cli/stripe",
+    claudeMdHint:
+      "Stripe CLI (`stripe`) is installed. Auth via `stripe login`. Use it for billing lookups (`stripe customers retrieve`, `stripe events list`, `stripe logs tail`). Run `stripe --help` for the full surface.",
+    docsUrl: "https://stripe.com/docs/stripe-cli",
+  },
 ];
 
 export function findEntry(id: string): CatalogEntry | undefined {
