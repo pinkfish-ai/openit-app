@@ -809,6 +809,14 @@ async function pullEntityImpl(
     }
   }
 
+  // Stamp the pull-completion sentinel so `pushAllEntities` skip-clean
+  // can recognise this prefix as "talked to remote at least once" even
+  // when both sides are empty. Without it, a collection that's empty
+  // on both ends (e.g. `openit-attachments` before any ticket has had
+  // an attachment) re-pulls on every sync click forever — manifest
+  // never populates, skip-clean's `last_pull_at_ms != null` check
+  // never flips, RTT bill grows. PIN-5865.
+  manifest.last_pull_at_ms = Date.now();
   await adapter.saveManifest(repo, manifest);
 
   if (touched.length > 0) {

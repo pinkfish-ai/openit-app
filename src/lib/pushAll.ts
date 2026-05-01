@@ -32,14 +32,47 @@ import {
 } from "./filestoreSync";
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
 import { loadCreds, type PinkfishCreds } from "./pinkfishAuth";
-import { gitStatusShort, datastoreStateLoad } from "./api";
+import { entityListLocal, gitStatusShort, type KbStatePersisted } from "./api";
 import {
+  classifyAsShadow,
   getConflictsForPrefix,
   hasConflictsForPrefix,
 } from "./syncEngine";
 import { loadCollectionManifest } from "./nestedManifest";
 
 type LineFn = (line: string) => void;
+
+/// True iff every canonical (non-shadow) file under `dir` already has a
+/// matching manifest entry AND every manifest entry still has a file on
+/// disk. Used by skip-clean to detect:
+///   - new files added + committed (not in manifest yet → would push)
+///   - files deleted locally (still in manifest → would issue remote DELETE)
+///
+/// Without this, `git status` clean + manifest-bootstrap-set + no
+/// conflicts returns true even when there's a brand-new committed file
+/// in the scope — and we'd skip the push, leaving the new file local
+/// forever. (User-reported regression: dropped invoice.pdf into
+/// knowledge-bases/default, committed, clicked Sync, nothing
+/// happened.) PIN-5865.
+async function manifestMatchesDisk(args: {
+  repo: string;
+  dir: string;
+  manifest: KbStatePersisted;
+}): Promise<boolean> {
+  const { repo, dir, manifest } = args;
+  const local = await entityListLocal(repo, dir).catch(() => []);
+  const allNames = new Set(local.map((f) => f.filename));
+  const localCanonical = local.filter(
+    (f) => !classifyAsShadow(f.filename, allNames),
+  );
+  const localCanonicalNames = new Set(localCanonical.map((f) => f.filename));
+  const tracked = manifest.files;
+  if (localCanonicalNames.size !== Object.keys(tracked).length) return false;
+  for (const name of localCanonicalNames) {
+    if (!(name in tracked)) return false;
+  }
+  return true;
+}
 
 export async function pushAllEntities(
   repo: string,
@@ -111,10 +144,18 @@ async function runKb(args: {
       return;
     }
 
-    // Skip-clean: every collection has a non-empty manifest (i.e. has
-    // been pulled at least once) AND no dirty paths under its dir AND
-    // no engine-level conflicts at its adapter prefix. Trust the 60s
-    // poller for remote-side changes. PIN-5865.
+    // Skip-clean: every collection has been pulled at least once
+    // (`last_pull_at_ms` set, even an empty pull counts) AND has no
+    // dirty paths under its dir AND no engine-level conflicts at its
+    // adapter prefix. Trust the 60s poller for remote-side changes.
+    // PIN-5865.
+    //
+    // Why `last_pull_at_ms` instead of `Object.keys(files).length > 0`:
+    // a collection that's empty on both ends (no local files, no
+    // remote rows) never populates `files`. With the file-count
+    // precondition, skip-clean fails forever and we re-pull every
+    // click for nothing — the openit-attachments case before any
+    // ticket has had an attachment.
     //
     // The kb adapter's prefix IS the collection's working-tree dir
     // (`knowledge-bases/<displayName>`) — see `kbAdapter` in
@@ -126,7 +167,11 @@ async function runKb(args: {
         if (dirtyUnderScope(dir)) return false;
         if (hasConflictsForPrefix(dir)) return false;
         const m = await loadCollectionManifest(repo, "kb", c.id);
-        return Object.keys(m.files).length > 0;
+        if (m.last_pull_at_ms == null) return false;
+        // Catches the committed-but-never-synced case: file lives on
+        // disk + in git history but not yet in the manifest, so push
+        // has work even though `git status` is clean.
+        return await manifestMatchesDisk({ repo, dir, manifest: m });
       }),
     );
     if (cleanByCol.every(Boolean)) {
@@ -261,7 +306,15 @@ async function runFilestoreCollection(args: {
 
     if (!dirtyUnderScope(dir) && !hasConflictsForPrefix(dir)) {
       const m = await loadCollectionManifest(repo, "fs", collection.id);
-      if (Object.keys(m.files).length > 0) {
+      // last_pull_at_ms is the bootstrap sentinel; manifestMatchesDisk
+      // catches the committed-but-never-synced case (user dropped a
+      // file in, committed, hit Sync — git is clean but manifest
+      // doesn't know about it yet). See runKb for the longer
+      // rationale on both.
+      if (
+        m.last_pull_at_ms != null &&
+        (await manifestMatchesDisk({ repo, dir, manifest: m }))
+      ) {
         onLine(`▸ sync: filestore (${collection.name}) skipped (clean)`);
         return;
       }
@@ -300,7 +353,9 @@ async function runFilestoreCollection(args: {
           onLine(`  • ${c.workingTreePath}: ${c.reason}`);
         }
       } else if (downloaded > 0) {
-        onLine(`  ✓ pulled ${downloaded} file(s) before push`);
+        onLine(
+          `▸ sync: filestore (${collection.name}) pulled ${downloaded} file(s) before push`,
+        );
       }
     } catch (e) {
       safe = false;
@@ -339,18 +394,15 @@ async function runDatastore(args: {
   onLine: LineFn;
   dirtyUnderScope: (scopeDir: string) => boolean;
 }): Promise<void> {
-  const { creds, repo, onLine, dirtyUnderScope } = args;
+  const { creds, repo, onLine, dirtyUnderScope: _dirtyUnderScope } = args;
+  void _dirtyUnderScope;
   try {
-    if (!dirtyUnderScope("databases") && !hasConflictsForPrefix("datastore")) {
-      const m = await datastoreStateLoad(repo).catch(() => null);
-      const manifestNonEmpty =
-        m != null && Object.keys(m.files ?? {}).length > 0;
-      if (manifestNonEmpty) {
-        onLine("▸ sync: datastores skipped (clean)");
-        return;
-      }
-    }
-
+    // No skip-clean for datastore: its on-disk layout (per-collection
+    // subdirs, nested conversations/<ticketId>/msg-*.json) doesn't
+    // map cleanly to a single-call manifestMatchesDisk check, and the
+    // performance cost of always running the pre-push pull is one
+    // RTT — small relative to the user-facing risk of an
+    // unsynced-row regression. PIN-5865.
     onLine("▸ sync: datastores pre-push pull");
     let safe = true;
     try {
@@ -370,7 +422,7 @@ async function runDatastore(args: {
           onLine(`  • ${c.collectionName}/${c.key}.json: ${c.reason}`);
         }
       } else if (pulled > 0) {
-        onLine(`  ✓ pulled ${pulled} row(s) before push`);
+        onLine(`▸ sync: datastores pulled ${pulled} row(s) before push`);
       }
     } catch (e) {
       safe = false;

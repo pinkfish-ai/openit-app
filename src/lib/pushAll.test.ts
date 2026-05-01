@@ -36,11 +36,21 @@ vi.mock("./pinkfishAuth", () => ({
 vi.mock("./api", () => ({
   gitStatusShort: vi.fn(),
   datastoreStateLoad: vi.fn(),
+  entityListLocal: vi.fn(),
 }));
 
 vi.mock("./syncEngine", () => ({
   hasConflictsForPrefix: vi.fn(),
   getConflictsForPrefix: vi.fn(),
+  // classifyAsShadow is a pure function in the real engine. Re-export
+  // a faithful implementation here so manifestMatchesDisk's filtering
+  // matches production behaviour without needing the full module.
+  classifyAsShadow: (filename: string, siblings: Set<string>): boolean => {
+    if (!filename.includes(".server.")) return false;
+    const i = filename.indexOf(".server.");
+    const canonical = `${filename.slice(0, i)}.${filename.slice(i + ".server.".length)}`;
+    return siblings.has(canonical);
+  },
 }));
 
 vi.mock("./nestedManifest", () => ({
@@ -68,7 +78,7 @@ import {
 } from "./filestoreSync";
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
 import { loadCreds } from "./pinkfishAuth";
-import { gitStatusShort, datastoreStateLoad } from "./api";
+import { gitStatusShort, datastoreStateLoad, entityListLocal } from "./api";
 import { getConflictsForPrefix, hasConflictsForPrefix } from "./syncEngine";
 import { loadCollectionManifest } from "./nestedManifest";
 
@@ -83,6 +93,13 @@ function setSteadyState() {
   vi.mocked(gitStatusShort).mockResolvedValue([]);
   vi.mocked(hasConflictsForPrefix).mockReturnValue(false);
   vi.mocked(getConflictsForPrefix).mockReturnValue([]);
+  // Default disk listing matches the seed manifest below so
+  // `manifestMatchesDisk` returns true → skip-clean fires unless an
+  // individual test overrides this. Fields beyond `filename` aren't
+  // read by the helper, so the cast is fine.
+  vi.mocked(entityListLocal).mockResolvedValue([
+    { filename: "seed.md", mtime_ms: 1, isShadow: false } as never,
+  ]);
 
   vi.mocked(getSyncStatus).mockReturnValue({
     collections: [{ id: "kb-default", name: "default" }],
@@ -121,13 +138,18 @@ function setSteadyState() {
   } as never);
   vi.mocked(datastoreStateLoad).mockResolvedValue({
     files: { "openit-people/personA": { remote_version: "v1" } },
+    last_pull_at_ms: 1000, // pulled at least once → skip-clean precondition met
   } as never);
 
-  // Manifest non-empty for every collection (skip-clean precondition).
+  // Manifest established (`last_pull_at_ms` set) — skip-clean
+  // precondition. Files non-empty too just so the steady-state covers
+  // a typical "pulled and got items" shape; the load-bearing field
+  // is the timestamp, not the file count.
   vi.mocked(loadCollectionManifest).mockResolvedValue({
     collection_id: "any",
     collection_name: "any",
     files: { "seed.md": { remote_version: "v1", pulled_at_mtime_ms: 1 } },
+    last_pull_at_ms: 1000,
   } as never);
 }
 
@@ -145,23 +167,46 @@ describe("pushAllEntities — skip-clean (PIN-5865)", () => {
     const lines: string[] = [];
     await pushAllEntities("/repo", (l) => lines.push(l));
 
-    // Critical: no list-remote / pre-push pull calls fired anywhere.
+    // KB + filestore are clean; their pre-push pull short-circuits.
+    // Datastore always pulls (no skip-clean for datastore — its
+    // on-disk layout doesn't map cleanly to a single-call
+    // manifest-vs-disk check, and the cost is one RTT).
     expect(pullAllKbNow).not.toHaveBeenCalled();
     expect(filestorePullOnce).not.toHaveBeenCalled();
-    expect(pullDatastoresOnce).not.toHaveBeenCalled();
-
-    // No push calls either — there's nothing to push.
     expect(pushAllToKb).not.toHaveBeenCalled();
     expect(pushAllToFilestore).not.toHaveBeenCalled();
-    expect(pushAllToDatastores).not.toHaveBeenCalled();
+    expect(pullDatastoresOnce).toHaveBeenCalledTimes(1);
 
     // User sees a transparent "skipped" line per scope so the sync pane
     // doesn't go silent.
     expect(lines).toContain("▸ sync: kb skipped (clean)");
     expect(lines).toContain("▸ sync: filestore (openit-scripts) skipped (clean)");
     expect(lines).toContain("▸ sync: filestore (openit-skills) skipped (clean)");
-    expect(lines).toContain("▸ sync: datastores skipped (clean)");
     expect(lines[lines.length - 1]).toBe("▸ sync: done");
+  });
+
+  it("REGRESSION: kb file committed-but-unsynced unblocks skip-clean (invoice.pdf scenario)", async () => {
+    // The user-visible bug from PIN-5865: drop a file into
+    // knowledge-bases/default, commit it, click Sync. `git status`
+    // shows clean (committed), `last_pull_at_ms` is set (we've pulled
+    // before), no conflicts → my earlier skip-clean fired and the
+    // new file never reached the cloud. The fix: also check that
+    // every on-disk file has a matching manifest entry.
+    vi.mocked(entityListLocal).mockResolvedValue([
+      { filename: "seed.md", mtime_ms: 1, isShadow: false } as never,
+      // Brand-new file on disk — committed locally but never pushed.
+      // Manifest doesn't know about it yet.
+      { filename: "invoice.pdf", mtime_ms: 2, isShadow: false } as never,
+    ]);
+    // git status reports clean (file is committed).
+    vi.mocked(gitStatusShort).mockResolvedValue([] as never);
+
+    await pushAllEntities("/repo", () => {});
+
+    // Skip-clean must NOT fire. Pull and push must run so the new
+    // file actually reaches the cloud.
+    expect(pullAllKbNow).toHaveBeenCalledTimes(1);
+    expect(pushAllToKb).toHaveBeenCalled();
   });
 
   it("kb skip is class-level: any single dirty kb collection unblocks the whole class pull", async () => {
@@ -211,19 +256,42 @@ describe("pushAllEntities — skip-clean (PIN-5865)", () => {
     );
   });
 
-  it("freshly-resolved collection with empty manifest still pulls (bootstrap path)", async () => {
-    // Working tree clean, no conflicts — but the manifest for the kb
-    // collection is empty (never been pulled). Skip-clean must NOT
-    // fire; we still need to pull at least once to populate disk.
+  it("freshly-resolved collection that has never pulled still pulls (bootstrap path)", async () => {
+    // Working tree clean, no conflicts — but the manifest has no
+    // `last_pull_at_ms`, meaning the engine hasn't completed a pull
+    // for this collection yet. Skip-clean must NOT fire; we have to
+    // talk to remote at least once before we can trust skip-clean.
+    // Files emptiness is irrelevant on its own; the timestamp is the
+    // bootstrap sentinel.
     vi.mocked(loadCollectionManifest).mockResolvedValue({
       collection_id: "kb-default",
       collection_name: "default",
-      files: {}, // empty
+      files: {},
+      last_pull_at_ms: null, // never pulled
     } as never);
 
     await pushAllEntities("/repo", () => {});
 
     expect(pullAllKbNow).toHaveBeenCalledTimes(1);
+  });
+
+  it("empty-on-both-ends collection skips after a single empty pull (no perpetual re-pull)", async () => {
+    // The openit-attachments-before-any-attachment case. Manifest has
+    // `last_pull_at_ms` set (engine pulled, got 0 items, stamped the
+    // timestamp anyway) and `files` is empty. Disk is also empty —
+    // matching the manifest. Working tree clean. Skip-clean must
+    // fire — pulling again would be pure RTT waste.
+    vi.mocked(loadCollectionManifest).mockResolvedValue({
+      collection_id: "kb-default",
+      collection_name: "default",
+      files: {},
+      last_pull_at_ms: 1700_000_000_000,
+    } as never);
+    vi.mocked(entityListLocal).mockResolvedValue([]);
+
+    await pushAllEntities("/repo", () => {});
+
+    expect(pullAllKbNow).not.toHaveBeenCalled();
   });
 
   it("conflict aggregate non-empty unblocks the pull even when working tree is clean", async () => {
