@@ -13,6 +13,7 @@ import {
   type TargetOs,
 } from "../lib/toolsInstall";
 import { Button } from "../ui";
+import { writeToActiveSession } from "./activeSession";
 import styles from "./ToolsPanel.module.css";
 
 /// Tools catalog rendered into the center pane via the `tools` entity
@@ -206,6 +207,16 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
     }
   };
 
+  /// Hand-off: ask the active Claude session what the admin can do
+  /// with a freshly installed tool. Trailing newline so Claude actually
+  /// dispatches the question instead of leaving it parked in the
+  /// composer. No-op (without UI noise) if Claude isn't running yet —
+  /// the user can re-click once a session is up.
+  const onAskWhatCanIDo = async (entry: CatalogEntry) => {
+    const prompt = `What can I do with ${entry.name}?`;
+    await writeToActiveSession(prompt + "\r");
+  };
+
   const onDismiss = (id: string) =>
     setStatuses((prev) => {
       const next = { ...prev };
@@ -244,6 +255,7 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
             targetOs={targetOs}
             onInstall={() => onInstall(entry)}
             onUninstall={() => onUninstall(entry)}
+            onAskWhatCanIDo={() => onAskWhatCanIDo(entry)}
             onAskClaude={(s) => onAskClaude(entry, s)}
             onRemoveHintOnly={() => onRemoveHintOnly(entry)}
             onDismiss={() => onDismiss(entry.id)}
@@ -261,6 +273,7 @@ function ToolCard({
   targetOs,
   onInstall,
   onUninstall,
+  onAskWhatCanIDo,
   onAskClaude,
   onRemoveHintOnly,
   onDismiss,
@@ -271,6 +284,7 @@ function ToolCard({
   targetOs: TargetOs | null;
   onInstall: () => void;
   onUninstall: () => void;
+  onAskWhatCanIDo: () => void;
   onAskClaude: (s: CardStatus) => void;
   onRemoveHintOnly: () => void;
   onDismiss: () => void;
@@ -279,9 +293,13 @@ function ToolCard({
   const handedOff = status.kind === "handed-off";
   const isMac = targetOs === "macos";
 
+  // For an installed tool, the headline action is "What can I do with
+  // this?" — that's the question new users actually have once a tool
+  // is on disk. Uninstall demotes to a subtle link (rendered after
+  // the primary CTA) so the destructive action doesn't dominate the
+  // card. For an uninstalled tool, the install CTA stays primary.
   let primaryLabel: string;
   let primaryHandler: () => void;
-  let primaryDanger = false;
   if (handedOff) {
     primaryLabel = "Sent to Claude →";
     primaryHandler = () => {};
@@ -289,9 +307,8 @@ function ToolCard({
     primaryLabel = status.verb === "install" ? "Installing…" : "Uninstalling…";
     primaryHandler = () => {};
   } else if (installed) {
-    primaryLabel = isMac ? "Uninstall" : "Uninstall via Claude →";
-    primaryHandler = onUninstall;
-    primaryDanger = true;
+    primaryLabel = "What can I do with this?";
+    primaryHandler = onAskWhatCanIDo;
   } else {
     primaryLabel = isMac ? "Install locally" : "Install via Claude →";
     primaryHandler = onInstall;
@@ -311,13 +328,26 @@ function ToolCard({
       <div className={styles.cardActions}>
         <Button
           variant="primary"
-          tone={primaryDanger ? "destructive" : "default"}
           onClick={primaryHandler}
           disabled={busy || handedOff || targetOs === null}
           loading={busy}
         >
           {primaryLabel}
         </Button>
+        {installed && !busy && !handedOff && (
+          <Button
+            variant="linkMuted"
+            size="sm"
+            onClick={onUninstall}
+            title={
+              isMac
+                ? `brew uninstall ${entry.brewPkg}`
+                : "Hand off uninstall to Claude"
+            }
+          >
+            {isMac ? "uninstall" : "uninstall via Claude"}
+          </Button>
+        )}
         <a
           className={styles.docsLink}
           href={entry.docsUrl}
