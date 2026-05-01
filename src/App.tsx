@@ -78,8 +78,11 @@ const LOCAL_ORG_NAME = "OpenIT (local)";
 /// destroy admin edits. The plugin-version sentinel inside .openit/ is
 /// owned exclusively by the sync.
 async function bundledPluginIsCurrent(repo: string): Promise<boolean> {
+  // V2 puts the triage agent in a folder; sentinel path moved with it.
+  // If V2 path is missing, plugin sync must re-run (covers fresh
+  // installs, post-cleanup states, and pre-V2 → V2 schema migrations).
   try {
-    await fsRead(`${repo}/agents/triage.json`);
+    await fsRead(`${repo}/agents/triage/triage.json`);
   } catch {
     return false;
   }
@@ -523,6 +526,21 @@ function App() {
               console.warn("[app] cloud-relaunch bootstrap failed (non-fatal):", e);
             }
             setBypassOnboarding(true);
+            // Re-run plugin sync if the bundled manifest version is
+            // ahead of the on-disk sentinel. Cloud-relaunch normally
+            // assumes the disk is already provisioned, but schema
+            // bumps (e.g. V2 agent folder layout) require the bundled
+            // sync to run again to land new files. Skip when the
+            // sentinel matches — sync is idempotent but the manifest
+            // walk is wasteful when nothing changed.
+            if (!(await bundledPluginIsCurrent(lastRepo))) {
+              syncSkillsToDisk(lastRepo, creds)
+                .then((manifest) => {
+                  console.log("[app] cloud-relaunch skill sync complete, bubbles:", manifest.bubbles);
+                  setBubbles(convertBubblesForPrompt(manifest.bubbles));
+                })
+                .catch((e) => console.error("cloud-relaunch skill sync failed:", e));
+            }
             // Fall back to creds.orgId when orgName is empty — the
             // first-run-with-creds path doesn't have a display name
             // available (no modal), so it stores `""`. Better to show
