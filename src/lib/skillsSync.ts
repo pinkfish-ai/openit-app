@@ -146,6 +146,25 @@ export function routeFile(
   return { subdir, filename, substituteSlug: false };
 }
 
+/// Probe disk for an existing file. Used by the agent write-once gate
+/// below — once the user has edited `agents/openit-triage.json`, every
+/// future plugin version bump must leave their edits alone. `fsRead`
+/// throws on missing → false; any other failure path also returns
+/// false so a transient read error doesn't permanently block re-sync.
+async function fileExistsOnDisk(
+  repo: string,
+  subdir: string,
+  filename: string,
+): Promise<boolean> {
+  try {
+    const path = subdir ? `${repo}/${subdir}/${filename}` : `${repo}/${filename}`;
+    await invoke<string>("fs_read", { path });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function ensureSkillFrontmatter(skillName: string, content: string): string {
   if (content.startsWith("---")) return content;
   const nameMatch = content.match(/^name:\s*(.+?)$/m);
@@ -177,6 +196,20 @@ export async function syncSkillsToDisk(
       try {
         const route = routeFile(file.path, slug);
         if (!route) continue;
+        // Write-once gate for agent files. The plugin sync runs on every
+        // version bump; without this, an upgrade silently overwrites
+        // user-edited `agents/<name>.json` instructions. Agents are the
+        // only manifest-routed destination the user edits in place — KB
+        // articles / scripts / schemas are managed by Claude or the
+        // plugin, not free-text user input.
+        if (route.subdir === "agents") {
+          if (await fileExistsOnDisk(repo, route.subdir, route.filename)) {
+            console.log(
+              `[skillsSync] preserved user-edited ${route.subdir}/${route.filename}`,
+            );
+            continue;
+          }
+        }
         let content = await fetchSkillFile(file.path, creds);
         if (route.substituteSlug) {
           content = content.replace(/\{\{slug\}\}/g, slug);

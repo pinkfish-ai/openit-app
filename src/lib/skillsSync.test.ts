@@ -6,8 +6,14 @@
 // "{{slug}}" placeholders, schemas missing), so each rule is locked
 // down with an explicit case.
 
-import { describe, expect, it } from "vitest";
-import { routeFile } from "./skillsSync";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
+import { invoke } from "@tauri-apps/api/core";
+import { routeFile, syncSkillsToDisk } from "./skillsSync";
 
 describe("routeFile", () => {
   const slug = "my-helpdesk";
@@ -127,8 +133,81 @@ describe("routeFile", () => {
     });
 
     it("ignores slug for agents (output is slug-free)", () => {
-      const r = routeFile("agents/triage.template.json", "any-slug-here");
-      expect(r?.filename).toBe("triage.json");
+      const r = routeFile("agents/openit-triage.template.json", "any-slug-here");
+      expect(r?.filename).toBe("openit-triage.json");
     });
+  });
+});
+
+describe("syncSkillsToDisk — agent write-once gate", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("skips writing agents/<name>.json when the file already exists on disk", async () => {
+    const writeCalls: Array<Record<string, unknown>> = [];
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "skills_fetch_bundled_manifest") {
+        return JSON.stringify({
+          version: "test-1",
+          files: [{ path: "agents/openit-triage.template.json" }],
+        }) as never;
+      }
+      if (cmd === "skills_fetch_bundled_file") {
+        return JSON.stringify({ name: "openit-triage" }) as never;
+      }
+      if (cmd === "fs_read") {
+        // Simulate the agent file already existing on disk so the
+        // write-once gate fires.
+        return "existing user-edited content" as never;
+      }
+      if (cmd === "entity_write_file") {
+        writeCalls.push(args as Record<string, unknown>);
+        return undefined as never;
+      }
+      return undefined as never;
+    });
+
+    await syncSkillsToDisk("/repo", null);
+
+    const agentWrites = writeCalls.filter(
+      (c) => c.subdir === "agents" && c.filename === "openit-triage.json",
+    );
+    expect(agentWrites).toEqual([]);
+  });
+
+  it("writes agents/<name>.json when the file is missing", async () => {
+    const writeCalls: Array<Record<string, unknown>> = [];
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "skills_fetch_bundled_manifest") {
+        return JSON.stringify({
+          version: "test-1",
+          files: [{ path: "agents/openit-triage.template.json" }],
+        }) as never;
+      }
+      if (cmd === "skills_fetch_bundled_file") {
+        return JSON.stringify({ name: "openit-triage" }) as never;
+      }
+      if (cmd === "fs_read") {
+        // File missing → fileExistsOnDisk returns false → write fires.
+        throw new Error("ENOENT");
+      }
+      if (cmd === "entity_write_file") {
+        writeCalls.push(args as Record<string, unknown>);
+        return undefined as never;
+      }
+      return undefined as never;
+    });
+
+    await syncSkillsToDisk("/repo", null);
+
+    const agentWrites = writeCalls.filter(
+      (c) => c.subdir === "agents" && c.filename === "openit-triage.json",
+    );
+    expect(agentWrites).toHaveLength(1);
   });
 });
