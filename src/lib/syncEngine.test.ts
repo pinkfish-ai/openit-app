@@ -308,10 +308,13 @@ describe("syncEngine.pullEntity", () => {
     expect(entry?.cloud_filename).toBeUndefined();
   });
 
-  it("drops legacy cloud_filename across re-fetch (tracked but missing from disk)", async () => {
-    // Re-fetch path counterpart to the fast-forward test above. PIN-5847
-    // makes the field obsolete; legacy values fall away the next time
-    // the engine writes the manifest entry.
+  it("tracked + missing locally → no fetch, no manifest mutation, no commit (push reconciles delete)", async () => {
+    // Regression test: the engine must NOT silently re-download a
+    // tracked file that is no longer on disk. This state is the user
+    // (or Claude) deleting the file locally — push is responsible for
+    // issuing a remote DELETE. Re-fetching here would un-delete the
+    // file and the user's intent never reaches the cloud.
+    const REMOTE_VERSION = "2026-04-30T10:00:00Z";
     const h = buildHarness({
       prefix: "fs",
       initialManifest: {
@@ -319,9 +322,8 @@ describe("syncEngine.pullEntity", () => {
         collection_name: null,
         files: {
           "report.pdf": {
-            remote_version: "2026-04-30T10:00:00Z",
+            remote_version: REMOTE_VERSION,
             pulled_at_mtime_ms: 1000,
-            cloud_filename: "uuid-xyz-report.pdf",
           },
         },
       },
@@ -329,15 +331,24 @@ describe("syncEngine.pullEntity", () => {
         {
           manifestKey: "report.pdf",
           workingTreePath: "filestores/library/report.pdf",
-          updatedAt: "2026-04-30T10:00:00Z",
+          updatedAt: REMOTE_VERSION,
         },
       ],
-      local: [], // file missing from disk
+      local: [], // user deleted it
     });
 
-    await pullEntity(h.adapter, "/repo");
+    const result = await pullEntity(h.adapter, "/repo");
 
-    expect(h.savedManifest?.files["report.pdf"].cloud_filename).toBeUndefined();
+    expect(h.fetchedKeys).toEqual([]);
+    expect(h.shadowedKeys).toEqual([]);
+    expect(result.pulled).toBe(0);
+    expect(result.conflicts).toEqual([]);
+    // Manifest entry left exactly as-is for push to reconcile against.
+    expect(h.savedManifest?.files["report.pdf"]).toEqual({
+      remote_version: REMOTE_VERSION,
+      pulled_at_mtime_ms: 1000,
+    });
+    expect(vi.mocked(gitCommitPaths)).not.toHaveBeenCalled();
   });
 
   it("bootstrap-adoption: file on disk, not in manifest → seed manifest, do NOT rewrite or commit", async () => {

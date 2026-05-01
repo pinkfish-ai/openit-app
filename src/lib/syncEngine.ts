@@ -549,6 +549,17 @@ async function pullEntityImpl(
   repo: string,
 ): Promise<PullResult> {
   const manifest = await adapter.loadManifest(repo);
+  // Flat-format adapters (agent, workflow, datastore) call
+  // `entity_state_load` directly, which now returns raw JSON. When the
+  // state file doesn't exist, Rust returns `{}` — no `.files`. Engine
+  // assumes `manifest.files` is always an object, so normalize here.
+  // Adapters that go through `nestedManifest.loadCollectionManifest`
+  // already get a proper default shape; this is a no-op for them.
+  if (!manifest.files || typeof manifest.files !== "object") {
+    manifest.files = {};
+  }
+  if (manifest.collection_id === undefined) manifest.collection_id = null;
+  if (manifest.collection_name === undefined) manifest.collection_name = null;
   const {
     items: remote,
     paginationFailed,
@@ -587,34 +598,6 @@ async function pullEntityImpl(
       } catch (e) {
         console.error(
           `[syncEngine:${adapter.prefix}] pull ${r.manifestKey} failed:`,
-          e,
-        );
-      }
-      continue;
-    }
-
-    // 1b. Tracked but missing from disk → re-fetch.
-    // Manifest claims the file was synced, but it's not on disk anymore.
-    // This can happen if a previous sync recorded the manifest entry but
-    // the actual file write failed (e.g., directory creation issues), or
-    // if the user deleted the file locally without a manifest update.
-    // Without this branch, the engine would silently skip and the file
-    // would never reappear.
-    if (tracked && !localFile) {
-      console.log(
-        `[syncEngine:${adapter.prefix}] re-fetching ${r.manifestKey} (tracked but missing from disk)`,
-      );
-      try {
-        await r.fetchAndWrite(repo);
-        manifest.files[r.manifestKey] = {
-          remote_version: r.updatedAt,
-          pulled_at_mtime_ms: Date.now(),
-        };
-        touched.push(r.workingTreePath);
-        pulled += 1;
-      } catch (e) {
-        console.error(
-          `[syncEngine:${adapter.prefix}] re-fetch ${r.manifestKey} failed:`,
           e,
         );
       }

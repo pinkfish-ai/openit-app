@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { CATALOG, type CatalogEntry } from "../lib/toolsCatalog";
 import {
   getTargetOs,
@@ -133,8 +134,9 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
   const onUninstall = async (entry: CatalogEntry) => {
     if (!projectRoot || !targetOs) return;
     if (targetOs !== "macos") {
-      const ok = window.confirm(
+      const ok = await ask(
         `Hand off uninstall of ${entry.name} to Claude? It'll pick the right uninstall method for ${targetOs}.`,
+        { title: "Uninstall via Claude?", kind: "warning" },
       );
       if (!ok) return;
       const sent = await requestAgentUninstall(entry, {
@@ -154,8 +156,9 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
       return;
     }
 
-    const ok = window.confirm(
+    const ok = await ask(
       `Uninstall ${entry.name}? This will run \`brew uninstall ${entry.brewPkg}\`.`,
+      { title: "Uninstall?", kind: "warning" },
     );
     if (!ok) return;
     setStatus(entry.id, { kind: "busy", verb: "uninstall" });

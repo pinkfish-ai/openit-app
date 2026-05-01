@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ask } from "@tauri-apps/plugin-dialog";
 import {
   claudeDetect,
   claudeInstall,
@@ -285,14 +286,12 @@ export function Onboarding({
                 <Button
                   variant="secondary"
                   tone="destructive"
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Disconnect from Pinkfish?\n\nYour local files stay. The credential on this machine is removed; Pinkfish-side, the API key remains until you delete it from Settings → API Credentials.",
-                      )
-                    ) {
-                      onPinkfishDisconnected();
-                    }
+                  onClick={async () => {
+                    const ok = await ask(
+                      "Disconnect from Pinkfish?\n\nYour local files stay. The credential on this machine is removed; Pinkfish-side, the API key remains until you delete it from Settings → API Credentials.",
+                      { title: "Disconnect from Pinkfish?", kind: "warning" },
+                    );
+                    if (ok) onPinkfishDisconnected();
                   }}
                   title="Remove the Pinkfish credential from this machine"
                 >
