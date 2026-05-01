@@ -222,6 +222,12 @@ async function pushAllToFilestoreImpl(args: {
   const manifestKeys = Object.keys(persisted.files);
   const toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
 
+  // [sync-debug] one-off — tracking down a "file on disk not pushed" report.
+  // Drop in the cleanup commit once diagnosed.
+  console.log(
+    `[sync-debug:fs:${collection.name}] dir=${dir} localFiles=${JSON.stringify(local.map((l) => l.filename))} manifestKeys=${JSON.stringify(manifestKeys)} toPush=${JSON.stringify(toPush.map((f) => f.filename))} toDelete=${JSON.stringify(toDelete)}`,
+  );
+
 
   if (toPush.length === 0 && toDelete.length === 0) {
     onLine?.(`▸ filestore push (${collection.name}): nothing new to upload`);
