@@ -71,12 +71,18 @@ async function manifestMatchesDisk(args: {
   for (const f of localCanonical) {
     const entry = tracked[f.filename];
     if (!entry) return false;
+    // Filesystem couldn't report an mtime — typically a read error
+    // or an exotic filesystem mode. The filestore push treats this
+    // as "needs push" (filestoreSync.ts:204), so skip-clean must
+    // also refuse to fire. KB push happens to take the opposite
+    // stance for this same shape, but matching the looser one would
+    // silently drop filestore work; better to over-pull on the rare
+    // null-mtime case than mis-skip. (BugBot iter 7, Medium.)
+    if (f.mtime_ms == null) return false;
     // Modified-then-committed case: file's mtime advanced past the
     // last-pulled stamp. Push would upload it; skip-clean must not
-    // fire.
-    if (f.mtime_ms != null && f.mtime_ms > entry.pulled_at_mtime_ms) {
-      return false;
-    }
+    // fire. (BugBot iter 5, High.)
+    if (f.mtime_ms > entry.pulled_at_mtime_ms) return false;
   }
   return true;
 }

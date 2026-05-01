@@ -185,6 +185,36 @@ describe("pushAllEntities — skip-clean (PIN-5865)", () => {
     expect(lines[lines.length - 1]).toBe("▸ sync: done");
   });
 
+  it("REGRESSION: file with null mtime unblocks skip-clean (BugBot iter 7)", async () => {
+    // BugBot iter 7 (Medium): the filestore push function treats
+    // a null mtime as "needs push" (filestoreSync.ts:204), but
+    // manifestMatchesDisk's earlier `mtime != null && >` short-
+    // circuit treated it as clean → skip-clean fired and the file
+    // never reached the cloud. Now we treat null mtime as
+    // not-clean to match the looser of the two adapters' push
+    // predicates.
+    vi.mocked(loadCollectionManifest).mockResolvedValue({
+      collection_id: "kb-default",
+      collection_name: "default",
+      files: {
+        "weird.bin": { remote_version: "v1", pulled_at_mtime_ms: 1000 },
+      },
+      last_pull_at_ms: 2000,
+    } as never);
+    vi.mocked(entityListLocal).mockResolvedValue([
+      // Filesystem couldn't report mtime — e.g. read error,
+      // exotic mode. Push would upload anyway; skip-clean must
+      // not fire.
+      { filename: "weird.bin", mtime_ms: null, isShadow: false } as never,
+    ]);
+    vi.mocked(gitStatusShort).mockResolvedValue([] as never);
+
+    await pushAllEntities("/repo", () => {});
+
+    expect(pullAllKbNow).toHaveBeenCalledTimes(1);
+    expect(pushAllToKb).toHaveBeenCalled();
+  });
+
   it("REGRESSION: kb file modified-then-committed unblocks skip-clean (BugBot iter 5)", async () => {
     // BugBot iter 5 finding (High): editing an existing tracked file
     // and committing it leaves `git status` clean, the filename set
