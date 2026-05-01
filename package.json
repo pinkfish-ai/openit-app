@@ -16,6 +16,7 @@
     "build:slack-listener": "node scripts/build-slack-listener.mjs",
     "cleanslate": "node scripts/cleanslate.mjs",
     "clear-cloud-slate": "node scripts/clear-cloud-slate.mjs",
+    "cleanup-cloud": "scripts/cleanup-cloud.sh",
     "devmode": "node scripts/devmode.mjs"
   },
   "dependencies": {
