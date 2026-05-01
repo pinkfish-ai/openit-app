@@ -336,50 +336,29 @@ async function pushAllToFilestoreImpl(args: {
     }
   }
 
-  // Deletion phase: DELETE /filestorage/items/<id> for each manifest
-  // entry the user removed locally. Mirrors the datastore push's
-  // "remote composites not in localComposites → DELETE" pass. Failure
-  // to find the row on remote (already gone) is treated as success —
-  // we just drop the manifest entry.
+  // Deletion phase: DELETE /filestorage/items/<filename>?collectionId=<id>.
+  // Endpoint addresses rows by filename in the path component, with the
+  // collection scoping as a query param (matches the Pinkfish dashboard's
+  // network trace). 404 from server = already gone = treat as success.
   if (toDelete.length > 0) {
-    let remote: Awaited<ReturnType<typeof kbListRemote>> = [];
-    try {
-      remote = await getRemote();
-    } catch (e) {
-      onLine?.(
-        `✗ filestore push (${collection.name}): failed to list remote for deletion phase: ${String(e)}`,
-      );
-      // Without the listing we can't address rows by id — fail closed
-      // so we don't drop manifest entries that are still on remote.
-      toDelete = [];
-    }
-    if (toDelete.length > 0) {
-      const remoteByName = new Map(remote.map((r) => [r.filename, r]));
-      const fetchFn = makeSkillsFetch(token.accessToken);
-      for (const name of toDelete) {
-        const r = remoteByName.get(name);
-        if (!r || !r.id) {
-          // Already gone from remote (or never had an id) — drop the
-          // manifest entry and move on. No error, no count.
-          delete persisted.files[name];
-          continue;
+    const fetchFn = makeSkillsFetch(token.accessToken);
+    for (const name of toDelete) {
+      try {
+        const url = new URL(
+          `/filestorage/items/${encodeURIComponent(name)}`,
+          urls.skillsBaseUrl,
+        );
+        url.searchParams.set("collectionId", collection.id);
+        const resp = await fetchFn(url.toString(), { method: "DELETE" });
+        if (!resp.ok && resp.status !== 404) {
+          throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
         }
-        try {
-          const url = new URL(
-            `/filestorage/items/${encodeURIComponent(r.id)}`,
-            urls.skillsBaseUrl,
-          );
-          const resp = await fetchFn(url.toString(), { method: "DELETE" });
-          if (!resp.ok && resp.status !== 404) {
-            throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-          }
-          delete persisted.files[name];
-          onLine?.(`  − ${dir}/${name} (deleted on remote)`);
-          pushed += 1;
-        } catch (e) {
-          onLine?.(`✗ ${dir}/${name}: delete failed: ${String(e)}`);
-          failed += 1;
-        }
+        delete persisted.files[name];
+        onLine?.(`  − ${dir}/${name} (deleted on remote)`);
+        pushed += 1;
+      } catch (e) {
+        onLine?.(`✗ ${dir}/${name}: delete failed: ${String(e)}`);
+        failed += 1;
       }
     }
   }
