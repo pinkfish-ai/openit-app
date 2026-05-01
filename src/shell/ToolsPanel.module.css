@@ -94,6 +94,15 @@
   font-weight: 500;
 }
 
+/* Right-rail of the card header — keeps the "Installed" pill and
+   the demoted "uninstall" link as a single unit so they read as
+   "you have this; click here to remove" without an extra row. */
+.installedGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .cardDesc {
   font-size: 13px;
   color: var(--text-muted);

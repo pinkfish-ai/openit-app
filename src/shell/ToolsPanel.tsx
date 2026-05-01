@@ -310,7 +310,7 @@ function ToolCard({
     primaryLabel = "What can I do with this?";
     primaryHandler = onAskWhatCanIDo;
   } else {
-    primaryLabel = isMac ? "Install locally" : "Install via Claude →";
+    primaryLabel = isMac ? "Install" : "Install via Claude →";
     primaryHandler = onInstall;
   }
 
@@ -322,30 +322,49 @@ function ToolCard({
           {entry.name}
           <span className={styles.cardBinary}>{entry.binary}</span>
         </span>
-        {installed && <span className={styles.installedPill}>Installed</span>}
+        {installed && (
+          <span className={styles.installedGroup}>
+            <span className={styles.installedPill}>Installed</span>
+            {!busy && !handedOff && (
+              <Button
+                variant="linkMuted"
+                size="sm"
+                onClick={onUninstall}
+                title={
+                  isMac
+                    ? `brew uninstall ${entry.brewPkg}`
+                    : "Hand off uninstall to Claude"
+                }
+              >
+                {isMac ? "uninstall" : "uninstall via Claude"}
+              </Button>
+            )}
+          </span>
+        )}
       </div>
       <p className={styles.cardDesc}>{entry.description}</p>
       <div className={styles.cardActions}>
-        <Button
-          variant="primary"
-          onClick={primaryHandler}
-          disabled={busy || handedOff || targetOs === null}
-          loading={busy}
-        >
-          {primaryLabel}
-        </Button>
-        {installed && !busy && !handedOff && (
+        {installed ? (
           <Button
-            variant="linkMuted"
+            variant="link"
             size="sm"
-            onClick={onUninstall}
-            title={
-              isMac
-                ? `brew uninstall ${entry.brewPkg}`
-                : "Hand off uninstall to Claude"
-            }
+            onClick={primaryHandler}
+            disabled={busy || handedOff || targetOs === null}
           >
-            {isMac ? "uninstall" : "uninstall via Claude"}
+            {handedOff
+              ? "Sent to Claude →"
+              : busy
+                ? "Uninstalling…"
+                : "What can I do with this? →"}
+          </Button>
+        ) : (
+          <Button
+            variant="primary"
+            onClick={primaryHandler}
+            disabled={busy || handedOff || targetOs === null}
+            loading={busy}
+          >
+            {primaryLabel}
           </Button>
         )}
         <a
