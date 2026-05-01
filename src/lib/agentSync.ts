@@ -12,6 +12,7 @@ import {
   AGENT_PREFIX,
   assembleInstructions,
   cloudAgentName,
+  getUserAgent,
   instructionsHash,
   listUserAgentsWithMeta,
   localAgentName,
@@ -26,6 +27,7 @@ import {
   type AgentTools,
   type AgentUpsertBody,
   type FullAgentResponse,
+  type WireResource,
   resolveProjectAgents,
 } from "./entities/agent";
 import {
@@ -297,10 +299,34 @@ async function buildUpsertBody(args: {
     body.promptExamples = parsed.promptExamples;
   if (parsed.introMessage !== undefined) body.introMessage = parsed.introMessage;
   if (parsed.resources !== undefined) {
+    // For an existing agent (PATCH path), GET the cloud's current
+    // state and lift its resource wire shapes (which already carry
+    // valid id + proxyEndpointId). resolveResourceRefs uses these
+    // for any disk ref that matches by name; falls back to
+    // /api/proxy-endpoints (Cognito-only, will 401) for new ones.
+    // Net: resources attached on cloud round-trip cleanly; resources
+    // on disk that aren't yet on cloud need to be attached via web
+    // first.
+    let cloudCurrent:
+      | { knowledgeBases?: WireResource[]; datastores?: WireResource[]; filestores?: WireResource[] }
+      | undefined;
+    if (parsed.id) {
+      try {
+        const cur = await getUserAgent(creds, parsed.id);
+        cloudCurrent = {
+          knowledgeBases: cur.knowledgeBases,
+          datastores: cur.datastores,
+          filestores: cur.filestores,
+        };
+      } catch (e) {
+        console.warn("[agentSync] GET current agent for resource lookup failed:", e);
+      }
+    }
     const wire = await resolveResourceRefs(
       creds,
       parsed.resources as AgentResources | undefined,
       onLine,
+      cloudCurrent,
     );
     if (wire.knowledgeBases !== undefined)
       body.knowledgeBases = wire.knowledgeBases;

@@ -485,6 +485,11 @@ export async function resolveResourceRefs(
   creds: PinkfishCreds,
   local: AgentResources | undefined,
   onWarn?: (line: string) => void,
+  cloudCurrent?: {
+    knowledgeBases?: WireResource[];
+    datastores?: WireResource[];
+    filestores?: WireResource[];
+  },
 ): Promise<ResolvedResources> {
   if (
     !local ||
@@ -493,23 +498,45 @@ export async function resolveResourceRefs(
     return {};
   }
 
-  // `/api/proxy-endpoints` requires Cognito auth (browser-only) — see
-  // platform routes.go comment about RuntimeTokenFromContext. OpenIT
-  // has a runtime token, not a Cognito one, so this 401s. There's no
-  // /service/ equivalent today. When the fetch fails (auth or
-  // otherwise), drop all resources and let the omit-when-absent
-  // semantics preserve whatever's currently on the cloud agent. Tools,
-  // identity, and instructions still round-trip; resources just don't
-  // auto-attach. Tracked for a platform-side /service/proxy-endpoints
-  // route in V3.
-  let proxyByResource: Map<string, string>;
+  // First, build a name → wire-ref lookup from the agent's CURRENT
+  // cloud resources (passed in from a fresh GET in `buildUpsertBody`).
+  // These wire refs already carry valid `id` + `proxyEndpointId`, so
+  // any disk ref that matches by name resolves without needing
+  // `/api/proxy-endpoints`. This is what makes V2 work end-to-end:
+  // the admin attaches resources via web ONCE; subsequent OpenIT
+  // pushes round-trip the wire shape from the existing cloud agent.
+  const cloudByKey = new Map<string, WireResource>();
+  if (cloudCurrent) {
+    for (const r of cloudCurrent.knowledgeBases ?? [])
+      cloudByKey.set(`kb:${r.name}`, r);
+    for (const r of cloudCurrent.datastores ?? [])
+      cloudByKey.set(`ds:${r.name}`, r);
+    for (const r of cloudCurrent.filestores ?? [])
+      cloudByKey.set(`fs:${r.name}`, r);
+  }
+
+  // For NEW resources not yet on the cloud agent, fall back to the
+  // /api/proxy-endpoints + /datacollection lookup. /api/proxy-endpoints
+  // requires Cognito auth (browser-only — see platform routes.go
+  // comment about RuntimeTokenFromContext). OpenIT's runtime token
+  // 401s here. There's no /service/ equivalent today; tracked as a
+  // platform-side V3 followup. When this fetch fails, refs not in
+  // `cloudByKey` are dropped with a warning.
+  let proxyByResource: Map<string, string> | null = null;
   try {
     proxyByResource = await fetchProxyEndpoints(creds);
   } catch (e) {
+    if (cloudByKey.size === 0) {
+      // No cloud-current resources to fall back on — can't resolve
+      // anything at all.
+      onWarn?.(
+        `  ⚠ resources skipped — proxy endpoint lookup unavailable and no cloud-attached resources to copy from (${String(e).split("\n")[0]})`,
+      );
+      return {};
+    }
     onWarn?.(
-      `  ⚠ resources skipped — proxy endpoint lookup unavailable (${String(e).split("\n")[0]})`,
+      `  ⚠ proxy lookup unavailable — only cloud-attached resources will resolve`,
     );
-    return {};
   }
 
   const [kbList, dsList, fsList] = await Promise.all([
@@ -520,10 +547,44 @@ export async function resolveResourceRefs(
 
   const resolveOne = (
     list: ResourceFetchResult,
+    typeKey: "kb" | "ds" | "fs",
     typeLabel: string,
     ref: AgentResourceRef,
   ): WireResource | null => {
     const cloudName = cloudAgentName(ref.name);
+
+    // Cloud-cached path: if this resource is already attached to the
+    // agent on cloud, reuse its wire shape (id + proxyEndpointId).
+    // Disk-side permission flags override the cloud's; everything
+    // else (id/proxy/description/isStructured) carries through.
+    const cached = cloudByKey.get(`${typeKey}:${cloudName}`);
+    if (cached) {
+      const wire: WireResource = {
+        ...cached,
+        canRead: ref.canRead ?? cached.canRead,
+        canWrite: ref.canWrite ?? cached.canWrite,
+        canDelete: ref.canDelete ?? cached.canDelete,
+      };
+      if (!wire.canRead && !wire.canWrite && !wire.canDelete) {
+        onWarn?.(
+          `  ⚠ skipping ${typeLabel} "${ref.name}" (no permission flags set)`,
+        );
+        return null;
+      }
+      return wire;
+    }
+
+    // Fallback path: /api/proxy-endpoints + /datacollection lookup.
+    // Only reachable when proxyByResource is non-null (else we'd
+    // have returned early above). For a brand-new resource not yet
+    // attached to the cloud agent, this is the only way to land
+    // valid `id` + `proxyEndpointId`.
+    if (!proxyByResource) {
+      onWarn?.(
+        `  ⚠ skipping ${typeLabel} "${ref.name}" (not on cloud agent and proxy lookup unavailable — attach via web first, then sync)`,
+      );
+      return null;
+    }
     const meta = list.byName.get(cloudName);
     if (!meta) {
       onWarn?.(`  ⚠ skipping ${typeLabel} "${ref.name}" (not found)`);
@@ -546,7 +607,6 @@ export async function resolveResourceRefs(
     };
     if (meta.description !== undefined) wire.description = meta.description;
     if (meta.isStructured !== undefined) wire.isStructured = meta.isStructured;
-    // Platform validateResources rejects all-three-permissions-false.
     if (!wire.canRead && !wire.canWrite && !wire.canDelete) {
       onWarn?.(
         `  ⚠ skipping ${typeLabel} "${ref.name}" (no permission flags set)`,
@@ -559,17 +619,17 @@ export async function resolveResourceRefs(
   const out: ResolvedResources = {};
   if (local.knowledgeBases) {
     out.knowledgeBases = local.knowledgeBases
-      .map((r) => resolveOne(kbList, "knowledge base", r))
+      .map((r) => resolveOne(kbList, "kb", "knowledge base", r))
       .filter((x): x is WireResource => x !== null);
   }
   if (local.datastores) {
     out.datastores = local.datastores
-      .map((r) => resolveOne(dsList, "datastore", r))
+      .map((r) => resolveOne(dsList, "ds", "datastore", r))
       .filter((x): x is WireResource => x !== null);
   }
   if (local.filestores) {
     out.filestores = local.filestores
-      .map((r) => resolveOne(fsList, "filestore", r))
+      .map((r) => resolveOne(fsList, "fs", "filestore", r))
       .filter((x): x is WireResource => x !== null);
   }
   return out;
