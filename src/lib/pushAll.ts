@@ -31,7 +31,9 @@ import {
   startFilestoreSync,
 } from "./filestoreSync";
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
+import { pullAgentsOnce, pushAllToAgents } from "./agentSync";
 import { loadCreds, type PinkfishCreds } from "./pinkfishAuth";
+import { invoke } from "@tauri-apps/api/core";
 import { entityListLocal, gitStatusShort, type KbStatePersisted } from "./api";
 import {
   classifyAsShadow,
@@ -118,6 +120,7 @@ export async function pushAllEntities(
     runKb({ creds, repo, onLine, dirtyUnderScope }),
     runFilestore({ creds, repo, onLine, dirtyUnderScope }),
     runDatastore({ creds, repo, onLine, dirtyUnderScope }),
+    runAgent({ creds, repo, onLine, dirtyUnderScope }),
   ]);
 
   onLine("▸ sync: done");
@@ -457,5 +460,75 @@ async function runDatastore(args: {
     }
   } catch (e) {
     onLine(`✗ sync: datastore failed: ${String(e)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent — single class, flat layout (`agents/<name>.json`). Mirrors
+// runDatastore's shape but with skip-clean (the flat layout maps cleanly
+// to manifestMatchesDisk, unlike datastore's nested per-collection
+// conversations dir).
+// ---------------------------------------------------------------------------
+
+async function runAgent(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLine: LineFn;
+  dirtyUnderScope: (scopeDir: string) => boolean;
+}): Promise<void> {
+  const { creds, repo, onLine, dirtyUnderScope } = args;
+  try {
+    // Skip-clean: the agent adapter's prefix is the class-level string
+    // "agent" (not the dir). Pass that to `hasConflictsForPrefix`. The
+    // dir for `manifestMatchesDisk` and `dirtyUnderScope` is "agents".
+    if (!dirtyUnderScope("agents") && !hasConflictsForPrefix("agent")) {
+      const m = await invoke<KbStatePersisted>("entity_state_load", {
+        repo,
+        name: "agent",
+      });
+      if (
+        m.last_pull_at_ms != null &&
+        (await manifestMatchesDisk({ repo, dir: "agents", manifest: m }))
+      ) {
+        onLine("▸ sync: agents skipped (clean)");
+        return;
+      }
+    }
+
+    onLine("▸ sync: agents pre-push pull");
+    let safe = true;
+    try {
+      const { ok, error, pulled } = await pullAgentsOnce({ creds, repo });
+      const conflicts = getConflictsForPrefix("agent");
+      if (!ok) {
+        safe = false;
+        onLine(`✗ sync: agents pre-push pull failed: ${error ?? "unknown"}`);
+      } else if (conflicts.length > 0) {
+        safe = false;
+        onLine(
+          "✗ sync: agents pull surfaced conflicts — resolve in Claude, then commit again:",
+        );
+        for (const c of conflicts) {
+          onLine(`  • ${c.workingTreePath}: ${c.reason}`);
+        }
+      } else if (pulled > 0) {
+        onLine(`▸ sync: agents pulled ${pulled} agent(s) before push`);
+      }
+    } catch (e) {
+      safe = false;
+      onLine(`✗ sync: agents pre-push pull failed: ${String(e)}`);
+    }
+
+    if (!safe) return;
+
+    onLine("▸ sync: agents pushing");
+    try {
+      const { pushed, failed } = await pushAllToAgents({ creds, repo, onLine });
+      onLine(`▸ sync: agent push complete — ${pushed} ok, ${failed} failed`);
+    } catch (e) {
+      onLine(`✗ sync: agent push failed: ${String(e)}`);
+    }
+  } catch (e) {
+    onLine(`✗ sync: agent failed: ${String(e)}`);
   }
 }
