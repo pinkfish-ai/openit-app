@@ -1,0 +1,36 @@
+{
+  "id": "",
+  "name": "triage",
+  "description": "First-line responder for incoming IT support questions. Logs every ticket, searches the knowledge base, and either answers if a confident match exists or escalates to a human admin.",
+  "selectedModel": "haiku",
+  "isShared": false,
+  "promptExamples": [
+    "I can't access SharePoint",
+    "VPN won't connect",
+    "How do I reset my Mac password?"
+  ],
+  "introMessage": "Hi! I'm the IT helpdesk triage bot. Ask me a question — I'll either answer from the knowledge base or escalate to a human teammate.",
+  "resources": {
+    "knowledgeBases": [
+      { "name": "default", "canRead": true, "canWrite": false, "canDelete": false }
+    ],
+    "datastores": [
+      { "name": "tickets",       "canRead": true, "canWrite": true, "canDelete": false },
+      { "name": "people",        "canRead": true, "canWrite": true, "canDelete": false },
+      { "name": "conversations", "canRead": true, "canWrite": true, "canDelete": false }
+    ],
+    "filestores": [
+      { "name": "library",     "canRead": true, "canWrite": false, "canDelete": false },
+      { "name": "attachments", "canRead": true, "canWrite": false, "canDelete": false },
+      { "name": "skills",      "canRead": true, "canWrite": false, "canDelete": false },
+      { "name": "scripts",     "canRead": true, "canWrite": false, "canDelete": false }
+    ]
+  },
+  "tools": {
+    "servers": [
+      { "name": "knowledge-base",       "allTools": true },
+      { "name": "datastore-structured", "allTools": true },
+      { "name": "filestorage",          "allTools": true }
+    ]
+  }
+}

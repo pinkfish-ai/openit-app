@@ -119,14 +119,16 @@ export function routeFile(
     };
   }
   if (filePath.startsWith("agents/") && filePath.endsWith(".template.json")) {
-    const agentBase = filePath
-      .replace("agents/", "")
-      .replace(".template.json", "");
-    return {
-      subdir: "agents",
-      filename: `${agentBase}.json`,
-      substituteSlug: false,
-    };
+    // Preserve any folder structure so `agents/triage/triage.template.json`
+    // lands at `agents/triage/triage.json`, not `agents/triage/triage.json`
+    // with a slash inside the filename (which entity_write_file mishandles
+    // for path-aware tools downstream).
+    const lastSlash = filePath.lastIndexOf("/");
+    const subdir = filePath.slice(0, lastSlash);
+    const filename = filePath
+      .slice(lastSlash + 1)
+      .replace(".template.json", ".json");
+    return { subdir, filename, substituteSlug: false };
   }
   if (filePath.startsWith("scripts/")) {
     const filename = filePath.replace("scripts/", "");
@@ -202,7 +204,7 @@ export async function syncSkillsToDisk(
         // only manifest-routed destination the user edits in place — KB
         // articles / scripts / schemas are managed by Claude or the
         // plugin, not free-text user input.
-        if (route.subdir === "agents") {
+        if (route.subdir === "agents" || route.subdir.startsWith("agents/")) {
           if (await fileExistsOnDisk(repo, route.subdir, route.filename)) {
             console.log(
               `[skillsSync] preserved user-edited ${route.subdir}/${route.filename}`,
