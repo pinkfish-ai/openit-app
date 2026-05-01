@@ -34,7 +34,11 @@ import { useBrowserConnect } from "./lib/useBrowserConnect";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
 import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
-import { startAgentSync, stopAgentSync } from "./lib/agentSync";
+import {
+  migrateLegacyTriageFilename,
+  startAgentSync,
+  stopAgentSync,
+} from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
 import { pushAllEntities } from "./lib/pushAll";
 import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
@@ -61,11 +65,6 @@ const LOCAL_ORG_NAME = "OpenIT (local)";
 // inside `loadCreds()` — every caller (this file, Shell.tsx push
 // handler, sync engines) sees the flag take effect uniformly.
 
-function basename(p: string): string {
-  const parts = p.split("/").filter((s) => s.length > 0);
-  return parts[parts.length - 1] ?? p;
-}
-
 /// Is the bundled plugin already synced at the *current* manifest version?
 /// Returns true when both (a) the triage-agent install sentinel exists
 /// (so we know a sync ran successfully at some point) AND (b) the
@@ -83,9 +82,8 @@ function basename(p: string): string {
 /// destroy admin edits. The plugin-version sentinel inside .openit/ is
 /// owned exclusively by the sync.
 async function bundledPluginIsCurrent(repo: string): Promise<boolean> {
-  const slug = basename(repo);
   try {
-    await fsRead(`${repo}/agents/openit-triage-${slug}.json`);
+    await fsRead(`${repo}/agents/openit-triage.json`);
   } catch {
     return false;
   }
@@ -125,21 +123,31 @@ function stopAllCloudSyncs(): void {
 /// only in the local-only bootstrap path. Once an account is in the loop,
 /// we trust cloud state and never re-seed.
 function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): void {
-  startKbSync({ creds, repo }).catch((e) =>
-    console.error("kb sync init failed:", e),
-  );
-  startFilestoreSync({ creds, repo }).catch((e) =>
-    console.error("filestore sync init failed:", e),
-  );
-  startAgentSync({ creds, repo }).catch((e) =>
-    console.error("agent sync init failed:", e),
-  );
-  startWorkflowSync({ creds, repo }).catch((e) =>
-    console.error("workflow sync init failed:", e),
-  );
-  startDatastoreSync({ creds, repo }).catch((e) =>
-    console.error("datastore sync init failed:", e),
-  );
+  // Rename legacy `agents/triage.json` → `agents/openit-triage.json`
+  // BEFORE any cloud pull. If a stale `openit-triage` exists on cloud,
+  // a pull-first ordering would write that version to the new filename
+  // first and the shim's "old exists, new missing" guard would no-op,
+  // dropping the user's local edits. Awaiting startAgentSync inside
+  // the chain serialises against the agent pull specifically.
+  migrateLegacyTriageFilename(repo)
+    .catch((e) => console.error("agent migration shim failed:", e))
+    .then(() => {
+      startKbSync({ creds, repo }).catch((e) =>
+        console.error("kb sync init failed:", e),
+      );
+      startFilestoreSync({ creds, repo }).catch((e) =>
+        console.error("filestore sync init failed:", e),
+      );
+      startAgentSync({ creds, repo }).catch((e) =>
+        console.error("agent sync init failed:", e),
+      );
+      startWorkflowSync({ creds, repo }).catch((e) =>
+        console.error("workflow sync init failed:", e),
+      );
+      startDatastoreSync({ creds, repo }).catch((e) =>
+        console.error("datastore sync init failed:", e),
+      );
+    });
 }
 
 function App() {
