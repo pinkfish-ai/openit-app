@@ -531,6 +531,20 @@ export function Viewer({
   const [editDraft, setEditDraft] = useState<string>("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Inline rename state for the file-title in the viewer-header.
+  // `renamingPath` is the source path the user is currently editing
+  // (null when not renaming). `renameDraft` is the textbox value.
+  // Both reset whenever the source changes — opening a different file
+  // mid-rename discards the draft.
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState<string>("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  useEffect(() => {
+    setRenamingPath(null);
+    setRenameDraft("");
+    setRenameError(null);
+  }, [source]);
+
   // Path the "New" button (scripts / skills folder views) just created.
   // When the file-load effect resolves for this path, we drop straight
   // into edit mode with the starter content seeded — so a freshly
@@ -998,6 +1012,44 @@ export function Viewer({
   // Pre-compute conversation status counts so the header pills can
   // display them without re-walking on each render frame. Memoising
   // would be overkill — the array is small and reads from the same
+  /// Validate + commit an inline rename from the viewer-header. Reads
+  /// `renamingPath` / `renameDraft`, calls `entity_rename_file` on
+  /// disk, then re-routes the viewer to the new path so the next
+  /// fsTick refresh doesn't bounce the user back to a stale source.
+  /// Bails (no-op) when the draft is empty, contains a path
+  /// separator, or matches the original — keeping a click-then-blur
+  /// without changes from triggering a needless write.
+  async function commitRename(): Promise<void> {
+    if (!renamingPath || !source || source.kind !== "file") return;
+    const original = renamingPath.split("/").pop() ?? renamingPath;
+    const next = renameDraft.trim();
+    if (!next || next === original) {
+      setRenamingPath(null);
+      setRenameDraft("");
+      setRenameError(null);
+      return;
+    }
+    if (next.includes("/") || next.includes("\\")) {
+      setRenameError("Filename can't contain slashes");
+      return;
+    }
+    const dirAbs = renamingPath.slice(0, renamingPath.length - original.length - 1);
+    const relSubdir = toRepoRelative(repo, dirAbs);
+    try {
+      const { entityRenameFile } = await import("../lib/api");
+      await entityRenameFile(repo, relSubdir, original, next);
+      const newPath = `${dirAbs}/${next}`;
+      setRenamingPath(null);
+      setRenameDraft("");
+      setRenameError(null);
+      if (onOpenPath) await onOpenPath(newPath);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error(`[rename] failed for ${original} → ${next}:`, err);
+      setRenameError(`Rename failed: ${reason}`);
+    }
+  }
+
   // reference until fsTick triggers a new resolver run.
   const conversationCounts: Record<
     "all" | "open" | "resolved" | "escalated",
@@ -2618,7 +2670,53 @@ export function Viewer({
           </Button>
         </div>
         {headerKind && <EntityBadge kind={headerKind} showLabel={false} />}
-        <span className="viewer-title">{title}</span>
+        {source && source.kind === "file" ? (
+          renamingPath === source.path ? (
+            <input
+              type="text"
+              className="viewer-title viewer-title-rename"
+              value={renameDraft}
+              autoFocus
+              onChange={(e) => {
+                setRenameDraft(e.target.value);
+                setRenameError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void commitRename();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setRenamingPath(null);
+                  setRenameDraft("");
+                  setRenameError(null);
+                }
+              }}
+              onBlur={() => void commitRename()}
+            />
+          ) : (
+            <button
+              type="button"
+              className="viewer-title viewer-title-editable"
+              onClick={() => {
+                const filename = source.path.split("/").pop() ?? source.path;
+                setRenamingPath(source.path);
+                setRenameDraft(filename);
+                setRenameError(null);
+              }}
+              title="Click to rename"
+            >
+              {title}
+            </button>
+          )
+        ) : (
+          <span className="viewer-title">{title}</span>
+        )}
+        {renameError && (
+          <span className="viewer-title-rename-error" role="alert">
+            {renameError}
+          </span>
+        )}
         {source && source.kind === "conversation-thread" && onOpenPath && (
           <TabStrip variant="segmented">
             <Tab active>Conversation</Tab>

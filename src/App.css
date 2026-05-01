@@ -941,6 +941,41 @@ body::before {
   color: var(--text);
 }
 
+/* File-title rename affordance. The display state is a borderless
+   button styled to look like the static title; the edit state swaps
+   in a real input that picks up the same typography so the user
+   doesn't perceive a layout shift. Hover hint is a faint underline
+   so it reads as "click to edit" without competing with the
+   right-side action chrome. */
+button.viewer-title.viewer-title-editable {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  cursor: text;
+  color: inherit;
+}
+button.viewer-title.viewer-title-editable:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--color-border-faint);
+  text-underline-offset: 3px;
+}
+input.viewer-title.viewer-title-rename {
+  background: var(--surface-soft, rgba(0, 0, 0, 0.025));
+  border: 1px solid var(--accent, #c43e3e);
+  border-radius: 4px;
+  padding: 2px 6px;
+  margin: -3px 0;
+  outline: none;
+}
+.viewer-title-rename-error {
+  font-family: var(--font-display);
+  font-size: 12px;
+  color: var(--warn-text, #a85b00);
+  flex: 0 0 auto;
+}
+
 /* .viewer-tabs / .viewer-tab (incl. :hover, .active) / .viewer-tab-count
    removed — segmented controls migrated to <TabStrip> in
    src/ui/TabStrip.tsx. */
