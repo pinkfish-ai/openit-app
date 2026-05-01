@@ -81,6 +81,15 @@ export type ViewerSource =
   | { kind: "file"; path: string }
   | { kind: "sync"; lines: string[] }
   | { kind: "diff"; text: string }
+  | {
+      kind: "script-output";
+      /** Absolute path of the .mjs that was executed. */
+      script: string;
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      durationMs: number;
+    }
   | { kind: "datastore-table"; collection: DataCollection; items?: MemoryItem[]; hasMore?: boolean; onLoadMore?: () => void }
   | { kind: "datastore-row"; collection: DataCollection; item: MemoryItem }
   | { kind: "datastore-schema"; collection: DataCollection }

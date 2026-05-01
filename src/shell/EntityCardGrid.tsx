@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ENTITY_META, type EntityKind } from "./entityIcons";
 import { TrashIcon } from "./TrashIcon";
+import { PlayIcon } from "./PlayIcon";
 import { Button } from "../ui";
 
 export type { EntityKind };
@@ -35,6 +36,14 @@ export type EntityCard = {
   /** When set, the right-click context menu shows a "Reveal in
    *  Finder" entry that calls this handler. */
   onReveal?: () => void | Promise<void>;
+  /** When set, the card shows a hover-revealed play button that
+   *  invokes this handler. Used by the scripts-folder cards to
+   *  spawn `node <script>` and route the viewer to the captured
+   *  stdout/stderr. The handler is responsible for any guard
+   *  prompts — the grid just wires the click + stops propagation
+   *  so the card's onClick (which would open the file) doesn't
+   *  fire alongside the run. */
+  onRun?: () => void | Promise<void>;
 };
 
 /**
@@ -235,30 +244,50 @@ function EntityCardItem({
       </div>
     </Tag>
   );
-  if (!c.onDelete) return card;
-  // The delete button has to sit OUTSIDE the card's <button> element
-  // — nesting interactive controls inside a button is invalid HTML
-  // and the click target collapses. Wrap card + delete button in a
-  // relatively-positioned div and overlay the trash button at the
-  // top-right; CSS hides it until the wrapper is hovered.
+  if (!c.onDelete && !c.onRun) return card;
+  // Action buttons (run, delete) have to sit OUTSIDE the card's
+  // <button> element — nesting interactive controls inside a button
+  // is invalid HTML and the click target collapses. Wrap card +
+  // overlays in a relatively-positioned div and absolute-position
+  // each action at the top-right; CSS hides them until the wrapper
+  // is hovered. Run sits to the LEFT of delete so the destructive
+  // gesture stays on the far edge.
   return (
     <div className="entity-card-wrapper">
       {card}
-      <Button
-        variant="ghost"
-        tone="destructive"
-        size="sm"
-        iconOnly
-        className="entity-card-delete"
-        title={`Delete ${c.title}`}
-        aria-label={`Delete ${c.title}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          void c.onDelete?.();
-        }}
-      >
-        <TrashIcon />
-      </Button>
+      {c.onRun && (
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          className="entity-card-run"
+          title={`Run ${c.title}`}
+          aria-label={`Run ${c.title}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            void c.onRun?.();
+          }}
+        >
+          <PlayIcon />
+        </Button>
+      )}
+      {c.onDelete && (
+        <Button
+          variant="ghost"
+          tone="destructive"
+          size="sm"
+          iconOnly
+          className="entity-card-delete"
+          title={`Delete ${c.title}`}
+          aria-label={`Delete ${c.title}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            void c.onDelete?.();
+          }}
+        >
+          <TrashIcon />
+        </Button>
+      )}
     </div>
   );
 }

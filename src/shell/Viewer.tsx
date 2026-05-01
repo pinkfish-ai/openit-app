@@ -171,10 +171,16 @@ async function deleteFileInSubdir(
 /// function (the shape every plugin-script entry point uses); the .md
 /// template seeds a frontmatter-less skill stub the user can fill in.
 const NEW_FILE_TEMPLATES: Record<"mjs" | "md", string> = {
+  // Default-export AND top-level invocation so the same file works
+  // both ways — `import helloWorld from './untitled.mjs'` for reuse
+  // elsewhere, AND `node untitled.mjs` (the in-app Run button) prints
+  // "Hello, world!" without the user having to add a call site.
   mjs:
     `export default async function helloWorld() {\n` +
     `  console.log("Hello, world!");\n` +
-    `}\n`,
+    `}\n` +
+    `\n` +
+    `await helloWorld();\n`,
   md: `When you invoke this skill, say "Hello World"\n`,
 };
 
@@ -454,6 +460,7 @@ export function Viewer({
   tunnelUrl,
   welcomeFlashKey,
   onOpenPath,
+  onShowSource,
   onGoBack,
   onGoForward,
   canGoBack,
@@ -477,6 +484,11 @@ export function Viewer({
    *  cards to drill into a specific thread). Optional — falls back to
    *  no-op if the parent didn't wire it. */
   onOpenPath?: (path: string) => void | Promise<void>;
+  /** Programmatically route the viewer to a non-path source (e.g.
+   *  the captured stdout/stderr of a script run). The parent owns
+   *  the source state, so a card-level handler can't call setSource
+   *  directly — this prop is the escape hatch. */
+  onShowSource?: (source: ViewerSource) => void;
   /** Browser-style back/forward across the center-pane view history.
    *  Wired by Shell so every page gets the same pair of arrows in
    *  the viewer header instead of relying on per-page back buttons. */
@@ -683,6 +695,11 @@ export function Viewer({
       setContent(source.text);
       return;
     }
+    if (source.kind === "script-output") {
+      setMode("rendered");
+      setContent("");
+      return;
+    }
     if (source.kind === "datastore-table") {
       setMode("table");
       setContent("");
@@ -873,6 +890,8 @@ export function Viewer({
       case "file": return source.path.split("/").pop() ?? source.path;
       case "sync": return "Sync output";
       case "diff": return "Git diff";
+      case "script-output":
+        return `Run: ${source.script.split("/").pop() ?? source.script}`;
       case "datastore-table": return source.collection?.name ?? "Datastore";
       case "datastore-schema": return `${source.collection?.name ?? "Datastore"} — Schema`;
       case "datastore-row": return `${source.collection?.name ?? "Datastore"} / ${source.item?.key || source.item?.id || "Row"}`;
@@ -1252,6 +1271,55 @@ export function Viewer({
         );
       }
       return <pre className="viewer-content">{content}</pre>;
+    }
+
+    // Captured stdout / stderr from a Run-button invocation. Two
+    // monospaced blocks (stdout green-tinted, stderr red-tinted)
+    // bracketed by a one-line summary so the admin can see exit
+    // status + duration at a glance. Empty streams are suppressed
+    // so a successful silent run doesn't leave dangling labels.
+    if (source.kind === "script-output") {
+      const ok = source.exitCode === 0;
+      const filename = source.script.split("/").pop() ?? source.script;
+      return (
+        <div className="viewer-summary script-output">
+          <div className="script-output-summary">
+            <span
+              className={`script-output-status ${ok ? "ok" : "fail"}`}
+              aria-label={ok ? "Exited 0" : `Exited ${source.exitCode}`}
+            >
+              {ok ? "✓" : "✗"} exit {source.exitCode}
+            </span>
+            <span className="script-output-duration">
+              {source.durationMs}ms
+            </span>
+            <code className="script-output-script">{filename}</code>
+          </div>
+          {source.stdout && (
+            <>
+              <h3 className="script-output-label">stdout</h3>
+              <pre className="viewer-content script-output-stream">
+                {source.stdout}
+              </pre>
+            </>
+          )}
+          {source.stderr && (
+            <>
+              <h3 className="script-output-label script-output-label-err">
+                stderr
+              </h3>
+              <pre className="viewer-content script-output-stream script-output-stream-err">
+                {source.stderr}
+              </pre>
+            </>
+          )}
+          {!source.stdout && !source.stderr && (
+            <p className="summary-desc">
+              The script ran to completion without printing anything.
+            </p>
+          )}
+        </div>
+      );
     }
 
     // Datastore schema (the `_schema.json` for a collection). Rendered
@@ -1959,6 +2027,33 @@ export function Viewer({
                 deleteFileInSubdir(repo, source.path, f.name, setFolderUploadError, showToast)
             : undefined,
           onReveal: () => void fsReveal(f.path).catch(console.error),
+          // "Run" only for the scripts folder. Spawns `node <script>`
+          // server-side and routes the viewer to a script-output
+          // source so the captured stdout / stderr lands in the main
+          // content window instead of an external terminal.
+          onRun:
+            source.entity === "scripts" &&
+            /\.(mjs|js|cjs|py)$/i.test(f.path) &&
+            onShowSource
+              ? async () => {
+                  try {
+                    const { scriptRun } = await import("../lib/api");
+                    const out = await scriptRun(repo, f.path);
+                    onShowSource({
+                      kind: "script-output",
+                      script: f.path,
+                      stdout: out.stdout,
+                      stderr: out.stderr,
+                      exitCode: out.exitCode,
+                      durationMs: out.durationMs,
+                    });
+                  } catch (err) {
+                    const reason = err instanceof Error ? err.message : String(err);
+                    console.error(`[script-run] ${f.name} failed:`, err);
+                    showToast(`Run failed: ${reason}`);
+                  }
+                }
+              : undefined,
         };
       });
       // Drag-and-drop upload from the desktop is enabled for the two
@@ -2918,6 +3013,16 @@ export function Viewer({
               <span className="arrow" aria-hidden="true">→</span>
             </Button>
           )}
+          {newFileAffordance && (
+            <Button
+              variant="linkMuted"
+              onClick={() => void newFileAffordance.onCreate()}
+              title={newFileAffordance.title}
+            >
+              new
+              <span className="arrow" aria-hidden="true">+</span>
+            </Button>
+          )}
           {chatAddPath && (
             <Button
               variant="linkMuted"
@@ -2930,16 +3035,6 @@ export function Viewer({
             >
               add to chat
               <span className="arrow" aria-hidden="true">→</span>
-            </Button>
-          )}
-          {newFileAffordance && (
-            <Button
-              variant="linkMuted"
-              onClick={() => void newFileAffordance.onCreate()}
-              title={newFileAffordance.title}
-            >
-              new
-              <span className="arrow" aria-hidden="true">+</span>
             </Button>
           )}
         </div>
