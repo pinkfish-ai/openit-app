@@ -534,8 +534,11 @@ export function FileExplorer({
   };
 
   // Always-hidden entries inside `.openit/` that the toggle should
-  // NOT reveal. Anything under .openit that isn't agent-traces is
-  // pure engine state and shouldn't surface even in advanced view.
+  // NOT reveal. Most of `.openit/` is pure engine state (sync manifests,
+  // session ledgers, plugin-version sentinel) with no user affordance.
+  // Two exceptions surface even in advanced view:
+  //   - `agent-traces/` — clickable per-turn JSONs.
+  //   - `config.json` — admin-tunable lifecycle knobs (PIN-5864).
   const isOpenitNoise = (n: FileNode): boolean => {
     if (!repo) return false;
     const rel = n.path.startsWith(repo + "/") ? n.path.slice(repo.length + 1) : n.path;
@@ -543,6 +546,7 @@ export function FileExplorer({
     if (rel === ".openit/agent-traces" || rel.startsWith(".openit/agent-traces/")) {
       return false;
     }
+    if (rel === ".openit/config.json") return false;
     return true;
   };
 

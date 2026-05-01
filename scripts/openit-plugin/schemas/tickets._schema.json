@@ -38,10 +38,10 @@
       "id": "status",
       "label": "Status",
       "type": "enum",
-      "values": ["incoming", "agent-responding", "open", "escalated", "resolved", "closed"],
+      "values": ["agent-responding", "open", "escalated", "resolved", "closed"],
       "required": true,
-      "default": "incoming",
-      "comment": "Lifecycle states: incoming = just landed, server hasn't kicked off the agent yet (transient). agent-responding = claude -p subprocess actively running this turn — admin sees the activity banner ONLY in this state. open = agent finished its turn (KB hit, answered the asker), conversation alive but the agent is idle waiting for the asker's next message; no banner. escalated = KB miss / agent gave up — escalated banner fires for the admin. resolved = the asker's question has been fully answered and the conversation is done (set by admin or by an explicit confirmation flow). closed = no further action; archived."
+      "default": "agent-responding",
+      "comment": "Lifecycle states: agent-responding = claude -p subprocess actively running this turn — admin sees the activity banner ONLY in this state. Set on first ticket creation (skipping a separate 'incoming' state) and again on every follow-up turn before the subprocess starts. open = agent finished its turn (KB hit, answered the asker), conversation alive but the agent is idle waiting for the asker's next message; no banner. escalated = admin needs to look at this. Triggered by any of four paths: (1) agent emits <<STATUS:escalated>> (KB miss / agent gave up), (2) claude -p subprocess crashed mid-turn, (3) admin replies on the ticket — the agent is no longer the sole driver, (4) ticket sat in 'open' past the auto-escalate threshold (default 24h, configurable via .openit/config.json). escalated banner fires for the admin. resolved = the asker's question has been fully answered and the conversation is done (set by admin via Mark-as-resolved, or by the agent emitting <<STATUS:resolved>>). resolved is reopenable — a follow-up asker turn flips back to agent-responding and the agent re-decides. closed = no further action; archived. Set by the auto-close walker after a ticket has been resolved past the threshold (default 24h, configurable via .openit/config.json)."
     },
     {
       "id": "priority",

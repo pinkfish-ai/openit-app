@@ -651,11 +651,16 @@ async fn chat_turn(
         Ok(out) => out,
         Err(e) => {
             eprintln!("[intake/chat] claude -p failed: {}", e);
-            // Best-effort: if we marked the ticket agent-responding,
-            // flip it back to escalated so the admin notices something
-            // went wrong rather than the ticket being stuck pretending
-            // to type.
-            let _ = mark_status(&repo, &ticket_id, "escalated").await;
+            // Best-effort: flip the ticket to `escalated` so the admin
+            // notices something went wrong rather than the ticket being
+            // stuck pretending to type. Gated on
+            // `ticketLifecycle.escalateOnAgentCrash` — admins can
+            // disable to leave crashed tickets in `agent-responding`
+            // for diagnosis.
+            let cfg = crate::openit_config::load(&repo).await;
+            if cfg.ticket_lifecycle.escalate_on_agent_crash {
+                let _ = mark_status(&repo, &ticket_id, "escalated").await;
+            }
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("agent error: {}", e),
