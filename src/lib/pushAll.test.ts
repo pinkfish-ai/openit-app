@@ -40,6 +40,7 @@ vi.mock("./api", () => ({
 
 vi.mock("./syncEngine", () => ({
   hasConflictsForPrefix: vi.fn(),
+  getConflictsForPrefix: vi.fn(),
 }));
 
 vi.mock("./nestedManifest", () => ({
@@ -68,7 +69,7 @@ import {
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
 import { loadCreds } from "./pinkfishAuth";
 import { gitStatusShort, datastoreStateLoad } from "./api";
-import { hasConflictsForPrefix } from "./syncEngine";
+import { getConflictsForPrefix, hasConflictsForPrefix } from "./syncEngine";
 import { loadCollectionManifest } from "./nestedManifest";
 
 // Default state every test inherits before customising. Steady-state
@@ -81,6 +82,7 @@ function setSteadyState() {
   } as never);
   vi.mocked(gitStatusShort).mockResolvedValue([]);
   vi.mocked(hasConflictsForPrefix).mockReturnValue(false);
+  vi.mocked(getConflictsForPrefix).mockReturnValue([]);
 
   vi.mocked(getSyncStatus).mockReturnValue({
     collections: [{ id: "kb-default", name: "default" }],
@@ -225,8 +227,11 @@ describe("pushAllEntities — skip-clean (PIN-5865)", () => {
   });
 
   it("conflict aggregate non-empty unblocks the pull even when working tree is clean", async () => {
+    // The kb adapter prefix IS the per-collection working-tree dir,
+    // not the literal class name "kb". The default mock uses
+    // collection.name = "default" → dir = "knowledge-bases/default".
     vi.mocked(hasConflictsForPrefix).mockImplementation(
-      (prefix: string) => prefix === "kb",
+      (prefix: string) => prefix === "knowledge-bases/default",
     );
 
     await pushAllEntities("/repo", () => {});
@@ -293,7 +298,50 @@ describe("pushAllEntities — parallelism (PIN-5865)", () => {
     expect(kbFinishedAt).toBeGreaterThan(dsFinishedAt);
   });
 
+  it("BugBot fix: filestore collection B's conflicts do NOT block A's push (per-collection conflict isolation)", async () => {
+    // Both collections have dirty paths so neither skips. After
+    // pull, collection B has conflicts but A is clean. With the old
+    // cross-collection conflicts union from `getFilestoreSyncStatus`,
+    // A's safety check would see B's conflicts and falsely block.
+    // The fix: A queries `getConflictsForPrefix("filestores/scripts")`
+    // which only returns A's own slot.
+    vi.mocked(gitStatusShort).mockResolvedValue([
+      { path: "filestores/scripts/dirty.sh", status: " M" },
+      { path: "filestores/skills/dirty.sh", status: " M" },
+    ] as never);
+
+    vi.mocked(getConflictsForPrefix).mockImplementation((prefix: string) => {
+      if (prefix === "filestores/skills") {
+        return [
+          {
+            prefix: "filestores/skills",
+            manifestKey: "skills/conflicting.txt",
+            workingTreePath: "filestores/skills/conflicting.txt",
+            reason: "local-and-remote-changed" as const,
+          },
+        ];
+      }
+      return [];
+    });
+
+    await pushAllEntities("/repo", () => {});
+
+    // A pushed (its own conflict slot is empty). B did NOT push (its
+    // own conflict slot is non-empty).
+    const aPushed = vi.mocked(pushAllToFilestore).mock.calls.some(
+      (call) => call[0].collection.name === "openit-scripts",
+    );
+    const bPushed = vi.mocked(pushAllToFilestore).mock.calls.some(
+      (call) => call[0].collection.name === "openit-skills",
+    );
+    expect(aPushed).toBe(true);
+    expect(bPushed).toBe(false);
+  });
+
   it("filestore collections run concurrently — slow A does not block B", async () => {
+    // Both collections must be dirty so skip-clean doesn't fire for
+    // either (otherwise they'd both short-circuit and never reach the
+    // pull stage where the slow-A behavior is observable).
     vi.mocked(gitStatusShort).mockResolvedValue([
       { path: "filestores/scripts/dirty.sh", status: " M" },
       { path: "filestores/skills/dirty.sh", status: " M" },

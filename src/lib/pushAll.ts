@@ -33,7 +33,10 @@ import {
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
 import { loadCreds, type PinkfishCreds } from "./pinkfishAuth";
 import { gitStatusShort, datastoreStateLoad } from "./api";
-import { hasConflictsForPrefix } from "./syncEngine";
+import {
+  getConflictsForPrefix,
+  hasConflictsForPrefix,
+} from "./syncEngine";
 import { loadCollectionManifest } from "./nestedManifest";
 
 type LineFn = (line: string) => void;
@@ -110,17 +113,23 @@ async function runKb(args: {
 
     // Skip-clean: every collection has a non-empty manifest (i.e. has
     // been pulled at least once) AND no dirty paths under its dir AND
-    // no aggregate conflicts for the kb prefix. Trust the 60s poller
-    // for remote-side changes. PIN-5865.
+    // no engine-level conflicts at its adapter prefix. Trust the 60s
+    // poller for remote-side changes. PIN-5865.
+    //
+    // The kb adapter's prefix IS the collection's working-tree dir
+    // (`knowledge-bases/<displayName>`) — see `kbAdapter` in
+    // `entities/kb.ts`. Passing the dir to `hasConflictsForPrefix`
+    // here matches the slot the engine writes after each pull.
     const cleanByCol = await Promise.all(
       collections.map(async (c) => {
         const dir = `knowledge-bases/${displayKbName(c.name)}`;
         if (dirtyUnderScope(dir)) return false;
+        if (hasConflictsForPrefix(dir)) return false;
         const m = await loadCollectionManifest(repo, "kb", c.id);
         return Object.keys(m.files).length > 0;
       }),
     );
-    if (cleanByCol.every(Boolean) && !hasConflictsForPrefix("kb")) {
+    if (cleanByCol.every(Boolean)) {
       onLine("▸ sync: kb skipped (clean)");
       return;
     }
@@ -239,14 +248,18 @@ async function runFilestoreCollection(args: {
 }): Promise<void> {
   const { creds, repo, collection, onLine, dirtyUnderScope } = args;
   try {
-    // Mirror of `collectionLocalDir` in filestoreSync.ts. Both must
-    // agree on the path; tests pin the contract.
+    // Mirror of `collectionLocalDir` in filestoreSync.ts and the
+    // adapter prefix in `entities/filestore.ts` — all three must agree
+    // on the path. The filestore adapter's prefix IS this dir, which
+    // is also the slot used by `conflictsByPrefix`. Pre-pull skip
+    // checks query that slot directly so a sibling collection's
+    // conflict can't contaminate this one.
     const folder = collection.name.startsWith("openit-")
       ? collection.name.slice("openit-".length)
       : collection.name;
     const dir = `filestores/${folder}`;
 
-    if (!dirtyUnderScope(dir) && !hasConflictsForPrefix("filestore")) {
+    if (!dirtyUnderScope(dir) && !hasConflictsForPrefix(dir)) {
       const m = await loadCollectionManifest(repo, "fs", collection.id);
       if (Object.keys(m.files).length > 0) {
         onLine(`▸ sync: filestore (${collection.name}) skipped (clean)`);
@@ -262,7 +275,14 @@ async function runFilestoreCollection(args: {
         repo,
         collection,
       });
-      const conflicts = getFilestoreSyncStatus().conflicts;
+      // Per-collection conflict snapshot from the engine's prefix
+      // store, not the cross-collection union in
+      // `getFilestoreSyncStatus().conflicts`. Without this filter, a
+      // sibling collection's conflicts that landed concurrently
+      // during the same Promise.allSettled batch would block this
+      // collection's push as a false positive. (BugBot finding,
+      // PIN-5865.)
+      const conflicts = getConflictsForPrefix(dir);
       if (!ok) {
         // pullOnce never throws; check ok explicitly. Without this a
         // network/auth failure would leave conflicts empty AND no catch
@@ -276,7 +296,9 @@ async function runFilestoreCollection(args: {
         onLine(
           `✗ sync: filestore (${collection.name}) pull surfaced conflicts — resolve in Claude, then commit again:`,
         );
-        for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
+        for (const c of conflicts) {
+          onLine(`  • ${c.workingTreePath}: ${c.reason}`);
+        }
       } else if (downloaded > 0) {
         onLine(`  ✓ pulled ${downloaded} file(s) before push`);
       }

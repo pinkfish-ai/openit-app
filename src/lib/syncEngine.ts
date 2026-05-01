@@ -317,9 +317,28 @@ export function clearConflictsForPrefix(prefix: string): void {
 /// previous pull may have surfaced conflicts the user hasn't resolved
 /// yet (their resolution will live in `.server.` shadow files, which
 /// are gitignored and thus invisible to `git status`).
+///
+/// **Prefix granularity matches the adapter that produced the conflict.**
+/// `kb` and `filestore` adapters use per-collection prefixes (e.g.
+/// `"knowledge-bases/default"`, `"filestores/library"`); `datastore`,
+/// `agent`, and `workflow` adapters use class-level strings
+/// (`"datastore"`, etc.). Pass the same string the adapter used as
+/// `prefix` — passing a class name like `"kb"` will never match the
+/// per-collection slots.
 export function hasConflictsForPrefix(prefix: string): boolean {
   const list = conflictsByPrefix.get(prefix);
   return list != null && list.length > 0;
+}
+
+/// Snapshot of conflicts for a single prefix. Same prefix-granularity
+/// rules as `hasConflictsForPrefix`. Used by parallel filestore pulls
+/// in `pushAllEntities` so each collection's post-pull conflict gate
+/// looks at ONLY its own conflicts — not the cross-collection union
+/// from `getFilestoreSyncStatus().conflicts`, which a sibling pull
+/// can race-contaminate when collections run concurrently.
+export function getConflictsForPrefix(prefix: string): AggregatedConflict[] {
+  const list = conflictsByPrefix.get(prefix);
+  return list != null ? [...list] : [];
 }
 
 /// Compute the on-disk shadow path for a conflict's canonical
