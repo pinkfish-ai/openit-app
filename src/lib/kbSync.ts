@@ -231,14 +231,9 @@ async function pushAllToKbImpl(args: {
   }
 
   // [sync-debug]
-  console.log(`[sync-debug:kb:${collection.name}] push inputs:`, {
-    localFiles: local.map((l) => ({ filename: l.filename, mtime_ms: l.mtime_ms })),
-    localCanonicalNames: Array.from(localCanonicalNames),
-    manifestKeys,
-    dirtyPaths: Array.from(dirtyPaths),
-    toPush: toPush.map((f) => f.filename),
-    toDelete,
-  });
+  console.log(
+    `[sync-debug:kb:${collection.name}] push toPush=${JSON.stringify(toPush.map((f) => f.filename))} toDelete=${JSON.stringify(toDelete)} (localCanonical=${JSON.stringify(Array.from(localCanonicalNames))} manifestKeys=${JSON.stringify(manifestKeys)})`,
+  );
 
   if (toPush.length === 0 && toDelete.length === 0) {
     onLine?.(`▸ kb push (${displayKbName(collection.name)}): nothing new to upload`);
