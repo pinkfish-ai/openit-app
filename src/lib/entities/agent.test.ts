@@ -237,7 +237,7 @@ describe("resolveResourceRefs", () => {
           return { ok: true, status: 200, json: async () => opts.fsCollections };
         }
       }
-      if (u.pathname === "/api/proxy-endpoints") {
+      if (u.pathname === "/service/proxy-endpoints") {
         return { ok: true, status: 200, json: async () => opts.proxies };
       }
       return { ok: false, status: 404, text: async () => "not found" };

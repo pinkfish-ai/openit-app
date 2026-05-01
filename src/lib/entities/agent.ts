@@ -455,7 +455,8 @@ async function fetchProxyEndpoints(
   if (!token) throw new Error("not authenticated");
   const fetchFn = makeSkillsFetch(token.accessToken, "bearer");
   const urls = derivedUrls(creds.tokenUrl);
-  const url = new URL("/api/proxy-endpoints", urls.appBaseUrl);
+  // /service/ variant accepts the runtime token; /api/ is Cognito-only.
+  const url = new URL("/service/proxy-endpoints", urls.appBaseUrl);
   const resp = await fetchFn(url.toString());
   if (!resp.ok) {
     throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
