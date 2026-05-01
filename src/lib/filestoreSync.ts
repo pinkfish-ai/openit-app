@@ -231,6 +231,15 @@ async function pushAllToFilestoreImpl(args: {
     toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
   }
 
+  // [sync-debug]
+  console.log(`[sync-debug:fs:${collection.name}] push inputs:`, {
+    localFiles: local.map((l) => ({ filename: l.filename, mtime_ms: l.mtime_ms })),
+    localCanonicalNames: Array.from(localCanonicalNames),
+    manifestKeys,
+    toPush: toPush.map((f) => f.filename),
+    toDelete,
+  });
+
   if (toPush.length === 0 && toDelete.length === 0) {
     onLine?.(`▸ filestore push (${collection.name}): nothing new to upload`);
     return { pushed: 0, failed: 0 };

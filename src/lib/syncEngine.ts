@@ -519,6 +519,16 @@ async function pullEntityImpl(
   } = await adapter.listRemote(repo, manifest);
   const local = await adapter.listLocal(repo);
 
+  // [sync-debug] DELETE-ME-LATER: trace what the pull pipeline sees so we
+  // can diagnose why local-deletes / remote-deletes aren't propagating.
+  console.log(`[sync-debug:${adapter.prefix}] pullEntity inputs:`, {
+    manifestKeys: Object.keys(manifest.files),
+    remoteKeys: remote.map((r) => r.manifestKey),
+    localCanonical: local.filter((l) => !l.isShadow).map((l) => l.manifestKey),
+    localShadows: local.filter((l) => l.isShadow).map((l) => l.manifestKey),
+    paginationFailed,
+  });
+
   // Index local items so we can answer "is this manifestKey on disk?" and
   // "does this manifestKey have an existing shadow?" in O(1).
   const localCanonicalByKey = new Map<string, LocalItem>();
@@ -536,6 +546,17 @@ async function pullEntityImpl(
     if (!r.manifestKey) continue;
     const tracked = manifest.files[r.manifestKey];
     const localFile = localCanonicalByKey.get(r.manifestKey);
+
+    // [sync-debug]
+    console.log(`[sync-debug:${adapter.prefix}] iter ${r.manifestKey}`, {
+      tracked: tracked
+        ? { remote_version: tracked.remote_version, pulled_at_mtime_ms: tracked.pulled_at_mtime_ms }
+        : null,
+      localFile: localFile
+        ? { mtime_ms: localFile.mtime_ms }
+        : null,
+      remoteUpdatedAt: r.updatedAt,
+    });
 
     // 1. Brand new (not tracked, not on disk) → fetch + record + commit.
     if (!tracked && !localFile) {
@@ -746,6 +767,10 @@ async function pullEntityImpl(
     for (const mKey of Object.keys(manifest.files)) {
       if (remoteKeys.has(mKey)) continue;
       if (unreliableKeyPrefixes.some((p) => mKey.startsWith(p))) continue;
+      // [sync-debug]
+      console.log(
+        `[sync-debug:${adapter.prefix}] server-delete fires for ${mKey}`,
+      );
       const handled = await adapter.onServerDelete?.({
         repo,
         manifestKey: mKey,
@@ -759,6 +784,11 @@ async function pullEntityImpl(
         delete manifest.files[mKey];
       }
     }
+  } else {
+    // [sync-debug]
+    console.log(
+      `[sync-debug:${adapter.prefix}] server-delete pass SKIPPED (paginationFailed)`,
+    );
   }
 
   await adapter.saveManifest(repo, manifest);
