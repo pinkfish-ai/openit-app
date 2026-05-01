@@ -23,6 +23,7 @@ import { ImageViewer } from "./viewers/ImageViewer";
 import { PdfViewer } from "./viewers/PdfViewer";
 import { SpreadsheetViewer } from "./viewers/SpreadsheetViewer";
 import { OfficeViewer } from "./viewers/OfficeViewer";
+import { DiffViewer } from "./DiffViewer";
 import { writeToActiveSession } from "./activeSession";
 import { PaneBody } from "../ui";
 
@@ -521,12 +522,6 @@ export function Viewer({
   // on-disk file changes (fsTick) so the table/raw view updates
   // without re-clicking.
   const [rowOverride, setRowOverride] = useState<MemoryItem | null>(null);
-  // Lifted from below the early returns (was at the copy-button section)
-  // — calling useState after a conditional early return broke the
-  // Rules of Hooks: hook count differed between "no source" and "with
-  // source" renders, surfacing as a blank-screen render error.
-  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
-
   // Filter for the conversations-list view. `all` shows every thread;
   // the others narrow by ticket status. Persists across click+reopen
   // of the conversations folder within the same session, but resets
@@ -1175,24 +1170,28 @@ export function Viewer({
     }
   }
   // The sync stream and the diff view are the two cases where the
-  // user's natural next step is "paste this into Claude". A copy
-  // button here saves a triple-click + ⌘C and avoids selection
-  // accidentally truncating long output.
-  const showCopy = source.kind === "sync" || source.kind === "diff";
-  const copyableText =
+  // user's natural next step is "paste this into Claude". The
+  // "add to chat" affordance pastes the contents into the active Claude
+  // session (bracketed-paste so the terminal treats it as one atomic
+  // input) and falls back to clipboard if Claude isn't running in the
+  // right pane.
+  const showAddToChat = source.kind === "sync" || source.kind === "diff";
+  const addableText =
     source.kind === "sync"
       ? source.lines.join("\n")
       : source.kind === "diff"
       ? source.text
       : "";
-  const handleCopy = async () => {
-    if (!copyableText) return;
+  const handleAddToChat = async () => {
+    if (!addableText) return;
+    const wrapped = `${BRACKETED_PASTE_OPEN}${addableText}${BRACKETED_PASTE_CLOSE}`;
     try {
-      await navigator.clipboard.writeText(copyableText);
-      setCopyState("copied");
-      setTimeout(() => setCopyState("idle"), 1500);
+      const ok = await writeToActiveSession(wrapped);
+      if (!ok) {
+        await navigator.clipboard.writeText(addableText);
+      }
     } catch (e) {
-      console.error("[viewer] clipboard write failed:", e);
+      console.error("[viewer] add-to-chat failed:", e);
     }
   };
 
@@ -2863,8 +2862,8 @@ export function Viewer({
       );
     }
 
-    // Deploy / diff. Sync output gets a ref so the auto-scroll
-    // useEffect above can pin the view to the latest line.
+    // Sync output gets a ref so the auto-scroll useEffect above can
+    // pin the view to the latest line.
     if (source?.kind === "sync") {
       return (
         <pre ref={syncPreRef} className="viewer-content">
@@ -2872,6 +2871,27 @@ export function Viewer({
         </pre>
       );
     }
+
+    // Diff: VSCode-style per-file unified-diff renderer. Click on a
+    // file header opens the file in the viewer (synced with
+    // FileExplorer via the `onOpenPath` round-trip).
+    if (source?.kind === "diff") {
+      return (
+        <div className="viewer-content diff-content">
+          <DiffViewer
+            text={content}
+            onOpenFile={
+              repo && onOpenPath
+                ? (rel) => {
+                    void onOpenPath(`${repo}/${rel}`);
+                  }
+                : undefined
+            }
+          />
+        </div>
+      );
+    }
+
     return <pre className="viewer-content">{content}</pre>;
   };
 
@@ -3192,14 +3212,14 @@ export function Viewer({
             ))}
           </TabStrip>
         )}
-        {showCopy && (
+        {showAddToChat && (
           <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleCopy}
-            title="Copy contents to clipboard"
+            variant="linkMuted"
+            onClick={handleAddToChat}
+            title="Paste these contents into Claude in the right pane"
           >
-            {copyState === "copied" ? "Copied!" : "Copy"}
+            add to chat
+            <span className="arrow" aria-hidden="true">→</span>
           </Button>
         )}
       </div>
