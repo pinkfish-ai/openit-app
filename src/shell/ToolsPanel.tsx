@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { ask } from "@tauri-apps/plugin-dialog";
 import { CATALOG, type CatalogEntry } from "../lib/toolsCatalog";
 import {
   getTargetOs,
@@ -8,8 +7,6 @@ import {
   removeHintOnly,
   requestAgentInstall,
   requestAgentUninstall,
-  uninstallTool,
-  UninstallError,
   type TargetOs,
 } from "../lib/toolsInstall";
 import { Button } from "../ui";
@@ -132,49 +129,7 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
     }
   };
 
-  const onUninstall = async (entry: CatalogEntry) => {
-    if (!projectRoot || !targetOs) return;
-    if (targetOs !== "macos") {
-      const ok = await ask(
-        `Hand off uninstall of ${entry.name} to Claude? It'll pick the right uninstall method for ${targetOs}.`,
-        { title: "Uninstall via Claude?", kind: "warning" },
-      );
-      if (!ok) return;
-      const sent = await requestAgentUninstall(entry, {
-        kind: "non-macos",
-        targetOs,
-      });
-      if (!sent) {
-        setStatus(entry.id, {
-          kind: "failed",
-          verb: "uninstall",
-          stderr: "No active Claude session.",
-          claudeSessionMissing: true,
-        });
-        return;
-      }
-      flashHandedOff(entry.id);
-      return;
-    }
-
-    const ok = await ask(
-      `Uninstall ${entry.name}? This will run \`brew uninstall ${entry.brewPkg}\`.`,
-      { title: "Uninstall?", kind: "warning" },
-    );
-    if (!ok) return;
-    setStatus(entry.id, { kind: "busy", verb: "uninstall" });
-    try {
-      await uninstallTool(projectRoot, entry);
-      setStatus(entry.id, { kind: "idle" });
-      await refreshInstalled();
-    } catch (e) {
-      const stderr = e instanceof UninstallError ? e.message : String(e);
-      setStatus(entry.id, { kind: "failed", verb: "uninstall", stderr });
-      await refreshInstalled();
-    }
-  };
-
-  const onAskClaude = async (entry: CatalogEntry, status: CardStatus) => {
+const onAskClaude = async (entry: CatalogEntry, status: CardStatus) => {
     if (status.kind !== "failed") return;
     // Brew-failed handoff carries the captured stderr. Same agent
     // path as the non-mac install, different context.
@@ -254,7 +209,6 @@ export function ToolsPanel({ projectRoot }: { projectRoot: string | null }) {
             status={statuses[entry.id] ?? { kind: "idle" }}
             targetOs={targetOs}
             onInstall={() => onInstall(entry)}
-            onUninstall={() => onUninstall(entry)}
             onAskWhatCanIDo={() => onAskWhatCanIDo(entry)}
             onAskClaude={(s) => onAskClaude(entry, s)}
             onRemoveHintOnly={() => onRemoveHintOnly(entry)}
@@ -272,7 +226,6 @@ function ToolCard({
   status,
   targetOs,
   onInstall,
-  onUninstall,
   onAskWhatCanIDo,
   onAskClaude,
   onRemoveHintOnly,
@@ -283,7 +236,6 @@ function ToolCard({
   status: CardStatus;
   targetOs: TargetOs | null;
   onInstall: () => void;
-  onUninstall: () => void;
   onAskWhatCanIDo: () => void;
   onAskClaude: (s: CardStatus) => void;
   onRemoveHintOnly: () => void;
@@ -322,25 +274,7 @@ function ToolCard({
           {entry.name}
           <span className={styles.cardBinary}>{entry.binary}</span>
         </span>
-        {installed && (
-          <span className={styles.installedGroup}>
-            <span className={styles.installedPill}>Installed</span>
-            {!busy && !handedOff && (
-              <Button
-                variant="linkMuted"
-                size="sm"
-                onClick={onUninstall}
-                title={
-                  isMac
-                    ? `brew uninstall ${entry.brewPkg}`
-                    : "Hand off uninstall to Claude"
-                }
-              >
-                {isMac ? "uninstall" : "uninstall via Claude"}
-              </Button>
-            )}
-          </span>
-        )}
+        {installed && <span className={styles.installedPill}>Installed</span>}
       </div>
       <p className={styles.cardDesc}>{entry.description}</p>
       <div className={styles.cardActions}>
