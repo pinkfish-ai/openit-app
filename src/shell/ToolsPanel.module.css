@@ -94,13 +94,15 @@
   font-weight: 500;
 }
 
-/* Right-rail of the card header — keeps the "Installed" pill and
-   the demoted "uninstall" link as a single unit so they read as
-   "you have this; click here to remove" without an extra row. */
+/* Right-rail of the card header — stacks the "Installed" pill above
+   the demoted "uninstall" link so the destructive action sits in a
+   visual hierarchy (status first, action below) without competing
+   with the title row. */
 .installedGroup {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
 }
 
 .cardDesc {
