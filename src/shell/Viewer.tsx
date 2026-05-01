@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -563,6 +563,30 @@ export function Viewer({
   // wakes the explorer so the new file appears in the tree.
   const [reportRunning, setReportRunning] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  // Auto-scroll the sync log to the bottom whenever new lines arrive
+  // — without this, watching a multi-class push from the top of the
+  // pane means the latest lines fall below the fold and the user has
+  // to scroll manually for every click. Only fires when the sync
+  // source is active; other raw renders (diff, schema) keep default
+  // scroll behaviour. The <pre> itself doesn't scroll — PaneBody is
+  // the scroll container per `.viewer-content` styling — so we walk
+  // up to the closest overflow-scroll ancestor and pin it to the
+  // bottom.
+  const syncPreRef = useRef<HTMLPreElement | null>(null);
+  useEffect(() => {
+    if (source?.kind !== "sync") return;
+    const el = syncPreRef.current;
+    if (!el) return;
+    let p: HTMLElement | null = el.parentElement;
+    while (p) {
+      const overflowY = window.getComputedStyle(p).overflowY;
+      if (overflowY === "auto" || overflowY === "scroll") {
+        p.scrollTop = p.scrollHeight;
+        return;
+      }
+      p = p.parentElement;
+    }
+  }, [source]);
   useEffect(() => {
     setReplyText("");
     setReplySending(false);
@@ -2450,7 +2474,15 @@ export function Viewer({
       );
     }
 
-    // Deploy / diff
+    // Deploy / diff. Sync output gets a ref so the auto-scroll
+    // useEffect above can pin the view to the latest line.
+    if (source?.kind === "sync") {
+      return (
+        <pre ref={syncPreRef} className="viewer-content">
+          {content}
+        </pre>
+      );
+    }
     return <pre className="viewer-content">{content}</pre>;
   };
 
