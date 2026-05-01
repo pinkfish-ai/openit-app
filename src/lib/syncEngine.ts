@@ -311,6 +311,36 @@ export function clearConflictsForPrefix(prefix: string): void {
   if (conflictsByPrefix.delete(prefix)) emitConflicts();
 }
 
+/// True if at least one aggregated conflict exists for this prefix. Used
+/// by the skip-clean preflight in `pushAllEntities` — a clean working
+/// tree alone isn't sufficient to skip a pre-push pull, because the
+/// previous pull may have surfaced conflicts the user hasn't resolved
+/// yet (their resolution will live in `.server.` shadow files, which
+/// are gitignored and thus invisible to `git status`).
+///
+/// **Prefix granularity matches the adapter that produced the conflict.**
+/// `kb` and `filestore` adapters use per-collection prefixes (e.g.
+/// `"knowledge-bases/default"`, `"filestores/library"`); `datastore`,
+/// `agent`, and `workflow` adapters use class-level strings
+/// (`"datastore"`, etc.). Pass the same string the adapter used as
+/// `prefix` — passing a class name like `"kb"` will never match the
+/// per-collection slots.
+export function hasConflictsForPrefix(prefix: string): boolean {
+  const list = conflictsByPrefix.get(prefix);
+  return list != null && list.length > 0;
+}
+
+/// Snapshot of conflicts for a single prefix. Same prefix-granularity
+/// rules as `hasConflictsForPrefix`. Used by parallel filestore pulls
+/// in `pushAllEntities` so each collection's post-pull conflict gate
+/// looks at ONLY its own conflicts — not the cross-collection union
+/// from `getFilestoreSyncStatus().conflicts`, which a sibling pull
+/// can race-contaminate when collections run concurrently.
+export function getConflictsForPrefix(prefix: string): AggregatedConflict[] {
+  const list = conflictsByPrefix.get(prefix);
+  return list != null ? [...list] : [];
+}
+
 /// Compute the on-disk shadow path for a conflict's canonical
 /// workingTreePath. e.g. `databases/openit-people-XXX/p123.json`
 /// → `databases/openit-people-XXX/p123.server.json`. Used by the
@@ -453,11 +483,18 @@ export async function commitTouched(
   message: string,
 ): Promise<void> {
   if (touched.length === 0) return;
-  try {
-    await gitCommitPaths(repo, touched, message);
-  } catch (e) {
-    console.warn(`[syncEngine] commit failed (${message}):`, e);
-  }
+  // Serialize commits across all entity prefixes through a dedicated
+  // `(repo, "git")` queue. Per-prefix locks already prevent two ops
+  // on the same entity from racing, but they don't prevent kb-push and
+  // filestore-pull from hitting `gitCommitPaths` concurrently — which
+  // races on `.git/index.lock`. PIN-5865.
+  await withRepoLock(repo, "git", async () => {
+    try {
+      await gitCommitPaths(repo, touched, message);
+    } catch (e) {
+      console.warn(`[syncEngine] commit failed (${message}):`, e);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -512,6 +549,17 @@ async function pullEntityImpl(
   repo: string,
 ): Promise<PullResult> {
   const manifest = await adapter.loadManifest(repo);
+  // Flat-format adapters (agent, workflow, datastore) call
+  // `entity_state_load` directly, which now returns raw JSON. When the
+  // state file doesn't exist, Rust returns `{}` — no `.files`. Engine
+  // assumes `manifest.files` is always an object, so normalize here.
+  // Adapters that go through `nestedManifest.loadCollectionManifest`
+  // already get a proper default shape; this is a no-op for them.
+  if (!manifest.files || typeof manifest.files !== "object") {
+    manifest.files = {};
+  }
+  if (manifest.collection_id === undefined) manifest.collection_id = null;
+  if (manifest.collection_name === undefined) manifest.collection_name = null;
   const {
     items: remote,
     paginationFailed,
@@ -550,34 +598,6 @@ async function pullEntityImpl(
       } catch (e) {
         console.error(
           `[syncEngine:${adapter.prefix}] pull ${r.manifestKey} failed:`,
-          e,
-        );
-      }
-      continue;
-    }
-
-    // 1b. Tracked but missing from disk → re-fetch.
-    // Manifest claims the file was synced, but it's not on disk anymore.
-    // This can happen if a previous sync recorded the manifest entry but
-    // the actual file write failed (e.g., directory creation issues), or
-    // if the user deleted the file locally without a manifest update.
-    // Without this branch, the engine would silently skip and the file
-    // would never reappear.
-    if (tracked && !localFile) {
-      console.log(
-        `[syncEngine:${adapter.prefix}] re-fetching ${r.manifestKey} (tracked but missing from disk)`,
-      );
-      try {
-        await r.fetchAndWrite(repo);
-        manifest.files[r.manifestKey] = {
-          remote_version: r.updatedAt,
-          pulled_at_mtime_ms: Date.now(),
-        };
-        touched.push(r.workingTreePath);
-        pulled += 1;
-      } catch (e) {
-        console.error(
-          `[syncEngine:${adapter.prefix}] re-fetch ${r.manifestKey} failed:`,
           e,
         );
       }
@@ -789,6 +809,22 @@ async function pullEntityImpl(
     }
   }
 
+  // Stamp the pull-completion sentinel so `pushAllEntities` skip-clean
+  // can recognise this prefix as "talked to remote at least once" even
+  // when both sides are empty. Without it, a collection that's empty
+  // on both ends (e.g. `openit-attachments` before any ticket has had
+  // an attachment) re-pulls on every sync click forever — manifest
+  // never populates, skip-clean's `last_pull_at_ms != null` check
+  // never flips, RTT bill grows. PIN-5865.
+  //
+  // Gated on `!paginationFailed`: a partial pull skipped the
+  // server-delete pass above, so its view of remote is incomplete.
+  // Stamping anyway would let skip-clean fire next click and the
+  // server-delete reconcile would be deferred indefinitely. Better
+  // to leave the sentinel un-set so the next click pulls again.
+  if (!paginationFailed) {
+    manifest.last_pull_at_ms = Date.now();
+  }
   await adapter.saveManifest(repo, manifest);
 
   if (touched.length > 0) {

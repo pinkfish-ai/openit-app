@@ -448,6 +448,16 @@ export type KbStatePersisted = {
   collection_id: string | null;
   collection_name: string | null;
   files: Record<string, KbFileState>;
+  /// Set by the engine after every successful pull pipeline pass — even
+  /// when zero items came back. Used by `pushAllEntities` skip-clean
+  /// preflight as the "we've talked to remote at least once for this
+  /// collection" sentinel. Without it, a brand-new empty collection
+  /// (e.g. `openit-attachments` on a project with no ticket
+  /// attachments yet) keeps failing skip-clean forever because
+  /// `Object.keys(files).length` stays 0 — pulling on every click for
+  /// no benefit. Optional on the type for backwards-compat with
+  /// pre-PIN-5865 manifests on disk.
+  last_pull_at_ms?: number | null;
 };
 
 export async function kbInit(repo: string): Promise<string> {
@@ -710,6 +720,25 @@ export async function kbSupportedExtensions(): Promise<string[]> {
 /// `reports/2026-04-27-1432-overview.md`. Rejects on failure.
 export async function reportOverviewRun(repo: string): Promise<string> {
   return invoke("report_overview_run", { repo });
+}
+
+/// Run an arbitrary `.mjs` script in the repo with `node` and return
+/// the captured stdout/stderr/exitCode. The Rust side rejects scripts
+/// that resolve outside the repo root (canonicalize + starts_with),
+/// so a bad UI path or crafted arg can't escape into system binaries.
+/// Powers the "Run" button on each filestores/scripts/ card.
+export interface ScriptRunOutput {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  durationMs: number;
+}
+
+export async function scriptRun(
+  repo: string,
+  scriptPath: string,
+): Promise<ScriptRunOutput> {
+  return invoke("script_run", { repo, scriptPath });
 }
 
 /// Generic JSON-RPC tools/call against any Pinkfish MCP server. Returns the

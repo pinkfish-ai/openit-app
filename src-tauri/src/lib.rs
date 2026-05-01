@@ -8,10 +8,12 @@ mod intake;
 mod kb;
 mod keychain;
 mod oauth_callback;
+mod openit_config;
 mod pinkfish;
 mod project;
 mod pty;
 mod reports;
+mod scripts;
 mod skill_canvas;
 mod skills;
 mod slack;
@@ -93,6 +95,7 @@ pub fn run() {
             project::project_get_cloud_binding,
             project::project_update_last_sync_at,
             reports::report_overview_run,
+            scripts::script_run,
             kb::kb_init,
             kb::kb_delete_file,
             kb::kb_read_file,

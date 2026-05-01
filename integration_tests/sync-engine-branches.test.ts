@@ -4,15 +4,17 @@
  * The pull pipeline has four shape-cases per remote file:
  *
  *   1.  !tracked && !localFile   → brand new, fetch + record
- *   1b. tracked  && !localFile   → tracked but missing, RE-FETCH (the bug)
+ *   1b. tracked  && !localFile   → user/Claude deleted, leave alone (push reconciles)
  *   2.  !tracked && localFile    → bootstrap-adopt
  *   3.  tracked  && localFile    → diff (remoteChanged / localChanged / both)
  *
- * Pre-fix, case 1b silently fell through and the engine did nothing. So
- * once the manifest had a stale entry (e.g. from a failed write where
- * the directory didn't exist), the file would never re-download. This
- * suite locks the new branch in place + exercises every other case so a
- * future refactor can't regress to the same shape.
+ * Case 1b previously RE-FETCHED any locally-missing tracked file, which
+ * silently undid user/Claude deletions before push could observe them
+ * and issue the remote DELETE (PR #99). The pull is now intentionally a
+ * no-op for case 1b — the manifest entry stays put so the subsequent
+ * push's deletion-reconcile pass picks it up. This suite pins that
+ * contract + exercises every other case so a future refactor can't
+ * regress to the silent re-download shape.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
@@ -114,8 +116,8 @@ describe("syncEngine — pull branch coverage", () => {
     });
   });
 
-  describe("case 1b: tracked && !localFile (THE BUG FIX)", () => {
-    it("re-fetches a tracked file that's missing from disk", async () => {
+  describe("case 1b: tracked && !localFile (honor local deletes)", () => {
+    it("does NOT re-fetch a tracked file that's missing from disk — leaves manifest entry intact for push to delete remote", async () => {
       const h = makeHarness({
         manifest: {
           collection_id: "x",
@@ -128,18 +130,19 @@ describe("syncEngine — pull branch coverage", () => {
           },
         },
         remote: [remote("ghost.txt")],
-        local: [], // file is GONE from disk
+        local: [], // file is GONE from disk — user/Claude deleted it
       });
       const result = await pullEntity(h.adapter, "/repo");
 
-      // Pre-fix: pulled=0, fetchCalls=[], file stays gone forever.
-      // Post-fix: re-fetched and re-recorded.
-      expect(result.pulled).toBe(1);
-      expect(h.fetchCalls).toEqual(["/repo:ghost.txt"]);
+      // Engine treats locally-missing tracked files as user-deletes
+      // (PR #99). Pull is a no-op so push's deletion-reconcile pass
+      // can issue the remote DELETE based on the still-tracked entry.
+      expect(result.pulled).toBe(0);
+      expect(h.fetchCalls).toEqual([]);
       expect(h.manifest.files["ghost.txt"]).toBeDefined();
     });
 
-    it("re-fetches all missing tracked files in one pull", async () => {
+    it("does NOT re-fetch any locally-missing tracked files — all stay in manifest for push to reconcile", async () => {
       const h = makeHarness({
         manifest: {
           collection_id: "x",
@@ -154,16 +157,18 @@ describe("syncEngine — pull branch coverage", () => {
         local: [], // all gone
       });
       const result = await pullEntity(h.adapter, "/repo");
-      expect(result.pulled).toBe(3);
-      expect(h.fetchCalls.sort()).toEqual([
-        "/repo:a.txt",
-        "/repo:b.txt",
-        "/repo:c.txt",
-      ]);
+      expect(result.pulled).toBe(0);
+      expect(h.fetchCalls).toEqual([]);
+      expect(h.manifest.files["a.txt"]).toBeDefined();
+      expect(h.manifest.files["b.txt"]).toBeDefined();
+      expect(h.manifest.files["c.txt"]).toBeDefined();
     });
 
-    it("doesn't increment pulled count if re-fetch throws", async () => {
+    it("a remote-side error on listRemote does not corrupt the manifest entry (push still reconciles next click)", async () => {
       const failingRemote = remote("flaky.txt");
+      // fetchAndWrite never gets called in case 1b post-PR-99, but we
+      // keep the rejecting mock to confirm the engine doesn't somehow
+      // route through it.
       failingRemote.fetchAndWrite = vi
         .fn()
         .mockRejectedValue(new Error("network down"));
@@ -180,7 +185,7 @@ describe("syncEngine — pull branch coverage", () => {
       });
       const result = await pullEntity(h.adapter, "/repo");
       expect(result.pulled).toBe(0);
-      // Manifest entry stays put — we'll retry next poll.
+      expect(failingRemote.fetchAndWrite).not.toHaveBeenCalled();
       expect(h.manifest.files["flaky.txt"]).toBeDefined();
     });
   });

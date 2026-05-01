@@ -1,4 +1,5 @@
 import { fsRead, fsList, entityWriteFile } from "../lib/api";
+import { loadOpenitConfig } from "../lib/openitConfig";
 import type {
   ConversationThreadSummary,
   ConversationTurn,
@@ -236,61 +237,104 @@ export async function resolvePathToSource(
           tags,
         });
       }
-      // Auto-escalate stale `open` tickets: if the agent is "waiting
-      // on the person" but no turn has landed in 24h, the agent has
-      // effectively stalled, so we flip status to `escalated` so it
-      // surfaces to the admin. Passive-on-view: rewriting the JSON
-      // here means the on-disk truth changes the next time the list
-      // renders, which keeps the rule consistent across reloads
-      // without a separate cron. Skip tickets with no turns yet —
-      // the agent hasn't started, so there's nothing to escalate.
-      const STALE_OPEN_MS = 24 * 60 * 60 * 1000;
+      // Lifecycle walkers: auto-escalate stale `open` tickets and
+      // auto-close stale `resolved` tickets. Both run passive-on-view —
+      // rewriting the JSON here means the on-disk truth changes the
+      // next time the list renders, which keeps the rule consistent
+      // across reloads without a separate cron. Hour thresholds and
+      // both transitions are admin-tunable via `.openit/config.json`;
+      // setting either threshold to `0` disables that walker.
+      const cfg = await loadOpenitConfig(repo);
+      const staleOpenMs = cfg.ticketLifecycle.autoEscalateOpenAfterHours * 60 * 60 * 1000;
+      const autoCloseMs = cfg.ticketLifecycle.autoCloseResolvedAfterHours * 60 * 60 * 1000;
       const nowMs = Date.now();
       await Promise.all(
         threads.map(async (t) => {
-          if (t.status !== "open") return;
-          if (!t.lastTurnAt) return;
-          const lastMs = Date.parse(t.lastTurnAt);
-          if (Number.isNaN(lastMs)) return;
-          if (nowMs - lastMs < STALE_OPEN_MS) return;
-          try {
-            const ticketPath = `${ticketsDir}/${t.ticketId}.json`;
-            const raw = await fsRead(ticketPath);
-            const parsed = JSON.parse(raw) as Record<string, unknown>;
-            // Re-check on disk to avoid racing a concurrent write
-            // (e.g. an admin reply that just escalated this ticket).
-            if (parsed.status !== "open") return;
-            parsed.status = "escalated";
-            parsed.updatedAt = new Date(nowMs).toISOString().replace(/\.\d+Z$/, "Z");
-            const existingTags = Array.isArray(parsed.tags)
-              ? parsed.tags.filter((v: unknown): v is string => typeof v === "string")
-              : [];
-            if (!existingTags.includes("auto-escalated")) {
-              existingTags.push("auto-escalated");
+          // -- auto-escalate `open` past stale window --
+          if (staleOpenMs > 0 && t.status === "open" && t.lastTurnAt) {
+            const lastMs = Date.parse(t.lastTurnAt);
+            if (!Number.isNaN(lastMs) && nowMs - lastMs >= staleOpenMs) {
+              try {
+                const ticketPath = `${ticketsDir}/${t.ticketId}.json`;
+                const raw = await fsRead(ticketPath);
+                const parsed = JSON.parse(raw) as Record<string, unknown>;
+                // Re-check on disk to avoid racing a concurrent write
+                // (e.g. an admin reply that just escalated this ticket).
+                if (parsed.status === "open") {
+                  parsed.status = "escalated";
+                  parsed.updatedAt = new Date(nowMs).toISOString().replace(/\.\d+Z$/, "Z");
+                  const existingTags = Array.isArray(parsed.tags)
+                    ? parsed.tags.filter((v: unknown): v is string => typeof v === "string")
+                    : [];
+                  if (!existingTags.includes("auto-escalated")) {
+                    existingTags.push("auto-escalated");
+                  }
+                  parsed.tags = existingTags;
+                  // Stamp the internal notes field so an admin opening the
+                  // ticket sees the *reason* for the escalation. Append-only:
+                  // preserve any existing notes the admin or agent has already
+                  // written.
+                  const hours = cfg.ticketLifecycle.autoEscalateOpenAfterHours;
+                  const noteLine = `Escalated for time (no asker reply in ${hours}h).`;
+                  const existingNotes =
+                    typeof parsed.notes === "string" ? parsed.notes : "";
+                  if (!existingNotes.includes(noteLine)) {
+                    parsed.notes = existingNotes
+                      ? `${existingNotes.replace(/\s+$/, "")}\n${noteLine}`
+                      : noteLine;
+                  }
+                  await entityWriteFile(
+                    repo,
+                    "databases/tickets",
+                    `${t.ticketId}.json`,
+                    JSON.stringify(parsed, null, 2),
+                  );
+                  t.status = "escalated";
+                  t.tags = existingTags;
+                  return;
+                }
+              } catch {
+                /* unparseable / missing — leave status as-is */
+              }
             }
-            parsed.tags = existingTags;
-            // Stamp the internal notes field so an admin opening the
-            // ticket sees the *reason* for the escalation, not just
-            // the status flip. Append-only: preserve any existing
-            // notes the admin or agent has already written.
-            const noteLine = "Escalated for time (no asker reply in 24h).";
-            const existingNotes =
-              typeof parsed.notes === "string" ? parsed.notes : "";
-            if (!existingNotes.includes(noteLine)) {
-              parsed.notes = existingNotes
-                ? `${existingNotes.replace(/\s+$/, "")}\n${noteLine}`
-                : noteLine;
+          }
+          // -- auto-close `resolved` past close window --
+          // The resolve-time anchor is the ticket's `updatedAt` —
+          // `mark_status` (intake.rs) stamps it on every status flip,
+          // and an asker follow-up that re-opens a resolved ticket
+          // flips it to `agent-responding` (so we won't false-trigger
+          // here). Walker only writes when the on-disk status is still
+          // `resolved` to avoid racing concurrent writes.
+          if (autoCloseMs > 0 && t.status === "resolved") {
+            try {
+              const ticketPath = `${ticketsDir}/${t.ticketId}.json`;
+              const raw = await fsRead(ticketPath);
+              const parsed = JSON.parse(raw) as Record<string, unknown>;
+              if (parsed.status !== "resolved") return;
+              const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : "";
+              const resolvedAtMs = Date.parse(updatedAt);
+              if (Number.isNaN(resolvedAtMs)) return;
+              if (nowMs - resolvedAtMs < autoCloseMs) return;
+              parsed.status = "closed";
+              parsed.updatedAt = new Date(nowMs).toISOString().replace(/\.\d+Z$/, "Z");
+              const existingTags = Array.isArray(parsed.tags)
+                ? parsed.tags.filter((v: unknown): v is string => typeof v === "string")
+                : [];
+              if (!existingTags.includes("auto-closed")) {
+                existingTags.push("auto-closed");
+              }
+              parsed.tags = existingTags;
+              await entityWriteFile(
+                repo,
+                "databases/tickets",
+                `${t.ticketId}.json`,
+                JSON.stringify(parsed, null, 2),
+              );
+              t.status = "closed";
+              t.tags = existingTags;
+            } catch {
+              /* unparseable / missing — leave status as-is */
             }
-            await entityWriteFile(
-              repo,
-              "databases/tickets",
-              `${t.ticketId}.json`,
-              JSON.stringify(parsed, null, 2),
-            );
-            t.status = "escalated";
-            t.tags = existingTags;
-          } catch {
-            /* unparseable / missing — leave status as-is */
           }
         }),
       );

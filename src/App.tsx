@@ -36,6 +36,7 @@ import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
 import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
 import { startAgentSync, stopAgentSync } from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
+import { pushAllEntities } from "./lib/pushAll";
 import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
 import { seedIfEmpty } from "./lib/seed";
 import { invoke } from "@tauri-apps/api/core";
@@ -726,7 +727,39 @@ function App() {
       });
   }, [repo]);
 
-  const onSyncLine = (line: string) => setSyncLines((prev) => [...prev, line]);
+  // Track the start time of the current sync run so we can stamp a
+  // `done in Xs` line when the run terminates. Stored in a ref so
+  // re-renders don't reset it mid-run.
+  const syncRunStartRef = useRef<number | null>(null);
+  const onSyncLine = (line: string) => {
+    // Decorations are computed OUTSIDE setSyncLines so React 18
+    // strict-mode's double-invocation of the reducer doesn't read a
+    // half-mutated ref. Inside the reducer, we only return new
+    // arrays; the ref read/write happens exactly once here.
+    let prepend: string[] = [];
+    let append: string[] = [];
+    if (line === "▸ sync: starting push to Pinkfish") {
+      syncRunStartRef.current = Date.now();
+      const stamp = new Date().toLocaleTimeString();
+      prepend = [`─── sync · ${stamp} ───`];
+    } else if (line === "▸ sync: done") {
+      const start = syncRunStartRef.current;
+      syncRunStartRef.current = null;
+      const stamp = new Date().toLocaleTimeString();
+      if (start != null) {
+        const elapsedSec = ((Date.now() - start) / 1000).toFixed(2);
+        append = [`─── done @ ${stamp} (${elapsedSec}s) ───`];
+      } else {
+        append = [`─── done @ ${stamp} ───`];
+      }
+    }
+    setSyncLines((prev) => {
+      // Blank line between runs (after the first) so the dividers
+      // visually separate.
+      const lead = prepend.length > 0 && prev.length > 0 ? [""] : [];
+      return [...prev, ...lead, ...prepend, line, ...append];
+    });
+  };
 
   const onPinkfishConnected = useCallback(async (incoming: string | null) => {
     setConnected(true);
@@ -778,6 +811,17 @@ function App() {
             setBubbles(convertBubblesForPrompt(manifest.bubbles));
           })
           .catch((e) => console.error("skill sync failed:", e));
+        // Kick off an initial push so the user sees the sync engine
+        // exercise itself end-to-end the moment they connect, instead
+        // of staring at the connect-to-cloud pitch page wondering if
+        // anything happened. Shell.tsx auto-routes the center pane to
+        // the sync log as soon as the first onSyncLine arrives, so
+        // there's no separate "switch panes" plumbing here.
+        // Fire-and-forget — errors surface as `✗ sync: …` lines in
+        // the pane via the per-class try/catch inside pushAllEntities.
+        pushAllEntities(result.path, onSyncLine).catch((e) =>
+          console.error("[app] initial push after connect failed:", e),
+        );
       }
     } catch (e) {
       console.error("[app] project bootstrap failed:", e);

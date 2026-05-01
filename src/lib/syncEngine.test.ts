@@ -25,7 +25,9 @@ vi.mock("./api", () => ({
 import { gitCommitPaths, fsRead } from "./api";
 import {
   classifyAsShadow,
+  commitTouched,
   contentsEquivalent,
+  hasConflictsForPrefix,
   pullEntity,
   subscribeConflicts,
   clearConflictsForPrefix,
@@ -306,10 +308,13 @@ describe("syncEngine.pullEntity", () => {
     expect(entry?.cloud_filename).toBeUndefined();
   });
 
-  it("drops legacy cloud_filename across re-fetch (tracked but missing from disk)", async () => {
-    // Re-fetch path counterpart to the fast-forward test above. PIN-5847
-    // makes the field obsolete; legacy values fall away the next time
-    // the engine writes the manifest entry.
+  it("tracked + missing locally → no fetch, no manifest mutation, no commit (push reconciles delete)", async () => {
+    // Regression test: the engine must NOT silently re-download a
+    // tracked file that is no longer on disk. This state is the user
+    // (or Claude) deleting the file locally — push is responsible for
+    // issuing a remote DELETE. Re-fetching here would un-delete the
+    // file and the user's intent never reaches the cloud.
+    const REMOTE_VERSION = "2026-04-30T10:00:00Z";
     const h = buildHarness({
       prefix: "fs",
       initialManifest: {
@@ -317,9 +322,8 @@ describe("syncEngine.pullEntity", () => {
         collection_name: null,
         files: {
           "report.pdf": {
-            remote_version: "2026-04-30T10:00:00Z",
+            remote_version: REMOTE_VERSION,
             pulled_at_mtime_ms: 1000,
-            cloud_filename: "uuid-xyz-report.pdf",
           },
         },
       },
@@ -327,15 +331,24 @@ describe("syncEngine.pullEntity", () => {
         {
           manifestKey: "report.pdf",
           workingTreePath: "filestores/library/report.pdf",
-          updatedAt: "2026-04-30T10:00:00Z",
+          updatedAt: REMOTE_VERSION,
         },
       ],
-      local: [], // file missing from disk
+      local: [], // user deleted it
     });
 
-    await pullEntity(h.adapter, "/repo");
+    const result = await pullEntity(h.adapter, "/repo");
 
-    expect(h.savedManifest?.files["report.pdf"].cloud_filename).toBeUndefined();
+    expect(h.fetchedKeys).toEqual([]);
+    expect(h.shadowedKeys).toEqual([]);
+    expect(result.pulled).toBe(0);
+    expect(result.conflicts).toEqual([]);
+    // Manifest entry left exactly as-is for push to reconcile against.
+    expect(h.savedManifest?.files["report.pdf"]).toEqual({
+      remote_version: REMOTE_VERSION,
+      pulled_at_mtime_ms: 1000,
+    });
+    expect(vi.mocked(gitCommitPaths)).not.toHaveBeenCalled();
   });
 
   it("bootstrap-adoption: file on disk, not in manifest → seed manifest, do NOT rewrite or commit", async () => {
@@ -733,6 +746,37 @@ describe("syncEngine.pullEntity", () => {
     // trusted as authoritative for "what's been deleted server-side".
     expect(h.savedManifest?.files.item_seen).toBeDefined();
     expect(h.savedManifest?.files.item_past_cutoff).toBeDefined();
+    // last_pull_at_ms is NOT stamped on a partial pull. If we did,
+    // skip-clean would fire on the next click and the deferred
+    // server-delete reconcile would never run until pagination
+    // succeeded — silently masking remote deletions for the user.
+    // PIN-5865.
+    expect(h.savedManifest?.last_pull_at_ms ?? null).toBeNull();
+  });
+
+  it("successful pull stamps last_pull_at_ms (skip-clean precondition)", async () => {
+    // Counterpart to the paginationFailed case. A complete pull —
+    // even one that returns zero items — is the one signal
+    // skip-clean uses to know "we've talked to remote at least once
+    // for this prefix". Without this stamping, the skip-clean
+    // precondition never flips and we re-pull the prefix on every
+    // click forever.
+    const h = buildHarness({
+      prefix: "test-prefix",
+      initialManifest: {
+        collection_id: null,
+        collection_name: null,
+        files: {},
+      },
+      remote: [],
+      local: [],
+    });
+
+    const before = Date.now();
+    await pullEntity(h.adapter, "/repo");
+
+    expect(h.savedManifest?.last_pull_at_ms).toBeDefined();
+    expect(h.savedManifest?.last_pull_at_ms ?? 0).toBeGreaterThanOrEqual(before);
   });
 });
 
@@ -786,6 +830,116 @@ describe("syncEngine.contentsEquivalent", () => {
 
   it("genuinely-different non-JSON is not equivalent", () => {
     expect(contentsEquivalent("hello", "goodbye")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PIN-5865: commitTouched serialises through (repo, "git") lock.
+// ---------------------------------------------------------------------------
+
+describe("syncEngine.commitTouched — git-index serialisation (PIN-5865)", () => {
+  it("serialises concurrent commits on the same repo so gitCommitPaths never overlaps", async () => {
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    vi.mocked(gitCommitPaths).mockImplementation(async () => {
+      inFlight += 1;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
+      // Hold the lock long enough for a sibling caller to race in if the
+      // mutex were missing. 10ms is plenty under JS event-loop scheduling.
+      await new Promise((r) => setTimeout(r, 10));
+      inFlight -= 1;
+      return true;
+    });
+
+    // Three commits queued at once, all on the same repo. Without the
+    // (repo, "git") lock these would call gitCommitPaths in parallel
+    // and `.git/index.lock` would race in real life.
+    await Promise.all([
+      commitTouched("/repo", ["a"], "msg-1"),
+      commitTouched("/repo", ["b"], "msg-2"),
+      commitTouched("/repo", ["c"], "msg-3"),
+    ]);
+
+    expect(maxConcurrent).toBe(1);
+    expect(gitCommitPaths).toHaveBeenCalledTimes(3);
+  });
+
+  it("commits on different repos are independent (no cross-repo serialisation)", async () => {
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    vi.mocked(gitCommitPaths).mockImplementation(async () => {
+      inFlight += 1;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
+      await new Promise((r) => setTimeout(r, 10));
+      inFlight -= 1;
+      return true;
+    });
+
+    await Promise.all([
+      commitTouched("/repo-a", ["x"], "msg"),
+      commitTouched("/repo-b", ["y"], "msg"),
+      commitTouched("/repo-c", ["z"], "msg"),
+    ]);
+
+    // Different repos should run concurrently — the git lock is
+    // per-(repo, "git"), not global.
+    expect(maxConcurrent).toBeGreaterThan(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PIN-5865: hasConflictsForPrefix accessor.
+// ---------------------------------------------------------------------------
+
+describe("syncEngine.hasConflictsForPrefix (PIN-5865)", () => {
+  it("returns false when no conflicts have been recorded for the prefix", () => {
+    clearConflictsForPrefix("test-prefix-isolated");
+    expect(hasConflictsForPrefix("test-prefix-isolated")).toBe(false);
+  });
+
+  it("returns true after pullEntity records a conflict for the prefix, false after clear", async () => {
+    // Reproduce the canonical two-user-conflict scenario but on its own
+    // prefix so we don't collide with other tests in this file.
+    const PREFIX = "kb-conflict-accessor";
+    clearConflictsForPrefix(PREFIX);
+
+    const h = buildHarness({
+      prefix: PREFIX,
+      initialManifest: {
+        collection_id: null,
+        collection_name: null,
+        files: {
+          intro: {
+            remote_version: "v0",
+            pulled_at_mtime_ms: 1000,
+          },
+        },
+      },
+      remote: [
+        {
+          manifestKey: "intro",
+          workingTreePath: "knowledge-bases/default/intro.md",
+          updatedAt: "v1",
+        },
+      ],
+      local: [
+        {
+          manifestKey: "intro",
+          workingTreePath: "knowledge-bases/default/intro.md",
+          mtime_ms: 2000, // bumped beyond pulled_at_mtime_ms → both sides changed
+          isShadow: false,
+        },
+      ],
+    });
+
+    expect(hasConflictsForPrefix(PREFIX)).toBe(false);
+
+    await pullEntity(h.adapter, "/repo");
+
+    expect(hasConflictsForPrefix(PREFIX)).toBe(true);
+
+    clearConflictsForPrefix(PREFIX);
+    expect(hasConflictsForPrefix(PREFIX)).toBe(false);
   });
 });
 

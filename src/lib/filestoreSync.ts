@@ -12,6 +12,7 @@
 //
 // Sibling: kbSync.ts uses the same helper with KB config.
 
+import { makeSkillsFetch } from "../api/fetchAdapter";
 import {
   entityListLocal,
   entityRenameFile,
@@ -196,6 +197,9 @@ async function pushAllToFilestoreImpl(args: {
   const persisted = await loadCollectionManifest(repo, "fs", collection.id);
 
   const siblings = new Set(local.map((f) => f.filename));
+  const localCanonicalNames = new Set(
+    local.filter((f) => !classifyAsShadow(f.filename, siblings)).map((f) => f.filename),
+  );
   const toPush = local.filter((f) => {
     if (classifyAsShadow(f.filename, siblings)) return false;
     const tracked = persisted.files[f.filename];
@@ -204,7 +208,22 @@ async function pushAllToFilestoreImpl(args: {
     return f.mtime_ms > tracked.pulled_at_mtime_ms;
   });
 
-  if (toPush.length === 0) {
+  // Files in the manifest but no longer on disk → user-deleted; push must
+  // issue a remote DELETE. Without this pass, local deletes never reach
+  // the cloud (the engine's pull leaves the manifest entry alone for
+  // push to reconcile, per syncEngine.ts case 4).
+  //
+  // No "local empty + manifest non-empty → refuse" guard: see the
+  // matching comment in kbSync.ts. `entity_list_local` returns an empty
+  // Vec for both "directory missing" and "directory present but empty"
+  // and only surfaces real read errors as throws, so the guard
+  // additionally blocked the legitimate "user wiped this collection"
+  // case the user actually hit.
+  const manifestKeys = Object.keys(persisted.files);
+  let toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
+
+
+  if (toPush.length === 0 && toDelete.length === 0) {
     onLine?.(`▸ filestore push (${collection.name}): nothing new to upload`);
     return { pushed: 0, failed: 0 };
   }
@@ -212,6 +231,11 @@ async function pushAllToFilestoreImpl(args: {
   let pushed = 0;
   let failed = 0;
   const pushedNames = new Set<string>();
+  // Tracks "old name → cloud-sanitized new name" renames so the
+  // post-push commit also stages the deletion of the old path. Without
+  // this, the user is left with a pending `D <old-name>` change in git
+  // every time the server sanitizes a filename.
+  const renamedFromNames = new Set<string>();
 
   for (const f of toPush) {
     try {
@@ -264,6 +288,7 @@ async function pushAllToFilestoreImpl(args: {
         // pre-rename key — self-heals but adds churn and noise, and
         // means the manifest briefly disagrees with disk.
         delete persisted.files[f.filename];
+        renamedFromNames.add(f.filename);
       }
       persisted.files[cloudName] = {
         remote_version: new Date().toISOString(),
@@ -274,6 +299,65 @@ async function pushAllToFilestoreImpl(args: {
     } catch (e) {
       failed += 1;
       onLine?.(`✗ ${dir}/${f.filename}: ${String(e)}`);
+    }
+  }
+
+  // Lazy single remote-list shared by both the deletion phase (needs
+  // `id` to address each row in the DELETE URL) and the post-push
+  // remote_version reconcile below. Most pushes are pure uploads with no
+  // deletes, so `kbListRemote` only fires when something downstream
+  // actually needs it.
+  let remoteCache: Awaited<ReturnType<typeof kbListRemote>> | null = null;
+  let remoteCacheError: unknown = null;
+  async function getRemote() {
+    if (remoteCache != null) return remoteCache;
+    if (remoteCacheError != null) throw remoteCacheError;
+    try {
+      remoteCache = await kbListRemote({
+        collectionId: collection.id,
+        skillsBaseUrl: urls.skillsBaseUrl,
+        accessToken: token!.accessToken,
+      });
+      return remoteCache;
+    } catch (e) {
+      remoteCacheError = e;
+      throw e;
+    }
+  }
+
+  // Deletion phase: DELETE /filestorage/items/<filename>?collectionId=<id>.
+  // Endpoint addresses rows by filename in the path component, with the
+  // collection scoping as a query param (matches the Pinkfish dashboard's
+  // network trace). 404 from server = already gone = treat as success.
+  //
+  // Filter against `pushedNames` first: if the upload loop just wrote a
+  // row under the same name we were about to delete, the row is now
+  // valid and must NOT be deleted. This happens when the server's
+  // `formatFileName` sanitizes a new local file's name (e.g. `hello
+  // world.txt`) to a name that matches a previously-deleted manifest
+  // entry (e.g. `hello-world.txt`) — without this filter, the deletion
+  // phase wipes the file we just uploaded.
+  toDelete = toDelete.filter((name) => !pushedNames.has(name));
+  if (toDelete.length > 0) {
+    const fetchFn = makeSkillsFetch(token.accessToken);
+    for (const name of toDelete) {
+      try {
+        const url = new URL(
+          `/filestorage/items/${encodeURIComponent(name)}`,
+          urls.skillsBaseUrl,
+        );
+        url.searchParams.set("collectionId", collection.id);
+        const resp = await fetchFn(url.toString(), { method: "DELETE" });
+        if (!resp.ok && resp.status !== 404) {
+          throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+        }
+        delete persisted.files[name];
+        onLine?.(`  − ${dir}/${name} (deleted on remote)`);
+        pushed += 1;
+      } catch (e) {
+        onLine?.(`✗ ${dir}/${name}: delete failed: ${String(e)}`);
+        failed += 1;
+      }
     }
   }
 
@@ -288,11 +372,7 @@ async function pushAllToFilestoreImpl(args: {
   // KB push has carried since Phase 2.
   if (pushedNames.size > 0) {
     try {
-      const remote = await kbListRemote({
-        collectionId: collection.id,
-        skillsBaseUrl: urls.skillsBaseUrl,
-        accessToken: token.accessToken,
-      });
+      const remote = await getRemote();
       for (const r of remote) {
         if (pushedNames.has(r.filename) && r.updated_at) {
           const tracked = persisted.files[r.filename];
@@ -316,9 +396,17 @@ async function pushAllToFilestoreImpl(args: {
   // Sync's `git status` check, which would mark them dirty and re-push
   // (creating duplicates on every Sync click pre-PIN-5847). Mirrors the
   // post-push commit kbSync.ts has had since Phase 2.
-  if (pushedNames.size > 0) {
+  //
+  // Also include any "renamed-from" paths so `git add` stages the
+  // deletion of the original local filename when the server sanitized
+  // the upload name. Without this, the user is left with a pending
+  // `D <old-name>` change after every spaces→hyphens rewrite.
+  if (pushedNames.size > 0 || renamedFromNames.size > 0) {
     const ts = new Date().toISOString();
-    const paths = Array.from(pushedNames).map((n) => `${dir}/${n}`);
+    const paths = [
+      ...Array.from(pushedNames).map((n) => `${dir}/${n}`),
+      ...Array.from(renamedFromNames).map((n) => `${dir}/${n}`),
+    ];
     await commitTouched(repo, paths, `sync: deployed @ ${ts}`);
   }
 
