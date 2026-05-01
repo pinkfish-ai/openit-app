@@ -3019,6 +3019,17 @@ export function Viewer({
             Run
           </Button>
         )}
+        {newFileAffordance && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => newFileAffordance.onCreate()}
+            title={newFileAffordance.title}
+          >
+            New
+            <span className="arrow" aria-hidden="true">+</span>
+          </Button>
+        )}
         {showFileTabs && (
           <TabStrip variant="segmented">
             <Tab
@@ -3151,7 +3162,7 @@ export function Viewer({
           </Button>
         )}
       </div>
-      {(chatAddPath || attachmentsTicketId || newFileAffordance) && (
+      {(chatAddPath || attachmentsTicketId) && (
         <div className="viewer-subheader">
           {attachmentsTicketId && onOpenPath && (
             <Button
@@ -3163,16 +3174,6 @@ export function Viewer({
             >
               conversation
               <span className="arrow" aria-hidden="true">→</span>
-            </Button>
-          )}
-          {newFileAffordance && (
-            <Button
-              variant="linkMuted"
-              onClick={() => void newFileAffordance.onCreate()}
-              title={newFileAffordance.title}
-            >
-              new
-              <span className="arrow" aria-hidden="true">+</span>
             </Button>
           )}
           {chatAddPath && (
