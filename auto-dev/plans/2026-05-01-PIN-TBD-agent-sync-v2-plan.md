@@ -2,8 +2,44 @@
 
 **Date:** 2026-05-01
 **Ticket:** PIN-TBD
-**Status:** Draft (stage 02) — design decisions locked with user
+**Status:** Draft (stage 02), revised after senior-architect critique
 **Owner:** Sankalp
+
+---
+
+## Review delta (2026-05-01)
+
+A second pass critique found 5 bugs in the original draft and 5+ underspecifications. Material corrections folded in below; remembered here so the implementer knows what to look for:
+
+1. **Plugin write-once gate condition needs widening.** Existing code at `skillsSync.ts:205-212` checks `route.subdir === "agents"` (exact match). With V2's folder layout, `route.subdir === "agents/triage"` — the gate never fires, plugin sync clobbers user edits on every version bump. Fix: `route.subdir === "agents" || route.subdir.startsWith("agents/")`.
+
+2. **`routeFile` is broken for nested paths.** The current `agents/*.template.json` rule at `skillsSync.ts:121-130` produces `filename: "triage/triage.json"` (with slash) for `agents/triage/triage.template.json` input. Need to rewrite the rule: preserve folder, strip `.template`, output `subdir: "agents/triage"`, `filename: "triage.json"`.
+
+3. **`listAllCollections` doesn't exist as a single REST endpoint.** It's an in-process Go interface only. `resolveResourceRefs` must fan out three per-type fetches (KB / datastores / filestores) — same calls `kbSync` / `filestoreSync` / `datastoreSync` already make. Updated §"Resource resolution at push" below.
+
+4. **Auto-release retry would never fire as drafted.** `pushAllToAgents` returns early on empty dirty list. The `release_pending` flag would stay set forever. Fix: scan manifest for `release_pending` BEFORE the `dirty.length === 0` early return, fire `releaseUserAgent` for each pending entry, clear the flag on success.
+
+5. **Pull-side `instructions` divergence detection needs an exact "what we last sent" anchor.** Recomputing `common + cloud` from disk at pull time means every local edit looks like "we just pushed this" — cloud edits never detect as conflicts. Fix: store `pushed_instructions_hash` in the agent's manifest entry at push time. New manifest field. Compare on pull, never recompute.
+
+6. **Pull semantics for V2 fields need locking.** Push uses omit-when-absent. Pull writes everything cloud sends, projected to disk shape (drop `id`/`proxyEndpointId`/`description`/`isStructured` from resource refs, etc.). Asymmetric but consistent: push respects user intent (omit = preserve cloud); pull is informational (write what cloud says).
+
+7. **Edit-tab Save must preserve unknown array rows.** If cloud has a 4th MCP server attached and the form only renders the 3 default toggles, Save must include the 4th unchanged in `tools.servers` — otherwise V2 silently drops cloud-side adds. Same for resources (4th datastore added via web).
+
+8. **`intake.rs` needs fallback logic.** Three .md files = three "missing file" cases. If `common.md` exists but `local.md` doesn't (mid-migration / mid-plugin-sync window), assemble with empty fallback rather than erroring. Also: dev-environment fallback to legacy flat `agents/triage.json` for `cargo test` runs that haven't run the JS migration shim.
+
+9. **`validateResources` rejects refs missing `id` / `proxyEndpointId`.** `resolveResourceRefs` MUST guarantee both fields non-empty before returning a ref. One bad ref kills the whole push (platform-level BadRequest, not skip-with-warning). Test this explicitly.
+
+10. **Engine adapter writes (`fetchAndWrite`, `writeShadow`, `onServerDelete`)** in `entities/agent.ts:260-291` use `DIR = "agents"` flat. V2 needs them folder-aware, writing to `agents/triage` subdir. Three callsite changes, not just type-shape changes.
+
+11. **First-launch pull window has no conflict detection.** Migration runs → plugin sync writes bundled `cloud.md`/`local.md` → cloud pull happens. Cloud's `instructions` is the pre-V2 string (just user's old flat instructions). `pushed_instructions_hash` is unset. No conflict detection for the first sync — cloud value is overwritten on next push. Document in risks; not a blocker for V2 ship.
+
+12. **V2-triage-only constraint** must be explicit: `intake.rs` hardcodes the path, `safeFilename` produces flat manifest keys, the migration shim only knows about triage. Multi-agent / rename support is V3+.
+
+13. **`\n\n` separator + edge cases.** Trim leading/trailing whitespace from each block before joining. Document explicitly so the implementer doesn't ship double-blank-lines.
+
+14. **Save handler should diff and write only changed files.** All-files-write is wasteful and creates unnecessary git churn.
+
+These changes are folded in below.
 
 ---
 
@@ -134,26 +170,53 @@ V1 fields (`name`, `description`, `instructions`) are always present in the body
 ### Three-block assembly
 
 **Push to cloud:**
-```
-instructions = read(common.md) + "\n\n" + read(cloud.md)
+```ts
+function assembleInstructionsForCloud(common: string, cloud: string): string {
+  return [common.trim(), cloud.trim()].filter((s) => s.length > 0).join("\n\n");
+}
 ```
 Sent in the PATCH body's `instructions` field. The cloud agent never knows about the split.
 
-**Local intake** ([intake.rs:load_triage_agent](src-tauri/src/intake.rs#L1204)):
-```rust
-instructions = read(common.md) + "\n\n" + read(local.md)
-```
-Passed to the `claude -p` subprocess as the agent's prompt.
+**Local intake** ([intake.rs:load_triage_agent](src-tauri/src/intake.rs#L1204)) does the equivalent for `common.md + local.md`. Passed to the `claude -p` subprocess as the agent's prompt.
 
-If any .md file is missing on disk (mid-edit, mid-migration), assembly substitutes `""` and logs a warning. No assembly failure aborts push or intake — the partial prompt is still functional.
+**Trim before join.** Each block trimmed to avoid double-blank-lines from trailing/leading whitespace in the source files. Empty blocks dropped from the join (avoids leading or trailing `\n\n` artifacts).
+
+**Missing-file fallback.** If any .md file is missing on disk (mid-edit, mid-migration, mid-plugin-sync window), assembly substitutes `""` and logs a warning. No assembly failure aborts push or intake — the partial prompt is still functional.
+
+**Rust-side fallback.** `intake.rs` MUST also handle:
+- Legacy flat `agents/triage.json` (cargo-test environments / dev runs that haven't run the JS migration shim) — fall back to V1's `instructions` field if the folder layout is missing.
+- Per-file missing in the folder layout (`common.md` exists, `local.md` doesn't) — substitute empty.
+
+Without legacy fallback, every dev's local `cargo test` breaks until they run a full app launch first.
 
 ### Resource resolution at push
 
-The wire shape needs `id` and `proxyEndpointId` per resource. Both are environment-specific. Reading from `getSyncStatus().collections` (KB) / `getFilestoreSyncStatus().collections` (filestore) would race the parallel `Promise.allSettled` in `pushAllEntities`: `runAgent` could try to resolve a brand-new KB before `runKb`'s pre-pull populates the cached state.
+The wire shape needs `id` and `proxyEndpointId` per resource (both required by platform's `validateResources` — sending an empty string for either makes the platform reject the entire PATCH with `BadRequest`, not skip the row).
 
-**Fix: `resolveResourceRefs` does a fresh `listAllCollections` REST call inside the helper.** One extra GET per push when resources are non-empty. Pattern matches `syncEngine.ts:1224`. Datastore collections (no exposed status helper) are also covered by the fresh fetch.
+**No single `listAllCollections` REST endpoint.** The platform's `GetAllCollections` is an in-process Go interface only. `resolveResourceRefs` fans out three per-type fetches in parallel:
 
-**Failure mode:** if a referenced name doesn't resolve (typo, deleted collection), log and skip — push continues with the resources that DID resolve. Surface in the streaming log:
+```ts
+async function resolveResourceRefs(creds, local: AgentResources): Promise<WireResources> {
+  if (!local || (!local.knowledgeBases && !local.datastores && !local.filestores)) {
+    return {}; // signals "omit all three from body"
+  }
+  const [kbCollections, fsCollections, dsCollections] = await Promise.all([
+    listKbCollections(creds),    // existing pattern in kbSync
+    listFsCollections(creds),    // existing pattern in filestoreSync
+    listDsCollections(creds),    // existing pattern in datastoreSync's resolveProjectDatastores
+  ]);
+  // For each disk entry, resolve `name` → cloud `openit-<name>` collection.
+  // If resolved cloud item lacks `id` or `proxyEndpointId`, treat as
+  // unresolvable (skip with warning) — sending a partial ref to the
+  // platform fails the whole PATCH.
+}
+```
+
+Three parallel fetches at push time when resources are non-empty. Negligible latency relative to the rest of the push pipeline. No race with the parallel `Promise.allSettled` in `pushAllEntities` because we're not reading from cached engine state.
+
+**`proxyEndpointId` resolution.** Each per-type fetch returns the proxy ID alongside the collection. Verify in pre-flight that all three list endpoints include this field. If a per-type endpoint doesn't surface `proxyEndpointId`, we'd need a per-collection follow-up fetch — adds N extra calls. Pre-flight Step 1 must verify.
+
+**Failure mode:** if a referenced name doesn't resolve (typo, deleted collection, or resolved but missing `id`/`proxyEndpointId`), log and skip — push continues with the resources that DID resolve. Surface in the streaming log:
 
 ```
 ▸ sync: agents pushing
@@ -180,7 +243,38 @@ try {
 }
 ```
 
-**Retry mechanism:** `runAgent`'s skip-clean check today returns early when nothing's dirty ([pushAll.ts:484-495](src/lib/pushAll.ts#L484)). Add a clause: if any tracked agent has `release_pending: true`, do NOT skip — fall through to the push step which will only fire `releaseUserAgent` (no upsert needed for that agent). Until the release succeeds, the flag stays set and every sync retries.
+**Retry mechanism — fixed from review.** Original draft had a fatal bug: `pushAllToAgents` returns early on `dirty.length === 0` ([agentSync.ts:187](src/lib/agentSync.ts#L187)) BEFORE reaching any release call, so a clean-but-release-pending agent would never retry. The corrected flow:
+
+```ts
+// Inside pushAllToAgents, AFTER manifest load, BEFORE the dirty-list
+// early return:
+const releasePending = Object.entries(manifest.files ?? {})
+  .filter(([_, entry]) => (entry as { release_pending?: boolean }).release_pending)
+  .map(([filename]) => filename);
+
+for (const filename of releasePending) {
+  const entry = manifest.files[filename] as { remote_id?: string };
+  if (!entry.remote_id) continue; // never made it to cloud — skip retry
+  try {
+    await releaseUserAgent(creds, entry.remote_id);
+    delete (manifest.files[filename] as { release_pending?: boolean }).release_pending;
+    onLine(`  ✓ retried release for ${filename}`);
+  } catch (e) {
+    onLine(`  ✗ release retry failed for ${filename}: ${String(e)}`);
+    // flag stays; next sync retries again
+  }
+}
+
+// Save manifest after retry attempts (in case any cleared)
+if (releasePending.length > 0) {
+  await invoke("entity_state_save", { repo, name: "agent", state: manifest });
+}
+
+// Now check for dirty work
+if (dirty.length === 0) return { pushed: 0, failed: 0 };
+```
+
+**`runAgent` skip-clean adjustment.** Today returns early on clean state ([pushAll.ts:484-495](src/lib/pushAll.ts#L484)). Adjust: if any tracked agent has `release_pending: true`, do NOT skip — fall through to `pushAllToAgents`, which now has the explicit retry path above.
 
 ```ts
 // In runAgent skip-clean check:
@@ -189,11 +283,19 @@ const hasPendingRelease = Object.values(m.files ?? {}).some(
   (f) => (f as { release_pending?: boolean }).release_pending,
 );
 if (hasPendingRelease) {
-  // Fall through; release retry will run inside pushAllToAgents.
+  // Fall through; pushAllToAgents handles release retry first thing.
 } else if (/* normal skip-clean */) {
   return; // skipped (clean)
 }
 ```
+
+**Manifest schema additions.** `KbStatePersisted` ([api.ts:455-465](src/lib/api.ts#L455)) gains two optional fields per file entry:
+
+- `release_pending?: boolean` — set after release call fails; cleared on retry success
+- `pushed_instructions_hash?: string` — SHA-256 of the assembled `common + cloud` we last sent (see Pull section). Read on pull to detect cloud-side divergence; never recomputed from disk.
+- `remote_id?: string` — the platform's agent ID. Today this lives inside the agent JSON's `id` field; for retry-only flows we need it accessible at the manifest layer (the agent's disk JSON might not have been touched between sync passes).
+
+Backward compat: absence of any field → treat as `undefined`/`false`.
 
 ### Migration shim
 
@@ -250,9 +352,51 @@ Run from `App.tsx` BEFORE `startCloudSyncs` (same ordering rule as V1's migratio
 | `agents/triage/cloud.md` | `agents/triage/cloud.md` |
 | `agents/triage/local.md` | `agents/triage/local.md` |
 
-The existing `agents/<name>.template.json` routing rule in `skillsSync.ts:121-130` strips `.template` and lands at `agents/<name>.json`. With the folder layout, `routeFile` needs to handle the `agents/<folder>/<file>` pattern: strip `.template` from filenames if present, preserve folder structure. Markdown files (`.md`) pass through unchanged.
+**Existing `routeFile` rule is broken for nested paths.** Current rule at [skillsSync.ts:121-130](src/lib/skillsSync.ts#L121-L130):
 
-The write-once gate (added in V1) for `agents/*.json` extends to all files under `agents/<folder>/` — preserves user edits to `triage.json`, `common.md`, `cloud.md`, `local.md` across plugin version bumps.
+```ts
+if (filePath.startsWith("agents/") && filePath.endsWith(".template.json")) {
+  const agentBase = filePath
+    .replace("agents/", "")
+    .replace(".template.json", "");
+  return {
+    subdir: "agents",
+    filename: `${agentBase}.json`,        // <-- "triage/triage.json" — slash in filename
+    substituteSlug: false,
+  };
+}
+```
+
+For input `agents/triage/triage.template.json`, `agentBase` becomes `triage/triage`, producing `filename: "triage/triage.json"` — slash in the filename, which `entity_write_file` will mishandle.
+
+**Fix:** rewrite the rule to preserve folder structure:
+
+```ts
+if (filePath.startsWith("agents/") && filePath.endsWith(".template.json")) {
+  // Strip .template from the basename, preserve any subfolder structure.
+  const lastSlash = filePath.lastIndexOf("/");
+  const subdir = filePath.slice(0, lastSlash);                     // "agents/triage"
+  const filename = filePath.slice(lastSlash + 1).replace(".template.json", ".json");
+  return { subdir, filename, substituteSlug: false };
+}
+```
+
+**Bundled `.md` files** under `agents/<folder>/` route through the default fallback (`split("/")` at [skillsSync.ts:142-146](src/lib/skillsSync.ts#L142-L146)) which already preserves folder structure correctly — but only because the `.template.json` rule didn't intercept. Verify the flow.
+
+**Write-once gate** condition needs widening from exact-match to `startsWith`:
+
+```ts
+// Was: route.subdir === "agents"
+// Now:
+if (route.subdir === "agents" || route.subdir.startsWith("agents/")) {
+  if (await fileExistsOnDisk(repo, route.subdir, route.filename)) {
+    console.log(`[skillsSync] preserved user-edited ${route.subdir}/${route.filename}`);
+    continue;
+  }
+}
+```
+
+This preserves user edits to `triage.json`, `common.md`, `cloud.md`, `local.md` across plugin version bumps.
 
 ### Edit tab UI (option B — full)
 
@@ -332,11 +476,13 @@ The Edit tab gets full form inputs:
 
 **Default permissions on first attach.** `canRead: true, canWrite: false, canDelete: false`. User toggles up.
 
-**Save behavior.** Writes:
-1. `triage.json` with structured fields (description, model, isShared, promptExamples, introMessage, resources, tools)
-2. `common.md`, `cloud.md`, `local.md` with their respective textarea contents
+**Save behavior.** Diffs form fields against loaded values; writes ONLY the changed files:
+1. `triage.json` if any structured field changed
+2. `common.md` / `cloud.md` / `local.md` individually if their textarea content differs from the file's current value
 
-If any write fails, surface the error inline and don't flip back to View mode.
+If any write fails, surface the error inline and don't flip back to View mode. All-or-nothing isn't required — the user has a clear failure marker per file.
+
+**Preserving unknown array entries.** If cloud has a 4th MCP server the form doesn't render (e.g. admin attached one via web), Save MUST preserve that entry verbatim in `tools.servers`. Same for `resources.knowledgeBases`/`datastores`/`filestores` — the form renders the 3 default MCPs and the local-collection rows; any cloud-side additions live in the loaded JSON and must round-trip through Save unchanged. Without this rule, V2 silently deletes web-side additions on first edit.
 
 **Tool servers.** V2 hardcodes the three default MCPs as the editable list. No "add custom server" option — that lives in V4 with the full Tools station UX.
 
@@ -467,9 +613,13 @@ Implement and wire FIRST so existing installs don't break on first launch with l
 
 ### Step 6 — Pull wrapper updates
 
-1. The cloud's full `instructions` string is informational on V2. Don't write to .md files on fast-forward (would conflate the three blocks).
-2. On both-changed conflict: write `agents/triage/instructions.server.md` with cloud's verbatim `instructions` string. Engine's existing aggregate picks it up.
-3. Manifest entry stores last-pushed assembled string for diff-detection (or its hash; cheaper).
+1. **Other V2 fields round-trip on pull.** The cloud's `description`, `selectedModel`, `isShared`, `promptExamples`, `introMessage`, `resources`, `tools` all get pulled to disk. Pull writes `triage.json` (with the structured fields, projecting `resources`/`tools` to local form: drop `id`, `proxyEndpointId`, `description`, `isStructured` from resource refs).
+2. **Asymmetric semantics for `instructions` only.** The cloud's full `instructions` string is informational on V2 — pull does NOT write to the three .md files on fast-forward (can't reverse the assembled cloud string into common+cloud blocks).
+3. **Divergence detection uses `pushed_instructions_hash`.** At push time, immediately after a successful POST/PATCH, the manifest stores SHA-256 of the assembled `common + cloud` string we just sent. On pull, compare cloud's current `instructions` (or its hash) to the stored value:
+   - Match → no cloud-side edit, no action.
+   - Differ AND `common.md`/`cloud.md` mtime > `pulled_at_mtime_ms` → both-changed conflict → write `agents/triage/instructions.server.md` shadow with cloud's verbatim string + record conflict via the engine's aggregate.
+   - Differ AND no local mtime advance → cloud-side edit only. Same shadow pattern (consistent with the Option-1 conflict semantics locked in conversation): write the shadow, surface as conflict, admin merges manually.
+4. **Never recompute the hash from disk at pull time.** The hash is "what we last sent," not "what's currently on disk." Recomputing from disk at pull time would mean every local edit retroactively becomes "the new version we pushed," and cloud-side changes would never detect as conflicts. Bug guard: hash is set only at push time, never elsewhere.
 
 ### Step 7 — Edit tab UI
 
