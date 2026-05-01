@@ -14,6 +14,20 @@ import { fsRead, gitCommitPaths, type KbStatePersisted } from "./api";
 
 export type Manifest = KbStatePersisted;
 
+/// Thrown by push adapters when the server reports a version conflict
+/// (PATCH 409 today; future entities can map other "you're behind"
+/// signals to the same class). Cross-cutting so any push wrapper can
+/// catch it without each entity defining its own. Pull-then-shadow is
+/// the recovery path — the wrapper re-pulls, the engine writes the
+/// `.server.` shadow, and the user resolves through the existing
+/// conflict pipeline.
+export class OutOfSync extends Error {
+  constructor(public readonly serverHint?: string) {
+    super(serverHint ? `out of sync: ${serverHint}` : "out of sync");
+    this.name = "OutOfSync";
+  }
+}
+
 /// Sentinel `pulled_at_mtime_ms` value the resolve script writes when
 /// flipping a row into "force-push" state after a user-resolved
 /// conflict. Any real local mtime exceeds it, so the engine's
