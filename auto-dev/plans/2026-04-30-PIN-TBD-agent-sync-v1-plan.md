@@ -2,8 +2,24 @@
 
 **Date:** 2026-04-30
 **Ticket:** PIN-TBD
-**Status:** Draft (stage 02), revised after self-critique
+**Status:** Draft (stage 02), revised after self-critique, then re-revised after merging origin/main (PIN-5865 + PR #99)
 **Owner:** Sankalp
+
+---
+
+## Update — origin/main merge absorbed
+
+After the original revision, three of Ben's PRs landed on `main` and were merged into this branch. Net effect on V1:
+
+- **PIN-5865 (parallel push + skip-clean)** restructured `pushAllEntities` from a sequential block into `Promise.allSettled` over per-class `runX` tasks with a class-level skip-clean preflight. **Our agent block becomes a fourth `runAgent` task in that array, mirroring `runDatastore`'s shape (single class, single pre-push pull, single push call). Skip-clean is feasible for agents (flat layout) using `dirtyUnderScope("agents")` + `hasConflictsForPrefix("agent")` + `manifestMatchesDisk` + `last_pull_at_ms`.**
+- **PR #99 (honor local deletes — engine)** normalizes `manifest.files = {}` for flat-format adapters in `pullEntityImpl`. Net positive: agent adapter no longer needs to defensively guard against an empty/missing manifest.
+- **`commitTouched` engine lock** now serializes through `(repo, "git")`, eliminating `.git/index.lock` races. Net positive: our `pushAllToAgents` calls `commitTouched` (or its successor) and benefits automatically — no plan change.
+- **New engine exports** `hasConflictsForPrefix(prefix)` and `getConflictsForPrefix(prefix)` ([syncEngine.ts:325-345](../../src/lib/syncEngine.ts#L325)) replace the cross-class `getSyncStatus().conflicts` reach. **Use these for the post-pull conflict gate** in `runAgent` — avoids the cross-class race the filestore/KB code was previously vulnerable to.
+- **Manifest gains a `last_pull_at_ms` sentinel** ([api.ts:460](../../src/lib/api.ts#L460), [syncEngine.ts:826](../../src/lib/syncEngine.ts#L826)) automatically set by `pullEntityImpl` at end of pull (gated on `!paginationFailed`). Agent manifest gets this for free once `pullAgentsOnce` runs through the engine.
+
+The core push design (POST-create / PATCH-update with read-merge, OutOfSync on 409, post-write mtime bump, plugin-manifest write-once gate, migration shim before cloud syncs, naming alignment) is **untouched**.
+
+The original "wire into pushAll.ts" step is rewritten in §"Step 5" below to add a `runAgent` function alongside `runKb`/`runFilestore`/`runDatastore`.
 
 ---
 
@@ -62,7 +78,7 @@ The V1 design keeps the engine surface narrow:
 | `src/lib/syncEngine.ts` | Add `export class OutOfSync extends Error`. No other changes. |
 | `src/lib/entities/agent.ts` | Narrow `AgentRow` to `{id, name, description, instructions}`. Strip `selectedModel`/`isShared`/`updatedAt`/`createdAt` in `canonicalizeForDisk`. Add typed REST wrappers `getUserAgent`, `postUserAgent`, `patchUserAgent`, `deleteUserAgent`. Map 409 responses to `OutOfSync` throws. |
 | `src/lib/agentSync.ts` | Add `pushAllToAgents({creds, repo, onLine})` — git-status-driven dirty detection + per-file POST/PATCH + manifest reconcile + auto-commit. Add `pullAgentsOnce` helper exposing the engine's existing pull as a once-and-return surface (mirroring `filestorePullOnce`/`pullDatastoresOnce`). Read-only `startAgentSync` keeps its current behavior. |
-| `src/lib/pushAll.ts` | Add an agent block (pre-pull → conflict gate → push) following the filestore block's structure. Position between datastore and the closing log line. |
+| `src/lib/pushAll.ts` | Add `runAgent` to the `Promise.allSettled` array. Modeled after `runDatastore` (single-class shape) plus skip-clean modeled after `runKb`/`runFilestore`. Use `hasConflictsForPrefix("agent")` and `getConflictsForPrefix("agent")` from the engine. |
 | `src/lib/skillsSync.ts` | In the `syncSkillsToDisk` writer, skip writing `agents/*.json` files that already exist on disk. (Same write-once gate idea as `seed.ts`'s `fileExists`.) |
 | `src/App.tsx` | Update bootstrap sentinel from `openit-triage-${slug}.json` to `openit-triage.json`. Run migration shim **before** `startCloudSyncs`. |
 | `scripts/openit-plugin/manifest.json` | Update the manifest entry from `agents/triage.template.json` → `agents/openit-triage.template.json`. |
@@ -232,39 +248,92 @@ Note: `entity_stat` may not exist as a Tauri command yet — if not, derive mtim
 
 `pullAgentsOnce` is a thin wrapper that calls `pullEntity(buildAgentAdapter(creds), repo)` once and returns the resulting `{ pulled, conflicts, ok, error }` shape. Same pattern as `filestorePullOnce` (`filestoreSync.ts`).
 
-### Step 5 — Wire into `pushAll.ts`
+### Step 5 — Wire into `pushAll.ts` (parallel + skip-clean)
 
-After the datastore block ([pushAll.ts:188-196](../../src/lib/pushAll.ts#L188)), before the final `▸ sync: done` log, add:
+`pushAllEntities` was rewritten in PIN-5865 ([pushAll.ts:96-124](../../src/lib/pushAll.ts#L96)). Each entity class now lives in its own `runX` function called from `Promise.allSettled`. Add `runAgent` as the fourth task. Modeled after `runDatastore` ([pushAll.ts:404-461](../../src/lib/pushAll.ts#L404)) — single-class shape, no per-collection fan-out — but with skip-clean added since agents have a flat layout that `manifestMatchesDisk` can check.
+
+Update the call site:
 
 ```ts
-onLine("▸ sync: agents pre-push pull");
-let agentPushSafe = true;
-try {
-  const { ok, pulled, conflicts, error } = await pullAgentsOnce({ creds, repo });
-  if (!ok) {
-    agentPushSafe = false;
-    onLine(`✗ sync: agents pre-push pull failed: ${error ?? "unknown"}`);
-  } else if (conflicts.length > 0) {
-    agentPushSafe = false;
-    onLine("✗ sync: agents pull surfaced conflicts — resolve in Claude, then commit again:");
-    for (const c of conflicts) onLine(`  • ${c.filename}: ${c.reason}`);
-  } else if (pulled > 0) {
-    onLine(`  ✓ pulled ${pulled} agent(s) before push`);
-  }
-} catch (e) {
-  agentPushSafe = false;
-  onLine(`✗ sync: agents pre-push pull failed: ${String(e)}`);
-}
-if (agentPushSafe) {
-  onLine("▸ sync: agents pushing");
+await Promise.allSettled([
+  runKb({ creds, repo, onLine, dirtyUnderScope }),
+  runFilestore({ creds, repo, onLine, dirtyUnderScope }),
+  runDatastore({ creds, repo, onLine, dirtyUnderScope }),
+  runAgent({ creds, repo, onLine, dirtyUnderScope }),
+]);
+```
+
+Add the function:
+
+```ts
+async function runAgent(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLine: LineFn;
+  dirtyUnderScope: (scopeDir: string) => boolean;
+}): Promise<void> {
+  const { creds, repo, onLine, dirtyUnderScope } = args;
   try {
-    const { pushed, failed } = await pushAllToAgents({ creds, repo, onLine });
-    onLine(`▸ sync: agent push complete — ${pushed} ok, ${failed} failed`);
+    // Skip-clean: agents are a flat layout (`agents/<name>.json`) so a
+    // manifestMatchesDisk + dirty-scope + conflict-prefix triple-check
+    // is sufficient. Adapter prefix is the class-level "agent" string
+    // (see `entities/agent.ts` agentAdapter). PIN-5865 pattern.
+    if (!dirtyUnderScope("agents") && !hasConflictsForPrefix("agent")) {
+      const m = await invoke<KbStatePersisted>("entity_state_load", {
+        repo, name: "agent",
+      });
+      if (m.last_pull_at_ms != null && await manifestMatchesDisk({
+        repo, dir: "agents", manifest: m,
+      })) {
+        onLine("▸ sync: agents skipped (clean)");
+        return;
+      }
+    }
+
+    onLine("▸ sync: agents pre-push pull");
+    let safe = true;
+    try {
+      const { ok, error, pulled } = await pullAgentsOnce({ creds, repo });
+      const conflicts = getConflictsForPrefix("agent");
+      if (!ok) {
+        safe = false;
+        onLine(`✗ sync: agents pre-push pull failed: ${error ?? "unknown"}`);
+      } else if (conflicts.length > 0) {
+        safe = false;
+        onLine(
+          "✗ sync: agents pull surfaced conflicts — resolve in Claude, then commit again:",
+        );
+        for (const c of conflicts) {
+          onLine(`  • ${c.workingTreePath}: ${c.reason}`);
+        }
+      } else if (pulled > 0) {
+        onLine(`▸ sync: agents pulled ${pulled} agent(s) before push`);
+      }
+    } catch (e) {
+      safe = false;
+      onLine(`✗ sync: agents pre-push pull failed: ${String(e)}`);
+    }
+
+    if (!safe) return;
+
+    onLine("▸ sync: agents pushing");
+    try {
+      const { pushed, failed } = await pushAllToAgents({ creds, repo, onLine });
+      onLine(`▸ sync: agent push complete — ${pushed} ok, ${failed} failed`);
+    } catch (e) {
+      onLine(`✗ sync: agent push failed: ${String(e)}`);
+    }
   } catch (e) {
-    onLine(`✗ sync: agent push failed: ${String(e)}`);
+    onLine(`✗ sync: agent failed: ${String(e)}`);
   }
 }
 ```
+
+`manifestMatchesDisk` is module-private to `pushAll.ts` ([pushAll.ts:58](../../src/lib/pushAll.ts#L58)) and called by `runKb`/`runFilestore`. Since `runAgent` lives in the same file, no export is needed — direct call. `hasConflictsForPrefix` and `getConflictsForPrefix` are imported from `syncEngine.ts`. `last_pull_at_ms` is set by the engine inside `pullEntityImpl` ([syncEngine.ts:826](../../src/lib/syncEngine.ts#L826)) automatically when our `pullAgentsOnce` runs through `pullEntity`.
+
+Add tests in the new `src/lib/pushAll.test.ts` (introduced by PIN-5865) — mirror the existing `runKb`/`runFilestore` test patterns. At minimum: skip-clean fires when manifest matches disk; pre-push pull surfaces conflicts; push runs after a clean pre-pull.
+
+The agent manifest type is `KbStatePersisted` (the shared shape per [api.ts:455-465](../../src/lib/api.ts#L455)) — it already has `last_pull_at_ms` as an optional field.
 
 ### Step 6 — Plugin manifest write-once gate for agents
 
@@ -387,7 +456,10 @@ Authored as a separate file `auto-dev/plans/2026-04-30-PIN-TBD-agent-sync-v1-man
   - [ ] Implement per spec above (note the post-write mtime bump — critical)
   - [ ] Unit tests including the OutOfSync re-pull path
 - [ ] **Step 5 — Wire into `pushAll.ts`**
-  - [ ] Add agent block after datastore
+  - [ ] Add `runAgent` function (skip-clean + pre-push pull + push), modeled on `runDatastore`
+  - [ ] Add to `Promise.allSettled` array in `pushAllEntities`
+  - [ ] Use `hasConflictsForPrefix("agent")` / `getConflictsForPrefix("agent")` from engine
+  - [ ] Skip-clean uses `dirtyUnderScope("agents")` + `manifestMatchesDisk` + `last_pull_at_ms`
   - [ ] Manual smoke: hit Commit and verify Sync tab shows agent lines
 - [ ] **Step 6 — Plugin manifest write-once gate**
   - [ ] Skip rule for `agents/*.json`
