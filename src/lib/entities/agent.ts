@@ -2,9 +2,11 @@
 // pre-R4 MCP-based agent_list call which didn't expose `updatedAt`. Each
 // openit-* agent becomes a JSON file at `agents/<name>.json`.
 //
-// Read-only: no apiUpsert / apiDelete (push isn't in scope for R4). The
-// adapter writes content via entityWriteFile and identifies shadows by the
-// engine's standard `<base>.server.<ext>` convention (KB/filestore-style).
+// V1 push surface: typed POST/PATCH/DELETE wrappers below. The on-disk
+// shape is narrowed to exactly the fields V1 owns (`id`, `name`,
+// `description`, `instructions`); fields like `selectedModel` /
+// `isShared` deliberately don't round-trip until the future iteration
+// that adds them to the disk schema, the PATCH body, and the UI.
 
 import {
   entityDeleteFile,
@@ -19,6 +21,7 @@ import { derivedUrls, getToken, type PinkfishCreds } from "../pinkfishAuth";
 import {
   canonicalFromShadow,
   classifyAsShadow,
+  OutOfSync,
   shadowFilename,
   type EntityAdapter,
   type LocalItem,
@@ -34,42 +37,67 @@ export type AgentRow = {
   name: string;
   description?: string;
   instructions?: string;
-  selectedModel?: string;
-  isShared?: boolean;
-  updatedAt?: string;
-  createdAt?: string;
 };
 
-/// Strip volatile API metadata before persisting so every pull doesn't
-/// rewrite the file with a new timestamp (would look like a local edit).
-/// The "real" updatedAt lives in the manifest, not on disk. Per the plan's
-/// "Volatile API metadata in pulled content" edge case.
+/// Server response shape for the user-agents endpoints. Includes fields
+/// V1 reads off the response (id + version metadata for manifest
+/// reconciliation) but doesn't carry to disk. Other server-managed
+/// fields (acl, createdBy, etc.) exist on the wire — we just don't
+/// declare or read them.
+export type FullAgentResponse = {
+  id: string;
+  name: string;
+  description?: string;
+  instructions?: string;
+  version?: number;
+  versionDate?: string;
+  updatedAt?: string;
+};
+
+/// Strip everything except the four V1 fields. Keeps the on-disk shape
+/// stable across pulls (otherwise every pull rewrites the file with
+/// fresh `updatedAt` and looks like a local edit) and forces edits to
+/// fields V1 doesn't own (selectedModel, isShared, …) to be irrelevant
+/// — they're not on disk, so they can't be silently dropped on push.
 function canonicalizeForDisk(agent: AgentRow): string {
-  const stripped: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(agent)) {
-    if (k === "updatedAt" || k === "createdAt" || k === "lastUsedAt") continue;
-    stripped[k] = v;
-  }
-  return JSON.stringify(stripped, null, 2);
+  return JSON.stringify(
+    {
+      id: agent.id,
+      name: agent.name,
+      description: agent.description ?? "",
+      instructions: agent.instructions ?? "",
+    },
+    null,
+    2,
+  );
 }
 
 function safeFilename(name: string): string {
   return `${name.replace(/[/\\:*?"<>|]/g, "_")}.json`;
 }
 
-async function listUserAgents(creds: PinkfishCreds): Promise<AgentRow[]> {
+function agentsBaseUrl(creds: PinkfishCreds): URL {
+  const urls = derivedUrls(creds.tokenUrl);
+  return new URL("/service/useragents", urls.appBaseUrl);
+}
+
+function agentsItemUrl(creds: PinkfishCreds, id: string): URL {
+  const urls = derivedUrls(creds.tokenUrl);
+  return new URL(
+    `/service/useragents/${encodeURIComponent(id)}`,
+    urls.appBaseUrl,
+  );
+}
+
+function authedFetch(): ReturnType<typeof makeSkillsFetch> {
   const token = getToken();
   if (!token) throw new Error("not authenticated");
-  const urls = derivedUrls(creds.tokenUrl);
-  // OpenIT uses the runtime token (OAuth client-credentials access token)
-  // for everything — it's accepted by `/service/*` on platform, skills*,
-  // and proxy*. Unlike `/web` (Cognito sessions on `/api/*`), service
-  // routes here read the org from the token claims, so no
-  // X-Selected-Org header is needed. See auto-dev/00-autodev-overview.md
-  // §"Auth: one runtime token".
-  const fetchFn = makeSkillsFetch(token.accessToken, "bearer");
-  const url = new URL("/service/useragents", urls.appBaseUrl);
-  const resp = await fetchFn(url.toString());
+  return makeSkillsFetch(token.accessToken, "bearer");
+}
+
+async function listUserAgents(creds: PinkfishCreds): Promise<AgentRow[]> {
+  const fetchFn = authedFetch();
+  const resp = await fetchFn(agentsBaseUrl(creds).toString());
   if (!resp.ok) {
     throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
   }
@@ -81,12 +109,93 @@ async function listUserAgents(creds: PinkfishCreds): Promise<AgentRow[]> {
     description: typeof a.description === "string" ? a.description : undefined,
     instructions:
       typeof a.instructions === "string" ? a.instructions : undefined,
-    selectedModel:
-      typeof a.selectedModel === "string" ? a.selectedModel : undefined,
-    isShared: typeof a.isShared === "boolean" ? a.isShared : undefined,
-    updatedAt: typeof a.updatedAt === "string" ? a.updatedAt : undefined,
-    createdAt: typeof a.createdAt === "string" ? a.createdAt : undefined,
   }));
+}
+
+/// Pulled list with the raw `updatedAt` retained — used by `listRemote`
+/// to populate the engine's manifest version slot. The narrowed
+/// `AgentRow` doesn't carry it, so we read it inline here.
+async function listUserAgentsWithMeta(
+  creds: PinkfishCreds,
+): Promise<Array<AgentRow & { updatedAt?: string }>> {
+  const fetchFn = authedFetch();
+  const resp = await fetchFn(agentsBaseUrl(creds).toString());
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+  }
+  const raw = (await resp.json()) as Array<Record<string, unknown>> | null;
+  const agents = Array.isArray(raw) ? raw : [];
+  return agents.map((a) => ({
+    id: String(a.id ?? ""),
+    name: String(a.name ?? ""),
+    description: typeof a.description === "string" ? a.description : undefined,
+    instructions:
+      typeof a.instructions === "string" ? a.instructions : undefined,
+    updatedAt: typeof a.updatedAt === "string" ? a.updatedAt : undefined,
+  }));
+}
+
+export async function getUserAgent(
+  creds: PinkfishCreds,
+  id: string,
+): Promise<FullAgentResponse> {
+  const fetchFn = authedFetch();
+  const resp = await fetchFn(agentsItemUrl(creds, id).toString());
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+  }
+  return (await resp.json()) as FullAgentResponse;
+}
+
+export async function postUserAgent(
+  creds: PinkfishCreds,
+  body: { name: string; description?: string; instructions?: string },
+): Promise<FullAgentResponse> {
+  const fetchFn = authedFetch();
+  const resp = await fetchFn(agentsBaseUrl(creds).toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+  }
+  return (await resp.json()) as FullAgentResponse;
+}
+
+export async function patchUserAgent(
+  creds: PinkfishCreds,
+  id: string,
+  body: { name: string; description?: string; instructions?: string },
+): Promise<FullAgentResponse> {
+  const fetchFn = authedFetch();
+  const resp = await fetchFn(agentsItemUrl(creds, id).toString(), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (resp.status === 409) {
+    // Body parse for context is optional; status is the signal. Platform
+    // maps `errors.OutOfSync` to 409 in `servers/internal/helpers.go`.
+    throw new OutOfSync();
+  }
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+  }
+  return (await resp.json()) as FullAgentResponse;
+}
+
+export async function deleteUserAgent(
+  creds: PinkfishCreds,
+  id: string,
+): Promise<void> {
+  const fetchFn = authedFetch();
+  const resp = await fetchFn(agentsItemUrl(creds, id).toString(), {
+    method: "DELETE",
+  });
+  if (!resp.ok && resp.status !== 404) {
+    throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+  }
 }
 
 export async function resolveProjectAgents(
@@ -99,7 +208,9 @@ export async function resolveProjectAgents(
 /// Walk `<repo>/agents/` once, return entries the engine's listLocal
 /// contract expects. Tauri side already exposes a generic
 /// `entity_list_local` (added in R2); reuse it.
-async function listLocalAgents(repo: string): Promise<{ filename: string; mtime_ms: number | null }[]> {
+async function listLocalAgents(
+  repo: string,
+): Promise<{ filename: string; mtime_ms: number | null }[]> {
   return invoke<{ filename: string; mtime_ms: number | null; size: number }[]>(
     "entity_list_local",
     { repo, subdir: DIR },
@@ -113,10 +224,11 @@ export function agentAdapter(args: {
   /// REST hit on the first sync tick (the wrapper already fetches for
   /// logging). Subsequent listRemote calls (poll ticks) re-fetch via
   /// REST so steady-state stays current.
-  initialAgents?: AgentRow[];
+  initialAgents?: Array<AgentRow & { updatedAt?: string }>;
 }): EntityAdapter {
   const { creds } = args;
-  let cachedFirst: AgentRow[] | undefined = args.initialAgents;
+  let cachedFirst: Array<AgentRow & { updatedAt?: string }> | undefined =
+    args.initialAgents;
   return {
     prefix: "agent",
 
@@ -126,7 +238,11 @@ export function agentAdapter(args: {
       invoke<void>("entity_state_save", { repo, name: "agent", state: m }),
 
     async listRemote(_repo, _manifest) {
-      const agents = cachedFirst ?? (await resolveProjectAgents(creds));
+      const agents =
+        cachedFirst ??
+        (await listUserAgentsWithMeta(creds)).filter((a) =>
+          a.name.startsWith(PREFIX),
+        );
       cachedFirst = undefined;
       const items: RemoteItem[] = [];
       for (const a of agents) {
@@ -185,3 +301,10 @@ export function agentAdapter(args: {
 // fsRead/fsList re-exports kept here in case future push paths need them
 // without re-importing across files.
 export { fsRead, fsList, type FileNode };
+
+// Internal helper exported for the agentSync wrapper's pre-fetch path so
+// it can cache the full row (with `updatedAt`) into the adapter.
+export { listUserAgentsWithMeta };
+
+// Constants exported for reuse by the migration shim and push wrapper.
+export { DIR as AGENT_DIR, PREFIX as AGENT_PREFIX };

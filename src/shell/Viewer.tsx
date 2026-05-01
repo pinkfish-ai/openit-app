@@ -1707,12 +1707,6 @@ export function Viewer({
             <h3>Details</h3>
             <table className="summary-table">
               <tbody>
-                {a.selectedModel && (
-                  <tr><td>Model</td><td>{a.selectedModel}</td></tr>
-                )}
-                {a.isShared !== undefined && (
-                  <tr><td>Shared</td><td>{a.isShared ? "Yes" : "No"}</td></tr>
-                )}
                 <tr><td>ID</td><td><code>{a.id}</code></td></tr>
               </tbody>
             </table>

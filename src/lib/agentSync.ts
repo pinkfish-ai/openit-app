@@ -5,7 +5,14 @@
 // Read-only today (no push). Built on the generic startReadOnlyEntitySync
 // helper from syncEngine.ts — same shape as workflowSync.
 
-import { agentAdapter, resolveProjectAgents, type AgentRow } from "./entities/agent";
+import {
+  agentAdapter,
+  AGENT_DIR,
+  AGENT_PREFIX,
+  listUserAgentsWithMeta,
+  resolveProjectAgents,
+  type AgentRow,
+} from "./entities/agent";
 import { type PinkfishCreds } from "./pinkfishAuth";
 import {
   clearConflictsForPrefix,
@@ -37,7 +44,9 @@ export async function startAgentSync(args: {
   handle = startReadOnlyEntitySync({
     repo,
     buildAdapter: async () => {
-      const agents = await resolveProjectAgents(creds);
+      const agents = (await listUserAgentsWithMeta(creds)).filter((a) =>
+        a.name.startsWith(AGENT_PREFIX),
+      );
       if (isFirstBuild && onLog) {
         for (const a of agents) {
           onLog(`  ✓ ${a.name || "(unnamed)"}  (id: ${a.id || "?"})`);
