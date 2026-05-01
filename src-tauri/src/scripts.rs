@@ -28,10 +28,7 @@ pub struct ScriptRunOutput {
 /// long-running `node …` would freeze the UI. Wrapping the spawn keeps
 /// the renderer responsive while the script runs.
 #[tauri::command]
-pub async fn script_run(
-    repo: String,
-    script_path: String,
-) -> Result<ScriptRunOutput, String> {
+pub async fn script_run(repo: String, script_path: String) -> Result<ScriptRunOutput, String> {
     tauri::async_runtime::spawn_blocking(move || run_blocking(&repo, &script_path))
         .await
         .map_err(|e| format!("background task failed: {}", e))?
