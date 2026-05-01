@@ -6,6 +6,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { fsRead, fsReadBytes, fsList, fsReveal, reportOverviewRun, entityWriteFileBytes, entityDeleteFile, entityListLocal } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
+import { loadOpenitConfig } from "../lib/openitConfig";
 import type { MemoryItem } from "../lib/skillsApi";
 import { DataTable } from "./DataTable";
 import { EntityCardGrid } from "./EntityCardGrid";
@@ -377,6 +378,32 @@ type ViewMode = "rendered" | "raw" | "table" | "edit";
 
 function isMarkdown(path: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(path);
+}
+
+/// Plain JSON files reaching this viewer (i.e. routed as
+/// `source.kind === "file"`, not as a `datastore-row` / `agent` /
+/// `workflow` / etc.). Datastore rows, agents, workflows, and
+/// `_schema.json` files all have dedicated structured editors and route
+/// by `source.kind` upstream — they don't hit the file branch.
+/// What's left here is config (`.openit/config.json`), agent-traces, and
+/// any standalone `.json` an admin drops in. All editable as raw text.
+function isJsonFile(path: string): boolean {
+  return /\.json$/i.test(path);
+}
+
+/// JavaScript module scripts. `.claude/scripts/*.mjs` is the plugin
+/// surface; `filestores/scripts/*.mjs` is the admin's own scripts
+/// folder. Both should be editable for ad-hoc tweaks. (Plugin scripts
+/// get overwritten by the next plugin sync — that's expected and
+/// orthogonal to whether they're editable in the moment.)
+function isMjsScript(path: string): boolean {
+  return /\.mjs$/i.test(path);
+}
+
+/// Files that should expose View / Edit tabs and a textarea-backed
+/// edit mode. Markdown, JSON, and `.mjs` scripts.
+function hasEditableTextMode(path: string): boolean {
+  return isMarkdown(path) || isJsonFile(path) || isMjsScript(path);
 }
 
 function isImage(path: string): boolean {
@@ -843,7 +870,9 @@ export function Viewer({
   const title = getTitle();
 
   // --- Tabs ---
-  const showFileTabs = source.kind === "file" && isMarkdown(source.path);
+  const showFileTabs =
+    (source.kind === "file" && hasEditableTextMode(source.path)) ||
+    source.kind === "datastore-schema";
   const showRowTabs = source.kind === "datastore-row";
   const showPeopleTabs = source.kind === "people-list";
   const showConversationsFilter = source.kind === "conversations-list";
@@ -946,12 +975,98 @@ export function Viewer({
   const flushBody =
     source.kind === "conversation-thread" ||
     (source.kind === "datastore-row" && mode === "edit") ||
+    (source.kind === "datastore-schema" && mode === "edit") ||
     (source.kind === "file" &&
       (isImage(source.path) ||
         isPdf(source.path) ||
         isSpreadsheet(source.path) ||
         isOfficeDoc(source.path) ||
-        (mode === "edit" && isMarkdown(source.path))));
+        (mode === "edit" && hasEditableTextMode(source.path))));
+
+  // Shared edit-mode renderer: textarea + Cancel / Save footer. Used by
+  // both the `kind: file` editable-text path (markdown / JSON / .mjs)
+  // and the `kind: datastore-schema` editor (which writes back to
+  // `databases/<col>/_schema.json`).
+  const renderEditTextarea = (args: {
+    filePath: string;
+    /// Mode to return to on Cancel and after a successful Save. Markdown
+    /// has a rendered preview ("rendered"); JSON / .mjs / schema only
+    /// have raw text ("raw").
+    afterMode: "raw" | "rendered";
+    /// Run `JSON.parse(draft)` before writing. Surfaces typos on Save
+    /// instead of letting them silently fall through to defaults at
+    /// load time.
+    validateAsJson: boolean;
+  }): ReactNode => {
+    const { filePath, afterMode, validateAsJson } = args;
+    const onSave = async () => {
+      if (!repo || !filePath.startsWith(`${repo}/`)) {
+        setEditError("Cannot save: file is outside the project folder.");
+        return;
+      }
+      if (validateAsJson) {
+        try {
+          JSON.parse(editDraft);
+        } catch (e) {
+          setEditError(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
+          return;
+        }
+      }
+      const rel = filePath.slice(repo.length + 1);
+      const lastSlash = rel.lastIndexOf("/");
+      const subdir = lastSlash >= 0 ? rel.slice(0, lastSlash) : "";
+      const filename = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
+      setEditSaving(true);
+      setEditError(null);
+      try {
+        const { entityWriteFile } = await import("../lib/api");
+        await entityWriteFile(repo, subdir, filename, editDraft);
+        setContent(editDraft);
+        setMode(afterMode);
+      } catch (err) {
+        setEditError(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setEditSaving(false);
+      }
+    };
+    const onCancel = () => {
+      setEditDraft(content);
+      setEditError(null);
+      setMode(afterMode);
+    };
+    const isDirty = editDraft !== content;
+    return (
+      <div className="viewer-edit">
+        <textarea
+          className="viewer-edit-textarea"
+          value={editDraft}
+          onChange={(e) => setEditDraft(e.target.value)}
+          spellCheck={false}
+          autoFocus
+        />
+        <div className="viewer-edit-footer">
+          {editError && <span className="viewer-edit-error">{editError}</span>}
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onCancel}
+            disabled={editSaving}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={onSave}
+            disabled={editSaving || !isDirty}
+            loading={editSaving}
+          >
+            {editSaving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+    );
+  };
 
   // --- Render body ---
   const renderBody = () => {
@@ -969,67 +1084,12 @@ export function Viewer({
       if (isOfficeDoc(source.path)) {
         return <OfficeViewer filename={source.path} />;
       }
-      if (mode === "edit" && isMarkdown(source.path)) {
-        const filePath = source.path;
-        const onSave = async () => {
-          if (!repo || !filePath.startsWith(`${repo}/`)) {
-            setEditError("Cannot save: file is outside the project folder.");
-            return;
-          }
-          const rel = filePath.slice(repo.length + 1);
-          const lastSlash = rel.lastIndexOf("/");
-          const subdir = lastSlash >= 0 ? rel.slice(0, lastSlash) : "";
-          const filename = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
-          setEditSaving(true);
-          setEditError(null);
-          try {
-            const { entityWriteFile } = await import("../lib/api");
-            await entityWriteFile(repo, subdir, filename, editDraft);
-            setContent(editDraft);
-            setMode("rendered");
-          } catch (err) {
-            setEditError(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
-          } finally {
-            setEditSaving(false);
-          }
-        };
-        const onCancel = () => {
-          setEditDraft(content);
-          setEditError(null);
-          setMode("rendered");
-        };
-        const isDirty = editDraft !== content;
-        return (
-          <div className="viewer-edit">
-            <textarea
-              className="viewer-edit-textarea"
-              value={editDraft}
-              onChange={(e) => setEditDraft(e.target.value)}
-              spellCheck={false}
-              autoFocus
-            />
-            <div className="viewer-edit-footer">
-              {editError && <span className="viewer-edit-error">{editError}</span>}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={onCancel}
-                disabled={editSaving}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={onSave}
-                disabled={editSaving || !isDirty}
-                loading={editSaving}
-              >
-                {editSaving ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          </div>
-        );
+      if (mode === "edit" && hasEditableTextMode(source.path)) {
+        return renderEditTextarea({
+          filePath: source.path,
+          afterMode: isMarkdown(source.path) ? "rendered" : "raw",
+          validateAsJson: isJsonFile(source.path),
+        });
       }
       if (mode === "rendered" && isMarkdown(source.path)) {
         // Substitute live template tokens before rendering. {{INTAKE_URL}}
@@ -1061,6 +1121,23 @@ export function Viewer({
             </ReactMarkdown>
           </div>
         );
+      }
+      return <pre className="viewer-content">{content}</pre>;
+    }
+
+    // Datastore schema (the `_schema.json` for a collection). Rendered
+    // as raw JSON for read; the textarea editor lets admins tweak field
+    // labels / types / comments inline. Save writes back to
+    // `databases/<col>/_schema.json` and JSON-validates first so a typo
+    // can't drop the whole schema. After save, the on-disk file watcher
+    // (fsTick) pulls the new schema into the row + table viewers.
+    if (source.kind === "datastore-schema") {
+      if (mode === "edit") {
+        return renderEditTextarea({
+          filePath: `${repo}/databases/${source.collection.name}/_schema.json`,
+          afterMode: "raw",
+          validateAsJson: true,
+        });
       }
       return <pre className="viewer-content">{content}</pre>;
     }
@@ -1887,18 +1964,32 @@ export function Viewer({
           `${msgId}.json`,
           JSON.stringify(payload, null, 2),
         );
-        // Any manual admin turn flips the ticket to `escalated`.
-        // `open` semantically means "agent is working on it"; once an
-        // admin chimes in, the agent is no longer the sole driver, so
-        // the ticket is escalated regardless of the previous status
-        // (open, resolved, closed, escalated). Best-effort: missing
-        // ticket file is logged but the reply itself stays.
+        // Any manual admin turn flips the ticket to `escalated` —
+        // `open` means "agent is working on it" and once an admin
+        // chimes in, the agent is no longer the sole driver. Gated on
+        // `ticketLifecycle.escalateOnAdminReply`: admins can disable
+        // to leave commentary on resolved threads without re-opening
+        // them.
+        //
+        // `updatedAt` is bumped regardless of the gate. The auto-close
+        // walker uses it as the resolve-time anchor — without this,
+        // an admin commenting on a resolved ticket while
+        // `escalateOnAdminReply: false` could see the ticket
+        // auto-close moments later because the close timer still
+        // tracked from the original resolve. Admin activity is real
+        // engagement; the lifecycle clock should reset.
+        //
+        // `assignee` stamps regardless too — admin authorship of the
+        // turn is a fact independent of the lifecycle decision.
         try {
+          const cfg = await loadOpenitConfig(repo);
           const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
           const raw = await fsRead(ticketPath);
           const parsed = JSON.parse(raw) as Record<string, unknown>;
-          parsed.status = "escalated";
           parsed.updatedAt = isoNow;
+          if (cfg.ticketLifecycle.escalateOnAdminReply) {
+            parsed.status = "escalated";
+          }
           if (typeof parsed.assignee !== "string" || !parsed.assignee) {
             parsed.assignee = sender;
           }
@@ -2494,8 +2585,16 @@ export function Viewer({
         {showFileTabs && (
           <TabStrip variant="segmented">
             <Tab
-              active={mode === "rendered"}
-              onClick={() => setMode("rendered")}
+              active={mode !== "edit"}
+              onClick={() => {
+                // Markdown files have a rendered preview; JSON,
+                // .mjs, and datastore schemas only have a raw textual
+                // view. Branch on file type so View returns the user
+                // to whichever read-only mode applies.
+                const renderable =
+                  source.kind === "file" && isMarkdown(source.path);
+                setMode(renderable ? "rendered" : "raw");
+              }}
             >
               View
             </Tab>
