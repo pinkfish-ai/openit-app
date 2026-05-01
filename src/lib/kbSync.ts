@@ -229,7 +229,7 @@ async function pushAllToKbImpl(args: {
   // We delete by exact filename only — UUID-prefixed orphans are still
   // the responsibility of `scripts/cleanup-uuid-duplicates.mjs`.
   const manifestKeys = Object.keys(persisted.files);
-  const toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
+  let toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
 
   if (toPush.length === 0 && toDelete.length === 0) {
     onLine?.(`▸ kb push (${displayKbName(collection.name)}): nothing new to upload`);
@@ -297,6 +297,13 @@ async function pushAllToKbImpl(args: {
   // collection scoping as a query param (mirrors what the Pinkfish
   // dashboard does — confirmed via the dashboard's network trace). The
   // server returns 404 for already-gone rows, which we treat as success.
+  //
+  // Filter against `pushedNames` first — see the matching block in
+  // filestoreSync.ts. Without this, the deletion phase can issue a
+  // remote DELETE for a file the upload loop just wrote (when the
+  // server sanitizes a new local file's name onto a previously-deleted
+  // manifest entry's name).
+  toDelete = toDelete.filter((name) => !pushedNames.has(name));
   if (toDelete.length > 0) {
     const fetchFn = makeSkillsFetch(token.accessToken);
     for (const name of toDelete) {

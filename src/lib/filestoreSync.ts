@@ -220,7 +220,7 @@ async function pushAllToFilestoreImpl(args: {
   // additionally blocked the legitimate "user wiped this collection"
   // case the user actually hit.
   const manifestKeys = Object.keys(persisted.files);
-  const toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
+  let toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
 
 
   if (toPush.length === 0 && toDelete.length === 0) {
@@ -329,6 +329,15 @@ async function pushAllToFilestoreImpl(args: {
   // Endpoint addresses rows by filename in the path component, with the
   // collection scoping as a query param (matches the Pinkfish dashboard's
   // network trace). 404 from server = already gone = treat as success.
+  //
+  // Filter against `pushedNames` first: if the upload loop just wrote a
+  // row under the same name we were about to delete, the row is now
+  // valid and must NOT be deleted. This happens when the server's
+  // `formatFileName` sanitizes a new local file's name (e.g. `hello
+  // world.txt`) to a name that matches a previously-deleted manifest
+  // entry (e.g. `hello-world.txt`) — without this filter, the deletion
+  // phase wipes the file we just uploaded.
+  toDelete = toDelete.filter((name) => !pushedNames.has(name));
   if (toDelete.length > 0) {
     const fetchFn = makeSkillsFetch(token.accessToken);
     for (const name of toDelete) {
