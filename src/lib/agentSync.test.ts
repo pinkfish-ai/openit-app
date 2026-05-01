@@ -82,7 +82,8 @@ afterEach(() => {
 });
 
 describe("pushAllToAgents — dirty detection", () => {
-  it("skips clean working tree (no dirty agents/* files)", async () => {
+  it("skips clean working tree (no agent files on disk, no manifest entries)", async () => {
+    vi.mocked(entityListLocal).mockResolvedValue([]);
     vi.mocked(gitStatusShort).mockResolvedValue([]);
     const onLine = vi.fn();
 
@@ -93,36 +94,69 @@ describe("pushAllToAgents — dirty detection", () => {
     expect(patchUserAgent).not.toHaveBeenCalled();
   });
 
-  it("skips shadow files (`.server.json`)", async () => {
-    vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/triage.server.json", status: " M", staged: false },
-    ] as never);
-    const onLine = vi.fn();
+  it("skips shadow files (`.server.json`) even when present on disk", async () => {
+    vi.mocked(entityListLocal).mockResolvedValue([
+      { filename: "triage.server.json", mtime_ms: 1000, size: 50 } as never,
+    ]);
+    vi.mocked(gitStatusShort).mockResolvedValue([]);
 
-    const out = await pushAllToAgents({ creds, repo: "/r", onLine });
+    const out = await pushAllToAgents({ creds, repo: "/r", onLine: vi.fn() });
 
     expect(out).toEqual({ pushed: 0, failed: 0 });
     expect(postUserAgent).not.toHaveBeenCalled();
   });
 
   it("skips non-json files under agents/", async () => {
-    vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/README.md", status: " M", staged: false },
-    ] as never);
+    vi.mocked(entityListLocal).mockResolvedValue([
+      { filename: "README.md", mtime_ms: 1000, size: 50 } as never,
+    ]);
+    vi.mocked(gitStatusShort).mockResolvedValue([]);
 
     const out = await pushAllToAgents({ creds, repo: "/r", onLine: vi.fn() });
 
     expect(out).toEqual({ pushed: 0, failed: 0 });
   });
 
-  it("ignores files outside agents/", async () => {
-    vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "knowledge-bases/default/note.md", status: " M", staged: false },
-    ] as never);
+  it("detects committed-after-last-pull file as dirty (mtime > pulled_at_mtime_ms)", async () => {
+    // Simulate: file is on disk with a recent mtime, manifest tracked
+    // it earlier, git status reports nothing (file was committed after
+    // the last sync). Without the mtime check, push would no-op.
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "entity_state_load") {
+        return {
+          files: {
+            "triage.json": {
+              remote_version: "2026-04-30T01:00:00Z",
+              pulled_at_mtime_ms: 1000,
+            },
+          },
+        } as never;
+      }
+      if (cmd === "entity_state_save") return undefined as never;
+      return undefined as never;
+    });
+    vi.mocked(entityListLocal).mockResolvedValue([
+      { filename: "triage.json", mtime_ms: 9000, size: 100 } as never,
+    ]);
+    vi.mocked(gitStatusShort).mockResolvedValue([]);
+    vi.mocked(fsRead).mockResolvedValue(
+      JSON.stringify({
+        id: "ua_x",
+        name: "triage",
+        description: "",
+        instructions: "edited",
+      }),
+    );
+    vi.mocked(patchUserAgent).mockResolvedValue({
+      id: "ua_x",
+      name: "openit-triage",
+      versionDate: "2026-04-30T02:00:00Z",
+    } as never);
 
     const out = await pushAllToAgents({ creds, repo: "/r", onLine: vi.fn() });
 
-    expect(out).toEqual({ pushed: 0, failed: 0 });
+    expect(out).toEqual({ pushed: 1, failed: 0 });
+    expect(patchUserAgent).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -229,6 +263,9 @@ describe("pushAllToAgents — PATCH flow (id present)", () => {
 
 describe("pushAllToAgents — OutOfSync recovery", () => {
   it("on PATCH 409 → re-pulls via pullEntity and counts the file as failed", async () => {
+    vi.mocked(entityListLocal).mockResolvedValue([
+      { filename: "triage.json", mtime_ms: 5000, size: 80 } as never,
+    ]);
     vi.mocked(gitStatusShort).mockResolvedValue([
       {
         path: "agents/triage.json",

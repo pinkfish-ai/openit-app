@@ -149,15 +149,6 @@ export async function pushAllToAgents(args: {
 }): Promise<{ pushed: number; failed: number }> {
   const { creds, repo, onLine } = args;
   return withRepoLock(repo, "agent", async () => {
-    const allFiles = await gitStatusShort(repo).catch(() => []);
-    const dirty = allFiles
-      .map((f) => f.path)
-      .filter((p) => p.startsWith(`${AGENT_DIR}/`) && p.endsWith(".json"))
-      .filter((p) => !p.includes(".server."))
-      .map((p) => p.slice(`${AGENT_DIR}/`.length));
-
-    if (dirty.length === 0) return { pushed: 0, failed: 0 };
-
     const manifest = await invoke<KbStatePersisted>("entity_state_load", {
       repo,
       name: "agent",
@@ -165,6 +156,35 @@ export async function pushAllToAgents(args: {
     if (!manifest.files || typeof manifest.files !== "object") {
       manifest.files = {};
     }
+
+    // Detect dirty using three signals — same shape as `pushAllToKb`:
+    // (1) file isn't tracked yet (never synced), (2) git status reports
+    // it modified/untracked (uncommitted edits), (3) mtime advanced past
+    // the last-pulled stamp (committed-after-last-sync — the case where
+    // the SourceControl panel commits before push runs, leaving git
+    // status clean but the manifest baseline behind). Without (3),
+    // every Commit-and-Push flow would silently no-op for agents.
+    const local = await entityListLocal(repo, AGENT_DIR);
+    const gitFiles = await gitStatusShort(repo).catch(() => []);
+    const dirtyPaths = new Set(
+      gitFiles
+        .filter((g) => g.path.startsWith(`${AGENT_DIR}/`))
+        .map((g) => g.path.slice(`${AGENT_DIR}/`.length)),
+    );
+    const dirty = local
+      .filter((f) => f.filename.endsWith(".json"))
+      .filter((f) => !f.filename.includes(".server."))
+      .filter((f) => {
+        const tracked = manifest.files[f.filename];
+        if (!tracked) return true;
+        if (dirtyPaths.has(f.filename)) return true;
+        if (f.mtime_ms != null && f.mtime_ms > tracked.pulled_at_mtime_ms)
+          return true;
+        return false;
+      })
+      .map((f) => f.filename);
+
+    if (dirty.length === 0) return { pushed: 0, failed: 0 };
 
     const touched: string[] = [];
     let pushed = 0;
