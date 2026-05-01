@@ -574,7 +574,7 @@ describe("pushAllEntities — error isolation (PIN-5865)", () => {
 describe("pushAllEntities — runAgent", () => {
   it("dirty agents/* unblocks pre-push pull and push", async () => {
     vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/triage.json", status: " M", staged: false },
+      { path: "agents/triage/triage.json", status: " M", staged: false },
     ] as never);
 
     await pushAllEntities("/repo", () => {});
@@ -585,7 +585,7 @@ describe("pushAllEntities — runAgent", () => {
 
   it("agent conflict slot non-empty surfaces conflicts and skips push", async () => {
     vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/triage.json", status: " M", staged: false },
+      { path: "agents/triage/triage.json", status: " M", staged: false },
     ] as never);
     vi.mocked(getConflictsForPrefix).mockImplementation((prefix: string) => {
       if (prefix === "agent") {
@@ -593,7 +593,7 @@ describe("pushAllEntities — runAgent", () => {
           {
             prefix: "agent",
             manifestKey: "triage.json",
-            workingTreePath: "agents/triage.json",
+            workingTreePath: "agents/triage/triage.json",
             reason: "local-and-remote-changed" as const,
           },
         ];
@@ -615,7 +615,7 @@ describe("pushAllEntities — runAgent", () => {
 
   it("pre-push pull failure short-circuits before push", async () => {
     vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/triage.json", status: " M", staged: false },
+      { path: "agents/triage/triage.json", status: " M", staged: false },
     ] as never);
     vi.mocked(pullAgentsOnce).mockResolvedValue({
       ok: false,
@@ -646,9 +646,44 @@ describe("pushAllEntities — runAgent", () => {
     expect(pullAgentsOnce).toHaveBeenCalledTimes(1);
   });
 
+  it("clean tree but release_pending manifest entry falls through skip-clean", async () => {
+    // No dirty paths, manifest matches disk, last_pull_at_ms set — but
+    // one manifest entry has release_pending: true. runAgent must NOT
+    // skip-clean; pushAllToAgents handles the retry.
+    vi.mocked(gitStatusShort).mockResolvedValue([] as never);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "entity_state_load") {
+        return {
+          files: {
+            "triage.json": {
+              remote_version: "x",
+              pulled_at_mtime_ms: 1000,
+              release_pending: true,
+              remote_id: "ua_x",
+            },
+          },
+          last_pull_at_ms: 9999,
+        } as never;
+      }
+      if (cmd === "entity_list_local") {
+        return [
+          { filename: "triage.json", mtime_ms: 1000, size: 80 },
+        ] as never;
+      }
+      return undefined as never;
+    });
+
+    await pushAllEntities("/repo", () => {});
+
+    // Pre-push pull AND push must both fire — release_pending bypasses
+    // skip-clean.
+    expect(pullAgentsOnce).toHaveBeenCalledTimes(1);
+    expect(pushAllToAgents).toHaveBeenCalledTimes(1);
+  });
+
   it("agent failure does not block other classes (error isolation)", async () => {
     vi.mocked(gitStatusShort).mockResolvedValue([
-      { path: "agents/triage.json", status: " M", staged: false },
+      { path: "agents/triage/triage.json", status: " M", staged: false },
       { path: "knowledge-bases/default/dirty.md", status: " M", staged: false },
     ] as never);
     vi.mocked(pushAllToAgents).mockRejectedValue(new Error("agent boom"));

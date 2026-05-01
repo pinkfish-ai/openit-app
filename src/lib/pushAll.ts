@@ -464,10 +464,10 @@ async function runDatastore(args: {
 }
 
 // ---------------------------------------------------------------------------
-// Agent — single class, flat layout (`agents/<name>.json`). Mirrors
-// runDatastore's shape but with skip-clean (the flat layout maps cleanly
-// to manifestMatchesDisk, unlike datastore's nested per-collection
-// conversations dir).
+// Agent — V2 folder layout (`agents/triage/triage.json` + three .md
+// blocks). Mirrors runDatastore's shape but with skip-clean (the
+// triage subdir maps cleanly to manifestMatchesDisk; the .md blocks
+// stay under the user's curation, manifest doesn't track them).
 // ---------------------------------------------------------------------------
 
 async function runAgent(args: {
@@ -478,17 +478,32 @@ async function runAgent(args: {
 }): Promise<void> {
   const { creds, repo, onLine, dirtyUnderScope } = args;
   try {
-    // Skip-clean: the agent adapter's prefix is the class-level string
-    // "agent" (not the dir). Pass that to `hasConflictsForPrefix`. The
-    // dir for `manifestMatchesDisk` and `dirtyUnderScope` is "agents".
-    if (!dirtyUnderScope("agents") && !hasConflictsForPrefix("agent")) {
-      const m = await invoke<KbStatePersisted>("entity_state_load", {
-        repo,
-        name: "agent",
-      });
+    // dirtyUnderScope("agents") catches both the triage.json change and
+    // any of the three .md blocks (common.md / cloud.md / local.md) —
+    // they all live under agents/triage/. Any of them being dirty must
+    // route through pushAllToAgents because instructions are assembled
+    // from the .md files at push time.
+    const m = await invoke<KbStatePersisted>("entity_state_load", {
+      repo,
+      name: "agent",
+    });
+    // Release-pending entries bypass the skip-clean — pushAllToAgents
+    // retries the release before the dirty-list early-return.
+    const hasPendingRelease = Object.values(m.files ?? {}).some(
+      (f) => (f as { release_pending?: boolean }).release_pending,
+    );
+    if (
+      !hasPendingRelease &&
+      !dirtyUnderScope("agents") &&
+      !hasConflictsForPrefix("agent")
+    ) {
       if (
         m.last_pull_at_ms != null &&
-        (await manifestMatchesDisk({ repo, dir: "agents", manifest: m }))
+        (await manifestMatchesDisk({
+          repo,
+          dir: "agents/triage",
+          manifest: m,
+        }))
       ) {
         onLine("▸ sync: agents skipped (clean)");
         return;

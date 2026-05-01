@@ -9,15 +9,24 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   agentAdapter,
-  AGENT_DIR,
   AGENT_PREFIX,
+  assembleInstructions,
   cloudAgentName,
+  instructionsHash,
   listUserAgentsWithMeta,
   localAgentName,
   patchUserAgent,
   postUserAgent,
-  resolveProjectAgents,
+  releaseUserAgent,
+  resolveResourceRefs,
+  TRIAGE_LOCAL_NAME,
+  TRIAGE_SUBDIR,
+  type AgentResources,
   type AgentRow,
+  type AgentTools,
+  type AgentUpsertBody,
+  type FullAgentResponse,
+  resolveProjectAgents,
 } from "./entities/agent";
 import {
   entityDeleteFile,
@@ -184,11 +193,86 @@ async function readMtimeAfterWrite(
   filename: string,
 ): Promise<number | null> {
   try {
-    const list = await entityListLocal(repo, AGENT_DIR);
+    const list = await entityListLocal(repo, TRIAGE_SUBDIR);
     const match = list.find((f) => f.filename === filename);
     return match?.mtime_ms ?? null;
   } catch {
     return null;
+  }
+}
+
+/// Read one of the three sibling instruction blocks. Missing → empty
+/// string so push can still assemble a partial prompt rather than abort.
+async function readMdBlock(repo: string, filename: string): Promise<string> {
+  try {
+    return await fsRead(`${repo}/${TRIAGE_SUBDIR}/${filename}`);
+  } catch {
+    return "";
+  }
+}
+
+/// Build the upsert body. V1 fields (name, description, instructions)
+/// are always present; V2 fields are present only when the disk file
+/// declared them — omit-when-absent semantics so unspecified fields
+/// preserve their cloud values across PATCH overlays.
+async function buildUpsertBody(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  parsed: Partial<AgentRow>;
+  onLine: (line: string) => void;
+}): Promise<AgentUpsertBody> {
+  const { creds, repo, parsed, onLine } = args;
+  const localName = String(parsed.name ?? TRIAGE_LOCAL_NAME);
+  const common = await readMdBlock(repo, "common.md");
+  const cloud = await readMdBlock(repo, "cloud.md");
+  const body: AgentUpsertBody = {
+    name: cloudAgentName(localName),
+    description: parsed.description ?? "",
+    instructions: assembleInstructions(common, cloud),
+  };
+  if (parsed.selectedModel !== undefined) body.selectedModel = parsed.selectedModel;
+  if (parsed.isShared !== undefined) body.isShared = parsed.isShared;
+  if (parsed.promptExamples !== undefined)
+    body.promptExamples = parsed.promptExamples;
+  if (parsed.introMessage !== undefined) body.introMessage = parsed.introMessage;
+  if (parsed.resources !== undefined) {
+    const wire = await resolveResourceRefs(
+      creds,
+      parsed.resources as AgentResources | undefined,
+      onLine,
+    );
+    if (wire.knowledgeBases !== undefined)
+      body.knowledgeBases = wire.knowledgeBases;
+    if (wire.datastores !== undefined) body.datastores = wire.datastores;
+    if (wire.filestores !== undefined) body.filestores = wire.filestores;
+  }
+  if (parsed.tools !== undefined) {
+    const servers = (parsed.tools as AgentTools | undefined)?.servers;
+    if (servers !== undefined) body.servers = servers;
+  }
+  return body;
+}
+
+async function fireReleaseWithRetry(args: {
+  creds: PinkfishCreds;
+  agentId: string;
+  filename: string;
+  manifest: KbStatePersisted;
+  onLine: (line: string) => void;
+}): Promise<void> {
+  const { creds, agentId, filename, manifest, onLine } = args;
+  try {
+    await releaseUserAgent(creds, agentId);
+    if (manifest.files[filename]) {
+      delete (manifest.files[filename] as { release_pending?: boolean })
+        .release_pending;
+    }
+  } catch (e) {
+    if (manifest.files[filename]) {
+      (manifest.files[filename] as { release_pending?: boolean }).release_pending =
+        true;
+    }
+    onLine(`  ✗ release failed (will retry next sync): ${String(e)}`);
   }
 }
 
@@ -207,6 +291,37 @@ export async function pushAllToAgents(args: {
       manifest.files = {};
     }
 
+    // Retry release-pending entries before the dirty-list early-return.
+    // Without this, a clean-but-release-pending agent would never retry
+    // (we'd return at `dirty.length === 0` below).
+    const releasePending = Object.entries(manifest.files)
+      .filter(
+        ([_, entry]) => (entry as { release_pending?: boolean }).release_pending,
+      )
+      .map(([fname]) => fname);
+    let manifestDirty = false;
+    for (const fname of releasePending) {
+      const entry = manifest.files[fname] as { remote_id?: string };
+      const remoteId = entry.remote_id;
+      if (!remoteId) continue;
+      try {
+        await releaseUserAgent(creds, remoteId);
+        delete (manifest.files[fname] as { release_pending?: boolean })
+          .release_pending;
+        manifestDirty = true;
+        onLine(`  ✓ retried release for ${fname}`);
+      } catch (e) {
+        onLine(`  ✗ release retry failed for ${fname}: ${String(e)}`);
+      }
+    }
+    if (manifestDirty) {
+      await invoke("entity_state_save", {
+        repo,
+        name: "agent",
+        state: manifest,
+      });
+    }
+
     // Detect dirty using three signals — same shape as `pushAllToKb`:
     // (1) file isn't tracked yet (never synced), (2) git status reports
     // it modified/untracked (uncommitted edits), (3) mtime advanced past
@@ -214,12 +329,20 @@ export async function pushAllToAgents(args: {
     // the SourceControl panel commits before push runs, leaving git
     // status clean but the manifest baseline behind). Without (3),
     // every Commit-and-Push flow would silently no-op for agents.
-    const local = await entityListLocal(repo, AGENT_DIR);
+    //
+    // Any of the three .md blocks being dirty also marks the agent's
+    // .json as needing push (instructions are assembled from common +
+    // cloud at push time). The manifest only tracks the .json row, so
+    // probe git status for .md changes to surface the dependency.
+    const local = await entityListLocal(repo, TRIAGE_SUBDIR);
     const gitFiles = await gitStatusShort(repo).catch(() => []);
     const dirtyPaths = new Set(
       gitFiles
-        .filter((g) => g.path.startsWith(`${AGENT_DIR}/`))
-        .map((g) => g.path.slice(`${AGENT_DIR}/`.length)),
+        .filter((g) => g.path.startsWith(`${TRIAGE_SUBDIR}/`))
+        .map((g) => g.path.slice(`${TRIAGE_SUBDIR}/`.length)),
+    );
+    const mdDirty = ["common.md", "cloud.md", "local.md"].some((f) =>
+      dirtyPaths.has(f),
     );
     const dirty = local
       .filter((f) => f.filename.endsWith(".json"))
@@ -230,6 +353,10 @@ export async function pushAllToAgents(args: {
         if (dirtyPaths.has(f.filename)) return true;
         if (f.mtime_ms != null && f.mtime_ms > tracked.pulled_at_mtime_ms)
           return true;
+        // The .json might be clean but a sibling .md (common/cloud)
+        // bumped — those affect the assembled `instructions` field on
+        // cloud, so the .json's row needs push too.
+        if (mdDirty && f.filename === `${TRIAGE_LOCAL_NAME}.json`) return true;
         return false;
       })
       .map((f) => f.filename);
@@ -242,7 +369,7 @@ export async function pushAllToAgents(args: {
 
     for (const filename of dirty) {
       try {
-        const localStr = await fsRead(`${repo}/${AGENT_DIR}/${filename}`);
+        const localStr = await fsRead(`${repo}/${TRIAGE_SUBDIR}/${filename}`);
         const parsed = JSON.parse(localStr) as Partial<AgentRow>;
         const name = String(parsed.name ?? "");
         if (!name) {
@@ -251,16 +378,9 @@ export async function pushAllToAgents(args: {
           continue;
         }
 
-        // Add the `openit-` prefix at the sync boundary. Local disk uses
-        // the unprefixed form (`triage`); Pinkfish stores `openit-triage`.
-        // Same convention as datastore/filestore/KB collection naming.
-        const body = {
-          name: cloudAgentName(name),
-          description: parsed.description ?? "",
-          instructions: parsed.instructions ?? "",
-        };
+        const body = await buildUpsertBody({ creds, repo, parsed, onLine });
 
-        let serverAgent;
+        let serverAgent: FullAgentResponse;
         if (!parsed.id) {
           serverAgent = await postUserAgent(creds, body);
           // Write the server-issued id back to disk so subsequent edits
@@ -270,14 +390,13 @@ export async function pushAllToAgents(args: {
           // file as dirty (mtime > tracked baseline) and re-pushes
           // forever.
           const updated: AgentRow = {
+            ...parsed,
             id: serverAgent.id,
             name,
-            description: body.description,
-            instructions: body.instructions,
-          };
+          } as AgentRow;
           await entityWriteFile(
             repo,
-            AGENT_DIR,
+            TRIAGE_SUBDIR,
             filename,
             JSON.stringify(updated, null, 2),
           );
@@ -290,12 +409,25 @@ export async function pushAllToAgents(args: {
           serverAgent.versionDate ??
           serverAgent.updatedAt ??
           new Date().toISOString();
+        const pushedHash = await instructionsHash(body.instructions);
         manifest.files[filename] = {
           remote_version: remoteVersion,
           pulled_at_mtime_ms: postWriteMtime ?? Date.now(),
           conflict_remote_version: undefined,
+          pushed_instructions_hash: pushedHash,
+          remote_id: serverAgent.id,
         };
-        touched.push(`${AGENT_DIR}/${filename}`);
+        touched.push(`${TRIAGE_SUBDIR}/${filename}`);
+        // Auto-release: every successful upsert tries to publish the
+        // current snapshot. Failure flags release_pending in the
+        // manifest entry; the next sync retries.
+        await fireReleaseWithRetry({
+          creds,
+          agentId: serverAgent.id,
+          filename,
+          manifest,
+          onLine,
+        });
         onLine(`  ✓ pushed ${filename}`);
         pushed += 1;
       } catch (e) {
