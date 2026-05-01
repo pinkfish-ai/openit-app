@@ -619,6 +619,49 @@ export async function resolvePathToSource(
         size: number | null;
       }[] = [];
       const childPrefix = `${path}/`;
+      // V2 agents are folders, not flat .json files. Each agent lives at
+      // `agents/<name>/<name>.json` with sibling .md instruction blocks.
+      // Scan top-level dirs for an inner `<name>/<name>.json` and surface
+      // those as the agent cards.
+      if (rel === "agents") {
+        for (const n of nodes) {
+          if (!n.is_dir) continue;
+          const remainder = n.path.startsWith(childPrefix)
+            ? n.path.slice(childPrefix.length)
+            : "";
+          if (!remainder || remainder.includes("/")) continue;
+          if (n.name.startsWith(".")) continue;
+          const agentJsonPath = `${n.path}/${n.name}.json`;
+          let displayName = n.name;
+          let description = "";
+          let size: number | null = null;
+          try {
+            const raw = await fsRead(agentJsonPath);
+            size = raw.length;
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === "object") {
+              if (typeof parsed.name === "string" && parsed.name.trim()) {
+                displayName = parsed.name.trim();
+              }
+              if (typeof parsed.description === "string") {
+                description = parsed.description.trim();
+              }
+            }
+          } catch {
+            // No `<folder>/<folder>.json` — skip this folder. Either
+            // a half-migrated state or a folder the user dropped in.
+            continue;
+          }
+          files.push({
+            name: `${n.name}.json`,
+            displayName,
+            description,
+            path: agentJsonPath,
+            size,
+          });
+        }
+        return { kind: "entity-folder", entity: entityFolderEntry.entity, files, path };
+      }
       for (const n of nodes) {
         if (n.is_dir) continue;
         // fs_list walks recursively (depth 6); keep only direct
