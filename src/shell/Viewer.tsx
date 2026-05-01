@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { fsRead, fsReadBytes, fsList, fsReveal, reportOverviewRun, entityWriteFileBytes, entityDeleteFile, entityListLocal } from "../lib/api";
 import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
@@ -102,8 +103,9 @@ async function uploadFilesToSubdir(
             .map((c) => c.filename)
             .slice(0, 3)
             .join(", ")}${collisions.length > 3 ? "…" : ""})`;
-    const ok = window.confirm(
+    const ok = await ask(
       `${list} already exist${collisions.length === 1 ? "s" : ""} in this folder.\n\nReplace?`,
+      { title: "Replace files?", kind: "warning" },
     );
     if (!ok) return;
   }
@@ -147,7 +149,10 @@ async function deleteFileInSubdir(
   setError: (msg: string | null) => void,
   onToast?: (msg: string) => void,
 ): Promise<void> {
-  const ok = window.confirm(`Delete "${filename}"?\n\nThis cannot be undone.`);
+  const ok = await ask(
+    `Delete "${filename}"?\n\nThis cannot be undone.`,
+    { title: "Delete file?", kind: "warning" },
+  );
   if (!ok) return;
   setError(null);
   try {
