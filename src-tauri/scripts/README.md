@@ -19,11 +19,21 @@ This is wired up via `src-tauri/.cargo/config.toml` + `scripts/dev-codesign.sh`
    - **Certificate Type:** Code Signing
 3. Click **Create** and accept the warning. The cert lands in your **login**
    keychain.
-4. Verify it shows up (note: no `-p codesigning` filter — self-signed certs aren't policy-trusted by default, but we don't need that for local signing):
+4. **Trust the cert for code signing.** This is the step that makes "Always
+   Allow" actually stick across rebuilds — without it, macOS binds keychain
+   ACLs to the binary's CDHash (which changes every rebuild) instead of its
+   designated requirement (which is stable). You'll re-prompt forever.
+   - In Keychain Access, find **OpenIT Dev** under **login → My Certificates**
+     (or **Certificates**), double-click it.
+   - Expand **Trust**, set **Code Signing: Always Trust**.
+   - Close the window — macOS will ask for your login password to save.
+5. Verify it shows up:
    ```
    security find-identity | grep "OpenIT Dev"
    ```
-   You should see a line with a SHA-1 hash and `"OpenIT Dev"`. If it says `CSSMERR_TP_NOT_TRUSTED`, that's fine — we sign by SHA-1, which bypasses the trust check.
+   You should see a line with a SHA-1 hash and `"OpenIT Dev"`. (We sign by
+   SHA-1, so the line works regardless of trust status — but the trust
+   setting from step 4 is what makes ACLs bind to the DR.)
 
 That's it. Next `npm run tauri dev` will sign the dev binary with this cert
 before launching.
@@ -46,13 +56,20 @@ After those two clicks, all subsequent `tauri dev` runs are silent.
 ## If old prompts still show up
 
 Existing keychain entries written before you set this up are bound to the
-old (unsigned) ACL. Delete them once and let them get rewritten:
+old ACL (CDHash of a previous unsigned/differently-signed binary). Delete
+them once and let the app rewrite them — the new entries will bind to the
+stable DR.
 
 ```
 security delete-generic-password -s ai.pinkfish.openit 2>/dev/null
 ```
 
-(Repeat per slot if needed; the service name is `ai.pinkfish.openit`.)
+(Repeat per slot until it says "could not be found"; the service name is
+`ai.pinkfish.openit`.)
+
+If you're still being prompted on every rebuild after deleting + clicking
+Always Allow, you almost certainly skipped the trust step (one-time setup,
+step 4). Without it, the ACL binds to CDHash and re-prompts forever.
 
 ## Custom identity name
 
