@@ -301,18 +301,16 @@ describe("pushAllEntities — parallelism (PIN-5865)", () => {
 
     let scriptsFinishedAt = 0;
     let skillsFinishedAt = 0;
-    vi.mocked(filestorePullOnce).mockImplementation(async (args: never) => {
-      const colName = (args as { collection: { name: string } }).collection.name;
-      if (colName === "openit-scripts") {
+    vi.mocked(filestorePullOnce).mockImplementation(async (args) => {
+      if (args.collection.name === "openit-scripts") {
         await new Promise((r) => setTimeout(r, 60));
       }
-      return { ok: true, downloaded: 0 } as never;
+      return { ok: true, downloaded: 0, total: 0 };
     });
-    vi.mocked(pushAllToFilestore).mockImplementation(async (args: never) => {
-      const colName = (args as { collection: { name: string } }).collection.name;
-      if (colName === "openit-scripts") scriptsFinishedAt = Date.now();
-      if (colName === "openit-skills") skillsFinishedAt = Date.now();
-      return { pushed: 0, failed: 0 } as never;
+    vi.mocked(pushAllToFilestore).mockImplementation(async (args) => {
+      if (args.collection.name === "openit-scripts") scriptsFinishedAt = Date.now();
+      if (args.collection.name === "openit-skills") skillsFinishedAt = Date.now();
+      return { pushed: 0, failed: 0 };
     });
 
     await pushAllEntities("/repo", () => {});
