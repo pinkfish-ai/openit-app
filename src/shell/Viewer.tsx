@@ -8,6 +8,7 @@ import { loadCreds } from "../lib/pinkfishAuth";
 import { fetchDatastoreItems } from "../lib/datastoreSync";
 import { loadOpenitConfig } from "../lib/openitConfig";
 import type { MemoryItem } from "../lib/skillsApi";
+import type { Agent } from "../lib/agentSync";
 import { DataTable } from "./DataTable";
 import { EntityCardGrid } from "./EntityCardGrid";
 import { FileThumbnail, isImageFile } from "./FileThumbnail";
@@ -566,6 +567,16 @@ export function Viewer({
   // booleans, etc. round-trip without coercion until save.
   const [rowEditDraft, setRowEditDraft] = useState<Record<string, unknown>>({});
 
+  // Agent-edit draft + post-save override. Mirrors the rowEditDraft /
+  // rowOverride pattern but for the agent panel: draft holds the
+  // in-flight form values, override flips the rendered/raw view to the
+  // saved content without waiting for the FS watcher to re-read disk.
+  const [agentEditDraft, setAgentEditDraft] = useState<{
+    description: string;
+    instructions: string;
+  }>({ description: "", instructions: "" });
+  const [agentOverride, setAgentOverride] = useState<Agent | null>(null);
+
   // Reply composer state for the conversation-thread view. The admin
   // can answer the asker directly from the thread bubble pane —
   // bypasses Claude entirely for the "I can answer this myself"
@@ -678,6 +689,7 @@ export function Viewer({
   }, [source]);
   // Reset on source change so a new click clears the previous override.
   useEffect(() => setRowOverride(null), [source]);
+  useEffect(() => setAgentOverride(null), [source]);
 
   useEffect(() => {
     setError(null);
@@ -983,6 +995,7 @@ export function Viewer({
       !isRunnableScript(source.path)) ||
     source.kind === "datastore-schema";
   const showRowTabs = source.kind === "datastore-row";
+  const showAgentTabs = source.kind === "agent";
   const showPeopleTabs = source.kind === "people-list";
   const showConversationsFilter = source.kind === "conversations-list";
 
@@ -1695,9 +1708,127 @@ export function Viewer({
       return <pre className="viewer-content">{content}</pre>;
     }
 
-    // Agent summary
+    // Agent summary — three modes (rendered / edit / raw) mirror the
+    // datastore-row pattern so agents read & edit the same way as rows.
     if (source.kind === "agent") {
-      const a = source.agent;
+      const a: Agent = agentOverride ?? source.agent;
+
+      if (mode === "raw") {
+        // Same shape `canonicalizeForDisk` produces — keeps Raw view
+        // identical to what's on disk.
+        const json = JSON.stringify(
+          {
+            id: a.id ?? "",
+            name: a.name ?? "",
+            description: a.description ?? "",
+            instructions: a.instructions ?? "",
+          },
+          null,
+          2,
+        );
+        return <pre className="viewer-content">{json}</pre>;
+      }
+
+      if (mode === "edit") {
+        const onSave = async () => {
+          if (!repo) {
+            setEditError("Cannot save: no repo open.");
+            return;
+          }
+          setEditSaving(true);
+          setEditError(null);
+          try {
+            // Filename is the local (unprefixed) `name` — agents/<name>.json.
+            // Editing the in-file `name` is out of V1 scope; only
+            // description + instructions round-trip from this form, so
+            // the filename never changes.
+            const filename = `${a.name}.json`;
+            const json = JSON.stringify(
+              {
+                id: a.id ?? "",
+                name: a.name ?? "",
+                description: agentEditDraft.description,
+                instructions: agentEditDraft.instructions,
+              },
+              null,
+              2,
+            );
+            await entityWriteFile(repo, "agents", filename, json);
+            setAgentOverride({
+              ...a,
+              description: agentEditDraft.description,
+              instructions: agentEditDraft.instructions,
+            });
+            setMode("rendered");
+          } catch (err) {
+            setEditError(
+              `Save failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          } finally {
+            setEditSaving(false);
+          }
+        };
+        const onCancel = () => {
+          setEditError(null);
+          setMode("rendered");
+        };
+        return (
+          <div className="row-edit">
+            <div className="row-edit-form">
+              <label className="row-edit-field">
+                <span className="row-edit-label">Description</span>
+                <input
+                  type="text"
+                  className="row-edit-input"
+                  value={agentEditDraft.description}
+                  onChange={(e) =>
+                    setAgentEditDraft({
+                      ...agentEditDraft,
+                      description: e.target.value,
+                    })
+                  }
+                />
+              </label>
+              <label className="row-edit-field">
+                <span className="row-edit-label">Instructions</span>
+                <textarea
+                  className="row-edit-textarea"
+                  rows={20}
+                  value={agentEditDraft.instructions}
+                  onChange={(e) =>
+                    setAgentEditDraft({
+                      ...agentEditDraft,
+                      instructions: e.target.value,
+                    })
+                  }
+                />
+              </label>
+            </div>
+            <div className="row-edit-footer">
+              {editError && <span className="row-edit-error">{editError}</span>}
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onCancel}
+                disabled={editSaving}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={onSave}
+                disabled={editSaving}
+                loading={editSaving}
+              >
+                {editSaving ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </div>
+        );
+      }
+
+      // Default: rendered (read-only beautiful view).
       return (
         <div className="viewer-summary">
           <h2>{a.name}</h2>
@@ -3161,6 +3292,38 @@ export function Viewer({
                     }
                   }
                   setRowEditDraft(parsed);
+                }
+                setEditError(null);
+                setMode("edit");
+              }}
+            >
+              Edit
+            </Tab>
+            <Tab
+              active={mode === "raw"}
+              onClick={() => setMode("raw")}
+            >
+              Raw
+            </Tab>
+          </TabStrip>
+        )}
+        {showAgentTabs && (
+          <TabStrip variant="segmented">
+            <Tab
+              active={mode === "rendered"}
+              onClick={() => setMode("rendered")}
+            >
+              View
+            </Tab>
+            <Tab
+              active={mode === "edit"}
+              onClick={() => {
+                if (mode !== "edit" && source.kind === "agent") {
+                  const a = agentOverride ?? source.agent;
+                  setAgentEditDraft({
+                    description: a.description ?? "",
+                    instructions: a.instructions ?? "",
+                  });
                 }
                 setEditError(null);
                 setMode("edit");
