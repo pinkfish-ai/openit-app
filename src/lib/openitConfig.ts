@@ -45,10 +45,6 @@ export const DEFAULT_TICKET_LIFECYCLE: TicketLifecycleConfig = {
   escalateOnAgentCrash: true,
 };
 
-export const DEFAULT_OPENIT_CONFIG: OpenitConfig = {
-  ticketLifecycle: { ...DEFAULT_TICKET_LIFECYCLE },
-};
-
 /// Merge a partial config payload (JSON parsed straight off disk) onto
 /// the defaults. Per-field merge — a missing field falls through to its
 /// default; a present field with the wrong type also falls through (we

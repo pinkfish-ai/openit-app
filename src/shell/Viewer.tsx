@@ -375,21 +375,30 @@ function isMarkdown(path: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(path);
 }
 
-/// Plain-JSON files that have no dedicated viewer of their own and
-/// should get a generic edit textarea instead of being read-only. Today
-/// just `.openit/config.json` (admin lifecycle tunables, PIN-5864). Any
-/// future tunable JSON drops in here. Datastore rows / agents / workflows
-/// have their own structured editors and should NOT match this — they
-/// route by `source.kind` upstream.
-function isEditableJsonFile(path: string): boolean {
-  return /\/\.openit\/config\.json$/.test(path);
+/// Plain JSON files reaching this viewer (i.e. routed as
+/// `source.kind === "file"`, not as a `datastore-row` / `agent` /
+/// `workflow` / etc.). Datastore rows, agents, workflows, and
+/// `_schema.json` files all have dedicated structured editors and route
+/// by `source.kind` upstream — they don't hit the file branch.
+/// What's left here is config (`.openit/config.json`), agent-traces, and
+/// any standalone `.json` an admin drops in. All editable as raw text.
+function isJsonFile(path: string): boolean {
+  return /\.json$/i.test(path);
+}
+
+/// JavaScript module scripts. `.claude/scripts/*.mjs` is the plugin
+/// surface; `filestores/scripts/*.mjs` is the admin's own scripts
+/// folder. Both should be editable for ad-hoc tweaks. (Plugin scripts
+/// get overwritten by the next plugin sync — that's expected and
+/// orthogonal to whether they're editable in the moment.)
+function isMjsScript(path: string): boolean {
+  return /\.mjs$/i.test(path);
 }
 
 /// Files that should expose View / Edit tabs and a textarea-backed
-/// edit mode. Markdown files always; admin-editable JSON files when
-/// `isEditableJsonFile` matches.
+/// edit mode. Markdown, JSON, and `.mjs` scripts.
 function hasEditableTextMode(path: string): boolean {
-  return isMarkdown(path) || isEditableJsonFile(path);
+  return isMarkdown(path) || isJsonFile(path) || isMjsScript(path);
 }
 
 function isImage(path: string): boolean {
@@ -984,7 +993,7 @@ export function Viewer({
       }
       if (mode === "edit" && hasEditableTextMode(source.path)) {
         const filePath = source.path;
-        const isJson = isEditableJsonFile(filePath);
+        const isJson = isJsonFile(filePath);
         const onSave = async () => {
           if (!repo || !filePath.startsWith(`${repo}/`)) {
             setEditError("Cannot save: file is outside the project folder.");
@@ -1921,17 +1930,26 @@ export function Viewer({
         // chimes in, the agent is no longer the sole driver. Gated on
         // `ticketLifecycle.escalateOnAdminReply`: admins can disable
         // to leave commentary on resolved threads without re-opening
-        // them. Even when the status flip is skipped, we still stamp
-        // `assignee` (admin authorship is a first-class fact about the
-        // turn, separate from the lifecycle decision).
+        // them.
+        //
+        // `updatedAt` is bumped regardless of the gate. The auto-close
+        // walker uses it as the resolve-time anchor — without this,
+        // an admin commenting on a resolved ticket while
+        // `escalateOnAdminReply: false` could see the ticket
+        // auto-close moments later because the close timer still
+        // tracked from the original resolve. Admin activity is real
+        // engagement; the lifecycle clock should reset.
+        //
+        // `assignee` stamps regardless too — admin authorship of the
+        // turn is a fact independent of the lifecycle decision.
         try {
           const cfg = await loadOpenitConfig(repo);
           const ticketPath = `${repo}/databases/tickets/${ticketId}.json`;
           const raw = await fsRead(ticketPath);
           const parsed = JSON.parse(raw) as Record<string, unknown>;
+          parsed.updatedAt = isoNow;
           if (cfg.ticketLifecycle.escalateOnAdminReply) {
             parsed.status = "escalated";
-            parsed.updatedAt = isoNow;
           }
           if (typeof parsed.assignee !== "string" || !parsed.assignee) {
             parsed.assignee = sender;
