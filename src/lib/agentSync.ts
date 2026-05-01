@@ -112,6 +112,15 @@ export function stopAgentSync(): void {
 
 /// Thin wrapper that exposes the engine's pull as a one-shot for the
 /// pushAll orchestrator. Mirrors `filestorePullOnce` / `pullDatastoresOnce`.
+///
+/// After the engine pull completes, run a separate divergence check on
+/// the assembled `instructions` field: cloud's full string is
+/// informational on V2 (the three .md blocks own the disk side, and
+/// reverse-splitting a server string into common/cloud is impossible),
+/// so the engine's normal `fetchAndWrite` doesn't touch the .md
+/// blocks. Instead, compare cloud's hash against `pushed_instructions_hash`
+/// in the manifest. If they differ, write `instructions.server.md` as a
+/// shadow so the user can resolve manually.
 export async function pullAgentsOnce(args: {
   creds: PinkfishCreds;
   repo: string;
@@ -125,6 +134,9 @@ export async function pullAgentsOnce(args: {
   try {
     const adapter = agentAdapter({ creds });
     const result = await pullEntity(adapter, repo);
+    await detectInstructionsDivergence({ creds, repo }).catch((e) =>
+      console.error("[agentSync] instructions divergence check failed:", e),
+    );
     return {
       ok: true,
       pulled: result.pulled,
@@ -134,6 +146,55 @@ export async function pullAgentsOnce(args: {
     console.error("[agentSync] pull failed:", e);
     return { ok: false, error: String(e), pulled: 0, conflicts: [] };
   }
+}
+
+/// Compare cloud `instructions` against the last-pushed-hash recorded
+/// in the manifest. On mismatch, write a `instructions.server.md`
+/// shadow inside the agent's folder so the resolve-conflict flow has
+/// something tangible to surface.
+///
+/// Skipped silently when:
+/// - The manifest has no `pushed_instructions_hash` yet (first-launch
+///   pull window — we've never sent anything, so cloud's value is the
+///   baseline; next push records the hash).
+/// - No `triage.json` row in the manifest (agent doesn't exist yet).
+async function detectInstructionsDivergence(args: {
+  creds: PinkfishCreds;
+  repo: string;
+}): Promise<void> {
+  const { creds, repo } = args;
+  const manifest = await invoke<KbStatePersisted>("entity_state_load", {
+    repo,
+    name: "agent",
+  });
+  const filename = `${TRIAGE_LOCAL_NAME}.json`;
+  const entry = manifest.files?.[filename] as
+    | { pushed_instructions_hash?: string }
+    | undefined;
+  const lastSent = entry?.pushed_instructions_hash;
+  if (!lastSent) return;
+
+  const all = await listUserAgentsWithMeta(creds);
+  const cloud = all.find(
+    (a) => localAgentName(a.name) === TRIAGE_LOCAL_NAME,
+  );
+  if (!cloud) return;
+  const cloudInstructions = cloud.instructionsRaw ?? "";
+  const cloudHash = await instructionsHash(cloudInstructions);
+  if (cloudHash === lastSent) return;
+
+  // Divergence — cloud's instructions string differs from what we last
+  // sent. Write the shadow so the resolve-conflict skill has something
+  // to merge against.
+  await entityWriteFile(
+    repo,
+    TRIAGE_SUBDIR,
+    "instructions.server.md",
+    cloudInstructions,
+  );
+  console.log(
+    "[agentSync] instructions divergence — wrote instructions.server.md shadow",
+  );
 }
 
 async function fileExistsOnDisk(repo: string, relPath: string): Promise<boolean> {
