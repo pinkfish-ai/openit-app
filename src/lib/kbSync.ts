@@ -11,6 +11,7 @@
 //
 // Sibling: filestoreSync.ts uses the same helper with filestore config.
 
+import { makeSkillsFetch } from "../api/fetchAdapter";
 import {
   entityListLocal,
   gitStatusShort,
@@ -198,6 +199,9 @@ async function pushAllToKbImpl(args: {
   );
 
   const siblings = canonicalSiblingSet(local);
+  const localCanonicalNames = new Set(
+    local.filter((f) => !classifyAsShadow(f.filename, siblings)).map((f) => f.filename),
+  );
   const toPush = local.filter((f) => {
     if (classifyAsShadow(f.filename, siblings)) return false;
     const tracked = persisted.files[f.filename];
@@ -208,7 +212,25 @@ async function pushAllToKbImpl(args: {
     return false;
   });
 
-  if (toPush.length === 0) {
+  // Files in the manifest but no longer on disk → user-deleted; push must
+  // issue a remote DELETE. See the matching block in filestoreSync.ts for
+  // the full rationale and safety-guard reasoning.
+  //
+  // KB-specific caveat: the multipart `/upload` endpoint rewrites
+  // filenames with a UUID prefix and can leave duplicate rows on remote.
+  // We delete by exact filename only — UUID-prefixed orphans are still
+  // the responsibility of `scripts/cleanup-uuid-duplicates.mjs`.
+  const manifestKeys = Object.keys(persisted.files);
+  let toDelete: string[] = [];
+  if (localCanonicalNames.size === 0 && manifestKeys.length > 0) {
+    onLine?.(
+      `▸ kb push (${displayKbName(collection.name)}): local listing empty but manifest has ${manifestKeys.length} entr${manifestKeys.length === 1 ? "y" : "ies"} — skipping deletion phase to avoid nuking remote`,
+    );
+  } else {
+    toDelete = manifestKeys.filter((k) => !localCanonicalNames.has(k));
+  }
+
+  if (toPush.length === 0 && toDelete.length === 0) {
     onLine?.(`▸ kb push (${displayKbName(collection.name)}): nothing new to upload`);
     return { pushed: 0, failed: 0 };
   }
@@ -248,16 +270,75 @@ async function pushAllToKbImpl(args: {
     }
   }
 
+  // Lazy single remote-list shared by the deletion phase and the
+  // post-push remote_version reconcile. Most pushes are pure uploads
+  // and don't need it.
+  let remoteCache: Awaited<ReturnType<typeof kbListRemote>> | null = null;
+  let remoteCacheError: unknown = null;
+  async function getRemote() {
+    if (remoteCache != null) return remoteCache;
+    if (remoteCacheError != null) throw remoteCacheError;
+    try {
+      remoteCache = await kbListRemote({
+        collectionId: collection.id,
+        skillsBaseUrl: urls.skillsBaseUrl,
+        accessToken: token!.accessToken,
+      });
+      return remoteCache;
+    } catch (e) {
+      remoteCacheError = e;
+      throw e;
+    }
+  }
+
+  // Deletion phase: DELETE /filestorage/items/<id> (KB and filestore
+  // share the same REST surface for deletes — see
+  // `scripts/cleanup-uuid-duplicates.mjs` which uses the same endpoint).
+  if (toDelete.length > 0) {
+    let remote: Awaited<ReturnType<typeof kbListRemote>> = [];
+    try {
+      remote = await getRemote();
+    } catch (e) {
+      onLine?.(
+        `✗ kb push (${displayKbName(collection.name)}): failed to list remote for deletion phase: ${String(e)}`,
+      );
+      toDelete = [];
+    }
+    if (toDelete.length > 0) {
+      const remoteByName = new Map(remote.map((r) => [r.filename, r]));
+      const fetchFn = makeSkillsFetch(token.accessToken);
+      for (const name of toDelete) {
+        const r = remoteByName.get(name);
+        if (!r || !r.id) {
+          delete persisted.files[name];
+          continue;
+        }
+        try {
+          const url = new URL(
+            `/filestorage/items/${encodeURIComponent(r.id)}`,
+            urls.skillsBaseUrl,
+          );
+          const resp = await fetchFn(url.toString(), { method: "DELETE" });
+          if (!resp.ok && resp.status !== 404) {
+            throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
+          }
+          delete persisted.files[name];
+          onLine?.(`  − ${dir}/${name} (deleted on remote)`);
+          pushed += 1;
+        } catch (e) {
+          onLine?.(`✗ ${dir}/${name}: delete failed: ${String(e)}`);
+          failed += 1;
+        }
+      }
+    }
+  }
+
   // Reconcile remote_version after push: refresh from server's
   // authoritative updatedAt so the next pull doesn't false-flag a
   // conflict.
   if (pushedNames.size > 0) {
     try {
-      const remote = await kbListRemote({
-        collectionId: collection.id,
-        skillsBaseUrl: urls.skillsBaseUrl,
-        accessToken: token.accessToken,
-      });
+      const remote = await getRemote();
       for (const r of remote) {
         if (pushedNames.has(r.filename) && r.updated_at) {
           const tracked = persisted.files[r.filename];
