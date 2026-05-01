@@ -512,6 +512,17 @@ async function pullEntityImpl(
   repo: string,
 ): Promise<PullResult> {
   const manifest = await adapter.loadManifest(repo);
+  // Flat-format adapters (agent, workflow, datastore) call
+  // `entity_state_load` directly, which now returns raw JSON. When the
+  // state file doesn't exist, Rust returns `{}` — no `.files`. Engine
+  // assumes `manifest.files` is always an object, so normalize here.
+  // Adapters that go through `nestedManifest.loadCollectionManifest`
+  // already get a proper default shape; this is a no-op for them.
+  if (!manifest.files || typeof manifest.files !== "object") {
+    manifest.files = {};
+  }
+  if (manifest.collection_id === undefined) manifest.collection_id = null;
+  if (manifest.collection_name === undefined) manifest.collection_name = null;
   const {
     items: remote,
     paginationFailed,
