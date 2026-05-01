@@ -165,13 +165,6 @@ export function resolveProjectFilestores(
 /// engine-specific upload semantics live in `pushAllToFilestoreImpl`.
 export const pushAllToFilestore = handle.pushOne;
 
-/// True if any filestore collection has unresolved `.server.` shadow
-/// files on disk. Used by `pushAllEntities` skip-clean preflight —
-/// shadows are gitignored so `git status` won't surface them, and
-/// after an app restart the in-memory conflict aggregate is empty,
-/// so this disk-level check is the only durable signal.
-export const filestoreHasServerShadowFiles = handle.hasServerShadowFiles;
-
 // ---------------------------------------------------------------------------
 // Push implementation — signed-URL upload (PIN-5847). The pre-PIN-5847
 // multipart `/upload` endpoint added a UUID prefix on every call and
