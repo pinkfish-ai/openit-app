@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -13,38 +12,12 @@ use serde::{Deserialize, Serialize};
 // kb-search walks alongside the default.
 const KB_DIR: &str = "knowledge-bases/default";
 
-#[derive(Serialize, Deserialize, Clone, Default)]
-pub struct KbState {
-    pub collection_id: Option<String>,
-    pub collection_name: Option<String>,
-    /// filename → last-pulled remote version + mtime at pull time.
-    #[serde(default)]
-    pub files: HashMap<String, KbFileState>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct KbFileState {
-    /// Whatever the server returns as a version (ISO timestamp string).
-    pub remote_version: String,
-    /// Local file mtime (ms since epoch) at the time of the last pull.
-    pub pulled_at_mtime_ms: u128,
-    /// Set iff this row is in conflict state. Holds the remote
-    /// `updatedAt` we observed when we wrote the `.server.` shadow,
-    /// so the resolve script can encode "I've reconciled against this
-    /// remote version" without re-fetching. `skip_serializing_if` keeps
-    /// the field absent in the on-disk JSON when not in conflict.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conflict_remote_version: Option<String>,
-    /// Server's canonical filename when it differs from the manifest
-    /// key (the local filename). Filestore uploads come back with a
-    /// `<uuid>-<original-name>` prefix; we keep the local file at the
-    /// user's original name and stash the cloud-side name here for
-    /// reconciliation. Absent → cloud_filename equals the manifest key
-    /// (KB and any filestore upload that didn't get sanitized).
-    /// (PIN-5827.)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cloud_filename: Option<String>,
-}
+// Pre-Phase-2 the manifest schema lived here as `KbState` /
+// `KbFileState` and the `entity_state_*` commands deserialized into it.
+// Phase 2 introduced a per-collection nested shape in TS
+// (`{ <collectionId>: { ... } }`) that doesn't fit the flat struct, so
+// the commands now pass through `serde_json::Value`. The TS type
+// `KbStatePersisted` in `src/lib/api.ts` is the source of truth.
 
 #[derive(Serialize)]
 pub struct KbLocalFile {
@@ -885,25 +858,37 @@ fn validate_state_name(name: &str) -> Result<(), String> {
 }
 
 /// Load `.openit/<name>-state.json` (the per-entity manifest). Returns
-/// `KbState::default()` when the file is missing. Replaces the three
-/// identical `kb_state_load` / `fs_store_state_load` / `datastore_state_load`
-/// commands. The TS wrappers in api.ts pass "kb", "fs", or "datastore".
+/// raw JSON so the TS layer can interpret both legacy flat and Phase-2
+/// nested formats without a Rust-side struct dictating the shape.
+///
+/// Pre-PIN-5775-Phase-2 this deserialized into the flat `KbState` struct,
+/// which silently dropped top-level keys outside `{ collection_id,
+/// collection_name, files }`. After Phase 2 introduced the nested
+/// `{ <collectionId>: { ... } }` shape, every nested-format save was
+/// silently round-tripping back through `KbState`, producing the empty
+/// `{ collection_id: null, collection_name: null, files: {} }` we kept
+/// observing on disk. Pass-through fixes that.
 #[tauri::command]
-pub fn entity_state_load(repo: String, name: String) -> Result<KbState, String> {
+pub fn entity_state_load(repo: String, name: String) -> Result<serde_json::Value, String> {
     validate_state_name(&name)?;
     let path = Path::new(&repo)
         .join(".openit")
         .join(format!("{}-state.json", name));
     if !path.exists() {
-        return Ok(KbState::default());
+        return Ok(serde_json::Value::Object(serde_json::Map::new()));
     }
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
-/// Save `.openit/<name>-state.json`. Creates the parent dir as needed.
+/// Save `.openit/<name>-state.json`. Pass-through — TS owns the shape.
+/// See `entity_state_load` for the rationale.
 #[tauri::command]
-pub fn entity_state_save(repo: String, name: String, state: KbState) -> Result<(), String> {
+pub fn entity_state_save(
+    repo: String,
+    name: String,
+    state: serde_json::Value,
+) -> Result<(), String> {
     validate_state_name(&name)?;
     let path = Path::new(&repo)
         .join(".openit")
