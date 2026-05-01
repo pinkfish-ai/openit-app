@@ -1442,13 +1442,32 @@ body::before {
   background: var(--accent-soft, rgba(196, 62, 62, 0.05));
 }
 
+/* On entity-folder views that accept desktop drops (library /
+   knowledge-base / skills / scripts), stretch the wrapper to the
+   full pane height so the drop target is the entire white area, not
+   just the strip occupied by existing tiles. Without this, a folder
+   with one or two cards leaves most of the panel un-droppable.
+   `position: relative` anchors the drag-highlight overlay below. */
+.viewer-summary-droppable {
+  min-height: 100%;
+  box-sizing: border-box;
+  position: relative;
+}
+
 /* Drag-from-desktop highlight on the library/knowledge-base entity-
-   folder view. Same affordance as the reply composer, scaled up to
-   the full card-grid panel. */
-.viewer-summary-drag {
-  outline: 2px dashed var(--accent, #c43e3e);
-  outline-offset: -6px;
+   folder view. Painted via an absolutely-positioned pseudo-element
+   so it overlays the cards instead of sitting behind their opaque
+   surface. `pointer-events: none` keeps the underlying drop handler
+   on the wrapper live. */
+.viewer-summary-drag::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 2px dashed var(--accent, #c43e3e);
+  border-radius: 14px;
   background: var(--accent-soft, rgba(196, 62, 62, 0.05));
+  z-index: 2;
 }
 
 /* Empty-folder state dressed up as a drop zone. Activates only on
@@ -1470,6 +1489,14 @@ body::before {
   background: var(--accent-soft, rgba(196, 62, 62, 0.05));
 }
 
+/* Empty-state dropzone already renders its own dashed-border + tinted
+   highlight via the rule above — the overlay pseudo-element from
+   .viewer-summary-drag would just paint a second dashed border on
+   top. Suppress it so the empty case stays single-bordered. */
+.viewer-summary-dropzone.viewer-summary-drag::after {
+  display: none;
+}
+
 .viewer-summary-dropzone-hint {
   display: block;
   margin-top: 10px;
@@ -1484,6 +1511,7 @@ body::before {
 .viewer-folder-toolbar {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   padding: 0 0 8px 0;
 }
 

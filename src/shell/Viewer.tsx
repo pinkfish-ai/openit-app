@@ -166,6 +166,55 @@ async function deleteFileInSubdir(
   }
 }
 
+/// Hello-world starter content for the "New" button on the scripts /
+/// skills folder views. The .mjs template exports a default async
+/// function (the shape every plugin-script entry point uses); the .md
+/// template seeds a frontmatter-less skill stub the user can fill in.
+const NEW_FILE_TEMPLATES: Record<"mjs" | "md", string> = {
+  mjs:
+    `export default async function helloWorld() {\n` +
+    `  console.log("Hello, world!");\n` +
+    `}\n`,
+  md: `# Untitled\n\nHello, world!\n`,
+};
+
+/// Create a new "untitled" file in `subdir` with a starter template,
+/// picking the next available numeric suffix when the base name is
+/// already taken (`untitled.mjs`, `untitled-2.mjs`, …). Used by the
+/// scripts / skills folder "New" button. Opens the new file in the
+/// viewer once it's on disk so the user lands straight in edit mode.
+async function createUntitledEntityFile(
+  repo: string,
+  relSubdir: string,
+  ext: "mjs" | "md",
+  existingNames: string[],
+  setError: (msg: string | null) => void,
+  onToast: ((msg: string) => void) | undefined,
+  onOpenPath: ((p: string) => void | Promise<void>) | undefined,
+): Promise<void> {
+  setError(null);
+  const taken = new Set(existingNames);
+  let filename = `untitled.${ext}`;
+  let i = 2;
+  while (taken.has(filename)) {
+    filename = `untitled-${i}.${ext}`;
+    i += 1;
+  }
+  try {
+    const { entityWriteFile } = await import("../lib/api");
+    await entityWriteFile(repo, relSubdir, filename, NEW_FILE_TEMPLATES[ext]);
+    onToast?.(`Created ${filename}`);
+    const fullPath = relSubdir
+      ? `${repo}/${relSubdir}/${filename}`
+      : `${repo}/${filename}`;
+    if (onOpenPath) await onOpenPath(fullPath);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[new-file] failed for ${filename}:`, err);
+    setError(`Failed to create ${filename}: ${reason}`);
+  }
+}
+
 /// Filenames that survive Finder (narrow no-break space, colons,
 /// stray Unicode whitespace) routinely break the sync push and other
 /// downstream tools that assume POSIX-safe names. Normalize before
@@ -855,9 +904,9 @@ export function Viewer({
         return ENTITY_FOLDER_LABELS[source.entity];
       }
       case "databases-list":     return "Databases";
-      case "filestores-list":    return "Files";
+      case "filestores-list":    return "Filestores";
       case "attachments-folder": return "Attachments";
-      case "knowledge-bases-list": return "Knowledge";
+      case "knowledge-bases-list": return "Knowledge Bases";
       case "agent-trace":
         return `Agent trace — ${source.subject}`;
       case "agent-trace-list":
@@ -1414,12 +1463,25 @@ export function Viewer({
     // view via the parent's onOpenPath callback.
     if (source.kind === "conversations-list") {
       if (source.threads.length === 0) {
+        const sampleUrl = tunnelUrl || intakeUrl || null;
         return (
           <div className="viewer-summary">
             <p className="summary-desc">
               No conversation threads yet. They appear here once a ticket gets
               its first message — file a ticket via the Intake form to start one.
             </p>
+            {sampleUrl && (
+              <Button
+                variant="primary"
+                onClick={() => {
+                  openUrl(sampleUrl).catch((err) =>
+                    console.warn("[viewer] openUrl failed:", err),
+                  );
+                }}
+              >
+                Submit sample ticket
+              </Button>
+            )}
           </div>
         );
       }
@@ -1839,8 +1901,10 @@ export function Viewer({
       return (
         <div
           className={`viewer-summary${
-            acceptsDrop && folderDragOver ? " viewer-summary-drag" : ""
-          }${showDropZone ? " viewer-summary-dropzone" : ""}`}
+            acceptsDrop ? " viewer-summary-droppable" : ""
+          }${acceptsDrop && folderDragOver ? " viewer-summary-drag" : ""}${
+            showDropZone ? " viewer-summary-dropzone" : ""
+          }`}
           onDragOver={(e) => {
             // preventDefault is required EVERY time on a file dragover
             // — even when this folder doesn't accept drops. The HTML5
@@ -1884,27 +1948,56 @@ export function Viewer({
           {folderUploadError && (
             <p className="viewer-edit-error">{folderUploadError}</p>
           )}
-          {cards.length > 1 && (
+          {(cards.length > 1 ||
+            source.entity === "scripts" ||
+            source.entity === "skills") && (
             <div className="viewer-folder-toolbar">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  setSortReversed((prev) => ({
-                    ...prev,
-                    [source.path]: !prev[source.path],
-                  }))
-                }
-                title="Reverse sort order"
-              >
-                {isReport
-                  ? reversed
-                    ? "oldest first"
-                    : "newest first"
-                  : reversed
-                    ? "Z → A"
-                    : "A → Z"}
-              </Button>
+              {cards.length > 1 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    setSortReversed((prev) => ({
+                      ...prev,
+                      [source.path]: !prev[source.path],
+                    }))
+                  }
+                  title="Reverse sort order"
+                >
+                  {isReport
+                    ? reversed
+                      ? "oldest first"
+                      : "newest first"
+                    : reversed
+                      ? "Z → A"
+                      : "A → Z"}
+                </Button>
+              )}
+              {(source.entity === "scripts" || source.entity === "skills") &&
+                repo && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() =>
+                      void createUntitledEntityFile(
+                        repo,
+                        toRepoRelative(repo, source.path),
+                        source.entity === "scripts" ? "mjs" : "md",
+                        source.files.map((f) => f.name),
+                        setFolderUploadError,
+                        showToast,
+                        onOpenPath,
+                      )
+                    }
+                    title={
+                      source.entity === "scripts"
+                        ? "Create a new untitled.mjs script"
+                        : "Create a new untitled.md skill"
+                    }
+                  >
+                    New
+                  </Button>
+                )}
             </div>
           )}
           <EntityCardGrid
