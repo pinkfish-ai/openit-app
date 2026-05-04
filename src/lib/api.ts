@@ -443,6 +443,22 @@ export type KbFileState = {
   /// the type only so legacy on-disk manifests deserialize without
   /// errors — drops out the next time a manifest is rewritten.
   cloud_filename?: string;
+  /// Agents only. Set when a release POST fails after a successful
+  /// upsert; cleared on retry success. Persists across restarts so the
+  /// next sync tick retries even when nothing else under `agents/` is
+  /// dirty. (Agent V2.)
+  release_pending?: boolean;
+  /// Agents only. SHA-256 of the assembled `common + cloud` instructions
+  /// we last sent to the platform. Compared on pull to detect cloud-side
+  /// edits — never recomputed from disk, otherwise local edits would
+  /// retroactively look like "what we last pushed" and divergence
+  /// detection breaks. (Agent V2.)
+  pushed_instructions_hash?: string;
+  /// Agents only. The platform's user-agent id. Today this lives inside
+  /// the agent JSON's `id` field; for retry-only flows (release-pending
+  /// retry without re-reading the disk file) we need it accessible at
+  /// the manifest layer. (Agent V2.)
+  remote_id?: string;
 };
 export type KbStatePersisted = {
   collection_id: string | null;

@@ -14,7 +14,7 @@ You're Claude, helping the admin run this helpdesk. Most of what they'll ask you
 | `knowledge-bases/default/*.md` | Solution articles. Markdown. The "answer once" capture target — write new articles here unless the admin explicitly asks for a different KB collection. Admins can `mkdir knowledge-bases/<custom>/` to add more KBs; `kb-search` walks all of them. |
 | `filestores/library/*` | Curated reference files — runbooks, scripts, recurring docs the admin keeps handy. Cloud-synced via the existing filestore sync engine. |
 | `filestores/attachments/<ticketId>/*` | Operational attachment storage — files dropped into the chat intake by the asker, or files the admin attached to a reply. One subfolder per ticket so attachments stay tied to their thread. |
-| `agents/<name>.json` | Agent configurations. The triage agent lives at `agents/triage.json`. |
+| `agents/<name>/` | Agent configurations — one folder per agent. The triage agent lives at `agents/triage/` with `triage.json` (structured fields: model, sharing, resources, tools) plus three markdown blocks: `common.md` (shared persona), `cloud.md` (Pinkfish runtime HOW-TO), and `local.md` (OpenIT runtime HOW-TO). The `openit-` prefix is added automatically when the agent is synced to Pinkfish. |
 | `workflows/<name>.json` | (Future, V2.) Captured action playbooks. |
 | `reports/<YYYY-MM-DD-HHmm>-<slug>.md` | Generated helpdesk reports. Newest sorts to the top by filename. The "Generate overview" button in the explorer writes a canned status snapshot; the `/report` skill writes freeform reports authored by Claude. |
 | `.claude/` | Plugin manifest territory — Claude Code's own conventions live here too (`.claude/skills/<name>/SKILL.md`, `.claude/scripts/*`, `.claude/settings.local.json`). **Owned by the plugin sync.** Overwritten on every reconnect / version bump. Don't write user state here — it'll get clobbered. Hidden from the explorer by default; the "show system files" toggle reveals it. |
@@ -49,7 +49,7 @@ You don't need to call any gateway / network tool to read or write tickets, KB a
 
 ## The triage agent
 
-The triage agent's persona lives at `agents/triage.json` (`name`, `selectedModel`, `instructions`). It's invoked by the `ai-intake` skill — see Skills below — once per turn the chat-intake server runs. Edit the `instructions` field there to tweak how the agent talks to end users; that's the source of truth for the agent's voice.
+The triage agent's persona lives at `agents/triage/`. The structured fields (model, sharing, resources, tools, prompt examples, intro message) live in `triage.json`; the prose persona is split across three markdown blocks — `common.md` (universal voice + escalation rules), `cloud.md` (Pinkfish-runtime instructions, e.g. MCP tool names), and `local.md` (OpenIT-runtime instructions, e.g. file paths and the `ai-intake` skill). The chat-intake server assembles `common.md + local.md` and passes it as the agent's prompt; the cloud agent on Pinkfish gets `common.md + cloud.md` instead. Edit the markdown files to tweak how the agent talks to end users — those are the sources of truth for the agent's voice.
 
 You don't normally run the triage flow yourself — `ai-intake` does. But if the admin asks you ad-hoc questions about ticket / conversation / people data, the file conventions you'd use are:
 

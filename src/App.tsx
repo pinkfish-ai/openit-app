@@ -34,7 +34,7 @@ import { useBrowserConnect } from "./lib/useBrowserConnect";
 import { startKbSync, stopKbSync } from "./lib/kbSync";
 import { startFilestoreSync, stopFilestoreSync } from "./lib/filestoreSync";
 import { startDatastoreSync, stopDatastoreSync } from "./lib/datastoreSync";
-import { startAgentSync, stopAgentSync } from "./lib/agentSync";
+import { migrateFlatTriage, startAgentSync, stopAgentSync } from "./lib/agentSync";
 import { startWorkflowSync, stopWorkflowSync } from "./lib/workflowSync";
 import { pushAllEntities } from "./lib/pushAll";
 import { syncSkillsToDisk, readSyncedPluginVersion, type Bubble as ManifestBubble } from "./lib/skillsSync";
@@ -61,11 +61,6 @@ const LOCAL_ORG_NAME = "OpenIT (local)";
 // inside `loadCreds()` — every caller (this file, Shell.tsx push
 // handler, sync engines) sees the flag take effect uniformly.
 
-function basename(p: string): string {
-  const parts = p.split("/").filter((s) => s.length > 0);
-  return parts[parts.length - 1] ?? p;
-}
-
 /// Is the bundled plugin already synced at the *current* manifest version?
 /// Returns true when both (a) the triage-agent install sentinel exists
 /// (so we know a sync ran successfully at some point) AND (b) the
@@ -83,9 +78,11 @@ function basename(p: string): string {
 /// destroy admin edits. The plugin-version sentinel inside .openit/ is
 /// owned exclusively by the sync.
 async function bundledPluginIsCurrent(repo: string): Promise<boolean> {
-  const slug = basename(repo);
+  // V2 puts the triage agent in a folder; sentinel path moved with it.
+  // If V2 path is missing, plugin sync must re-run (covers fresh
+  // installs, post-cleanup states, and pre-V2 → V2 schema migrations).
   try {
-    await fsRead(`${repo}/agents/openit-triage-${slug}.json`);
+    await fsRead(`${repo}/agents/triage/triage.json`);
   } catch {
     return false;
   }
@@ -131,9 +128,16 @@ function startCloudSyncs(creds: PinkfishCreds, repo: string, _orgName: string): 
   startFilestoreSync({ creds, repo }).catch((e) =>
     console.error("filestore sync init failed:", e),
   );
-  startAgentSync({ creds, repo }).catch((e) =>
-    console.error("agent sync init failed:", e),
-  );
+  // Agent migration must complete before the first agent pull. A stale
+  // cloud-side `openit-triage` would otherwise overwrite the folder
+  // layout the migration is in the middle of writing.
+  migrateFlatTriage(repo)
+    .catch((e) => console.error("agent migration failed:", e))
+    .finally(() => {
+      startAgentSync({ creds, repo }).catch((e) =>
+        console.error("agent sync init failed:", e),
+      );
+    });
   startWorkflowSync({ creds, repo }).catch((e) =>
     console.error("workflow sync init failed:", e),
   );
@@ -521,7 +525,34 @@ function App() {
             } catch (e) {
               console.warn("[app] cloud-relaunch bootstrap failed (non-fatal):", e);
             }
+            // V1 → V2 migration MUST complete before syncSkillsToDisk
+            // touches `agents/triage/`. Otherwise the bundled plugin
+            // writes the folder layout first, the shim sees
+            // `folderExists=true` and bails — silently abandoning the
+            // user's V1 `instructions` in the orphaned flat file.
+            // The shim is idempotent; subsequent calls inside
+            // startCloudSyncs are safe no-ops.
+            try {
+              await migrateFlatTriage(lastRepo);
+            } catch (e) {
+              console.warn("[app] cloud-relaunch migration failed (non-fatal):", e);
+            }
             setBypassOnboarding(true);
+            // Re-run plugin sync if the bundled manifest version is
+            // ahead of the on-disk sentinel. Cloud-relaunch normally
+            // assumes the disk is already provisioned, but schema
+            // bumps (e.g. V2 agent folder layout) require the bundled
+            // sync to run again to land new files. Skip when the
+            // sentinel matches — sync is idempotent but the manifest
+            // walk is wasteful when nothing changed.
+            if (!(await bundledPluginIsCurrent(lastRepo))) {
+              syncSkillsToDisk(lastRepo, creds)
+                .then((manifest) => {
+                  console.log("[app] cloud-relaunch skill sync complete, bubbles:", manifest.bubbles);
+                  setBubbles(convertBubblesForPrompt(manifest.bubbles));
+                })
+                .catch((e) => console.error("cloud-relaunch skill sync failed:", e));
+            }
             // Fall back to creds.orgId when orgName is empty — the
             // first-run-with-creds path doesn't have a display name
             // available (no modal), so it stores `""`. Better to show
@@ -577,6 +608,15 @@ function App() {
               pinned_bubbles: s.pinned_bubbles ?? null,
               onboarding_complete: s.onboarding_complete ?? false,
             });
+            // Same V1→V2 migration ordering rule as cloud-relaunch:
+            // shim must complete before syncSkillsToDisk so a stale
+            // flat triage.json is folded into common.md before the
+            // bundle's defaults land.
+            try {
+              await migrateFlatTriage(result.path);
+            } catch (e) {
+              console.warn("[app] first-run migration failed (non-fatal):", e);
+            }
             startCloudSyncs(creds, result.path, creds.orgId);
             syncSkillsToDisk(result.path, creds)
               .then((manifest) => {

@@ -29,6 +29,15 @@ vi.mock("./datastoreSync", () => ({
   pullDatastoresOnce: vi.fn(),
 }));
 
+vi.mock("./agentSync", () => ({
+  pushAllToAgents: vi.fn(),
+  pullAgentsOnce: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
 vi.mock("./pinkfishAuth", () => ({
   loadCreds: vi.fn(),
 }));
@@ -77,8 +86,10 @@ import {
   startFilestoreSync,
 } from "./filestoreSync";
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
+import { pullAgentsOnce, pushAllToAgents } from "./agentSync";
 import { loadCreds } from "./pinkfishAuth";
 import { gitStatusShort, datastoreStateLoad, entityListLocal } from "./api";
+import { invoke } from "@tauri-apps/api/core";
 import { getConflictsForPrefix, hasConflictsForPrefix } from "./syncEngine";
 import { loadCollectionManifest } from "./nestedManifest";
 
@@ -141,6 +152,28 @@ function setSteadyState() {
     last_pull_at_ms: 1000, // pulled at least once → skip-clean precondition met
   } as never);
 
+  // Agent defaults: skip-clean fires (manifest matches the same seed
+  // disk listing entityListLocal returns above, last_pull_at_ms set).
+  // Tests opting in to non-clean shapes override invoke per-test.
+  vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+    if (cmd === "entity_state_load") {
+      return {
+        files: { "seed.md": { remote_version: "v1", pulled_at_mtime_ms: 1 } },
+        last_pull_at_ms: 1000,
+      } as never;
+    }
+    return undefined as never;
+  });
+  vi.mocked(pullAgentsOnce).mockResolvedValue({
+    ok: true,
+    pulled: 0,
+    conflicts: [],
+  } as never);
+  vi.mocked(pushAllToAgents).mockResolvedValue({
+    pushed: 0,
+    failed: 0,
+  } as never);
+
   // Manifest established (`last_pull_at_ms` set) — skip-clean
   // precondition. Files non-empty too just so the steady-state covers
   // a typical "pulled and got items" shape; the load-bearing field
@@ -176,12 +209,16 @@ describe("pushAllEntities — skip-clean (PIN-5865)", () => {
     expect(pushAllToKb).not.toHaveBeenCalled();
     expect(pushAllToFilestore).not.toHaveBeenCalled();
     expect(pullDatastoresOnce).toHaveBeenCalledTimes(1);
+    // Agents are skip-clean too (flat layout, manifest matches disk).
+    expect(pullAgentsOnce).not.toHaveBeenCalled();
+    expect(pushAllToAgents).not.toHaveBeenCalled();
 
     // User sees a transparent "skipped" line per scope so the sync pane
     // doesn't go silent.
     expect(lines).toContain("▸ sync: kb skipped (clean)");
     expect(lines).toContain("▸ sync: filestore (openit-scripts) skipped (clean)");
     expect(lines).toContain("▸ sync: filestore (openit-skills) skipped (clean)");
+    expect(lines).toContain("▸ sync: agents skipped (clean)");
     expect(lines[lines.length - 1]).toBe("▸ sync: done");
   });
 
@@ -529,6 +566,138 @@ describe("pushAllEntities — error isolation (PIN-5865)", () => {
     expect(pullAllKbNow).not.toHaveBeenCalled();
     expect(filestorePullOnce).not.toHaveBeenCalled();
     expect(pullDatastoresOnce).not.toHaveBeenCalled();
+    expect(pullAgentsOnce).not.toHaveBeenCalled();
     expect(lines).toEqual(["✗ sync: not authenticated"]);
+  });
+});
+
+describe("pushAllEntities — runAgent", () => {
+  it("dirty agents/* unblocks pre-push pull and push", async () => {
+    vi.mocked(gitStatusShort).mockResolvedValue([
+      { path: "agents/triage/triage.json", status: " M", staged: false },
+    ] as never);
+
+    await pushAllEntities("/repo", () => {});
+
+    expect(pullAgentsOnce).toHaveBeenCalledTimes(1);
+    expect(pushAllToAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it("agent conflict slot non-empty surfaces conflicts and skips push", async () => {
+    vi.mocked(gitStatusShort).mockResolvedValue([
+      { path: "agents/triage/triage.json", status: " M", staged: false },
+    ] as never);
+    vi.mocked(getConflictsForPrefix).mockImplementation((prefix: string) => {
+      if (prefix === "agent") {
+        return [
+          {
+            prefix: "agent",
+            manifestKey: "triage.json",
+            workingTreePath: "agents/triage/triage.json",
+            reason: "local-and-remote-changed" as const,
+          },
+        ];
+      }
+      return [];
+    });
+
+    const lines: string[] = [];
+    await pushAllEntities("/repo", (l) => lines.push(l));
+
+    expect(pullAgentsOnce).toHaveBeenCalledTimes(1);
+    expect(pushAllToAgents).not.toHaveBeenCalled();
+    expect(
+      lines.some((l) =>
+        l.startsWith("✗ sync: agents pull surfaced conflicts"),
+      ),
+    ).toBe(true);
+  });
+
+  it("pre-push pull failure short-circuits before push", async () => {
+    vi.mocked(gitStatusShort).mockResolvedValue([
+      { path: "agents/triage/triage.json", status: " M", staged: false },
+    ] as never);
+    vi.mocked(pullAgentsOnce).mockResolvedValue({
+      ok: false,
+      error: "network down",
+      pulled: 0,
+      conflicts: [],
+    } as never);
+
+    const lines: string[] = [];
+    await pushAllEntities("/repo", (l) => lines.push(l));
+
+    expect(pushAllToAgents).not.toHaveBeenCalled();
+    expect(
+      lines.some((l) => l.startsWith("✗ sync: agents pre-push pull failed")),
+    ).toBe(true);
+  });
+
+  it("clean working tree but never-pulled manifest still pulls (bootstrap)", async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "entity_state_load") {
+        return { files: {}, last_pull_at_ms: null } as never;
+      }
+      return undefined as never;
+    });
+
+    await pushAllEntities("/repo", () => {});
+
+    expect(pullAgentsOnce).toHaveBeenCalledTimes(1);
+  });
+
+  it("clean tree but release_pending manifest entry falls through skip-clean", async () => {
+    // No dirty paths, manifest matches disk, last_pull_at_ms set — but
+    // one manifest entry has release_pending: true. runAgent must NOT
+    // skip-clean; pushAllToAgents handles the retry.
+    vi.mocked(gitStatusShort).mockResolvedValue([] as never);
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "entity_state_load") {
+        return {
+          files: {
+            "triage.json": {
+              remote_version: "x",
+              pulled_at_mtime_ms: 1000,
+              release_pending: true,
+              remote_id: "ua_x",
+            },
+          },
+          last_pull_at_ms: 9999,
+        } as never;
+      }
+      if (cmd === "entity_list_local") {
+        return [
+          { filename: "triage.json", mtime_ms: 1000, size: 80 },
+        ] as never;
+      }
+      return undefined as never;
+    });
+
+    await pushAllEntities("/repo", () => {});
+
+    // Pre-push pull AND push must both fire — release_pending bypasses
+    // skip-clean.
+    expect(pullAgentsOnce).toHaveBeenCalledTimes(1);
+    expect(pushAllToAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it("agent failure does not block other classes (error isolation)", async () => {
+    vi.mocked(gitStatusShort).mockResolvedValue([
+      { path: "agents/triage/triage.json", status: " M", staged: false },
+      { path: "knowledge-bases/default/dirty.md", status: " M", staged: false },
+    ] as never);
+    vi.mocked(pushAllToAgents).mockRejectedValue(new Error("agent boom"));
+
+    const lines: string[] = [];
+    await pushAllEntities("/repo", (l) => lines.push(l));
+
+    expect(pushAllToKb).toHaveBeenCalled();
+    expect(pushAllToDatastores).toHaveBeenCalled();
+    expect(
+      lines.some(
+        (l) => l.startsWith("✗ sync: agent push") && l.includes("agent boom"),
+      ),
+    ).toBe(true);
+    expect(lines[lines.length - 1]).toBe("▸ sync: done");
   });
 });

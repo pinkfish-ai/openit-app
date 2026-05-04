@@ -1,5 +1,5 @@
 {
-  "version": "2026-04-30-010",
+  "version": "2026-05-01-001",
   "bubbles": [
     { "label": "Answer ticket", "skill": "/answer-ticket" }
   ],
@@ -13,7 +13,10 @@
     { "path": "skills/report.md" },
     { "path": "schemas/tickets._schema.json" },
     { "path": "schemas/people._schema.json" },
-    { "path": "agents/triage.template.json" },
+    { "path": "agents/triage/triage.template.json" },
+    { "path": "agents/triage/common.md" },
+    { "path": "agents/triage/cloud.md" },
+    { "path": "agents/triage/local.md" },
     { "path": "scripts/kb-search.mjs" },
     { "path": "scripts/sync-resolve-conflict.mjs" },
     { "path": "scripts/sync-push.mjs" },

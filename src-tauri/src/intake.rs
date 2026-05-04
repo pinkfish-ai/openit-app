@@ -2,11 +2,11 @@
 //
 // A coworker on the same machine (or LAN, when the Phase 3b toggle
 // ships) opens the URL surfaced in the OpenIT header and chats with
-// an AI agent. The agent — driven by `agents/triage.json` and the
-// `ai-intake` skill — gathers the question, searches the local
-// knowledge base, and either answers inline (KB hit) or escalates to
-// the admin (KB miss → status flips to `escalated`, admin sees the
-// banner).
+// an AI agent. The agent — driven by `agents/triage/` (folder with
+// triage.json + common.md/cloud.md/local.md) and the `ai-intake`
+// skill — gathers the question, searches the local knowledge base,
+// and either answers inline (KB hit) or escalates to the admin (KB
+// miss → status flips to `escalated`, admin sees the banner).
 //
 // Bind: 127.0.0.1. Release builds use an OS-assigned port (new port
 // per launch); debug builds pin DEV_INTAKE_PORT so a browser tab
@@ -18,10 +18,11 @@
 // command lock to prevent races.
 //
 // Per-turn agent: each user message spawns a fresh `claude -p`
-// subprocess with cwd = repo, model from `agents/triage.json`, and
-// the conversation history + ticket id passed in the prompt. The
-// skill writes ticket / conversation / people files directly via
-// Claude's Read/Write/Edit tools.
+// subprocess with cwd = repo, persona assembled from
+// `agents/triage/common.md` + `agents/triage/local.md`, model from
+// `agents/triage/triage.json`, and the conversation history + ticket
+// id passed in the prompt. The skill writes ticket / conversation /
+// people files directly via Claude's Read/Write/Edit tools.
 
 use axum::{
     body::Bytes,
@@ -623,7 +624,7 @@ async fn chat_turn(
     let mut history = history_before;
     history.push(user_msg);
 
-    // Read the agent's persona + selected model from agents/triage.json.
+    // Read the agent's persona + selected model from agents/triage/.
     let (agent_instructions, model) = load_triage_agent(&repo).await;
 
     // Build the prompt and run claude -p. This is the slow part
@@ -1198,39 +1199,75 @@ fn mime_for_attachment(path: &Path) -> String {
 // Helpers — agent invocation, ticket file operations.
 // ---------------------------------------------------------------------------
 
-/// Read `agents/triage.json` for the persona instructions + selected
-/// model. Falls back to safe defaults if the file is missing or
-/// malformed (rare — the bundled-skills sync writes it on first run).
+/// Read the triage agent's persona instructions + selected model. V2
+/// layout: `agents/triage/triage.json` for the structured fields plus
+/// `common.md` + `local.md` for the assembled prompt. The cloud sees
+/// `common + cloud`; we send `common + local` to the local subprocess.
+///
+/// Falls back to V1's flat `agents/triage.json` (with a top-level
+/// `instructions` field) when the folder layout doesn't exist — keeps
+/// `cargo test` and dev-environment runs that haven't gone through the
+/// JS migration shim functional. Per-file missing-block fallback drops
+/// the empty side from the assembly so we never emit a leading or
+/// trailing blank-line.
 async fn load_triage_agent(repo: &Path) -> (String, String) {
-    let path = repo.join("agents").join("triage.json");
-    let raw = match tokio::fs::read_to_string(&path).await {
-        Ok(s) => s,
-        Err(_) => {
-            return (
-                "You are a helpdesk triage agent.".to_string(),
-                "sonnet".to_string(),
-            )
-        }
+    let folder = repo.join("agents").join("triage");
+    let folder_json = folder.join("triage.json");
+
+    let (json_path, raw) = if folder_json.exists() {
+        (
+            folder_json.clone(),
+            tokio::fs::read_to_string(&folder_json).await.ok(),
+        )
+    } else {
+        // V1 / pre-migration legacy fallback.
+        let flat = repo.join("agents").join("triage.json");
+        (flat.clone(), tokio::fs::read_to_string(&flat).await.ok())
     };
-    let parsed: serde_json::Value = match serde_json::from_str(&raw) {
-        Ok(v) => v,
-        Err(_) => {
-            return (
-                "You are a helpdesk triage agent.".to_string(),
-                "sonnet".to_string(),
-            )
-        }
-    };
-    let instructions = parsed
-        .get("instructions")
-        .and_then(|v| v.as_str())
-        .unwrap_or("You are a helpdesk triage agent.")
-        .to_string();
+
+    let parsed: Option<serde_json::Value> =
+        raw.as_deref().and_then(|s| serde_json::from_str(s).ok());
+
+    // Model — both layouts use the same `selectedModel` key.
     let model = parsed
-        .get("selectedModel")
+        .as_ref()
+        .and_then(|v| v.get("selectedModel"))
         .and_then(|v| v.as_str())
         .unwrap_or("sonnet")
         .to_string();
+
+    // V2 path: assemble common + local from sibling .md files. If we
+    // landed on the legacy flat path (json_path != folder layout), fall
+    // through to the V1 `instructions` field instead.
+    let assembled = if json_path == folder_json {
+        let common = tokio::fs::read_to_string(folder.join("common.md"))
+            .await
+            .unwrap_or_default();
+        let local = tokio::fs::read_to_string(folder.join("local.md"))
+            .await
+            .unwrap_or_default();
+        let common_t = common.trim();
+        let local_t = local.trim();
+        match (common_t.is_empty(), local_t.is_empty()) {
+            (true, true) => String::new(),
+            (true, false) => local_t.to_string(),
+            (false, true) => common_t.to_string(),
+            (false, false) => format!("{common_t}\n\n{local_t}"),
+        }
+    } else {
+        parsed
+            .as_ref()
+            .and_then(|v| v.get("instructions"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+
+    let instructions = if assembled.is_empty() {
+        "You are a helpdesk triage agent.".to_string()
+    } else {
+        assembled
+    };
     (instructions, model)
 }
 

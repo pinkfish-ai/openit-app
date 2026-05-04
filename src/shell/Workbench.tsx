@@ -25,7 +25,7 @@ const STATIONS: Station[] = [
   { id: "people",    kind: "people",    rel: "databases/people",  countMode: "json-rows" },
   { id: "knowledge", kind: "knowledge", rel: "knowledge-bases",   countMode: "dirs" },
   { id: "files",     kind: "files",     rel: "filestores",        countMode: "dirs" },
-  { id: "agents",    kind: "agents",    rel: "agents",            countMode: "json-rows" },
+  { id: "agents",    kind: "agents",    rel: "agents",            countMode: "dirs" },
   // Skills + scripts (PIN-5829) — admin-curated artifacts captured by
   // /conversation-to-automation. Both live as filestore subdirs and
   // mirror into .claude/ for native discovery; here we surface the

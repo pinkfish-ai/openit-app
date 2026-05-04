@@ -6,8 +6,14 @@
 // "{{slug}}" placeholders, schemas missing), so each rule is locked
 // down with an explicit case.
 
-import { describe, expect, it } from "vitest";
-import { routeFile } from "./skillsSync";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+}));
+
+import { invoke } from "@tauri-apps/api/core";
+import { routeFile, syncSkillsToDisk } from "./skillsSync";
 
 describe("routeFile", () => {
   const slug = "my-helpdesk";
@@ -75,6 +81,24 @@ describe("routeFile", () => {
       });
     });
 
+    it("preserves the folder structure for nested agent templates", () => {
+      expect(routeFile("agents/triage/triage.template.json", slug)).toEqual({
+        subdir: "agents/triage",
+        filename: "triage.json",
+        substituteSlug: false,
+      });
+    });
+
+    it("routes nested .md files under agents/<folder> through the default rule", () => {
+      // common.md / cloud.md / local.md ride the default fallback —
+      // the agent template rule only fires for .template.json basenames.
+      expect(routeFile("agents/triage/common.md", slug)).toEqual({
+        subdir: "agents/triage",
+        filename: "common.md",
+        substituteSlug: false,
+      });
+    });
+
     it("non-template agent files preserved as-is", () => {
       expect(routeFile("agents/some-other.json", slug)).toEqual({
         subdir: "agents",
@@ -130,5 +154,114 @@ describe("routeFile", () => {
       const r = routeFile("agents/triage.template.json", "any-slug-here");
       expect(r?.filename).toBe("triage.json");
     });
+  });
+});
+
+describe("syncSkillsToDisk — agent write-once gate", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("skips writing agents/<name>.json when the file already exists on disk", async () => {
+    const writeCalls: Array<Record<string, unknown>> = [];
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "skills_fetch_bundled_manifest") {
+        return JSON.stringify({
+          version: "test-1",
+          files: [{ path: "agents/triage.template.json" }],
+        }) as never;
+      }
+      if (cmd === "skills_fetch_bundled_file") {
+        return JSON.stringify({ name: "triage" }) as never;
+      }
+      if (cmd === "fs_read") {
+        // Simulate the agent file already existing on disk so the
+        // write-once gate fires.
+        return "existing user-edited content" as never;
+      }
+      if (cmd === "entity_write_file") {
+        writeCalls.push(args as Record<string, unknown>);
+        return undefined as never;
+      }
+      return undefined as never;
+    });
+
+    await syncSkillsToDisk("/repo", null);
+
+    const agentWrites = writeCalls.filter(
+      (c) => c.subdir === "agents" && c.filename === "triage.json",
+    );
+    expect(agentWrites).toEqual([]);
+  });
+
+  it("preserves user-edited files inside agents/<folder>/* across plugin bumps", async () => {
+    const writeCalls: Array<Record<string, unknown>> = [];
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "skills_fetch_bundled_manifest") {
+        return JSON.stringify({
+          version: "test-2",
+          files: [
+            { path: "agents/triage/triage.template.json" },
+            { path: "agents/triage/common.md" },
+            { path: "agents/triage/cloud.md" },
+            { path: "agents/triage/local.md" },
+          ],
+        }) as never;
+      }
+      if (cmd === "skills_fetch_bundled_file") {
+        return "bundled" as never;
+      }
+      if (cmd === "fs_read") {
+        // Every probe finds an existing file → gate fires for all four.
+        return "existing" as never;
+      }
+      if (cmd === "entity_write_file") {
+        writeCalls.push(args as Record<string, unknown>);
+        return undefined as never;
+      }
+      return undefined as never;
+    });
+
+    await syncSkillsToDisk("/repo", null);
+
+    const triageWrites = writeCalls.filter(
+      (c) => typeof c.subdir === "string" && (c.subdir as string).startsWith("agents/"),
+    );
+    expect(triageWrites).toEqual([]);
+  });
+
+  it("writes agents/<name>.json when the file is missing", async () => {
+    const writeCalls: Array<Record<string, unknown>> = [];
+    vi.mocked(invoke).mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === "skills_fetch_bundled_manifest") {
+        return JSON.stringify({
+          version: "test-1",
+          files: [{ path: "agents/triage.template.json" }],
+        }) as never;
+      }
+      if (cmd === "skills_fetch_bundled_file") {
+        return JSON.stringify({ name: "triage" }) as never;
+      }
+      if (cmd === "fs_read") {
+        // File missing → fileExistsOnDisk returns false → write fires.
+        throw new Error("ENOENT");
+      }
+      if (cmd === "entity_write_file") {
+        writeCalls.push(args as Record<string, unknown>);
+        return undefined as never;
+      }
+      return undefined as never;
+    });
+
+    await syncSkillsToDisk("/repo", null);
+
+    const agentWrites = writeCalls.filter(
+      (c) => c.subdir === "agents" && c.filename === "triage.json",
+    );
+    expect(agentWrites).toHaveLength(1);
   });
 });

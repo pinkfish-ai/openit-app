@@ -31,7 +31,9 @@ import {
   startFilestoreSync,
 } from "./filestoreSync";
 import { pushAllToDatastores, pullDatastoresOnce } from "./datastoreSync";
+import { pullAgentsOnce, pushAllToAgents } from "./agentSync";
 import { loadCreds, type PinkfishCreds } from "./pinkfishAuth";
+import { invoke } from "@tauri-apps/api/core";
 import { entityListLocal, gitStatusShort, type KbStatePersisted } from "./api";
 import {
   classifyAsShadow,
@@ -118,6 +120,7 @@ export async function pushAllEntities(
     runKb({ creds, repo, onLine, dirtyUnderScope }),
     runFilestore({ creds, repo, onLine, dirtyUnderScope }),
     runDatastore({ creds, repo, onLine, dirtyUnderScope }),
+    runAgent({ creds, repo, onLine, dirtyUnderScope }),
   ]);
 
   onLine("▸ sync: done");
@@ -457,5 +460,90 @@ async function runDatastore(args: {
     }
   } catch (e) {
     onLine(`✗ sync: datastore failed: ${String(e)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent — V2 folder layout (`agents/triage/triage.json` + three .md
+// blocks). Mirrors runDatastore's shape but with skip-clean (the
+// triage subdir maps cleanly to manifestMatchesDisk; the .md blocks
+// stay under the user's curation, manifest doesn't track them).
+// ---------------------------------------------------------------------------
+
+async function runAgent(args: {
+  creds: PinkfishCreds;
+  repo: string;
+  onLine: LineFn;
+  dirtyUnderScope: (scopeDir: string) => boolean;
+}): Promise<void> {
+  const { creds, repo, onLine, dirtyUnderScope } = args;
+  try {
+    // dirtyUnderScope("agents") catches both the triage.json change and
+    // any of the three .md blocks (common.md / cloud.md / local.md) —
+    // they all live under agents/triage/. Any of them being dirty must
+    // route through pushAllToAgents because instructions are assembled
+    // from the .md files at push time.
+    const m = await invoke<KbStatePersisted>("entity_state_load", {
+      repo,
+      name: "agent",
+    });
+    // Release-pending entries bypass the skip-clean — pushAllToAgents
+    // retries the release before the dirty-list early-return.
+    const hasPendingRelease = Object.values(m.files ?? {}).some(
+      (f) => (f as { release_pending?: boolean }).release_pending,
+    );
+    if (
+      !hasPendingRelease &&
+      !dirtyUnderScope("agents") &&
+      !hasConflictsForPrefix("agent")
+    ) {
+      if (
+        m.last_pull_at_ms != null &&
+        (await manifestMatchesDisk({
+          repo,
+          dir: "agents/triage",
+          manifest: m,
+        }))
+      ) {
+        onLine("▸ sync: agents skipped (clean)");
+        return;
+      }
+    }
+
+    onLine("▸ sync: agents pre-push pull");
+    let safe = true;
+    try {
+      const { ok, error, pulled } = await pullAgentsOnce({ creds, repo });
+      const conflicts = getConflictsForPrefix("agent");
+      if (!ok) {
+        safe = false;
+        onLine(`✗ sync: agents pre-push pull failed: ${error ?? "unknown"}`);
+      } else if (conflicts.length > 0) {
+        safe = false;
+        onLine(
+          "✗ sync: agents pull surfaced conflicts — resolve in Claude, then commit again:",
+        );
+        for (const c of conflicts) {
+          onLine(`  • ${c.workingTreePath}: ${c.reason}`);
+        }
+      } else if (pulled > 0) {
+        onLine(`▸ sync: agents pulled ${pulled} agent(s) before push`);
+      }
+    } catch (e) {
+      safe = false;
+      onLine(`✗ sync: agents pre-push pull failed: ${String(e)}`);
+    }
+
+    if (!safe) return;
+
+    onLine("▸ sync: agents pushing");
+    try {
+      const { pushed, failed } = await pushAllToAgents({ creds, repo, onLine });
+      onLine(`▸ sync: agent push complete — ${pushed} ok, ${failed} failed`);
+    } catch (e) {
+      onLine(`✗ sync: agent push failed: ${String(e)}`);
+    }
+  } catch (e) {
+    onLine(`✗ sync: agent failed: ${String(e)}`);
   }
 }
