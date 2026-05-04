@@ -322,7 +322,9 @@ export function SourceControl({ repo, active, onShowDiff, onSyncLine, onFsChange
           {committing
             ? "…"
             : files.length > 0
-              ? "Commit"
+              ? cloudConnected
+                ? "Commit & Push"
+                : "Commit"
               : "Sync with Cloud"}
         </Button>
       </div>
