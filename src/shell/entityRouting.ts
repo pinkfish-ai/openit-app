@@ -478,7 +478,7 @@ export async function resolvePathToSource(
     }
   }
 
-  // agents/<name>.json → agent
+  // agents/<name>.json → agent (V1 flat layout)
   const agentMatch = rel.match(/^agents\/(.+)\.json$/);
   if (agentMatch) {
     try {
@@ -487,6 +487,23 @@ export async function resolvePathToSource(
       return { kind: "agent", agent, path };
     } catch {
       return { kind: "file", path };
+    }
+  }
+
+  // agents/<name>/ → agent (V2 folder layout). The folder click in
+  // Overview / file explorer should resolve to the agent's
+  // structured JSON, not a file-read of the directory itself
+  // (which throws "No such file or directory" through the viewer).
+  const agentFolderMatch = rel.match(/^agents\/([^/]+)\/?$/);
+  if (agentFolderMatch && agentFolderMatch[1] !== "" && !rel.endsWith(".json")) {
+    const folderName = agentFolderMatch[1];
+    const innerPath = `${path.replace(/\/$/, "")}/${folderName}.json`;
+    try {
+      const raw = await fsRead(innerPath);
+      const agent = JSON.parse(raw);
+      return { kind: "agent", agent, path: innerPath };
+    } catch {
+      return { kind: "file", path: innerPath };
     }
   }
 
