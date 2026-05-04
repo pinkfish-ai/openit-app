@@ -1225,9 +1225,8 @@ async fn load_triage_agent(repo: &Path) -> (String, String) {
         (flat.clone(), tokio::fs::read_to_string(&flat).await.ok())
     };
 
-    let parsed: Option<serde_json::Value> = raw
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok());
+    let parsed: Option<serde_json::Value> =
+        raw.as_deref().and_then(|s| serde_json::from_str(s).ok());
 
     // Model — both layouts use the same `selectedModel` key.
     let model = parsed
