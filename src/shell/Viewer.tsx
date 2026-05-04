@@ -209,19 +209,11 @@ async function saveAgentEditDraft(args: {
   agent: Agent;
 }): Promise<void> {
   const { repo, draft, loaded, agent } = args;
-  if (loaded && draft.common !== loaded.common) {
-    await entityWriteFile(repo, AGENT_TRIAGE_SUBDIR, "common.md", draft.common);
-  }
-  if (loaded && draft.cloud !== loaded.cloud) {
-    await entityWriteFile(repo, AGENT_TRIAGE_SUBDIR, "cloud.md", draft.cloud);
-  }
-  if (loaded && draft.local !== loaded.local) {
-    await entityWriteFile(repo, AGENT_TRIAGE_SUBDIR, "local.md", draft.local);
-  }
 
-  // Build the new triage.json: start from the loaded JSON (so unknown
-  // array entries / per-tool config / cloud-side additions round-trip
-  // verbatim) and overlay the form-managed fields.
+  // Build the new triage.json BEFORE any disk write so we can deep-equal
+  // it against the loaded snapshot and skip writing when nothing
+  // changed. Without this, every Save bumps mtime and forces a re-PATCH
+  // on the next push, even on a no-op Save.
   const next: Record<string, unknown> = { ...(loaded?.json ?? {}) };
   next.id = String(next.id ?? agent.id ?? "");
   next.name = String(next.name ?? agent.name ?? "");
@@ -255,13 +247,45 @@ async function saveAgentEditDraft(args: {
   const loadedServers = ((loaded?.json.tools as { servers?: { name: string; allTools?: boolean }[] } | undefined)?.servers) ?? [];
   next.tools = { servers: mergeServerRows(loadedServers, draft.servers) };
 
-  const filename = `${agent.name}.json`;
-  await entityWriteFile(
-    repo,
-    AGENT_TRIAGE_SUBDIR,
-    filename,
-    JSON.stringify(next, null, 2),
-  );
+  // Compute pending writes up-front so we can fail loudly without
+  // partial-disk state. Each write is wrapped per-file: if any write
+  // throws, we bail before subsequent writes — so worst case is the
+  // first N succeed and the (N+1)th's content stays unwritten.
+  // Atomic-across-files would require a Tauri batch write or a
+  // staging dir + rename; out of scope. The error gets thrown back to
+  // the Save handler which surfaces it inline.
+  type Write = { filename: string; content: string };
+  const pending: Write[] = [];
+  if (loaded && draft.common !== loaded.common) {
+    pending.push({ filename: "common.md", content: draft.common });
+  }
+  if (loaded && draft.cloud !== loaded.cloud) {
+    pending.push({ filename: "cloud.md", content: draft.cloud });
+  }
+  if (loaded && draft.local !== loaded.local) {
+    pending.push({ filename: "local.md", content: draft.local });
+  }
+  // Skip the JSON write when nothing changed — diff against loaded.
+  // Use a stable serialization (same indent, same key order via the
+  // ...spread) so the comparison is meaningful.
+  const nextJson = JSON.stringify(next, null, 2);
+  const loadedJson = loaded
+    ? JSON.stringify(loaded.json, null, 2)
+    : null;
+  if (nextJson !== loadedJson) {
+    const filename = `${agent.name}.json`;
+    pending.push({ filename, content: nextJson });
+  }
+
+  for (const write of pending) {
+    try {
+      await entityWriteFile(repo, AGENT_TRIAGE_SUBDIR, write.filename, write.content);
+    } catch (e) {
+      throw new Error(
+        `Save failed at ${write.filename}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
 }
 
 function mergeResourceRows(

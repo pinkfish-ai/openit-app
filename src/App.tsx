@@ -525,6 +525,18 @@ function App() {
             } catch (e) {
               console.warn("[app] cloud-relaunch bootstrap failed (non-fatal):", e);
             }
+            // V1 → V2 migration MUST complete before syncSkillsToDisk
+            // touches `agents/triage/`. Otherwise the bundled plugin
+            // writes the folder layout first, the shim sees
+            // `folderExists=true` and bails — silently abandoning the
+            // user's V1 `instructions` in the orphaned flat file.
+            // The shim is idempotent; subsequent calls inside
+            // startCloudSyncs are safe no-ops.
+            try {
+              await migrateFlatTriage(lastRepo);
+            } catch (e) {
+              console.warn("[app] cloud-relaunch migration failed (non-fatal):", e);
+            }
             setBypassOnboarding(true);
             // Re-run plugin sync if the bundled manifest version is
             // ahead of the on-disk sentinel. Cloud-relaunch normally
@@ -596,6 +608,15 @@ function App() {
               pinned_bubbles: s.pinned_bubbles ?? null,
               onboarding_complete: s.onboarding_complete ?? false,
             });
+            // Same V1→V2 migration ordering rule as cloud-relaunch:
+            // shim must complete before syncSkillsToDisk so a stale
+            // flat triage.json is folded into common.md before the
+            // bundle's defaults land.
+            try {
+              await migrateFlatTriage(result.path);
+            } catch (e) {
+              console.warn("[app] first-run migration failed (non-fatal):", e);
+            }
             startCloudSyncs(creds, result.path, creds.orgId);
             syncSkillsToDisk(result.path, creds)
               .then((manifest) => {
