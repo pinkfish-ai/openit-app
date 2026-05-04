@@ -416,7 +416,7 @@ type ResourceFetchResult = {
 
 async function fetchCollectionsByType(
   creds: PinkfishCreds,
-  type: "knowledge_base" | "datastore" | "filestore",
+  type: "knowledge_base" | "datastore" | "filestorage",
 ): Promise<ResourceFetchResult> {
   const token = getToken();
   if (!token) throw new Error("not authenticated");
@@ -543,7 +543,7 @@ export async function resolveResourceRefs(
   const [kbList, dsList, fsList] = await Promise.all([
     fetchCollectionsByType(creds, "knowledge_base"),
     fetchCollectionsByType(creds, "datastore"),
-    fetchCollectionsByType(creds, "filestore"),
+    fetchCollectionsByType(creds, "filestorage"),
   ]);
 
   const resolveOne = (

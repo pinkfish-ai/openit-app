@@ -233,7 +233,7 @@ describe("resolveResourceRefs", () => {
         if (t === "datastore") {
           return { ok: true, status: 200, json: async () => opts.dsCollections };
         }
-        if (t === "filestore") {
+        if (t === "filestorage") {
           return { ok: true, status: 200, json: async () => opts.fsCollections };
         }
       }
