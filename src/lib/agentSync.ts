@@ -134,9 +134,13 @@ export async function pullAgentsOnce(args: {
 }> {
   const { creds, repo } = args;
   try {
-    const adapter = agentAdapter({ creds });
+    // Single REST fetch shared by the adapter (via initialAgents) and the
+    // divergence check below — without this both paths would issue their
+    // own /user-agents call on every poll tick.
+    const all = await listUserAgentsWithMeta(creds);
+    const adapter = agentAdapter({ creds, initialAgents: all });
     const result = await pullEntity(adapter, repo);
-    await detectInstructionsDivergence({ creds, repo }).catch((e) =>
+    await detectInstructionsDivergence({ all, repo }).catch((e) =>
       console.error("[agentSync] instructions divergence check failed:", e),
     );
     return {
@@ -161,10 +165,10 @@ export async function pullAgentsOnce(args: {
 ///   baseline; next push records the hash).
 /// - No `triage.json` row in the manifest (agent doesn't exist yet).
 async function detectInstructionsDivergence(args: {
-  creds: PinkfishCreds;
+  all: Awaited<ReturnType<typeof listUserAgentsWithMeta>>;
   repo: string;
 }): Promise<void> {
-  const { creds, repo } = args;
+  const { all, repo } = args;
   const manifest = await invoke<KbStatePersisted>("entity_state_load", {
     repo,
     name: "agent",
@@ -176,7 +180,6 @@ async function detectInstructionsDivergence(args: {
   const lastSent = entry?.pushed_instructions_hash;
   if (!lastSent) return;
 
-  const all = await listUserAgentsWithMeta(creds);
   const cloud = all.find(
     (a) => localAgentName(a.name) === TRIAGE_LOCAL_NAME,
   );
@@ -268,7 +271,7 @@ async function readMtimeAfterWrite(
 /// string so push can still assemble a partial prompt rather than abort.
 async function readMdBlock(repo: string, filename: string): Promise<string> {
   try {
-    return await fsRead(`${repo}/${TRIAGE_SUBDIR}/${filename}`);
+    return (await fsRead(`${repo}/${TRIAGE_SUBDIR}/${filename}`)) ?? "";
   } catch {
     return "";
   }
@@ -409,18 +412,21 @@ export async function pushAllToAgents(args: {
       });
     }
 
-    // Detect dirty using three signals — same shape as `pushAllToKb`:
-    // (1) file isn't tracked yet (never synced), (2) git status reports
-    // it modified/untracked (uncommitted edits), (3) mtime advanced past
-    // the last-pulled stamp (committed-after-last-sync — the case where
-    // the SourceControl panel commits before push runs, leaving git
-    // status clean but the manifest baseline behind). Without (3),
-    // every Commit-and-Push flow would silently no-op for agents.
+    // Detect dirty using three signals on the .json — same shape as
+    // `pushAllToKb`: (1) file isn't tracked yet (never synced), (2) git
+    // status reports it modified/untracked (uncommitted edits), (3) mtime
+    // advanced past the last-pulled stamp (committed-after-last-sync —
+    // the case where the SourceControl panel commits before push runs,
+    // leaving git status clean but the manifest baseline behind).
     //
-    // Any of the three .md blocks being dirty also marks the agent's
-    // .json as needing push (instructions are assembled from common +
-    // cloud at push time). The manifest only tracks the .json row, so
-    // probe git status for .md changes to surface the dependency.
+    // For the triage row specifically, also compare the assembled
+    // (common + cloud) instructions hash against `pushed_instructions_hash`.
+    // .md siblings aren't tracked by the manifest and don't bump the
+    // .json's mtime, so neither git status nor mtime catch them after
+    // they've been committed. The hash is what actually got sent to
+    // cloud last time, so any disk-side drift means the row needs push.
+    // Bonus: local.md isn't part of the assembled string, so editing it
+    // alone won't trigger a spurious push.
     const local = await entityListLocal(repo, TRIAGE_SUBDIR);
     const gitFiles = await gitStatusShort(repo).catch(() => []);
     const dirtyPaths = new Set(
@@ -428,8 +434,11 @@ export async function pushAllToAgents(args: {
         .filter((g) => g.path.startsWith(`${TRIAGE_SUBDIR}/`))
         .map((g) => g.path.slice(`${TRIAGE_SUBDIR}/`.length)),
     );
-    const mdDirty = ["common.md", "cloud.md", "local.md"].some((f) =>
-      dirtyPaths.has(f),
+    const triageJson = `${TRIAGE_LOCAL_NAME}.json`;
+    const triageCommon = await readMdBlock(repo, "common.md");
+    const triageCloud = await readMdBlock(repo, "cloud.md");
+    const triageInstructionsHash = await instructionsHash(
+      assembleInstructions(triageCommon, triageCloud),
     );
     const dirty = local
       .filter((f) => f.filename.endsWith(".json"))
@@ -440,10 +449,11 @@ export async function pushAllToAgents(args: {
         if (dirtyPaths.has(f.filename)) return true;
         if (f.mtime_ms != null && f.mtime_ms > tracked.pulled_at_mtime_ms)
           return true;
-        // The .json might be clean but a sibling .md (common/cloud)
-        // bumped — those affect the assembled `instructions` field on
-        // cloud, so the .json's row needs push too.
-        if (mdDirty && f.filename === `${TRIAGE_LOCAL_NAME}.json`) return true;
+        if (f.filename === triageJson) {
+          const lastSent = (tracked as { pushed_instructions_hash?: string })
+            .pushed_instructions_hash;
+          if (lastSent !== triageInstructionsHash) return true;
+        }
         return false;
       })
       .map((f) => f.filename);

@@ -92,7 +92,7 @@ npm run tauri dev
 ```
 Dev window opens with an embedded terminal. If `claude` is on PATH it launches automatically; otherwise it falls back to your shell.
 
-**One-time keychain setup (macOS):** to stop the keychain prompt from re-appearing on every rebuild, follow `src-tauri/scripts/README.md` to create a self-signed `OpenIT Dev` cert. The cargo runner (`src-tauri/.cargo/config.toml`) signs the dev binary with it on every build so the keychain ACL persists. Without this, `tauri dev` still works — you just get repeated prompts.
+**One-time keychain setup (macOS):** to stop the keychain prompt from re-appearing on every rebuild, follow `src-tauri/scripts/README.md`. The cargo runner (`src-tauri/.cargo/config.toml`) signs the dev binary with your Apple Development cert on every build so the keychain partition ACL persists across rebuilds. Without this, `tauri dev` still works — you just get repeated prompts.
 
 ### Build
 ```bash

@@ -402,6 +402,11 @@ describe("pushAllToAgents — release retry", () => {
             "triage.json": {
               remote_version: "x",
               pulled_at_mtime_ms: 5000, // mtime 1000 < 5000 → not dirty
+              // sha256("") — matches assembled (empty common + empty
+              // cloud) so the new instructions-hash dirty signal stays
+              // clean for this release-retry-only path.
+              pushed_instructions_hash:
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
               release_pending: true,
               remote_id: "ua_existing",
             },
