@@ -119,6 +119,107 @@ describe("pushAllToAgents — dirty detection", () => {
     expect(out).toEqual({ pushed: 0, failed: 0 });
   });
 
+  it("detects committed .md edit as dirty even when .json mtime is unchanged and git status is clean (instructions-hash diff)", async () => {
+    // Regression for the V2 high-severity finding: editing common.md →
+    // committing it leaves git status clean and triage.json's mtime
+    // unchanged. Without an instructions-hash check the push silently
+    // returns 0 and cloud goes stale.
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "entity_state_load") {
+        return {
+          files: {
+            "triage.json": {
+              remote_version: "v",
+              pulled_at_mtime_ms: 9000, // ahead of disk mtime → mtime path won't fire
+              // hash of "stale instructions" — disk now assembles to
+              // "be helpful\n\nuse MCP" which has a different hash.
+              pushed_instructions_hash: "deadbeef",
+              remote_id: "ua_x",
+            },
+          },
+        } as never;
+      }
+      return undefined as never;
+    });
+    vi.mocked(entityListLocal).mockResolvedValue([
+      { filename: "triage.json", mtime_ms: 1000, size: 100 } as never,
+    ]);
+    vi.mocked(gitStatusShort).mockResolvedValue([]); // clean — already committed
+    mockFsRead({
+      triageJson: JSON.stringify({ id: "ua_x", name: "triage", description: "" }),
+      common: "be helpful",
+      cloud: "use MCP",
+    });
+    vi.mocked(patchUserAgent).mockResolvedValue({
+      id: "ua_x",
+      name: "openit-triage",
+      versionDate: "2026-04-30T03:00:00Z",
+    } as never);
+    const agentMod = await import("./entities/agent");
+    vi.spyOn(agentMod, "releaseUserAgent").mockResolvedValue();
+    vi.spyOn(agentMod, "resolveResourceRefs").mockResolvedValue({});
+
+    const out = await pushAllToAgents({ creds, repo: "/r", onLine: vi.fn() });
+
+    expect(out).toEqual({ pushed: 1, failed: 0 });
+    expect(patchUserAgent).toHaveBeenCalledTimes(1);
+    expect(patchUserAgent).toHaveBeenCalledWith(
+      creds,
+      "ua_x",
+      expect.objectContaining({ instructions: "be helpful\n\nuse MCP" }),
+    );
+  });
+
+  it("does NOT push when only local.md changed (local.md isn't part of the cloud-bound instructions)", async () => {
+    // Regression for the V2 low-severity finding: local.md isn't in the
+    // assembled (common + cloud) string. Editing it must not trigger a
+    // cloud push or auto-release.
+    const cleanCommon = "be helpful";
+    const cleanCloud = "use MCP";
+    // Pre-compute the hash of the assembled string so the manifest
+    // matches and dirty detection stays clean.
+    const { instructionsHash, assembleInstructions } = await import(
+      "./entities/agent"
+    );
+    const cleanHash = await instructionsHash(
+      assembleInstructions(cleanCommon, cleanCloud),
+    );
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === "entity_state_load") {
+        return {
+          files: {
+            "triage.json": {
+              remote_version: "v",
+              pulled_at_mtime_ms: 9000,
+              pushed_instructions_hash: cleanHash,
+              remote_id: "ua_x",
+            },
+          },
+        } as never;
+      }
+      return undefined as never;
+    });
+    vi.mocked(entityListLocal).mockResolvedValue([
+      { filename: "triage.json", mtime_ms: 1000, size: 100 } as never,
+    ]);
+    // local.md is the only thing modified — uncommitted.
+    vi.mocked(gitStatusShort).mockResolvedValue([
+      { path: "agents/triage/local.md", status: " M", staged: false } as never,
+    ]);
+    mockFsRead({
+      triageJson: JSON.stringify({ id: "ua_x", name: "triage", description: "" }),
+      common: cleanCommon,
+      cloud: cleanCloud,
+      local: "intake-only edits here",
+    });
+
+    const out = await pushAllToAgents({ creds, repo: "/r", onLine: vi.fn() });
+
+    expect(out).toEqual({ pushed: 0, failed: 0 });
+    expect(patchUserAgent).not.toHaveBeenCalled();
+    expect(postUserAgent).not.toHaveBeenCalled();
+  });
+
   it("detects committed-after-last-pull file as dirty (mtime > pulled_at_mtime_ms)", async () => {
     // Simulate: file is on disk with a recent mtime, manifest tracked
     // it earlier, git status reports nothing (file was committed after
