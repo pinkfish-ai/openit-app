@@ -516,27 +516,19 @@ export async function resolveResourceRefs(
       cloudByKey.set(`fs:${r.name}`, r);
   }
 
-  // For NEW resources not yet on the cloud agent, fall back to the
-  // /api/proxy-endpoints + /datacollection lookup. /api/proxy-endpoints
-  // requires Cognito auth (browser-only — see platform routes.go
-  // comment about RuntimeTokenFromContext). OpenIT's runtime token
-  // 401s here. There's no /service/ equivalent today; tracked as a
-  // platform-side V3 followup. When this fetch fails, refs not in
-  // `cloudByKey` are dropped with a warning.
-  let proxyByResource: Map<string, string> | null = null;
+  // Best-effort fetch of existing proxy endpoints from the platform.
+  // The /service/ route is recent — older deployments don't have it
+  // and return 404. The platform now accepts resources with empty
+  // proxyEndpointId, so a proxy lookup miss isn't fatal: we send the
+  // resource without a proxy id, the platform attaches it to the
+  // agent, and runtime use that needs the proxy can be wired up
+  // separately (V3 will auto-create proxies server-side).
+  let proxyByResource: Map<string, string> = new Map();
   try {
     proxyByResource = await fetchProxyEndpoints(creds);
   } catch (e) {
-    if (cloudByKey.size === 0) {
-      // No cloud-current resources to fall back on — can't resolve
-      // anything at all.
-      onWarn?.(
-        `  ⚠ resources skipped — proxy endpoint lookup unavailable and no cloud-attached resources to copy from (${String(e).split("\n")[0]})`,
-      );
-      return {};
-    }
     onWarn?.(
-      `  ⚠ proxy lookup unavailable — only cloud-attached resources will resolve`,
+      `  ⚠ proxy lookup unavailable (${String(e).split("\n")[0]}) — resources will attach without proxy IDs`,
     );
   }
 
@@ -575,29 +567,20 @@ export async function resolveResourceRefs(
       return wire;
     }
 
-    // Fallback path: /api/proxy-endpoints + /datacollection lookup.
-    // Only reachable when proxyByResource is non-null (else we'd
-    // have returned early above). For a brand-new resource not yet
-    // attached to the cloud agent, this is the only way to land
-    // valid `id` + `proxyEndpointId`.
-    if (!proxyByResource) {
-      onWarn?.(
-        `  ⚠ skipping ${typeLabel} "${ref.name}" (not on cloud agent and proxy lookup unavailable — attach via web first, then sync)`,
-      );
-      return null;
-    }
+    // Fallback path: /datacollection lookup for the cloud collection
+    // id. Proxy endpoints are looked up in proxyByResource; missing
+    // entries mean we send the resource without a proxy id (platform
+    // accepts that now).
     const meta = list.byName.get(cloudName);
     if (!meta) {
       onWarn?.(`  ⚠ skipping ${typeLabel} "${ref.name}" (not found)`);
       return null;
     }
+    // Empty proxyEndpointId is now accepted by the platform. The
+    // resource attaches to the agent visibly; runtime use that
+    // requires a proxy needs the proxy created via web (V3 will add
+    // server-side auto-creation on attach).
     const proxyId = proxyByResource.get(meta.id) ?? "";
-    if (!proxyId) {
-      onWarn?.(
-        `  ⚠ skipping ${typeLabel} "${ref.name}" (no proxy endpoint registered)`,
-      );
-      return null;
-    }
     const wire: WireResource = {
       id: meta.id,
       name: cloudName,

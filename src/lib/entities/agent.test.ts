@@ -323,25 +323,23 @@ describe("resolveResourceRefs", () => {
     );
   });
 
-  it("skips refs whose collection resolves but no proxy exists", async () => {
+  it("emits ref with empty proxyEndpointId when no proxy exists (platform now accepts it)", async () => {
     setupFetches({
       kbCollections: [],
       dsCollections: [{ id: "col-ds-1", name: "openit-tickets" }],
       fsCollections: [],
       proxies: [], // no proxy for col-ds-1
     });
-    const warnings: string[] = [];
 
     const out = await resolveResourceRefs(
       creds,
       { datastores: [{ name: "tickets", canRead: true }] },
-      (line) => warnings.push(line),
+      () => {},
     );
 
-    expect(out.datastores).toEqual([]);
-    expect(
-      warnings.some((w) => /no proxy endpoint/.test(w)),
-    ).toBe(true);
+    expect(out.datastores).toHaveLength(1);
+    expect(out.datastores?.[0]?.id).toBe("col-ds-1");
+    expect(out.datastores?.[0]?.proxyEndpointId).toBe("");
   });
 
   it("skips refs with no permissions set", async () => {
